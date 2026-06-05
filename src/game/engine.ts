@@ -1,5 +1,6 @@
 import {
   AGILITY_SPEED_BONUS,
+  ACTIVE_SKILL_DAMAGE_MULTIPLIER,
   ENEMY_PROJECTILE_SIZE,
   ENEMY_PROJECTILE_SPEED,
   ENEMY_PROJECTILE_TTL,
@@ -38,6 +39,7 @@ import type {
   ActiveSkillDefinition,
   ActiveSkillInstance,
   Enemy,
+  FloatingText,
   GamePhase,
   GameSnapshot,
   InputState,
@@ -62,7 +64,9 @@ const PLAYER_DASH_DURATION = 0.16
 const PLAYER_DASH_COOLDOWN = 1.1
 const PLAYER_DASH_SPEED = 480
 const HEALTH_PACK_DROP_CHANCE = 0.22
-const HEALTH_PACK_HEAL = 3
+const HEALTH_PACK_HEAL = 25
+const ENEMY_CONTACT_DAMAGE = 16
+const DAMAGE_TEXT_TTL = 0.65
 const isEliteLevel = (level: number) => level > 10 && level % 5 === 0
 
 const createEmptySkillAllocations = (): SkillAllocations => ({
@@ -271,6 +275,7 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
     enemyProjectiles: [],
     skillFields: [],
     bursts: [],
+    floatingTexts: [],
   }
 }
 
@@ -281,6 +286,34 @@ const createBurst = (position: Vector2, color: string, radius: number) => ({
   color,
   radius,
 })
+
+const createFloatingText = (position: Vector2, value: string, color = '#fef08a'): FloatingText => ({
+  id: createId(),
+  position: {
+    x: position.x + randomBetween(-5, 5),
+    y: position.y - 18,
+  },
+  velocity: {
+    x: randomBetween(-8, 8),
+    y: -32,
+  },
+  ttl: DAMAGE_TEXT_TTL,
+  value,
+  color,
+})
+
+const formatDamage = (damage: number) => {
+  return `${Math.max(1, Math.round(damage))}`
+}
+
+const scaleActiveSkillDamage = (damage: number) => damage * ACTIVE_SKILL_DAMAGE_MULTIPLIER
+
+const damageEnemy = (snapshot: GameSnapshot, enemy: Enemy, damage: number, color = '#fef08a') => {
+  const appliedDamage = Math.max(0, damage)
+  enemy.hp -= appliedDamage
+  enemy.hitFlash = Math.max(enemy.hitFlash, 0.12)
+  snapshot.floatingTexts.push(createFloatingText(enemy.position, formatDamage(appliedDamage), color))
+}
 
 const createHealthPickup = (position: Vector2) => ({
   id: createId(),
@@ -318,6 +351,7 @@ const spawnEnemy = (level: number): Enemy => {
     grantsEliteReward: false,
     position: getSpawnPosition(),
     hp: stats.hp,
+    maxHp: stats.hp,
     speed: stats.speed,
     size: stats.size,
     tint: stats.tint,
@@ -340,6 +374,7 @@ const spawnEliteEnemy = (level: number): Enemy => {
     grantsEliteReward: true,
     position: getSpawnPosition(),
     hp: stats.hp,
+    maxHp: stats.hp,
     speed: stats.speed,
     size: stats.size,
     tint: stats.tint,
@@ -398,6 +433,11 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
   bursts: snapshot.bursts.map((burst) => ({
     ...burst,
     position: { ...burst.position },
+  })),
+  floatingTexts: snapshot.floatingTexts.map((text) => ({
+    ...text,
+    position: { ...text.position },
+    velocity: { ...text.velocity },
   })),
 })
 
@@ -480,7 +520,7 @@ const createEnemyProjectiles = (origin: Vector2, target: Vector2) => {
         y: rotatedDirection.y * ENEMY_PROJECTILE_SPEED,
       },
       owner: 'enemy',
-      damage: 1,
+      damage: 12,
       ttl: ENEMY_PROJECTILE_TTL,
       size: ENEMY_PROJECTILE_SIZE,
       color: PALETTE.rangedBolt,
@@ -499,7 +539,7 @@ const createField = (kind: SkillField['kind'], position: Vector2, config: Active
   position: { ...position },
   ttl: config.fieldTtl,
   radius: config.fieldRadius,
-  damage: config.tickDamage,
+  damage: scaleActiveSkillDamage(config.tickDamage),
   tickInterval: config.tickInterval,
   tickCooldown: 0,
   color: config.color,
@@ -545,7 +585,7 @@ const createSkillProjectile = (
       y: shotDirection.y * config.speed,
     },
     owner: 'player',
-    damage: config.damage,
+    damage: scaleActiveSkillDamage(config.damage),
     ttl: Math.max(config.ttl, config.range / Math.max(config.speed, 1)),
     size: config.size,
     color: config.color,
@@ -619,7 +659,7 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
   const targetKills = getLevelGoal(nextLevel)
   const healedHp = Math.min(
     getDerivedPlayerStats(previous.skillAllocations, previous.fixedPassiveLevel, previous.equippedWeaponId).maxHp,
-    previous.player.hp + 1,
+    previous.player.hp + HEALTH_PACK_HEAL,
   )
 
   return {
@@ -652,8 +692,8 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     mapObstacles: createLevelObstacles(nextLevel),
     message:
       nextLevel >= 4
-        ? `第 ${nextLevel} 层开始，远程怪已加入战场，已恢复 1 点生命`
-        : `第 ${nextLevel} 层开始，已恢复 1 点生命`,
+        ? `第 ${nextLevel} 层开始，远程怪已加入战场，已恢复 ${HEALTH_PACK_HEAL} 点生命`
+        : `第 ${nextLevel} 层开始，已恢复 ${HEALTH_PACK_HEAL} 点生命`,
     player: createPlayer(previous.skillAllocations, previous.fixedPassiveLevel, previous.equippedWeaponId, healedHp),
   }
 }
@@ -872,7 +912,7 @@ const explodeProjectile = (snapshot: GameSnapshot, projectile: Projectile) => {
       return
     }
 
-    enemy.hp -= projectile.damage * 0.65
+    damageEnemy(snapshot, enemy, projectile.damage * 0.65, '#fbbf24')
     applyProjectileEffectToEnemy(enemy, projectile)
   })
 
@@ -891,8 +931,8 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
         return
       }
 
-      enemy.hp -= projectile.damage + enemy.markStacks * 0.8
-      enemy.hitFlash = 0.15
+      const damage = projectile.damage + enemy.markStacks * 0.8
+      damageEnemy(snapshot, enemy, damage, projectile.color)
       applyProjectileEffectToEnemy(enemy, projectile)
       if (enemy.markStacks > 0) {
         enemy.markStacks = Math.max(0, enemy.markStacks - 1)
@@ -979,7 +1019,7 @@ const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
         return
       }
 
-      enemy.hp -= field.damage
+      damageEnemy(snapshot, enemy, field.damage, field.color)
       if (field.effect === 'burn') {
         enemy.burnTtl = Math.max(enemy.burnTtl, 2)
         enemy.burnDamagePerSecond = Math.max(enemy.burnDamagePerSecond, field.effectStrength)
@@ -988,7 +1028,6 @@ const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
         enemy.slowTtl = Math.max(enemy.slowTtl, 1.2 + field.effectStrength)
         enemy.slowFactor = Math.max(enemy.slowFactor, field.effectStrength)
       }
-      enemy.hitFlash = 0.12
     })
 
     snapshot.bursts.push(createBurst({ ...field.position }, `${field.color.replace(')', '')}, ALPHA)`.includes('rgba') ? field.color.replace('1)', 'ALPHA)') : 'rgba(157, 213, 172, ALPHA)', field.radius * 0.35))
@@ -1011,7 +1050,7 @@ const resolvePlayerDamage = (snapshot: GameSnapshot) => {
   })
 
   if ((collidingEnemy || hitByProjectile) && snapshot.player.hurtCooldown <= 0) {
-    snapshot.player.hp -= 1
+    snapshot.player.hp -= hitByProjectile ? hitByProjectile.damage : ENEMY_CONTACT_DAMAGE
     snapshot.player.hurtCooldown = PLAYER_HURT_COOLDOWN
     snapshot.bursts.push(createBurst({ ...snapshot.player.position }, 'rgba(244, 63, 94, ALPHA)', 14))
     snapshot.message = hitByProjectile ? '被远程弹道擦中了，快调整鼠标方向' : '受击了，快保持走位'
@@ -1046,6 +1085,19 @@ const updateBursts = (snapshot: GameSnapshot, delta: number) => {
   snapshot.bursts = snapshot.bursts
     .map((burst) => ({ ...burst, ttl: burst.ttl - delta }))
     .filter((burst) => burst.ttl > 0)
+}
+
+const updateFloatingTexts = (snapshot: GameSnapshot, delta: number) => {
+  snapshot.floatingTexts = snapshot.floatingTexts
+    .map((text) => ({
+      ...text,
+      ttl: text.ttl - delta,
+      position: {
+        x: text.position.x + text.velocity.x * delta,
+        y: text.position.y + text.velocity.y * delta,
+      },
+    }))
+    .filter((text) => text.ttl > 0)
 }
 
 const spawnWaveEnemies = (snapshot: GameSnapshot) => {
@@ -1420,6 +1472,7 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
   snapshot.projectiles = filterProjectiles(snapshot.projectiles)
   snapshot.enemyProjectiles = filterProjectiles(snapshot.enemyProjectiles)
   updateBursts(snapshot, delta)
+  updateFloatingTexts(snapshot, delta)
 
   if (snapshot.player.hp <= 0) {
     const earnedGold = getGoldReward(snapshot.level, snapshot.kills)

@@ -2,10 +2,15 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { Coins, RotateCcw } from 'lucide-react'
 
 import { ARCHER_ACTIVE_SKILLS, ARCHER_FIXED_PASSIVE, ARCHER_FIXED_PASSIVE_LEVELS } from '../../game/archerSkills'
+import { ACTIVE_SKILL_DAMAGE_MULTIPLIER } from '../../game/config'
 import { WEAPON_DEFINITIONS } from '../../game/weapons'
 import { useGameStore } from '../../store/useGameStore'
 
 type IdleMenuTab = 'start' | 'shop' | 'profession' | 'skills'
+
+const formatScaledDamage = (damage: number) => {
+  return Number((damage * ACTIVE_SKILL_DAMAGE_MULTIPLIER).toFixed(1))
+}
 
 const OverlayCard = ({
   title,
@@ -266,8 +271,8 @@ export function GameOverlay() {
                         <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">{skill.description}</p>
                         <div className="mt-3 space-y-1 text-[1rem] leading-tight text-[#9dd5ac]">
                           <p>类型：{skill.kind}</p>
-                          <p>Lv.1 伤害：{skill.levels[0].damage}</p>
-                          <p>Lv.5 伤害：{skill.levels[4].damage}</p>
+                          <p>Lv.1 伤害：{formatScaledDamage(skill.levels[0].damage)}</p>
+                          <p>Lv.5 伤害：{formatScaledDamage(skill.levels[4].damage)}</p>
                           <p>冷却：{skill.levels[0].cooldown}s 到 {skill.levels[4].cooldown}s</p>
                         </div>
                       </div>

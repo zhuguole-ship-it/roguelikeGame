@@ -8,9 +8,10 @@ export const ENEMY_SIZE = 14
 export const PROJECTILE_SIZE = 5
 export const ENEMY_PROJECTILE_SIZE = 6
 export const PLAYER_BASE_SPEED = 156
-export const PLAYER_BASE_MAX_HP = 5
+export const PLAYER_BASE_MAX_HP = 100
 export const PLAYER_BASE_ATTACK_INTERVAL = 0.42
-export const PLAYER_BASE_DAMAGE = 1
+export const PLAYER_BASE_DAMAGE = 12
+export const ACTIVE_SKILL_DAMAGE_MULTIPLIER = 3
 export const PLAYER_BASE_ATTACK_RANGE = 220
 export const PLAYER_HURT_COOLDOWN = 1
 export const PLAYER_ACTIVE_SKILL_SLOTS = 3
@@ -23,8 +24,8 @@ export const SPAWN_EDGE_PADDING = 30
 export const ROOM_PADDING = 28
 export const RANGED_MIN_LEVEL = 4
 export const RANGED_SPREAD_ANGLES = [-0.42, 0, 0.42]
-export const VITALITY_HP_BONUS = 1
-export const POWER_DAMAGE_BONUS = 1
+export const VITALITY_HP_BONUS = 20
+export const POWER_DAMAGE_BONUS = 3
 export const HASTE_INTERVAL_REDUCTION = 0.04
 export const AGILITY_SPEED_BONUS = 14
 export const PLAYER_MIN_ATTACK_INTERVAL = 0.18
@@ -71,7 +72,7 @@ export const getEnemyKind = (level: number, roll = Math.random()): EnemyKind => 
 export const getEnemyStats = (level: number, kind: EnemyKind) => {
   if (kind === 'elite') {
     return {
-      hp: 10 + Math.floor(level * 1.6),
+      hp: 170 + level * 18,
       speed: 30 + level * 3,
       size: ENEMY_SIZE + 8,
       tint: '#c084fc',
@@ -80,7 +81,7 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
 
   if (kind === 'ranged') {
     return {
-      hp: 2 + Math.floor(level / 3),
+      hp: 30 + level * 7,
       speed: 26 + level * 4,
       size: ENEMY_SIZE + 2,
       tint: PALETTE.rangedEnemy,
@@ -88,7 +89,7 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
   }
 
   return {
-    hp: 1 + Math.floor(level / 2),
+    hp: 38 + level * 8,
     speed: 36 + level * 6,
     size: ENEMY_SIZE + Math.min(level, 4),
     tint: PALETTE.enemy,

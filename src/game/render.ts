@@ -7,7 +7,7 @@ import {
   WORLD_WIDTH,
 } from './config'
 import { drawEnemySprite, drawFloorTile, drawObstacleSprite, drawPickupSprite, drawPlayerSprite, drawProjectileSprite, drawTorch } from './sprites'
-import type { GameSnapshot } from './types'
+import type { Enemy, GameSnapshot, Player } from './types'
 
 const drawFrame = (ctx: CanvasRenderingContext2D) => {
   ctx.fillStyle = PALETTE.wall
@@ -38,6 +38,75 @@ const drawBursts = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
     ctx.fillRect(burst.position.x - burst.radius, burst.position.y - 1, burst.radius * 2, 2)
     ctx.fillRect(burst.position.x - 1, burst.position.y - burst.radius, 2, burst.radius * 2)
   })
+}
+
+const drawHealthBar = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  hp: number,
+  maxHp: number,
+  fill: string,
+) => {
+  const ratio = Math.max(0, Math.min(1, hp / Math.max(1, maxHp)))
+
+  ctx.fillStyle = 'rgba(4, 8, 6, 0.82)'
+  ctx.fillRect(x, y, width, height)
+  ctx.fillStyle = '#2a1a1d'
+  ctx.fillRect(x + 1, y + 1, width - 2, height - 2)
+  ctx.fillStyle = fill
+  ctx.fillRect(x + 1, y + 1, (width - 2) * ratio, height - 2)
+  ctx.strokeStyle = 'rgba(244, 240, 215, 0.42)'
+  ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1)
+}
+
+const drawEnemyHealthBar = (ctx: CanvasRenderingContext2D, enemy: Enemy) => {
+  if (enemy.hp >= enemy.maxHp) {
+    return
+  }
+
+  const width = enemy.kind === 'elite' ? 46 : 30
+  const height = enemy.kind === 'elite' ? 5 : 4
+  drawHealthBar(
+    ctx,
+    enemy.position.x - width / 2,
+    enemy.position.y - enemy.size * 0.72 - 13,
+    width,
+    height,
+    enemy.hp,
+    enemy.maxHp,
+    enemy.kind === 'elite' ? '#c084fc' : '#f43f5e',
+  )
+}
+
+const drawPlayerHealthBar = (ctx: CanvasRenderingContext2D, player: Player) => {
+  drawHealthBar(
+    ctx,
+    player.position.x - 22,
+    player.position.y - player.size * 0.8 - 15,
+    44,
+    5,
+    player.hp,
+    player.maxHp,
+    '#22c55e',
+  )
+}
+
+const drawFloatingTexts = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = '10px "Press Start 2P", monospace'
+  state.floatingTexts.forEach((text) => {
+    const alpha = Math.max(0, Math.min(1, text.ttl / 0.28))
+    ctx.globalAlpha = alpha
+    ctx.fillStyle = 'rgba(4, 8, 6, 0.75)'
+    ctx.fillText(text.value, text.position.x + 1, text.position.y + 1)
+    ctx.fillStyle = text.color
+    ctx.fillText(text.value, text.position.x, text.position.y)
+  })
+  ctx.globalAlpha = 1
 }
 
 const drawSkillFields = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
@@ -79,11 +148,16 @@ export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot) =
 
   state.projectiles.forEach((projectile) => drawProjectileSprite(ctx, projectile, state.elapsedTime))
   state.enemyProjectiles.forEach((projectile) => drawProjectileSprite(ctx, projectile, state.elapsedTime))
-  state.enemies.forEach((enemy) => drawEnemySprite(ctx, enemy, state.elapsedTime))
+  state.enemies.forEach((enemy) => {
+    drawEnemySprite(ctx, enemy, state.elapsedTime)
+    drawEnemyHealthBar(ctx, enemy)
+  })
 
   const isMoving = state.phase === 'running' && state.player.attackCooldown < Math.max(0.2, state.player.attackInterval + 0.02)
   drawPlayerSprite(ctx, state.player, state.elapsedTime, isMoving)
+  drawPlayerHealthBar(ctx, state.player)
   drawBursts(ctx, state)
+  drawFloatingTexts(ctx, state)
   drawAimCursor(ctx, state)
 
   ctx.strokeStyle = 'rgba(157, 213, 172, 0.25)'

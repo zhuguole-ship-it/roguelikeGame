@@ -88,7 +88,7 @@ describe('game engine', () => {
 
   it('lets the player dash through damage briefly', () => {
     const snapshot = createInitialSnapshot('running')
-    snapshot.player.hp = 3
+    snapshot.player.hp = 60
     snapshot.enemyProjectiles = [
       {
         id: 'enemy-shot',
@@ -110,7 +110,7 @@ describe('game engine', () => {
     const dashed = triggerDashSnapshot(snapshot)
     const next = advanceGame(dashed, { up: false, down: false, left: false, right: false }, 0.016)
 
-    expect(next.player.hp).toBe(3)
+    expect(next.player.hp).toBe(60)
     expect(next.player.dashTimer).toBeGreaterThan(0)
   })
 
@@ -158,6 +158,7 @@ describe('game engine', () => {
         grantsEliteReward: false,
         position: { x: 140, y: 100 },
         hp: 1,
+        maxHp: 46,
         speed: 0,
         size: 14,
         tint: '#7ee081',
@@ -193,25 +194,25 @@ describe('game engine', () => {
     vi.restoreAllMocks()
 
     expect(next.pickups.length).toBe(1)
-    expect(next.pickups[0].healAmount).toBe(3)
+    expect(next.pickups[0].healAmount).toBe(25)
   })
 
-  it('heals the player by 3 when picking up a health pack', () => {
+  it('heals the player by 25 when picking up a health pack', () => {
     const snapshot = createInitialSnapshot('running')
-    snapshot.player.hp = 1
+    snapshot.player.hp = 20
     snapshot.pickups = [
       {
         id: 'hp-1',
         kind: 'health-pack',
         position: { ...snapshot.player.position },
         radius: 10,
-        healAmount: 3,
+        healAmount: 25,
       },
     ]
 
     const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
 
-    expect(next.player.hp).toBe(4)
+    expect(next.player.hp).toBe(45)
     expect(next.pickups.length).toBe(0)
   })
 
@@ -309,14 +310,14 @@ describe('game engine', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.phase = 'level-clear'
     snapshot.skillPoints = 1
-    snapshot.player.hp = 3
+    snapshot.player.hp = 60
 
     const next = spendSkillPointSnapshot(snapshot, 'vitality')
 
     expect(next.skillPoints).toBe(0)
     expect(next.skillAllocations.vitality).toBe(1)
-    expect(next.player.maxHp).toBe(snapshot.player.maxHp + 1)
-    expect(next.player.hp).toBe(4)
+    expect(next.player.maxHp).toBe(snapshot.player.maxHp + 20)
+    expect(next.player.hp).toBe(80)
   })
 
   it('prefers ranged targets when the priority is switched to ranged', () => {
@@ -333,6 +334,7 @@ describe('game engine', () => {
         grantsEliteReward: false,
         position: { x: 135, y: 100 },
         hp: 2,
+        maxHp: 46,
         speed: 0,
         size: 14,
         tint: '#7ee081',
@@ -350,6 +352,7 @@ describe('game engine', () => {
         grantsEliteReward: false,
         position: { x: 100, y: 220 },
         hp: 2,
+        maxHp: 37,
         speed: 0,
         size: 16,
         tint: '#8bb8ff',
@@ -384,6 +387,7 @@ describe('game engine', () => {
         grantsEliteReward: false,
         position: { x: 180, y: 100 },
         hp: 2,
+        maxHp: 46,
         speed: 0,
         size: 14,
         tint: '#7ee081',

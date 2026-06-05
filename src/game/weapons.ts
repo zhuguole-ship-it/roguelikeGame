@@ -9,7 +9,7 @@ export const WEAPON_DEFINITIONS: WeaponDefinition[] = [
     description: '新手友好的轻弓，便宜且稳定。',
     price: 40,
     unlockProgress: 0,
-    bonus: { attackDamage: 1, attackIntervalOffset: -0.01 },
+    bonus: { attackDamage: 4, attackIntervalOffset: -0.01 },
   },
   {
     id: 'stoneheart-hunter-bow',
@@ -17,7 +17,7 @@ export const WEAPON_DEFINITIONS: WeaponDefinition[] = [
     description: '增加基础伤害，适合前中期推层。',
     price: 75,
     unlockProgress: 0.15,
-    bonus: { attackDamage: 2 },
+    bonus: { attackDamage: 8 },
   },
   {
     id: 'swift-reed-longbow',
@@ -41,7 +41,7 @@ export const WEAPON_DEFINITIONS: WeaponDefinition[] = [
     description: '中期平衡武器，伤害与射程兼顾。',
     price: 195,
     unlockProgress: 0.4,
-    bonus: { attackDamage: 2, attackRange: 20 },
+    bonus: { attackDamage: 8, attackRange: 20 },
   },
   {
     id: 'windsplit-serpent-bow',
@@ -57,7 +57,7 @@ export const WEAPON_DEFINITIONS: WeaponDefinition[] = [
     description: '重型输出弓，大幅提高单发威力。',
     price: 300,
     unlockProgress: 0.6,
-    bonus: { attackDamage: 4, attackIntervalOffset: -0.01 },
+    bonus: { attackDamage: 14, attackIntervalOffset: -0.01 },
   },
   {
     id: 'moonshadow-arc-bow',
@@ -73,7 +73,7 @@ export const WEAPON_DEFINITIONS: WeaponDefinition[] = [
     description: '传奇武器，属性极强且价格昂贵。',
     price: 520,
     unlockProgress: 0.7,
-    bonus: { attackDamage: 5, attackRange: 52, attackIntervalOffset: -0.06, attackPierce: 1, speed: 12 },
+    bonus: { attackDamage: 18, attackRange: 52, attackIntervalOffset: -0.06, attackPierce: 1, speed: 12 },
   },
   {
     id: 'skybreaker-judgement-bow',
@@ -81,7 +81,7 @@ export const WEAPON_DEFINITIONS: WeaponDefinition[] = [
     description: '终盘武器，面向高层长期养成。',
     price: 680,
     unlockProgress: 0.85,
-    bonus: { attackDamage: 6, attackRange: 70, attackIntervalOffset: -0.08, attackPierce: 2, speed: 16 },
+    bonus: { attackDamage: 22, attackRange: 70, attackIntervalOffset: -0.08, attackPierce: 2, speed: 16 },
   },
 ]
 

@@ -132,6 +132,7 @@ export type Enemy = {
   grantsEliteReward: boolean
   position: Vector2
   hp: number
+  maxHp: number
   speed: number
   size: number
   tint: string
@@ -184,6 +185,15 @@ export type Burst = {
   ttl: number
   color: string
   radius: number
+}
+
+export type FloatingText = {
+  id: string
+  position: Vector2
+  velocity: Vector2
+  ttl: number
+  value: string
+  color: string
 }
 
 export type MapObstacle = {
@@ -245,4 +255,5 @@ export type GameSnapshot = {
   enemyProjectiles: Projectile[]
   skillFields: SkillField[]
   bursts: Burst[]
+  floatingTexts: FloatingText[]
 }
