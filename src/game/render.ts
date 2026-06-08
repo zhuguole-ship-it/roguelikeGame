@@ -67,8 +67,8 @@ const drawEnemyHealthBar = (ctx: CanvasRenderingContext2D, enemy: Enemy) => {
     return
   }
 
-  const width = enemy.kind === 'elite' ? 46 : 30
-  const height = enemy.kind === 'elite' ? 5 : 4
+  const width = enemy.kind === 'boss' ? 72 : enemy.kind === 'elite' ? 46 : 30
+  const height = enemy.kind === 'boss' ? 6 : enemy.kind === 'elite' ? 5 : 4
   drawHealthBar(
     ctx,
     enemy.position.x - width / 2,
@@ -77,7 +77,7 @@ const drawEnemyHealthBar = (ctx: CanvasRenderingContext2D, enemy: Enemy) => {
     height,
     enemy.hp,
     enemy.maxHp,
-    enemy.kind === 'elite' ? '#c084fc' : '#f43f5e',
+    enemy.kind === 'boss' ? '#f97316' : enemy.kind === 'elite' ? '#c084fc' : '#f43f5e',
   )
 }
 
@@ -92,6 +92,46 @@ const drawPlayerHealthBar = (ctx: CanvasRenderingContext2D, player: Player) => {
     player.maxHp,
     '#22c55e',
   )
+}
+
+const drawPlayerGrowthEffects = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
+  const { player, skillAllocations } = state
+  const vitality = skillAllocations.vitality
+  const power = skillAllocations.power
+  const haste = skillAllocations.haste
+  const agility = skillAllocations.agility
+
+  if (agility > 0) {
+    const trailCount = Math.min(4, agility)
+    for (let index = 0; index < trailCount; index += 1) {
+      const alpha = 0.08 + index * 0.025
+      const offset = (index + 1) * 4
+      ctx.fillStyle = `rgba(125, 211, 252, ${alpha})`
+      ctx.fillRect(player.position.x - 7 - offset * 0.2, player.position.y + 8 + index, 14, 2)
+    }
+  }
+
+  if (vitality > 0) {
+    ctx.strokeStyle = vitality >= 3 ? 'rgba(34, 197, 94, 0.7)' : 'rgba(157, 213, 172, 0.42)'
+    ctx.lineWidth = vitality >= 3 ? 2 : 1
+    ctx.strokeRect(player.position.x - 11, player.position.y - 13, 22, 25)
+    ctx.lineWidth = 1
+  }
+
+  if (power > 0) {
+    ctx.fillStyle = power >= 3 ? 'rgba(251, 191, 36, 0.24)' : 'rgba(251, 191, 36, 0.14)'
+    ctx.fillRect(player.position.x - 12, player.position.y - 2, 24, 4)
+    ctx.fillRect(player.position.x - 2, player.position.y - 12, 4, 24)
+  }
+
+  if (haste > 0) {
+    const ticks = Math.min(6, haste + 1)
+    ctx.fillStyle = 'rgba(244, 240, 215, 0.42)'
+    for (let index = 0; index < ticks; index += 1) {
+      const angle = state.elapsedTime * 5 + (Math.PI * 2 * index) / ticks
+      ctx.fillRect(player.position.x + Math.cos(angle) * 17, player.position.y + Math.sin(angle) * 17, 2, 2)
+    }
+  }
 }
 
 const drawFloatingTexts = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
@@ -154,6 +194,7 @@ export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot) =
   })
 
   const isMoving = state.phase === 'running' && state.player.attackCooldown < Math.max(0.2, state.player.attackInterval + 0.02)
+  drawPlayerGrowthEffects(ctx, state)
   drawPlayerSprite(ctx, state.player, state.elapsedTime, isMoving)
   drawPlayerHealthBar(ctx, state.player)
   drawBursts(ctx, state)

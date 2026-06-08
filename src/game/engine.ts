@@ -32,6 +32,8 @@ import {
   getMaxEnemiesOnField,
   getRangedEnemyAttackInterval,
   getSpawnInterval,
+  isBossLevel,
+  isEliteLevel,
 } from './config'
 import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, ARCHER_FIXED_PASSIVE_LEVELS } from './archerSkills'
 import { WEAPON_DEFINITION_MAP, WEAPON_PROGRESS_BASE_LEVELS } from './weapons'
@@ -67,7 +69,10 @@ const HEALTH_PACK_DROP_CHANCE = 0.22
 const HEALTH_PACK_HEAL = 25
 const ENEMY_CONTACT_DAMAGE = 16
 const DAMAGE_TEXT_TTL = 0.65
-const isEliteLevel = (level: number) => level > 10 && level % 5 === 0
+const BOMBER_EXPLOSION_DAMAGE = 26
+const BOMBER_EXPLOSION_RADIUS = 46
+const RUN_RECORD_LIMIT = 5
+const MILESTONE_LEVELS = [10, 20, 50, 100, 200]
 
 const createEmptySkillAllocations = (): SkillAllocations => ({
   vitality: 0,
@@ -117,7 +122,20 @@ const moveWithObstacleCollision = (position: Vector2, radius: number, movement: 
 }
 
 const createLevelObstacles = (level: number): MapObstacle[] => {
-  const obstacleCount = 4 + Math.min(5, level)
+  if (isBossLevel(level)) {
+    return obstacleTemplates.slice(0, 2).map((template, index) => ({
+      id: `${level}-boss-${template.kind}`,
+      kind: template.kind,
+      width: template.width,
+      height: template.height,
+      position: {
+        x: WORLD_WIDTH / 2 + (index === 0 ? -170 : 170),
+        y: WORLD_HEIGHT / 2 + 105,
+      },
+    }))
+  }
+
+  const obstacleCount = isEliteLevel(level) ? 3 : 4 + Math.min(6, Math.floor(level * 0.8))
   const obstacles: MapObstacle[] = []
   let attempts = 0
 
@@ -137,8 +155,8 @@ const createLevelObstacles = (level: number): MapObstacle[] => {
 
     const tooCloseToPlayer = distance(obstacle.position, { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }) < 120
     const overlapsExisting = obstacles.some((current) => {
-      return Math.abs(current.position.x - obstacle.position.x) < (current.width + obstacle.width) * 0.7 &&
-        Math.abs(current.position.y - obstacle.position.y) < (current.height + obstacle.height) * 0.7
+      return Math.abs(current.position.x - obstacle.position.x) < (current.width + obstacle.width) * 0.95 &&
+        Math.abs(current.position.y - obstacle.position.y) < (current.height + obstacle.height) * 0.95
     })
 
     if (tooCloseToPlayer || overlapsExisting) {
@@ -191,6 +209,34 @@ const getGoldReward = (level: number, kills: number) => {
 
 const getWeaponUnlockProgress = (bestLevel: number) => {
   return Math.min(1, bestLevel / WEAPON_PROGRESS_BASE_LEVELS)
+}
+
+const getLevelIntroMessage = (level: number, targetKills: number) => {
+  if (isBossLevel(level)) {
+    return `第 ${level} 层首领房开启，小 Boss 会冲锋并释放扇形弹幕`
+  }
+
+  if (isEliteLevel(level)) {
+    return `第 ${level} 层精英战，击败精英怪可立刻获得额外职业奖励`
+  }
+
+  if (level >= 9) {
+    return `第 ${level} 层开始，爆裂怪加入，击杀后注意远离爆炸`
+  }
+
+  if (level >= 7) {
+    return `第 ${level} 层开始，分裂怪加入，死亡后会裂成小怪`
+  }
+
+  if (level >= 4) {
+    return `第 ${level} 层开始，远程怪加入战场，注意弹道走位`
+  }
+
+  if (level >= 3) {
+    return `第 ${level} 层开始，冲锋怪加入，观察蓄力后滑步闪避`
+  }
+
+  return `第 ${level} 层开始，清除 ${targetKills} 只怪物`
 }
 
 const getDerivedPlayerStats = (skillAllocations: SkillAllocations, fixedPassiveLevel: number, equippedWeaponId: WeaponId | null) => {
@@ -246,6 +292,8 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
     currency: 0,
     earnedGold: 0,
     bestLevel: 1,
+    runHistory: [],
+    achievedMilestones: [],
     unlockedWeapons: [],
     equippedWeaponId: null,
     level,
@@ -259,7 +307,7 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
     spawnCooldown: 0.15,
     levelTimer: 0,
     elapsedTime: 0,
-    message: phase === 'idle' ? '按下开始按钮进入地下城' : `第 ${level} 层开始，清除 ${targetKills} 只怪物`,
+    message: phase === 'idle' ? '按下开始按钮进入地下城' : getLevelIntroMessage(level, targetKills),
     skillPoints: 0,
     skillAllocations,
     targetPriority: 'melee',
@@ -323,33 +371,43 @@ const createHealthPickup = (position: Vector2) => ({
   healAmount: HEALTH_PACK_HEAL,
 })
 
-const getSpawnPosition = (): Vector2 => {
+const keepInsideRoom = (position: Vector2, radius: number): Vector2 => ({
+  x: clamp(position.x, ROOM_PADDING + radius, WORLD_WIDTH - ROOM_PADDING - radius),
+  y: clamp(position.y, ROOM_PADDING + radius, WORLD_HEIGHT - ROOM_PADDING - radius),
+})
+
+const getSpawnPosition = (obstacles: MapObstacle[] = []): Vector2 => {
   const edge = sample(['top', 'right', 'bottom', 'left'])
+  let position: Vector2
 
   if (edge === 'top') {
-    return { x: randomBetween(ROOM_PADDING + 20, WORLD_WIDTH - ROOM_PADDING - 20), y: SPAWN_EDGE_PADDING }
+    position = { x: randomBetween(ROOM_PADDING + 28, WORLD_WIDTH - ROOM_PADDING - 28), y: SPAWN_EDGE_PADDING }
+  } else if (edge === 'right') {
+    position = { x: WORLD_WIDTH - SPAWN_EDGE_PADDING, y: randomBetween(ROOM_PADDING + 24, WORLD_HEIGHT - ROOM_PADDING - 24) }
+  } else if (edge === 'bottom') {
+    position = { x: randomBetween(ROOM_PADDING + 28, WORLD_WIDTH - ROOM_PADDING - 28), y: WORLD_HEIGHT - SPAWN_EDGE_PADDING }
+  } else {
+    position = { x: SPAWN_EDGE_PADDING, y: randomBetween(ROOM_PADDING + 24, WORLD_HEIGHT - ROOM_PADDING - 24) }
   }
 
-  if (edge === 'right') {
-    return { x: WORLD_WIDTH - SPAWN_EDGE_PADDING, y: randomBetween(ROOM_PADDING + 16, WORLD_HEIGHT - ROOM_PADDING - 16) }
+  if (obstacles.some((obstacle) => intersectsObstacle(position, 24, obstacle))) {
+    return {
+      x: randomBetween(ROOM_PADDING + 80, WORLD_WIDTH - ROOM_PADDING - 80),
+      y: randomBetween(ROOM_PADDING + 70, WORLD_HEIGHT - ROOM_PADDING - 70),
+    }
   }
 
-  if (edge === 'bottom') {
-    return { x: randomBetween(ROOM_PADDING + 20, WORLD_WIDTH - ROOM_PADDING - 20), y: WORLD_HEIGHT - SPAWN_EDGE_PADDING }
-  }
-
-  return { x: SPAWN_EDGE_PADDING, y: randomBetween(ROOM_PADDING + 16, WORLD_HEIGHT - ROOM_PADDING - 16) }
+  return position
 }
 
-const spawnEnemy = (level: number): Enemy => {
-  const kind = getEnemyKind(level)
+const createEnemy = (level: number, kind = getEnemyKind(level), position = getSpawnPosition()): Enemy => {
   const stats = getEnemyStats(level, kind)
 
   return {
     id: createId(),
     kind,
     grantsEliteReward: false,
-    position: getSpawnPosition(),
+    position,
     hp: stats.hp,
     maxHp: stats.hp,
     speed: stats.speed,
@@ -357,6 +415,11 @@ const spawnEnemy = (level: number): Enemy => {
     tint: stats.tint,
     hitFlash: 0,
     attackCooldown: kind === 'ranged' ? getRangedEnemyAttackInterval(level) * randomBetween(0.4, 1) : 0,
+    behaviorCooldown: kind === 'charger' ? randomBetween(0.5, 1.2) : kind === 'boss' ? 1.1 : 0,
+    behaviorTimer: 0,
+    behaviorDirection: { x: 0, y: 0 },
+    stuckTimer: 0,
+    lastPosition: { ...position },
     burnTtl: 0,
     burnDamagePerSecond: 0,
     slowTtl: 0,
@@ -365,14 +428,19 @@ const spawnEnemy = (level: number): Enemy => {
   }
 }
 
-const spawnEliteEnemy = (level: number): Enemy => {
+const spawnEnemy = (level: number, obstacles: MapObstacle[]): Enemy => {
+  return createEnemy(level, getEnemyKind(level), getSpawnPosition(obstacles))
+}
+
+const spawnEliteEnemy = (level: number, obstacles: MapObstacle[]): Enemy => {
   const stats = getEnemyStats(level, 'elite')
+  const position = getSpawnPosition(obstacles)
 
   return {
     id: `elite-${createId()}`,
     kind: 'elite',
     grantsEliteReward: true,
-    position: getSpawnPosition(),
+    position,
     hp: stats.hp,
     maxHp: stats.hp,
     speed: stats.speed,
@@ -380,6 +448,11 @@ const spawnEliteEnemy = (level: number): Enemy => {
     tint: stats.tint,
     hitFlash: 0,
     attackCooldown: 0,
+    behaviorCooldown: 0,
+    behaviorTimer: 0,
+    behaviorDirection: { x: 0, y: 0 },
+    stuckTimer: 0,
+    lastPosition: { ...position },
     burnTtl: 0,
     burnDamagePerSecond: 0,
     slowTtl: 0,
@@ -391,6 +464,8 @@ const spawnEliteEnemy = (level: number): Enemy => {
 const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
   ...snapshot,
   unlockedWeapons: [...snapshot.unlockedWeapons],
+  runHistory: snapshot.runHistory.map((record) => ({ ...record })),
+  achievedMilestones: [...snapshot.achievedMilestones],
   skillAllocations: { ...snapshot.skillAllocations },
   activeSkills: snapshot.activeSkills.map((skill) => ({ ...skill })),
   pendingSkillReward: snapshot.pendingSkillReward
@@ -407,6 +482,8 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
   enemies: snapshot.enemies.map((enemy) => ({
     ...enemy,
     position: { ...enemy.position },
+    behaviorDirection: { ...enemy.behaviorDirection },
+    lastPosition: { ...enemy.lastPosition },
   })),
   mapObstacles: snapshot.mapObstacles.map((obstacle) => ({
     ...obstacle,
@@ -487,6 +564,7 @@ const createPlayerProjectile = (
   range: number,
   sourceSkillId: string,
   color = '#fef08a',
+  size = PROJECTILE_SIZE,
 ) => {
   return createProjectile({
     origin,
@@ -497,7 +575,7 @@ const createPlayerProjectile = (
     owner: 'player',
     damage,
     ttl: Math.max(PROJECTILE_TTL, range / PROJECTILE_SPEED),
-    size: PROJECTILE_SIZE,
+    size,
     color,
     pierceRemaining: pierce,
     explosionRadius: 0,
@@ -690,10 +768,7 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     pendingSkillReward: null,
     aimPoint: { ...previous.aimPoint },
     mapObstacles: createLevelObstacles(nextLevel),
-    message:
-      nextLevel >= 4
-        ? `第 ${nextLevel} 层开始，远程怪已加入战场，已恢复 ${HEALTH_PACK_HEAL} 点生命`
-        : `第 ${nextLevel} 层开始，已恢复 ${HEALTH_PACK_HEAL} 点生命`,
+    message: `${getLevelIntroMessage(nextLevel, targetKills)}，已恢复 ${HEALTH_PACK_HEAL} 点生命`,
     player: createPlayer(previous.skillAllocations, previous.fixedPassiveLevel, previous.equippedWeaponId, healedHp),
   }
 }
@@ -736,6 +811,7 @@ const updatePlayerMovement = (snapshot: GameSnapshot, input: InputState, delta: 
 
 const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
   snapshot.enemies.forEach((enemy) => {
+    const previousPosition = { ...enemy.position }
     const offset = {
       x: snapshot.player.position.x - enemy.position.x,
       y: snapshot.player.position.y - enemy.position.y,
@@ -745,7 +821,27 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     const slowedSpeed = enemy.speed * (enemy.slowTtl > 0 ? 1 - enemy.slowFactor : 1)
     let movement = { x: 0, y: 0 }
 
-    if (enemy.kind === 'melee') {
+    enemy.behaviorCooldown = Math.max(0, enemy.behaviorCooldown - delta)
+    enemy.behaviorTimer = Math.max(0, enemy.behaviorTimer - delta)
+
+    if (enemy.kind === 'charger' || enemy.kind === 'boss') {
+      if (enemy.behaviorTimer > 0) {
+        movement = {
+          x: enemy.behaviorDirection.x * slowedSpeed * delta * (enemy.kind === 'boss' ? 2.1 : 2.6),
+          y: enemy.behaviorDirection.y * slowedSpeed * delta * (enemy.kind === 'boss' ? 2.1 : 2.6),
+        }
+      } else if (enemy.behaviorCooldown <= 0 && gap < (enemy.kind === 'boss' ? 360 : 290)) {
+        enemy.behaviorDirection = direction
+        enemy.behaviorTimer = enemy.kind === 'boss' ? 0.28 : 0.34
+        enemy.behaviorCooldown = enemy.kind === 'boss' ? 2.1 : 1.8
+        snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(251, 113, 133, ALPHA)', enemy.kind === 'boss' ? 22 : 14))
+      } else {
+        movement = {
+          x: direction.x * slowedSpeed * delta * (enemy.kind === 'boss' ? 0.72 : 0.58),
+          y: direction.y * slowedSpeed * delta * (enemy.kind === 'boss' ? 0.72 : 0.58),
+        }
+      }
+    } else if (enemy.kind === 'melee' || enemy.kind === 'splitter' || enemy.kind === 'bomber') {
       movement = {
         x: direction.x * slowedSpeed * delta,
         y: direction.y * slowedSpeed * delta,
@@ -772,7 +868,31 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       enemy.attackCooldown = Math.max(0, enemy.attackCooldown - delta)
     }
 
-    enemy.position = moveWithObstacleCollision(enemy.position, enemy.size * 0.5, movement, snapshot.mapObstacles)
+    let nextPosition = moveWithObstacleCollision(enemy.position, enemy.size * 0.5, movement, snapshot.mapObstacles)
+    const movedDistance = distance(previousPosition, nextPosition)
+
+    if (movedDistance < Math.max(0.25, slowedSpeed * delta * 0.12) && gap > enemy.size * 1.5) {
+      enemy.stuckTimer += delta
+    } else {
+      enemy.stuckTimer = Math.max(0, enemy.stuckTimer - delta * 2)
+    }
+
+    if (enemy.stuckTimer > 0.35) {
+      const side = enemy.id.charCodeAt(0) % 2 === 0 ? 1 : -1
+      nextPosition = moveWithObstacleCollision(
+        enemy.position,
+        enemy.size * 0.5,
+        {
+          x: -direction.y * slowedSpeed * delta * side,
+          y: direction.x * slowedSpeed * delta * side,
+        },
+        snapshot.mapObstacles,
+      )
+      enemy.stuckTimer = Math.max(0, enemy.stuckTimer - delta)
+    }
+
+    enemy.position = keepInsideRoom(nextPosition, enemy.size * 0.55)
+    enemy.lastPosition = { ...enemy.position }
 
     if (enemy.burnTtl > 0) {
       enemy.hp -= enemy.burnDamagePerSecond * delta
@@ -805,17 +925,19 @@ const triggerAutoAttack = (snapshot: GameSnapshot) => {
     x: target.position.x - snapshot.player.position.x,
     y: target.position.y - snapshot.player.position.y,
   })
-  snapshot.projectiles.push(
-    createPlayerProjectile(
-      snapshot.player.position,
-      direction,
-      snapshot.player.attackDamage,
-      snapshot.player.attackPierce,
-      snapshot.player.attackRange,
-      'basic-arrow',
-      '#fde68a',
-    ),
+  const powerLevel = snapshot.skillAllocations.power
+  const hasteLevel = snapshot.skillAllocations.haste
+  const projectile = createPlayerProjectile(
+    snapshot.player.position,
+    direction,
+    snapshot.player.attackDamage,
+    snapshot.player.attackPierce,
+    snapshot.player.attackRange,
+    'basic-arrow',
+    powerLevel >= 3 ? '#fef3c7' : powerLevel > 0 ? '#fde047' : '#fde68a',
+    PROJECTILE_SIZE + Math.min(3, powerLevel * 0.75) + Math.min(1.5, hasteLevel * 0.2),
   )
+  snapshot.projectiles.push(projectile)
   snapshot.player.attackCooldown = snapshot.player.attackInterval
 }
 
@@ -855,11 +977,44 @@ const updateActiveSkills = (snapshot: GameSnapshot, delta: number) => {
 
 const triggerEnemyAttacks = (snapshot: GameSnapshot) => {
   snapshot.enemies.forEach((enemy) => {
-    if (enemy.kind !== 'ranged' || enemy.attackCooldown > 0) {
+    if ((enemy.kind !== 'ranged' && enemy.kind !== 'boss') || enemy.attackCooldown > 0) {
       return
     }
 
-    if (distance(enemy.position, snapshot.player.position) > 430) {
+    if (distance(enemy.position, snapshot.player.position) > (enemy.kind === 'boss' ? 560 : 430)) {
+      return
+    }
+
+    if (enemy.kind === 'boss') {
+      const baseDirection = normalize({
+        x: snapshot.player.position.x - enemy.position.x,
+        y: snapshot.player.position.y - enemy.position.y,
+      })
+      const bossAngles = [-0.78, -0.52, -0.26, 0, 0.26, 0.52, 0.78]
+      bossAngles.forEach((angle) => {
+        const shotDirection = rotate(baseDirection, angle)
+        snapshot.enemyProjectiles.push(
+          createProjectile({
+            origin: enemy.position,
+            velocity: {
+              x: shotDirection.x * ENEMY_PROJECTILE_SPEED * 1.18,
+              y: shotDirection.y * ENEMY_PROJECTILE_SPEED * 1.18,
+            },
+            owner: 'enemy',
+            damage: 14,
+            ttl: ENEMY_PROJECTILE_TTL * 1.2,
+            size: ENEMY_PROJECTILE_SIZE,
+            color: PALETTE.ember,
+            pierceRemaining: 0,
+            explosionRadius: 0,
+            effect: 'none',
+            effectStrength: 0,
+            sourceSkillId: 'boss-fan-shot',
+          }),
+        )
+      })
+      enemy.attackCooldown = 1.7
+      snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(249, 115, 22, ALPHA)', 22))
       return
     }
 
@@ -952,14 +1107,47 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
     })
   })
 
+  const spawnedEnemies: Enemy[] = []
+
   snapshot.enemies = snapshot.enemies.filter((enemy) => {
     if (enemy.hp > 0) {
       return true
     }
 
+    if (enemy.kind === 'splitter' && enemy.size > PLAYER_SIZE * 0.75) {
+      const childStats = getEnemyStats(Math.max(1, snapshot.level - 2), 'melee')
+      const childHp = Math.max(18, Math.round(enemy.maxHp * 0.36))
+      const offsets = [{ x: -12, y: 8 }, { x: 12, y: -8 }]
+      offsets.forEach((offset) => {
+        const childPosition = keepInsideRoom({
+          x: enemy.position.x + offset.x,
+          y: enemy.position.y + offset.y,
+        }, childStats.size * 0.45)
+        spawnedEnemies.push({
+          ...createEnemy(snapshot.level, 'melee', childPosition),
+          id: `split-${createId()}`,
+          hp: childHp,
+          maxHp: childHp,
+          speed: childStats.speed + 20,
+          size: Math.max(10, childStats.size - 3),
+          tint: '#bef264',
+        })
+      })
+      snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(163, 230, 53, ALPHA)', 22))
+    }
+
+    if (enemy.kind === 'bomber') {
+      snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(249, 115, 22, ALPHA)', BOMBER_EXPLOSION_RADIUS))
+      if (distance(enemy.position, snapshot.player.position) <= BOMBER_EXPLOSION_RADIUS && snapshot.player.dashTimer <= 0) {
+        snapshot.player.hp -= BOMBER_EXPLOSION_DAMAGE
+        snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, PLAYER_HURT_COOLDOWN * 0.5)
+        snapshot.message = '爆裂怪炸开了，击杀后也要拉开距离'
+      }
+    }
+
     snapshot.kills += 1
     snapshot.levelKills += 1
-    snapshot.exp = Math.min(snapshot.expToNext, snapshot.exp + 18)
+    snapshot.exp = Math.min(snapshot.expToNext, snapshot.exp + (enemy.kind === 'boss' ? 80 : enemy.kind === 'elite' ? 36 : 18))
     snapshot.bursts.push(
       createBurst({ ...enemy.position }, enemy.kind === 'ranged' ? 'rgba(125, 211, 252, ALPHA)' : 'rgba(244, 114, 182, ALPHA)', 10),
     )
@@ -977,6 +1165,8 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
     }
     return false
   })
+
+  snapshot.enemies.push(...spawnedEnemies)
 }
 
 const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
@@ -1042,7 +1232,7 @@ const resolvePlayerDamage = (snapshot: GameSnapshot) => {
   }
 
   const collidingEnemy = snapshot.enemies.find((enemy) => {
-    return enemy.kind === 'melee' && distance(enemy.position, snapshot.player.position) < enemy.size * 0.55 + snapshot.player.size * 0.55
+    return enemy.kind !== 'ranged' && distance(enemy.position, snapshot.player.position) < enemy.size * 0.55 + snapshot.player.size * 0.55
   })
 
   const hitByProjectile = snapshot.enemyProjectiles.find((projectile) => {
@@ -1050,7 +1240,11 @@ const resolvePlayerDamage = (snapshot: GameSnapshot) => {
   })
 
   if ((collidingEnemy || hitByProjectile) && snapshot.player.hurtCooldown <= 0) {
-    snapshot.player.hp -= hitByProjectile ? hitByProjectile.damage : ENEMY_CONTACT_DAMAGE
+    snapshot.player.hp -= hitByProjectile
+      ? hitByProjectile.damage
+      : collidingEnemy?.kind === 'boss'
+        ? ENEMY_CONTACT_DAMAGE + 10
+        : ENEMY_CONTACT_DAMAGE
     snapshot.player.hurtCooldown = PLAYER_HURT_COOLDOWN
     snapshot.bursts.push(createBurst({ ...snapshot.player.position }, 'rgba(244, 63, 94, ALPHA)', 14))
     snapshot.message = hitByProjectile ? '被远程弹道擦中了，快调整鼠标方向' : '受击了，快保持走位'
@@ -1109,11 +1303,18 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
     return
   }
 
-  if (isEliteLevel(snapshot.level) && !snapshot.eliteSpawnedThisLevel) {
-    snapshot.enemies.push(spawnEliteEnemy(snapshot.level))
+  if (isBossLevel(snapshot.level) && !snapshot.eliteSpawnedThisLevel) {
+    const boss = createEnemy(snapshot.level, 'boss', { x: WORLD_WIDTH / 2, y: ROOM_PADDING + 88 })
+    boss.id = `boss-${createId()}`
+    boss.grantsEliteReward = true
+    boss.attackCooldown = 1.1
+    snapshot.enemies.push(boss)
+    snapshot.eliteSpawnedThisLevel = true
+  } else if (isEliteLevel(snapshot.level) && !snapshot.eliteSpawnedThisLevel) {
+    snapshot.enemies.push(spawnEliteEnemy(snapshot.level, snapshot.mapObstacles))
     snapshot.eliteSpawnedThisLevel = true
   } else {
-    snapshot.enemies.push(spawnEnemy(snapshot.level))
+    snapshot.enemies.push(spawnEnemy(snapshot.level, snapshot.mapObstacles))
   }
   snapshot.remainingToSpawn -= 1
   snapshot.spawnCooldown = getSpawnInterval(snapshot.level)
@@ -1141,21 +1342,40 @@ const preserveMetaProgress = (baseSnapshot: GameSnapshot, previous: GameSnapshot
   baseSnapshot.currency = previous.currency
   baseSnapshot.earnedGold = 0
   baseSnapshot.bestLevel = previous.bestLevel
+  baseSnapshot.runHistory = previous.runHistory.map((record) => ({ ...record }))
+  baseSnapshot.achievedMilestones = [...previous.achievedMilestones]
   baseSnapshot.unlockedWeapons = [...previous.unlockedWeapons]
   baseSnapshot.equippedWeaponId = previous.equippedWeaponId
   baseSnapshot.player = createPlayer(baseSnapshot.skillAllocations, baseSnapshot.fixedPassiveLevel, baseSnapshot.equippedWeaponId)
   return baseSnapshot
 }
 
+const recordRunResult = (snapshot: GameSnapshot, earnedGold: number) => {
+  const runRecord = {
+    id: createId(),
+    level: snapshot.level,
+    kills: snapshot.kills,
+    gold: earnedGold,
+    elapsedTime: snapshot.elapsedTime,
+  }
+  snapshot.runHistory = [runRecord, ...snapshot.runHistory]
+    .sort((a, b) => b.level - a.level || b.kills - a.kills || a.elapsedTime - b.elapsedTime)
+    .slice(0, RUN_RECORD_LIMIT)
+  snapshot.achievedMilestones = Array.from(new Set([
+    ...snapshot.achievedMilestones,
+    ...MILESTONE_LEVELS.filter((level) => snapshot.level >= level),
+  ])).sort((a, b) => a - b)
+}
+
 export const restartRunSnapshot = (current: GameSnapshot): GameSnapshot => {
   const next = preserveMetaProgress(createInitialSnapshot('running'), current)
-  next.message = `第 1 层开始，清除 ${next.levelTargetKills} 只怪物`
+  next.message = getLevelIntroMessage(1, next.levelTargetKills)
   return next
 }
 
 export const startRunSnapshot = (current: GameSnapshot): GameSnapshot => {
   const next = preserveMetaProgress(createInitialSnapshot('running'), current)
-  next.message = `第 1 层开始，清除 ${next.levelTargetKills} 只怪物`
+  next.message = getLevelIntroMessage(1, next.levelTargetKills)
   return next
 }
 
@@ -1480,6 +1700,7 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
     snapshot.earnedGold = earnedGold
     snapshot.currency += earnedGold
     snapshot.bestLevel = Math.max(snapshot.bestLevel, snapshot.level)
+    recordRunResult(snapshot, earnedGold)
     snapshot.message = `你在第 ${snapshot.level} 层倒下，击败 ${snapshot.kills} 只敌人，获得 ${earnedGold} 金币`
     return snapshot
   }

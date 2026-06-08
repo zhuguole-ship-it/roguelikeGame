@@ -127,6 +127,22 @@ export const drawEnemySprite = (
     pixel(ctx, x - enemy.size * 0.55, y - enemy.size * 0.65 + wobble, enemy.size * 0.15, enemy.size * 0.8, '#dbeafe')
     pixel(ctx, x + enemy.size * 0.22, y - enemy.size * 0.55 + wobble, enemy.size * 0.12, enemy.size * 0.85, '#7dd3fc')
     pixel(ctx, x - enemy.size * 0.18, y + enemy.size * 0.2 + wobble, enemy.size * 0.36, enemy.size * 0.1, '#08100b')
+  } else if (enemy.kind === 'charger') {
+    pixel(ctx, x - enemy.size * 0.62, y - enemy.size * 0.58 + wobble, enemy.size * 0.18, enemy.size * 0.42, '#fee2e2')
+    pixel(ctx, x + enemy.size * 0.44, y - enemy.size * 0.58 + wobble, enemy.size * 0.18, enemy.size * 0.42, '#fee2e2')
+    pixel(ctx, x - enemy.size * 0.26, y + enemy.size * 0.2 + wobble, enemy.size * 0.52, enemy.size * 0.12, '#7f1d1d')
+  } else if (enemy.kind === 'splitter') {
+    pixel(ctx, x - enemy.size * 0.62, y - enemy.size * 0.2 + wobble, enemy.size * 0.18, enemy.size * 0.18, '#365314')
+    pixel(ctx, x + enemy.size * 0.44, y - enemy.size * 0.2 + wobble, enemy.size * 0.18, enemy.size * 0.18, '#365314')
+    pixel(ctx, x - enemy.size * 0.12, y + enemy.size * 0.2 + wobble, enemy.size * 0.24, enemy.size * 0.12, '#08100b')
+  } else if (enemy.kind === 'bomber') {
+    pixel(ctx, x - enemy.size * 0.16, y - enemy.size * 0.78 + wobble, enemy.size * 0.32, enemy.size * 0.24, '#fef3c7')
+    pixel(ctx, x - enemy.size * 0.58, y + enemy.size * 0.02 + wobble, enemy.size * 1.16, enemy.size * 0.12, '#7c2d12')
+    pixel(ctx, x - enemy.size * 0.3, y + enemy.size * 0.2 + wobble, enemy.size * 0.6, enemy.size * 0.12, '#08100b')
+  } else if (enemy.kind === 'boss') {
+    pixel(ctx, x - enemy.size * 0.62, y - enemy.size * 0.7 + wobble, enemy.size * 0.2, enemy.size * 0.32, '#fef3c7')
+    pixel(ctx, x + enemy.size * 0.42, y - enemy.size * 0.7 + wobble, enemy.size * 0.2, enemy.size * 0.32, '#fef3c7')
+    pixel(ctx, x - enemy.size * 0.32, y + enemy.size * 0.22 + wobble, enemy.size * 0.64, enemy.size * 0.14, '#431407')
   } else {
     pixel(ctx, x - enemy.size * 0.2, y + enemy.size * 0.18 + wobble, enemy.size * 0.4, enemy.size * 0.12, '#08100b')
   }

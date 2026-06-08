@@ -12,6 +12,14 @@ const formatScaledDamage = (damage: number) => {
   return Number((damage * ACTIVE_SKILL_DAMAGE_MULTIPLIER).toFixed(1))
 }
 
+const milestoneRewards = [
+  { level: 10, reward: '挑战者称号' },
+  { level: 20, reward: '绿色角色描边' },
+  { level: 50, reward: '黄金箭矢外观' },
+  { level: 100, reward: '永久角色皮肤' },
+  { level: 200, reward: '永久武器皮肤' },
+]
+
 const OverlayCard = ({
   title,
   description,
@@ -187,6 +195,8 @@ export function GameOverlay() {
   const currency = useGameStore((state) => state.currency)
   const earnedGold = useGameStore((state) => state.earnedGold)
   const bestLevel = useGameStore((state) => state.bestLevel)
+  const runHistory = useGameStore((state) => state.runHistory)
+  const achievedMilestones = useGameStore((state) => state.achievedMilestones)
   const unlockedWeapons = useGameStore((state) => state.unlockedWeapons)
   const equippedWeaponId = useGameStore((state) => state.equippedWeaponId)
   const startGame = useGameStore((state) => state.startGame)
@@ -330,10 +340,12 @@ export function GameOverlay() {
   }
 
   if (phase === 'game-over') {
+    const nextMilestone = milestoneRewards.find((milestone) => !achievedMilestones.includes(milestone.level))
+
     return (
       <div className="absolute inset-0 flex items-center justify-center bg-[rgba(8,16,11,0.62)]">
         <div className="pointer-events-auto pixel-panel mx-4 w-full max-w-[1180px] p-5 md:p-6">
-          <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+          <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
             <div className="space-y-4">
               <OverlayCard
                 title="冒险结束"
@@ -347,24 +359,59 @@ export function GameOverlay() {
                   <Coins size={18} />
                   <p className="font-pixel text-[10px] uppercase tracking-[0.18em]">对局结算</p>
                 </div>
-                <div className="mt-4 space-y-2 text-xl text-[#dfe7d5]">
+                <div className="mt-4 grid grid-cols-2 gap-2 text-xl text-[#dfe7d5]">
+                  <p>到达层数：{level}</p>
+                  <p>击杀数量：{kills}</p>
                   <p>本局奖励：{earnedGold} 金币</p>
                   <p>当前金币：{currency}</p>
-                  <p>历史最高层：{bestLevel}</p>
-                  <p>武器解锁进度：{Math.min(100, Math.round((bestLevel / 10) * 100))}%</p>
                 </div>
-                <p className="mt-3 text-lg text-[#9dd5ac]">{message}</p>
+                <p className="mt-3 text-lg text-[#9dd5ac]">
+                  {nextMilestone
+                    ? `距离 ${nextMilestone.level} 层奖励「${nextMilestone.reward}」还差 ${Math.max(0, nextMilestone.level - level)} 层`
+                    : '所有长期目标已经达成，继续刷新你的最高层数'}
+                </p>
               </div>
             </div>
 
-            <WeaponShopPanel
-              currency={currency}
-              bestLevel={bestLevel}
-              unlockedWeapons={unlockedWeapons}
-              equippedWeaponId={equippedWeaponId}
-              purchaseWeapon={purchaseWeapon}
-              equipWeapon={equipWeapon}
-            />
+            <div className="grid gap-4 lg:grid-cols-2">
+              <SectionPanel eyebrow="历史排行" title={`最高层：${bestLevel}`}>
+                <div className="space-y-3">
+                  {runHistory.length === 0 ? (
+                    <p className="text-xl text-[#dfe7d5]">完成一局后会记录你的前 5 名成绩。</p>
+                  ) : (
+                    runHistory.map((record, index) => (
+                      <div key={record.id} className="border-2 border-[#08100b] bg-[#121b16] px-3 py-3 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-pixel text-[10px] uppercase tracking-[0.16em] text-amber-300">#{index + 1}</p>
+                          <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#f4f0d7]">第 {record.level} 层</p>
+                        </div>
+                        <p className="mt-2 text-lg text-[#dfe7d5]">击杀 {record.kills} / 金币 {record.gold}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </SectionPanel>
+
+              <SectionPanel eyebrow="长期目标" title="爬塔奖励">
+                <div className="space-y-3">
+                  {milestoneRewards.map((milestone) => {
+                    const achieved = achievedMilestones.includes(milestone.level) || bestLevel >= milestone.level
+
+                    return (
+                      <div key={milestone.level} className="border-2 border-[#08100b] bg-[#121b16] px-3 py-3 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#f4f0d7]">通关 {milestone.level} 层</p>
+                          <p className={`font-pixel text-[8px] uppercase tracking-[0.16em] ${achieved ? 'text-amber-300' : 'text-[#9dd5ac]'}`}>
+                            {achieved ? '已达成' : '未达成'}
+                          </p>
+                        </div>
+                        <p className="mt-2 text-lg text-[#dfe7d5]">{milestone.reward}</p>
+                      </div>
+                    )
+                  })}
+                </div>
+              </SectionPanel>
+            </div>
           </div>
         </div>
       </div>

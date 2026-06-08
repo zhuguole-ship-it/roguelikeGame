@@ -55,21 +55,62 @@ export const PALETTE = {
   text: '#f4f0d7',
 }
 
-export const getLevelGoal = (level: number) => 6 + level * 3
+export const isBossLevel = (level: number) => level > 0 && level % 10 === 0
+export const isEliteLevel = (level: number) => level > 0 && level % 5 === 0 && !isBossLevel(level)
+export const getLevelGoal = (level: number) => {
+  if (isBossLevel(level)) {
+    return 1
+  }
+
+  if (isEliteLevel(level)) {
+    return 8 + level
+  }
+
+  return 6 + level * 3
+}
 export const getExperienceTarget = (level: number) => getLevelGoal(level) * 18
 export const getSpawnInterval = (level: number) => Math.max(0.22, 0.66 - level * 0.035)
 export const getMaxEnemiesOnField = (level: number) => 4 + Math.min(6, Math.floor(level * 1.2))
 export const getEnemyCountWeight = (level: number) => Math.min(0.55, Math.max(0, (level - 3) * 0.08))
 
 export const getEnemyKind = (level: number, roll = Math.random()): EnemyKind => {
+  if (isBossLevel(level)) {
+    return 'boss'
+  }
+
   if (level < RANGED_MIN_LEVEL) {
+    if (level >= 3 && roll < 0.32) {
+      return 'charger'
+    }
+
     return 'melee'
   }
 
-  return roll < getEnemyCountWeight(level) ? 'ranged' : 'melee'
+  if (level >= 9 && roll < 0.22) {
+    return 'bomber'
+  }
+
+  if (level >= 7 && roll < 0.4) {
+    return 'splitter'
+  }
+
+  if (level >= 3 && roll < 0.58) {
+    return 'charger'
+  }
+
+  return roll < 0.58 + getEnemyCountWeight(level) ? 'ranged' : 'melee'
 }
 
 export const getEnemyStats = (level: number, kind: EnemyKind) => {
+  if (kind === 'boss') {
+    return {
+      hp: 520 + level * 42,
+      speed: 26 + level * 2,
+      size: ENEMY_SIZE + 16,
+      tint: '#f97316',
+    }
+  }
+
   if (kind === 'elite') {
     return {
       hp: 170 + level * 18,
@@ -85,6 +126,33 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
       speed: 26 + level * 4,
       size: ENEMY_SIZE + 2,
       tint: PALETTE.rangedEnemy,
+    }
+  }
+
+  if (kind === 'charger') {
+    return {
+      hp: 34 + level * 8,
+      speed: 44 + level * 6,
+      size: ENEMY_SIZE + 2,
+      tint: '#fb7185',
+    }
+  }
+
+  if (kind === 'splitter') {
+    return {
+      hp: 44 + level * 9,
+      speed: 30 + level * 4,
+      size: ENEMY_SIZE + 3,
+      tint: '#a3e635',
+    }
+  }
+
+  if (kind === 'bomber') {
+    return {
+      hp: 28 + level * 7,
+      speed: 42 + level * 5,
+      size: ENEMY_SIZE + 1,
+      tint: '#f59e0b',
     }
   }
 

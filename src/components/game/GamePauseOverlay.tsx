@@ -13,25 +13,25 @@ const upgradeItems: Array<{
   {
     key: 'vitality',
     label: '生命',
-    description: '提升生命上限并立即回复 1 点生命',
+    description: '生命 +20，角色获得更明显的护盾描边',
     getValue: (state) => `LV.${state.skillAllocations.vitality}/${state.player.maxHp}`,
   },
   {
     key: 'power',
     label: '攻击力',
-    description: '提高自动攻击单发伤害',
+    description: '攻击 +3，箭矢更亮更粗，命中火花更强',
     getValue: (state) => `LV.${state.skillAllocations.power}/${state.player.attackDamage}`,
   },
   {
     key: 'haste',
     label: '攻击速度',
-    description: '缩短自动攻击冷却时间',
+    description: '攻速提升，身边出现更密的节奏光点',
     getValue: (state) => `LV.${state.skillAllocations.haste}/${state.player.attackInterval.toFixed(2)}s`,
   },
   {
     key: 'agility',
     label: '移动速度',
-    description: '提高走位和拉扯能力',
+    description: '移速 +14，移动时出现更明显风步拖影',
     getValue: (state) => `LV.${state.skillAllocations.agility}/${state.player.speed}`,
   },
 ]
@@ -81,23 +81,14 @@ export function GamePauseOverlay() {
           </button>
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
           <div className="space-y-4">
-            <Panel title="职业说明">
+            <Panel title="本层结果">
               <div className="space-y-3 text-xl text-[#dfe7d5]">
-                <p>当前职业：弓箭手。所有主动技能都会自动朝当前鼠标方向释放。</p>
-                <p>固定被动 `{ARCHER_FIXED_PASSIVE.name}` 无法替换，只能升级，升级后持续提高基础射程。</p>
-                <p>每局最多携带 3 个主动技能；若已满槽，领取新技能前必须放弃一个已有技能。</p>
-              </div>
-            </Panel>
-
-            <Panel title="玩法速览">
-              <div className="space-y-3 text-xl text-[#dfe7d5]">
-                <p><span className="pixel-kbd mr-2">W</span><span className="pixel-kbd mr-2">A</span><span className="pixel-kbd mr-2">S</span><span className="pixel-kbd mr-2">D</span> 或方向键移动</p>
-                <p><span className="pixel-kbd mr-2">鼠标</span>决定所有主动技能自动释放方向</p>
-                <p><span className="pixel-kbd mr-2">空格</span>快速滑步并短暂无敌</p>
-                <p><span className="pixel-kbd mr-2">Tab</span>切换自动攻击目标优先级</p>
-                <p><span className="pixel-kbd mr-2">ESC</span>打开菜单并查看成长与奖励</p>
+                <p>层数：第 {state.level} 层</p>
+                <p>击杀：{state.levelKills}/{state.levelTargetKills}</p>
+                <p>生命：{Math.max(0, Math.round(state.player.hp))}/{state.player.maxHp}</p>
+                <p className="text-[#9dd5ac]">{state.message}</p>
               </div>
             </Panel>
 
@@ -108,6 +99,16 @@ export function GamePauseOverlay() {
                 {state.activeSkills.map((skill) => (
                   <p key={skill.skillId}>{ARCHER_ACTIVE_SKILL_MAP[skill.skillId].name} Lv.{skill.level}</p>
                 ))}
+              </div>
+            </Panel>
+
+            <Panel title="下一层期待">
+              <div className="space-y-2 text-lg text-[#dfe7d5]">
+                <p>第 3 层：冲锋怪</p>
+                <p>第 5 层：精英奖励</p>
+                <p>第 7 层：分裂怪</p>
+                <p>第 9 层：爆裂怪</p>
+                <p>第 10 层：小 Boss</p>
               </div>
             </Panel>
           </div>
@@ -128,10 +129,10 @@ export function GamePauseOverlay() {
               <p className="mt-3 text-xl text-[#dfe7d5]">
                 {state.phase === 'level-clear'
                   ? state.pendingSkillReward
-                    ? '请先完成三选一职业技能奖励，然后处理属性点。'
+                    ? '先选择一个会改变战斗风格的职业奖励。'
                     : state.skillPoints > 0
-                      ? `本层已肃清，请先用完 ${state.skillPoints} 点属性点。`
-                      : '当前层奖励已处理完成，关闭菜单后会进入下一层。'
+                      ? `还剩 ${state.skillPoints} 点属性点，选择一个能被看见的成长方向。`
+                      : '奖励已处理完成，准备进入下一层。'
                   : state.pendingSkillReward
                     ? '精英怪掉落了额外技能奖励，请先完成选择。'
                     : '按 ESC 查看当前属性、职业技能与成长奖励。'}

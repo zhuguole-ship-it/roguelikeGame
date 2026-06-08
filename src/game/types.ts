@@ -1,7 +1,7 @@
 export type Facing = 'up' | 'down' | 'left' | 'right'
 export type GamePhase = 'idle' | 'running' | 'paused' | 'level-clear' | 'game-over'
-export type EnemyKind = 'melee' | 'ranged' | 'elite'
-export type TargetPriority = EnemyKind
+export type EnemyKind = 'melee' | 'ranged' | 'charger' | 'splitter' | 'bomber' | 'elite' | 'boss'
+export type TargetPriority = 'melee' | 'ranged'
 export type ProjectileOwner = 'player' | 'enemy'
 export type SkillStat = 'vitality' | 'power' | 'haste' | 'agility'
 export type ProfessionId = 'archer'
@@ -138,11 +138,24 @@ export type Enemy = {
   tint: string
   hitFlash: number
   attackCooldown: number
+  behaviorCooldown: number
+  behaviorTimer: number
+  behaviorDirection: Vector2
+  stuckTimer: number
+  lastPosition: Vector2
   burnTtl: number
   burnDamagePerSecond: number
   slowTtl: number
   slowFactor: number
   markStacks: number
+}
+
+export type RunRecord = {
+  id: string
+  level: number
+  kills: number
+  gold: number
+  elapsedTime: number
 }
 
 export type Projectile = {
@@ -226,6 +239,8 @@ export type GameSnapshot = {
   currency: number
   earnedGold: number
   bestLevel: number
+  runHistory: RunRecord[]
+  achievedMilestones: number[]
   unlockedWeapons: WeaponId[]
   equippedWeaponId: WeaponId | null
   level: number
