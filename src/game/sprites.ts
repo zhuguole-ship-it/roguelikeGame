@@ -146,6 +146,28 @@ export const drawEnemySprite = (
   } else {
     pixel(ctx, x - enemy.size * 0.2, y + enemy.size * 0.18 + wobble, enemy.size * 0.4, enemy.size * 0.12, '#08100b')
   }
+
+  const marker = enemy.kind === 'charger'
+    ? '冲'
+    : enemy.kind === 'splitter'
+      ? '裂'
+      : enemy.kind === 'bomber'
+        ? '爆'
+        : enemy.kind === 'boss'
+          ? '王'
+          : enemy.kind === 'elite'
+            ? '精'
+            : ''
+
+  if (marker) {
+    ctx.font = '10px "Press Start 2P", monospace'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillStyle = 'rgba(8, 16, 11, 0.82)'
+    ctx.fillRect(Math.round(x - 8), Math.round(y - enemy.size - 18 + wobble), 16, 14)
+    ctx.fillStyle = enemy.kind === 'bomber' || enemy.kind === 'boss' ? '#fbbf24' : '#f4f0d7'
+    ctx.fillText(marker, Math.round(x), Math.round(y - enemy.size - 11 + wobble))
+  }
 }
 
 export const drawProjectileSprite = (

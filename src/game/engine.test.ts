@@ -477,6 +477,38 @@ describe('game engine', () => {
     expect(killed.pendingSkillReward?.source).toBe('elite')
   })
 
+  it('forces new enemy types into early milestone levels', () => {
+    const chargerRun = createInitialSnapshot('running')
+    chargerRun.level = 3
+    chargerRun.levelTargetKills = 15
+    chargerRun.remainingToSpawn = 15
+    chargerRun.spawnCooldown = 0
+    chargerRun.enemies = []
+
+    const chargerSpawned = advanceGame(chargerRun, { up: false, down: false, left: false, right: false }, 0.016)
+    expect(chargerSpawned.enemies.some((enemy) => enemy.kind === 'charger')).toBe(true)
+
+    const splitterRun = createInitialSnapshot('running')
+    splitterRun.level = 7
+    splitterRun.levelTargetKills = 27
+    splitterRun.remainingToSpawn = 27
+    splitterRun.spawnCooldown = 0
+    splitterRun.enemies = []
+
+    const splitterSpawned = advanceGame(splitterRun, { up: false, down: false, left: false, right: false }, 0.016)
+    expect(splitterSpawned.enemies.some((enemy) => enemy.kind === 'splitter')).toBe(true)
+
+    const bomberRun = createInitialSnapshot('running')
+    bomberRun.level = 9
+    bomberRun.levelTargetKills = 33
+    bomberRun.remainingToSpawn = 33
+    bomberRun.spawnCooldown = 0
+    bomberRun.enemies = []
+
+    const bomberSpawned = advanceGame(bomberRun, { up: false, down: false, left: false, right: false }, 0.016)
+    expect(bomberSpawned.enemies.some((enemy) => enemy.kind === 'bomber')).toBe(true)
+  })
+
   it('prefers upgrading current skills in level clear rewards', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.fixedPassiveLevel = 3

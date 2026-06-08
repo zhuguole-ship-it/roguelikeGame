@@ -7,30 +7,35 @@ import { useGameStore } from '../../store/useGameStore'
 const upgradeItems: Array<{
   key: SkillStat
   label: string
+  badge: string
   description: string
   getValue: (state: ReturnType<typeof useGameStore.getState>) => string
 }> = [
   {
     key: 'vitality',
     label: '生命',
+    badge: '护盾描边变强',
     description: '生命 +20，角色获得更明显的护盾描边',
     getValue: (state) => `LV.${state.skillAllocations.vitality}/${state.player.maxHp}`,
   },
   {
     key: 'power',
     label: '攻击力',
+    badge: '箭矢变粗变亮',
     description: '攻击 +3，箭矢更亮更粗，命中火花更强',
     getValue: (state) => `LV.${state.skillAllocations.power}/${state.player.attackDamage}`,
   },
   {
     key: 'haste',
     label: '攻击速度',
+    badge: '节奏光点增加',
     description: '攻速提升，身边出现更密的节奏光点',
     getValue: (state) => `LV.${state.skillAllocations.haste}/${state.player.attackInterval.toFixed(2)}s`,
   },
   {
     key: 'agility',
     label: '移动速度',
+    badge: '风步拖影增强',
     description: '移速 +14，移动时出现更明显风步拖影',
     getValue: (state) => `LV.${state.skillAllocations.agility}/${state.player.speed}`,
   },
@@ -174,6 +179,9 @@ export function GamePauseOverlay() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#f4f0d7] md:text-[10px]">{item.label}</p>
+                        <p className="mt-2 inline-block border-2 border-[#08100b] bg-[rgba(251,191,36,0.16)] px-2 py-1 font-pixel text-[8px] uppercase tracking-[0.14em] text-amber-300">
+                          {item.badge}
+                        </p>
                         <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">{item.description}</p>
                         <p className="mt-2 font-pixel text-[8px] uppercase tracking-[0.18em] text-[#9dd5ac] md:text-[9px]">
                           {item.getValue(state)}

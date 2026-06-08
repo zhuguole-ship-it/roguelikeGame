@@ -101,6 +101,30 @@ export const getEnemyKind = (level: number, roll = Math.random()): EnemyKind => 
   return roll < 0.58 + getEnemyCountWeight(level) ? 'ranged' : 'melee'
 }
 
+export const getFeaturedEnemyKind = (level: number, spawnedCount: number): EnemyKind | null => {
+  if (isBossLevel(level)) {
+    return spawnedCount === 0 ? 'boss' : null
+  }
+
+  if (isEliteLevel(level)) {
+    return spawnedCount === 0 ? 'elite' : null
+  }
+
+  if (level >= 9 && spawnedCount % 4 === 0) {
+    return 'bomber'
+  }
+
+  if (level >= 7 && spawnedCount % 3 === 0) {
+    return 'splitter'
+  }
+
+  if (level >= 3 && spawnedCount % 3 === 0) {
+    return 'charger'
+  }
+
+  return null
+}
+
 export const getEnemyStats = (level: number, kind: EnemyKind) => {
   if (kind === 'boss') {
     return {

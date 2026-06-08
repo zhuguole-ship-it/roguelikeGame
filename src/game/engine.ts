@@ -28,6 +28,7 @@ import {
   getEnemyKind,
   getEnemyStats,
   getExperienceTarget,
+  getFeaturedEnemyKind,
   getLevelGoal,
   getMaxEnemiesOnField,
   getRangedEnemyAttackInterval,
@@ -121,6 +122,44 @@ const moveWithObstacleCollision = (position: Vector2, radius: number, movement: 
   return next
 }
 
+const moveEnemyWithSteering = (
+  position: Vector2,
+  radius: number,
+  movement: Vector2,
+  target: Vector2,
+  obstacles: MapObstacle[],
+) => {
+  const direct = moveWithObstacleCollision(position, radius, movement, obstacles)
+  const directProgress = distance(position, target) - distance(direct, target)
+
+  if (directProgress > 0.2 || (Math.abs(movement.x) < 0.01 && Math.abs(movement.y) < 0.01)) {
+    return direct
+  }
+
+  const movementLength = Math.hypot(movement.x, movement.y)
+  const direction = normalize(movement)
+  const candidates = [-1.25, 1.25, -0.75, 0.75, -1.7, 1.7]
+    .map((angle) => {
+      const steered = rotate(direction, angle)
+      const next = moveWithObstacleCollision(
+        position,
+        radius,
+        { x: steered.x * movementLength, y: steered.y * movementLength },
+        obstacles,
+      )
+
+      return {
+        next,
+        progress: distance(position, target) - distance(next, target),
+        moved: distance(position, next),
+      }
+    })
+    .filter((candidate) => candidate.moved > 0.3)
+    .sort((a, b) => b.progress - a.progress)
+
+  return candidates[0]?.next ?? direct
+}
+
 const createLevelObstacles = (level: number): MapObstacle[] => {
   if (isBossLevel(level)) {
     return obstacleTemplates.slice(0, 2).map((template, index) => ({
@@ -171,6 +210,30 @@ const createLevelObstacles = (level: number): MapObstacle[] => {
 
 const getPriorityLabel = (priority: TargetPriority) => {
   return priority === 'melee' ? '近战优先' : '远程优先'
+}
+
+const getEnemyKindLabel = (kind: Enemy['kind']) => {
+  if (kind === 'charger') {
+    return '冲锋怪'
+  }
+
+  if (kind === 'splitter') {
+    return '分裂怪'
+  }
+
+  if (kind === 'bomber') {
+    return '爆裂怪'
+  }
+
+  if (kind === 'boss') {
+    return '小 Boss'
+  }
+
+  if (kind === 'elite') {
+    return '精英怪'
+  }
+
+  return kind === 'ranged' ? '远程怪' : '近战怪'
 }
 
 const getSkillLabel = (skill: SkillStat) => {
@@ -868,7 +931,13 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       enemy.attackCooldown = Math.max(0, enemy.attackCooldown - delta)
     }
 
-    let nextPosition = moveWithObstacleCollision(enemy.position, enemy.size * 0.5, movement, snapshot.mapObstacles)
+    let nextPosition = moveEnemyWithSteering(
+      enemy.position,
+      enemy.size * 0.5,
+      movement,
+      snapshot.player.position,
+      snapshot.mapObstacles,
+    )
     const movedDistance = distance(previousPosition, nextPosition)
 
     if (movedDistance < Math.max(0.25, slowedSpeed * delta * 0.12) && gap > enemy.size * 1.5) {
@@ -879,16 +948,31 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
 
     if (enemy.stuckTimer > 0.35) {
       const side = enemy.id.charCodeAt(0) % 2 === 0 ? 1 : -1
-      nextPosition = moveWithObstacleCollision(
+      nextPosition = moveEnemyWithSteering(
         enemy.position,
         enemy.size * 0.5,
         {
           x: -direction.y * slowedSpeed * delta * side,
           y: direction.x * slowedSpeed * delta * side,
         },
+        snapshot.player.position,
         snapshot.mapObstacles,
       )
       enemy.stuckTimer = Math.max(0, enemy.stuckTimer - delta)
+    }
+
+    if (enemy.stuckTimer > 1.4 && gap > 120) {
+      const pressureDirection = rotate(direction, enemy.id.charCodeAt(1) % 2 === 0 ? 0.9 : -0.9)
+      const pressurePosition = keepInsideRoom({
+        x: snapshot.player.position.x - pressureDirection.x * randomBetween(150, 220),
+        y: snapshot.player.position.y - pressureDirection.y * randomBetween(110, 180),
+      }, enemy.size * 0.55)
+
+      if (!isBlockedByObstacle(pressurePosition, enemy.size * 0.55, snapshot.mapObstacles)) {
+        nextPosition = pressurePosition
+        enemy.stuckTimer = 0
+        snapshot.bursts.push(createBurst({ ...nextPosition }, 'rgba(157, 213, 172, ALPHA)', 10))
+      }
     }
 
     enemy.position = keepInsideRoom(nextPosition, enemy.size * 0.55)
@@ -1303,6 +1387,9 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
     return
   }
 
+  const spawnedCount = snapshot.levelTargetKills - snapshot.remainingToSpawn
+  const featuredKind = getFeaturedEnemyKind(snapshot.level, spawnedCount)
+
   if (isBossLevel(snapshot.level) && !snapshot.eliteSpawnedThisLevel) {
     const boss = createEnemy(snapshot.level, 'boss', { x: WORLD_WIDTH / 2, y: ROOM_PADDING + 88 })
     boss.id = `boss-${createId()}`
@@ -1310,9 +1397,14 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
     boss.attackCooldown = 1.1
     snapshot.enemies.push(boss)
     snapshot.eliteSpawnedThisLevel = true
+    snapshot.message = '小 Boss 登场：会冲锋，也会释放扇形弹幕'
   } else if (isEliteLevel(snapshot.level) && !snapshot.eliteSpawnedThisLevel) {
     snapshot.enemies.push(spawnEliteEnemy(snapshot.level, snapshot.mapObstacles))
     snapshot.eliteSpawnedThisLevel = true
+    snapshot.message = '精英怪登场：击败后会立刻给职业奖励'
+  } else if (featuredKind && featuredKind !== 'elite' && featuredKind !== 'boss') {
+    snapshot.enemies.push(createEnemy(snapshot.level, featuredKind, getSpawnPosition(snapshot.mapObstacles)))
+    snapshot.message = `${getEnemyKindLabel(featuredKind)}登场：观察它的行为变化`
   } else {
     snapshot.enemies.push(spawnEnemy(snapshot.level, snapshot.mapObstacles))
   }
@@ -1516,6 +1608,16 @@ export const spendSkillPointSnapshot = (current: GameSnapshot, skill: SkillStat)
   if (derived.maxHp > previousMaxHp) {
     snapshot.player.hp = Math.min(derived.maxHp, snapshot.player.hp + (derived.maxHp - previousMaxHp))
   }
+
+  const growthText = skill === 'vitality'
+    ? `生命+${derived.maxHp - previousMaxHp}`
+    : skill === 'power'
+      ? `攻击+${POWER_DAMAGE_BONUS}`
+      : skill === 'haste'
+        ? '攻速提升'
+        : `移速+${AGILITY_SPEED_BONUS}`
+  snapshot.floatingTexts.push(createFloatingText(snapshot.player.position, growthText, skill === 'vitality' ? '#86efac' : skill === 'power' ? '#fbbf24' : skill === 'haste' ? '#f4f0d7' : '#7dd3fc'))
+  snapshot.bursts.push(createBurst({ ...snapshot.player.position }, skill === 'power' ? 'rgba(251, 191, 36, ALPHA)' : 'rgba(125, 211, 252, ALPHA)', skill === 'vitality' ? 22 : 16))
 
   snapshot.message = snapshot.skillPoints === 0
     ? `已强化${getSkillLabel(skill)}，请继续选择职业技能奖励`
