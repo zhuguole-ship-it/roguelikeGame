@@ -5,6 +5,13 @@
 @tailwind utilities;
 
 :root {
+  --ui-ink: #08100b;
+  --ui-panel: rgba(9, 13, 11, 0.9);
+  --ui-panel-strong: rgba(17, 25, 19, 0.96);
+  --ui-gold: #f6c86f;
+  --ui-gold-dim: rgba(183, 128, 52, 0.72);
+  --ui-leaf: #9dd5ac;
+  --ui-parchment: #f4f0d7;
   color: #f4f0d7;
   background:
     radial-gradient(circle at top, rgba(251, 191, 36, 0.14), transparent 36%),
@@ -44,7 +51,7 @@ select {
 canvas {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
@@ -88,11 +95,69 @@ canvas {
   box-shadow: 0 0 0 2px rgba(252, 211, 77, 0.35), 2px 2px 0 rgba(8, 16, 11, 0.85);
 }
 
+.village-ui-frame {
+  position: relative;
+  border: 2px solid var(--ui-ink);
+  background:
+    linear-gradient(180deg, rgba(22, 29, 24, 0.9), rgba(5, 9, 7, 0.88)),
+    var(--ui-panel);
+  box-shadow:
+    0 0 0 1px var(--ui-gold-dim),
+    inset 0 0 0 1px rgba(244, 240, 215, 0.06),
+    5px 5px 0 rgba(0, 0, 0, 0.32);
+}
+
+.village-ui-frame::before,
+.village-ui-frame::after {
+  content: '';
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  pointer-events: none;
+}
+
+.village-ui-frame::before {
+  left: 5px;
+  top: 5px;
+  border-left: 2px solid var(--ui-gold);
+  border-top: 2px solid var(--ui-gold);
+}
+
+.village-ui-frame::after {
+  right: 5px;
+  bottom: 5px;
+  border-right: 2px solid var(--ui-gold);
+  border-bottom: 2px solid var(--ui-gold);
+}
+
+.village-ui-button {
+  position: relative;
+  border: 2px solid var(--ui-ink);
+  background:
+    linear-gradient(180deg, rgba(48, 36, 22, 0.94), rgba(12, 16, 12, 0.94)),
+    var(--ui-panel-strong);
+  box-shadow:
+    0 0 0 1px var(--ui-gold-dim),
+    inset 0 0 0 1px rgba(244, 240, 215, 0.06),
+    4px 4px 0 rgba(0, 0, 0, 0.38);
+  transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
+}
+
+.village-ui-button:hover {
+  transform: translate(1px, 1px);
+  filter: brightness(1.08);
+  box-shadow:
+    0 0 0 1px var(--ui-gold),
+    inset 0 0 0 1px rgba(244, 240, 215, 0.08),
+    3px 3px 0 rgba(0, 0, 0, 0.38);
+}
+
 .pixel-screen {
   position: relative;
   overflow: hidden;
-  border: 4px solid #08100b;
-  box-shadow: 0 0 0 2px rgba(77, 113, 92, 0.6), 8px 8px 0 rgba(0, 0, 0, 0.48);
+  box-shadow:
+    inset 0 0 0 4px #08100b,
+    inset 0 0 0 6px rgba(77, 113, 92, 0.6);
 }
 
 .pixel-screen::before {

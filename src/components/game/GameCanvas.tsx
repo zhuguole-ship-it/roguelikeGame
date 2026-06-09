@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 
-import { WORLD_HEIGHT, WORLD_WIDTH } from '../../game/config'
+import { CANVAS_HEIGHT, CANVAS_SCALE, CANVAS_WIDTH, WORLD_HEIGHT, WORLD_WIDTH } from '../../game/config'
 import { renderGame } from '../../game/render'
 import { useGameLoop } from '../../hooks/useGameLoop'
 import { useKeyboard } from '../../hooks/useKeyboard'
@@ -18,6 +18,7 @@ export function GameCanvas() {
   const phase = useGameStore((state) => state.phase)
   const toggleTargetPriority = useGameStore((state) => state.toggleTargetPriority)
   const togglePause = useGameStore((state) => state.togglePause)
+  const triggerActiveSkill = useGameStore((state) => state.triggerActiveSkill)
   const triggerDash = useGameStore((state) => state.triggerDash)
   const updateAimPoint = useGameStore((state) => state.updateAimPoint)
 
@@ -33,6 +34,7 @@ export function GameCanvas() {
         return
       }
 
+      context.setTransform(CANVAS_SCALE, 0, 0, CANVAS_SCALE, 0, 0)
       renderGame(context, latestState.current)
     }
   }, [])
@@ -47,7 +49,7 @@ export function GameCanvas() {
   }, [renderCurrentState])
 
   useEffect(() => {
-    if (phase === 'running' || phase === 'level-clear' || phase === 'paused') {
+    if (phase === 'idle' || phase === 'running' || phase === 'level-clear' || phase === 'paused') {
       containerRef.current?.focus()
     }
   }, [phase])
@@ -59,7 +61,7 @@ export function GameCanvas() {
   return (
     <div
       ref={containerRef}
-      className="pixel-screen relative bg-[#0d1511] p-2 outline-none md:p-3"
+      className="pixel-screen relative flex h-screen w-screen items-center justify-center bg-[#0d1511] outline-none"
       tabIndex={0}
       onMouseDown={() => containerRef.current?.focus()}
       onMouseMove={(event) => {
@@ -76,6 +78,8 @@ export function GameCanvas() {
         })
       }}
       onKeyDownCapture={(event) => {
+        const key = event.key.toLowerCase()
+
         if (event.key === 'Escape' && !event.repeat) {
           event.preventDefault()
           event.stopPropagation()
@@ -90,6 +94,13 @@ export function GameCanvas() {
           return
         }
 
+        if ((key === 'q' || key === 'e' || key === 'r') && !event.repeat) {
+          event.preventDefault()
+          event.stopPropagation()
+          triggerActiveSkill(key === 'q' ? 0 : key === 'e' ? 1 : 2)
+          return
+        }
+
         if (event.key === ' ' && !event.repeat) {
           event.preventDefault()
           event.stopPropagation()
@@ -97,7 +108,7 @@ export function GameCanvas() {
         }
       }}
     >
-      <canvas ref={canvasRef} width={WORLD_WIDTH} height={WORLD_HEIGHT} aria-label="游戏画布" />
+      <canvas ref={canvasRef} className="m-auto h-auto max-h-screen w-full max-w-[calc(100vh*1.5)] object-contain" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} aria-label="游戏画布" />
       <GameStatusBar />
       <GameOverlay />
       <GamePauseOverlay />

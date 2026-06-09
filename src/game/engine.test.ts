@@ -9,6 +9,7 @@ import {
   purchaseWeaponSnapshot,
   restartRunSnapshot,
   spendSkillPointSnapshot,
+  triggerActiveSkillSnapshot,
   triggerDashSnapshot,
   togglePauseSnapshot,
   togglePrioritySnapshot,
@@ -21,6 +22,21 @@ describe('game engine', () => {
     const next = advanceGame(snapshot, { up: false, down: false, left: false, right: true }, 0.5)
 
     expect(next.player.position.x).toBeGreaterThan(snapshot.player.position.x)
+  })
+
+  it('gives a short safe entry before the first wave spawns', () => {
+    const snapshot = createInitialSnapshot('idle')
+    const started = restartRunSnapshot(snapshot)
+
+    expect(started.levelTimer).toBeGreaterThan(0)
+    expect(started.player.hurtCooldown).toBeGreaterThan(0)
+
+    const next = advanceGame(started, { up: false, down: false, left: false, right: true }, 0.2)
+
+    expect(next.player.position.x).toBeGreaterThan(started.player.position.x)
+    expect(next.enemies).toHaveLength(0)
+    expect(next.remainingToSpawn).toBe(started.remainingToSpawn)
+    expect(next.levelTimer).toBeLessThan(started.levelTimer)
   })
 
   it('tracks mouse aim point', () => {
@@ -56,7 +72,7 @@ describe('game engine', () => {
 
     expect(next.phase).toBe('level-clear')
     expect(next.skillPoints).toBe(1)
-    expect(next.pendingSkillReward?.choices.length).toBeGreaterThan(0)
+    expect(next.pendingSkillReward?.choices.length).toBe(5)
   })
 
   it('refreshes reward choices instead of always using the same fixed skills', () => {
@@ -112,6 +128,91 @@ describe('game engine', () => {
 
     expect(next.player.hp).toBe(60)
     expect(next.player.dashTimer).toBeGreaterThan(0)
+  })
+
+  it('does not auto-cast active skills when cooldown is ready', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.remainingToSpawn = 0
+    snapshot.enemies = []
+    snapshot.projectiles = []
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.1)
+
+    expect(next.projectiles).toHaveLength(0)
+    expect(next.activeSkills[0].cooldownRemaining).toBe(0)
+  })
+
+  it('casts active skills manually by slot and starts cooldown', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.player.position = { x: 100, y: 100 }
+    snapshot.aimPoint = { x: 220, y: 100 }
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+
+    const next = triggerActiveSkillSnapshot(snapshot, 0)
+
+    expect(next.projectiles.length).toBeGreaterThan(0)
+    expect(next.projectiles[0].sourceSkillId).toBe('pierce-arrow')
+    expect(next.projectiles[0].velocity.x).toBeGreaterThan(0)
+    expect(next.activeSkills[0].cooldownRemaining).toBeGreaterThan(0)
+  })
+
+  it('summons a beast companion when casting a beast-path skill', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.player.position = { x: 200, y: 200 }
+    snapshot.aimPoint = { x: 320, y: 200 }
+    snapshot.activeSkills = [{ skillId: 'raptor-dive', level: 1, cooldownRemaining: 0 }]
+
+    const next = triggerActiveSkillSnapshot(snapshot, 0)
+
+    expect(next.beastCompanions).toHaveLength(1)
+    expect(next.beastCompanions[0].kind).toBe('hawk')
+    expect(next.beastCompanions[0].hp).toBe(next.beastCompanions[0].maxHp)
+    expect(next.activeSkills[0].cooldownRemaining).toBeGreaterThan(0)
+  })
+
+  it('lets beast companions attack nearby enemies and revive after falling', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.remainingToSpawn = 0
+    snapshot.player.position = { x: 200, y: 200 }
+    snapshot.aimPoint = { x: 260, y: 200 }
+    snapshot.activeSkills = [{ skillId: 'sentry-tower', level: 1, cooldownRemaining: 0 }]
+    snapshot.enemies = [{
+      id: 'melee-1',
+      kind: 'melee',
+      grantsEliteReward: false,
+      position: { x: 228, y: 200 },
+      hp: 80,
+      maxHp: 80,
+      speed: 0,
+      size: 14,
+      tint: '#7ee081',
+      hitFlash: 0,
+      attackCooldown: 0,
+      behaviorCooldown: 0,
+      behaviorTimer: 0,
+      behaviorDirection: { x: 0, y: 0 },
+      stuckTimer: 0,
+      lastPosition: { x: 228, y: 200 },
+      burnTtl: 0,
+      burnDamagePerSecond: 0,
+      slowTtl: 0,
+      slowFactor: 0,
+      markStacks: 0,
+    }]
+
+    const summoned = triggerActiveSkillSnapshot(snapshot, 0)
+    summoned.beastCompanions[0].attackCooldown = 0
+    const attacked = advanceGame(summoned, { up: false, down: false, left: false, right: false }, 0.1)
+
+    expect(attacked.enemies[0].hp).toBeLessThan(80)
+
+    attacked.beastCompanions[0].hp = 0
+    attacked.beastCompanions[0].reviveTimer = 0.01
+    const revived = advanceGame(attacked, { up: false, down: false, left: false, right: false }, 0.1)
+
+    expect(revived.beastCompanions[0].reviveTimer).toBe(0)
+    expect(revived.beastCompanions[0].hp).toBeGreaterThan(0)
   })
 
   it('lets dungeon buildings block projectiles', () => {
@@ -244,7 +345,10 @@ describe('game engine', () => {
         skillId: 'arrow-rain',
         title: '箭雨坠落',
         description: '测试技能',
+        buildTag: 'control',
+        tacticalTags: ['区域控制', '落点'],
         levelText: '获得新技能',
+        tacticalText: '强化落点区域、减速、持续伤害和陷阱，适合处理分裂怪和密集怪群。',
       }],
     }
 
@@ -264,7 +368,10 @@ describe('game engine', () => {
         skillId: 'arrow-rain',
         title: '箭雨坠落',
         description: '测试技能',
+        buildTag: 'control',
+        tacticalTags: ['区域控制', '落点'],
         levelText: '获得新技能',
+        tacticalText: '强化落点区域、减速、持续伤害和陷阱，适合处理分裂怪和密集怪群。',
       }],
     }
 
@@ -285,7 +392,10 @@ describe('game engine', () => {
         skillId: 'eagle-eye-focus',
         title: '固定被动升级',
         description: '测试被动',
+        buildTag: 'pierce',
+        tacticalTags: ['穿透直线', '普攻', '射程'],
         levelText: '下一阶：Lv.2',
+        tacticalText: '强化单线穿透和远距离点杀，适合打 Boss 与拉直线怪群。',
       }],
     }
 
@@ -518,9 +628,25 @@ describe('game engine', () => {
       { skillId: 'arrow-rain', level: 4, cooldownRemaining: 0 },
     ]
 
+    vi.spyOn(Math, 'random').mockReturnValue(0)
     const reward = buildPendingReward(snapshot)
+    vi.restoreAllMocks()
     const hasUpgradeChoice = reward.choices.some((choice) => choice.mode === 'upgrade-passive' || choice.mode === 'upgrade-active')
 
     expect(hasUpgradeChoice).toBe(true)
+  })
+
+  it('keeps reward choices aligned with the current archer build path', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.activeSkills = [
+      { skillId: 'pierce-arrow', level: 2, cooldownRemaining: 0 },
+      { skillId: 'heavy-snipe', level: 1, cooldownRemaining: 0 },
+      { skillId: 'wind-cut', level: 1, cooldownRemaining: 0 },
+    ]
+
+    const reward = buildPendingReward(snapshot)
+
+    expect(reward.choices.every((choice) => choice.buildTag && choice.tacticalTags.length > 0 && choice.tacticalText.length > 0)).toBe(true)
+    expect(reward.choices.some((choice) => choice.buildTag === 'pierce' && choice.mode !== 'upgrade-passive')).toBe(true)
   })
 })

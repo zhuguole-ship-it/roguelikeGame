@@ -10,7 +10,7 @@ afterEach(() => {
 })
 
 describe('GameStatusBar', () => {
-  it('renders profession info and active skill slots in the top bar', () => {
+  it('renders compact combat info in the top bar', () => {
     const base = createInitialSnapshot('running')
 
     useGameStore.setState({
@@ -39,11 +39,12 @@ describe('GameStatusBar', () => {
     render(<GameStatusBar />)
 
     expect(screen.getByText('弓箭手')).toBeTruthy()
-    expect(screen.getByText('180G')).toBeTruthy()
     expect(screen.getByText('林地短弓')).toBeTruthy()
-    expect(screen.getByText('鹰眼专注 Lv.2')).toBeTruthy()
-    expect(screen.getByText('穿刺箭 Lv.2')).toBeTruthy()
-    expect(screen.getByText('箭雨坠落 Lv.1')).toBeTruthy()
+    expect(screen.getByText('6/6')).toBeTruthy()
+    expect(screen.getByText('远程优先')).toBeTruthy()
+    expect(screen.getByText('第 1 层')).toBeTruthy()
+    expect(screen.queryByText('180G')).toBeNull()
+    expect(screen.queryByText('穿刺箭 Lv.2')).toBeNull()
   })
 
   it('hides the top bar when the run is over so the weapon shop is not blocked', () => {

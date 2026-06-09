@@ -7,6 +7,8 @@ export type SkillStat = 'vitality' | 'power' | 'haste' | 'agility'
 export type ProfessionId = 'archer'
 export type SkillBehaviorKind = 'projectile' | 'spread' | 'rain' | 'trap' | 'storm' | 'turret' | 'orbit' | 'beam'
 export type SkillEffectTag = 'none' | 'burn' | 'slow' | 'mark'
+export type SkillBuildTag = 'pierce' | 'spread' | 'control' | 'beast'
+export type BeastKind = 'hawk' | 'wolf' | 'boar' | 'bear' | 'deer'
 export type RewardChoiceMode = 'new-active' | 'upgrade-active' | 'upgrade-passive'
 export type ObstacleKind = 'pillar' | 'crate' | 'wagon' | 'ruin'
 export type PickupKind = 'health-pack'
@@ -60,6 +62,8 @@ export type ActiveSkillDefinition = {
   name: string
   description: string
   kind: SkillBehaviorKind
+  buildTag: SkillBuildTag
+  tacticalTags: string[]
   levels: SkillLevelConfig[]
 }
 
@@ -99,7 +103,10 @@ export type SkillRewardChoice = {
   skillId: string
   title: string
   description: string
+  buildTag: SkillBuildTag
+  tacticalTags: string[]
   levelText: string
+  tacticalText: string
 }
 
 export type PendingSkillReward = {
@@ -156,6 +163,8 @@ export type RunRecord = {
   kills: number
   gold: number
   elapsedTime: number
+  activeSkillNames: string[]
+  statSummary: string
 }
 
 export type Projectile = {
@@ -190,6 +199,27 @@ export type SkillField = {
   spread: number
   projectileSpeed: number
   sourceSkillId: string
+}
+
+export type BeastCompanion = {
+  id: string
+  kind: BeastKind
+  skillId: string
+  position: Vector2
+  hp: number
+  maxHp: number
+  size: number
+  speed: number
+  damage: number
+  attackRange: number
+  attackInterval: number
+  attackCooldown: number
+  hurtCooldown: number
+  reviveTimer: number
+  commandTtl: number
+  commandPoint: Vector2
+  specialCooldown: number
+  tint: string
 }
 
 export type Burst = {
@@ -269,6 +299,7 @@ export type GameSnapshot = {
   projectiles: Projectile[]
   enemyProjectiles: Projectile[]
   skillFields: SkillField[]
+  beastCompanions: BeastCompanion[]
   bursts: Burst[]
   floatingTexts: FloatingText[]
 }

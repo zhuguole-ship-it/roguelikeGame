@@ -10,7 +10,7 @@ afterEach(() => {
 })
 
 describe('GamePauseOverlay', () => {
-  it('shows profession guide and reward controls when the game is paused', () => {
+  it('shows compact growth controls when the game is paused', () => {
     const base = createInitialSnapshot('running')
 
     useGameStore.setState({
@@ -24,7 +24,10 @@ describe('GamePauseOverlay', () => {
           skillId: 'arrow-rain',
           title: '箭雨坠落',
           description: '在鼠标落点召唤箭雨。',
+          buildTag: 'control',
+          tacticalTags: ['区域控制', '落点'],
           levelText: '获得新技能',
+          tacticalText: '强化落点区域、减速、持续伤害和陷阱，适合处理分裂怪和密集怪群。',
         }],
       },
     })
@@ -32,8 +35,10 @@ describe('GamePauseOverlay', () => {
     render(<GamePauseOverlay />)
 
     expect(screen.getByText('弓箭手暂停菜单')).toBeTruthy()
-    expect(screen.getByText(/固定被动：/)).toBeTruthy()
-    expect(screen.getByText('三选一技能奖励')).toBeTruthy()
+    expect(screen.getByText('层数')).toBeTruthy()
+    expect(screen.getByText(/鹰眼专注 Lv\.1/)).toBeTruthy()
+    expect(screen.getByText('技能奖励')).toBeTruthy()
     expect(screen.getByText('箭雨坠落')).toBeTruthy()
+    expect(screen.getByText('剩余属性点 1 点')).toBeTruthy()
   })
 })

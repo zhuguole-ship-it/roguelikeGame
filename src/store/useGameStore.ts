@@ -8,6 +8,8 @@ import {
   equipWeaponSnapshot,
   purchaseWeaponSnapshot,
   restartRunSnapshot,
+  triggerActiveSkillSnapshot,
+  returnToVillageSnapshot,
   startRunSnapshot,
   spendSkillPointSnapshot,
   triggerDashSnapshot,
@@ -20,6 +22,7 @@ import type { GameSnapshot, InputState, SkillStat, Vector2, WeaponId } from '../
 type GameStore = GameSnapshot & {
   startGame: () => void
   restart: () => void
+  returnToVillage: () => void
   tick: (delta: number, input: InputState) => void
   toggleTargetPriority: () => void
   spendSkillPoint: (skill: SkillStat) => void
@@ -29,6 +32,7 @@ type GameStore = GameSnapshot & {
   declineSkillReward: () => void
   purchaseWeapon: (weaponId: WeaponId) => void
   equipWeapon: (weaponId: WeaponId) => void
+  triggerActiveSkill: (slotIndex: number) => void
   triggerDash: () => void
 }
 
@@ -41,6 +45,9 @@ export const useGameStore = create<GameStore>((set) => ({
   },
   restart: () => {
     set((state) => restartRunSnapshot(state))
+  },
+  returnToVillage: () => {
+    set((state) => returnToVillageSnapshot(state))
   },
   tick: (delta, input) => {
     set((state) => advanceGame(state, input, delta))
@@ -68,6 +75,9 @@ export const useGameStore = create<GameStore>((set) => ({
   },
   equipWeapon: (weaponId) => {
     set((state) => equipWeaponSnapshot(state, weaponId))
+  },
+  triggerActiveSkill: (slotIndex) => {
+    set((state) => triggerActiveSkillSnapshot(state, slotIndex))
   },
   triggerDash: () => {
     set((state) => triggerDashSnapshot(state))

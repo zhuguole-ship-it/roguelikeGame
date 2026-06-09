@@ -2,6 +2,9 @@ import type { EnemyKind, Vector2 } from './types'
 
 export const WORLD_WIDTH = 960
 export const WORLD_HEIGHT = 640
+export const CANVAS_SCALE = 2
+export const CANVAS_WIDTH = WORLD_WIDTH * CANVAS_SCALE
+export const CANVAS_HEIGHT = WORLD_HEIGHT * CANVAS_SCALE
 export const TILE_SIZE = 16
 export const PLAYER_SIZE = 14
 export const ENEMY_SIZE = 14
@@ -38,6 +41,18 @@ export const TORCHES: Vector2[] = [
   { x: WORLD_WIDTH / 2 + 20, y: WORLD_HEIGHT - 58 },
   { x: WORLD_WIDTH - 70, y: WORLD_HEIGHT - 48 },
 ]
+
+export const VILLAGE_POINTS = {
+  chief: { x: 472, y: 326 },
+  mapTable: { x: 470, y: 244 },
+  campfire: { x: 332, y: 294 },
+  portal: { x: 660, y: 354 },
+  blacksmith: { x: 190, y: 404 },
+  signboard: { x: 824, y: 392 },
+  armory: { x: 154, y: 404 },
+  supplyCrates: { x: 706, y: 454 },
+  trainingDummy: { x: 674, y: 334 },
+} as const
 
 export const PALETTE = {
   floorDark: '#111913',

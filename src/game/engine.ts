@@ -23,6 +23,7 @@ import {
   ROOM_PADDING,
   SPAWN_EDGE_PADDING,
   VITALITY_HP_BONUS,
+  VILLAGE_POINTS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
   getEnemyKind,
@@ -36,11 +37,13 @@ import {
   isBossLevel,
   isEliteLevel,
 } from './config'
-import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, ARCHER_FIXED_PASSIVE_LEVELS } from './archerSkills'
+import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, ARCHER_FIXED_PASSIVE_LEVELS, SKILL_BUILD_DESCRIPTIONS } from './archerSkills'
 import { WEAPON_DEFINITION_MAP, WEAPON_PROGRESS_BASE_LEVELS } from './weapons'
 import type {
   ActiveSkillDefinition,
   ActiveSkillInstance,
+  BeastCompanion,
+  BeastKind,
   Enemy,
   FloatingText,
   GamePhase,
@@ -51,6 +54,7 @@ import type {
   Projectile,
   RewardChoiceMode,
   SkillAllocations,
+  SkillBuildTag,
   SkillField,
   SkillRewardChoice,
   SkillStat,
@@ -60,7 +64,7 @@ import type {
   WeaponId,
 } from './types'
 import { clamp, distance, dominantFacing, normalize, rotate } from '../utils/math'
-import { randomBetween, sample, sampleSize } from '../utils/random'
+import { randomBetween, sample } from '../utils/random'
 
 const createId = () => Math.random().toString(16).slice(2)
 const PLAYER_DASH_DURATION = 0.16
@@ -74,6 +78,38 @@ const BOMBER_EXPLOSION_DAMAGE = 26
 const BOMBER_EXPLOSION_RADIUS = 46
 const RUN_RECORD_LIMIT = 5
 const MILESTONE_LEVELS = [10, 20, 50, 100, 200]
+const DUNGEON_ENTRY_GRACE = 1
+const REWARD_CHOICE_COUNT = 5
+const BEAST_DEFEND_RADIUS = 280
+const BEAST_REVIVE_DELAY = 4.2
+const BEAST_FOLLOW_DISTANCE = 54
+const BEAST_COMMAND_TTL = 1.15
+
+const BEAST_SKILL_KIND: Partial<Record<string, BeastKind | 'pack'>> = {
+  'raptor-dive': 'hawk',
+  'ring-volley': 'wolf',
+  'revolving-feather': 'boar',
+  'sentry-tower': 'bear',
+  'decoy-feather': 'deer',
+  'god-hunt': 'pack',
+}
+
+const BEAST_STATS: Record<BeastKind, {
+  label: string
+  maxHp: number
+  size: number
+  speed: number
+  damage: number
+  attackRange: number
+  attackInterval: number
+  tint: string
+}> = {
+  hawk: { label: '猎鹰', maxHp: 42, size: 16, speed: 260, damage: 5.5, attackRange: 34, attackInterval: 0.55, tint: '#fbbf24' },
+  wolf: { label: '霜狼', maxHp: 74, size: 20, speed: 220, damage: 4.2, attackRange: 30, attackInterval: 0.62, tint: '#93c5fd' },
+  boar: { label: '野猪', maxHp: 92, size: 22, speed: 235, damage: 5, attackRange: 32, attackInterval: 0.72, tint: '#a16207' },
+  bear: { label: '林熊', maxHp: 135, size: 27, speed: 170, damage: 4.8, attackRange: 36, attackInterval: 0.85, tint: '#6b7f45' },
+  deer: { label: '灵鹿', maxHp: 62, size: 19, speed: 230, damage: 2.8, attackRange: 28, attackInterval: 0.8, tint: '#f7e8bf' },
+}
 
 const createEmptySkillAllocations = (): SkillAllocations => ({
   vitality: 0,
@@ -208,6 +244,100 @@ const createLevelObstacles = (level: number): MapObstacle[] => {
   return obstacles
 }
 
+const createVillageObstacles = (): MapObstacle[] => [
+  {
+    id: 'village-chief-house',
+    kind: 'ruin',
+    width: 192,
+    height: 104,
+    position: { x: VILLAGE_POINTS.chief.x, y: VILLAGE_POINTS.chief.y - 46 },
+  },
+  {
+    id: 'village-map-table',
+    kind: 'crate',
+    width: 142,
+    height: 48,
+    position: { ...VILLAGE_POINTS.mapTable },
+  },
+  {
+    id: 'village-blacksmith-shop',
+    kind: 'crate',
+    width: 174,
+    height: 96,
+    position: { x: VILLAGE_POINTS.blacksmith.x - 2, y: VILLAGE_POINTS.blacksmith.y - 54 },
+  },
+  {
+    id: 'village-signboard',
+    kind: 'wagon',
+    width: 86,
+    height: 42,
+    position: { ...VILLAGE_POINTS.signboard },
+  },
+  {
+    id: 'village-portal-stones',
+    kind: 'pillar',
+    width: 136,
+    height: 100,
+    position: { ...VILLAGE_POINTS.portal },
+  },
+  {
+    id: 'village-campfire-north-bench',
+    kind: 'crate',
+    width: 76,
+    height: 22,
+    position: { x: VILLAGE_POINTS.campfire.x, y: VILLAGE_POINTS.campfire.y - 58 },
+  },
+  {
+    id: 'village-campfire-south-bench',
+    kind: 'crate',
+    width: 76,
+    height: 22,
+    position: { x: VILLAGE_POINTS.campfire.x, y: VILLAGE_POINTS.campfire.y + 74 },
+  },
+  {
+    id: 'village-campfire-west-bench',
+    kind: 'crate',
+    width: 24,
+    height: 78,
+    position: { x: VILLAGE_POINTS.campfire.x - 74, y: VILLAGE_POINTS.campfire.y + 4 },
+  },
+  {
+    id: 'village-campfire-east-bench',
+    kind: 'crate',
+    width: 24,
+    height: 78,
+    position: { x: VILLAGE_POINTS.campfire.x + 74, y: VILLAGE_POINTS.campfire.y + 4 },
+  },
+  {
+    id: 'village-armory-rack',
+    kind: 'wagon',
+    width: 108,
+    height: 46,
+    position: { ...VILLAGE_POINTS.armory },
+  },
+  {
+    id: 'village-supply-crates',
+    kind: 'crate',
+    width: 116,
+    height: 58,
+    position: { ...VILLAGE_POINTS.supplyCrates },
+  },
+  {
+    id: 'village-training-dummy',
+    kind: 'pillar',
+    width: 58,
+    height: 56,
+    position: { ...VILLAGE_POINTS.trainingDummy },
+  },
+  {
+    id: 'village-bottom-table',
+    kind: 'crate',
+    width: 132,
+    height: 44,
+    position: { x: 322, y: 522 },
+  },
+]
+
 const getPriorityLabel = (priority: TargetPriority) => {
   return priority === 'melee' ? '近战优先' : '远程优先'
 }
@@ -319,12 +449,18 @@ const getDerivedPlayerStats = (skillAllocations: SkillAllocations, fixedPassiveL
   }
 }
 
-const createPlayer = (skillAllocations: SkillAllocations, fixedPassiveLevel: number, equippedWeaponId: WeaponId | null, hpOverride?: number) => {
+const createPlayer = (
+  skillAllocations: SkillAllocations,
+  fixedPassiveLevel: number,
+  equippedWeaponId: WeaponId | null,
+  hpOverride?: number,
+  position: Vector2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 },
+) => {
   const derived = getDerivedPlayerStats(skillAllocations, fixedPassiveLevel, equippedWeaponId)
   const currentHp = hpOverride === undefined ? derived.maxHp : Math.min(hpOverride, derived.maxHp)
 
   return {
-    position: { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 },
+    position: { ...position },
     hp: currentHp,
     maxHp: derived.maxHp,
     speed: derived.speed,
@@ -347,6 +483,7 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
   const targetKills = getLevelGoal(level)
   const skillAllocations = createEmptySkillAllocations()
   const fixedPassiveLevel = 1
+  const isVillagePhase = phase === 'idle' || phase === 'game-over'
 
   return {
     phase,
@@ -370,7 +507,7 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
     spawnCooldown: 0.15,
     levelTimer: 0,
     elapsedTime: 0,
-    message: phase === 'idle' ? '按下开始按钮进入地下城' : getLevelIntroMessage(level, targetKills),
+    message: isVillagePhase ? '村庄篝火旁苏醒，寻找传送门进入地下城' : getLevelIntroMessage(level, targetKills),
     skillPoints: 0,
     skillAllocations,
     targetPriority: 'melee',
@@ -378,13 +515,14 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
     activeSkills: [],
     pendingSkillReward: null,
     aimPoint: { x: WORLD_WIDTH * 0.68, y: WORLD_HEIGHT / 2 },
-    player: createPlayer(skillAllocations, fixedPassiveLevel, null),
-    mapObstacles: createLevelObstacles(level),
+    player: createPlayer(skillAllocations, fixedPassiveLevel, null, undefined, isVillagePhase ? VILLAGE_POINTS.campfire : { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }),
+    mapObstacles: isVillagePhase ? createVillageObstacles() : createLevelObstacles(level),
     pickups: [],
     enemies: [],
     projectiles: [],
     enemyProjectiles: [],
     skillFields: [],
+    beastCompanions: [],
     bursts: [],
     floatingTexts: [],
   }
@@ -424,6 +562,215 @@ const damageEnemy = (snapshot: GameSnapshot, enemy: Enemy, damage: number, color
   enemy.hp -= appliedDamage
   enemy.hitFlash = Math.max(enemy.hitFlash, 0.12)
   snapshot.floatingTexts.push(createFloatingText(enemy.position, formatDamage(appliedDamage), color))
+}
+
+const createBeastCompanion = (
+  kind: BeastKind,
+  skillId: string,
+  level: number,
+  position: Vector2,
+  commandPoint: Vector2,
+): BeastCompanion => {
+  const stats = BEAST_STATS[kind]
+  const levelBoost = Math.max(0, level - 1)
+
+  return {
+    id: `${kind}-${createId()}`,
+    kind,
+    skillId,
+    position: { ...position },
+    hp: stats.maxHp + levelBoost * 12,
+    maxHp: stats.maxHp + levelBoost * 12,
+    size: stats.size,
+    speed: stats.speed + levelBoost * 8,
+    damage: scaleActiveSkillDamage(stats.damage + levelBoost * 1.1),
+    attackRange: stats.attackRange,
+    attackInterval: Math.max(0.28, stats.attackInterval - levelBoost * 0.04),
+    attackCooldown: 0.2,
+    hurtCooldown: 0,
+    reviveTimer: 0,
+    commandTtl: BEAST_COMMAND_TTL,
+    commandPoint: { ...commandPoint },
+    specialCooldown: 0,
+    tint: stats.tint,
+  }
+}
+
+const getBeastLevel = (snapshot: GameSnapshot, skillId: string) => {
+  return snapshot.activeSkills.find((skill) => skill.skillId === skillId)?.level ?? 1
+}
+
+const createBeastSpawnPoint = (snapshot: GameSnapshot, index: number, total: number) => {
+  const angle = total <= 1 ? Math.atan2(snapshot.aimPoint.y - snapshot.player.position.y, snapshot.aimPoint.x - snapshot.player.position.x) : (Math.PI * 2 * index) / total
+  return keepInsideRoom({
+    x: snapshot.player.position.x + Math.cos(angle) * 34,
+    y: snapshot.player.position.y + Math.sin(angle) * 34,
+  }, 18)
+}
+
+const damageBeast = (snapshot: GameSnapshot, beast: BeastCompanion, damage: number) => {
+  if (beast.reviveTimer > 0 || beast.hurtCooldown > 0) {
+    return
+  }
+
+  beast.hp -= damage
+  beast.hurtCooldown = 0.45
+  snapshot.floatingTexts.push(createFloatingText(beast.position, `-${formatDamage(damage)}`, '#93c5fd'))
+  snapshot.bursts.push(createBurst({ ...beast.position }, 'rgba(147, 197, 253, ALPHA)', 9))
+
+  if (beast.hp <= 0) {
+    beast.hp = 0
+    beast.reviveTimer = BEAST_REVIVE_DELAY
+    beast.commandTtl = 0
+    snapshot.message = `${BEAST_STATS[beast.kind].label}倒下了，正在回到你身边`
+  }
+}
+
+const findNearbyEnemyForBeast = (snapshot: GameSnapshot, beast: BeastCompanion) => {
+  return snapshot.enemies
+    .filter((enemy) => enemy.hp > 0 && distance(enemy.position, snapshot.player.position) <= BEAST_DEFEND_RADIUS)
+    .sort((a, b) => {
+      const distanceScore = distance(a.position, beast.position) - distance(b.position, beast.position)
+      if (Math.abs(distanceScore) > 1) {
+        return distanceScore
+      }
+      return a.hp - b.hp
+    })[0]
+}
+
+const damageEnemiesInLine = (
+  snapshot: GameSnapshot,
+  origin: Vector2,
+  direction: Vector2,
+  length: number,
+  radius: number,
+  damage: number,
+  color: string,
+  effect?: (enemy: Enemy) => void,
+) => {
+  snapshot.enemies.forEach((enemy) => {
+    const toEnemy = { x: enemy.position.x - origin.x, y: enemy.position.y - origin.y }
+    const forward = toEnemy.x * direction.x + toEnemy.y * direction.y
+    if (forward < 0 || forward > length) {
+      return
+    }
+    const side = Math.abs(toEnemy.x * direction.y - toEnemy.y * direction.x)
+    if (side > radius + enemy.size * 0.45) {
+      return
+    }
+
+    damageEnemy(snapshot, enemy, damage, color)
+    effect?.(enemy)
+  })
+}
+
+const commandBeastSpecial = (snapshot: GameSnapshot, beast: BeastCompanion, config: ActiveSkillDefinition['levels'][number]) => {
+  if (beast.reviveTimer > 0) {
+    beast.reviveTimer = 0
+    beast.hp = beast.maxHp
+    beast.position = createBeastSpawnPoint(snapshot, 0, 1)
+  }
+
+  const direction = normalize({
+    x: beast.commandPoint.x - beast.position.x,
+    y: beast.commandPoint.y - beast.position.y,
+  })
+  const commandDirection = direction.x === 0 && direction.y === 0 ? getAimDirection(snapshot) : direction
+  const specialDamage = scaleActiveSkillDamage(config.damage + BEAST_STATS[beast.kind].damage)
+
+  if (beast.kind === 'hawk') {
+    damageEnemiesInLine(snapshot, beast.position, commandDirection, Math.max(220, config.range), 18, specialDamage * 1.25, '#fbbf24')
+    beast.position = keepInsideRoom({
+      x: beast.position.x + commandDirection.x * 92,
+      y: beast.position.y + commandDirection.y * 92,
+    }, beast.size * 0.5)
+    snapshot.bursts.push(createBurst({ ...beast.position }, 'rgba(251, 191, 36, ALPHA)', 22))
+    return
+  }
+
+  if (beast.kind === 'wolf') {
+    beast.position = keepInsideRoom({ ...beast.commandPoint }, beast.size * 0.5)
+    snapshot.enemies.forEach((enemy) => {
+      if (distance(enemy.position, beast.position) <= 76) {
+        damageEnemy(snapshot, enemy, specialDamage, '#93c5fd')
+        enemy.slowTtl = Math.max(enemy.slowTtl, 2)
+        enemy.slowFactor = Math.max(enemy.slowFactor, 0.36)
+      }
+    })
+    snapshot.bursts.push(createBurst({ ...beast.position }, 'rgba(147, 197, 253, ALPHA)', 42))
+    return
+  }
+
+  if (beast.kind === 'boar') {
+    damageEnemiesInLine(snapshot, beast.position, commandDirection, 190, 28, specialDamage * 1.1, '#fcd34d', (enemy) => {
+      enemy.slowTtl = Math.max(enemy.slowTtl, 0.8)
+      enemy.slowFactor = Math.max(enemy.slowFactor, 0.22)
+    })
+    beast.position = keepInsideRoom({
+      x: beast.position.x + commandDirection.x * 120,
+      y: beast.position.y + commandDirection.y * 120,
+    }, beast.size * 0.5)
+    snapshot.bursts.push(createBurst({ ...beast.position }, 'rgba(252, 211, 77, ALPHA)', 30))
+    return
+  }
+
+  if (beast.kind === 'bear') {
+    beast.position = keepInsideRoom({
+      x: snapshot.player.position.x + commandDirection.x * 42,
+      y: snapshot.player.position.y + commandDirection.y * 42,
+    }, beast.size * 0.5)
+    snapshot.enemies.forEach((enemy) => {
+      if (distance(enemy.position, beast.position) <= 88) {
+        damageEnemy(snapshot, enemy, specialDamage * 0.9, '#bef264')
+        enemy.slowTtl = Math.max(enemy.slowTtl, 1.1)
+        enemy.slowFactor = Math.max(enemy.slowFactor, 0.18)
+      }
+    })
+    snapshot.bursts.push(createBurst({ ...beast.position }, 'rgba(190, 242, 100, ALPHA)', 48))
+    return
+  }
+
+  snapshot.player.hp = Math.min(snapshot.player.maxHp, snapshot.player.hp + 12 + getBeastLevel(snapshot, beast.skillId) * 4)
+  snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, 0.85)
+  snapshot.enemies.forEach((enemy) => {
+    if (distance(enemy.position, snapshot.player.position) <= 76) {
+      damageEnemy(snapshot, enemy, specialDamage * 0.45, '#f7e8bf')
+    }
+  })
+  snapshot.bursts.push(createBurst({ ...snapshot.player.position }, 'rgba(157, 213, 172, ALPHA)', 42))
+}
+
+const summonOrCommandBeast = (
+  snapshot: GameSnapshot,
+  kind: BeastKind,
+  skillId: string,
+  level: number,
+  config: ActiveSkillDefinition['levels'][number],
+  index: number,
+  total: number,
+) => {
+  const commandPoint = keepInsideRoom({ ...snapshot.aimPoint }, BEAST_STATS[kind].size * 0.5)
+  let beast = snapshot.beastCompanions.find((companion) => companion.kind === kind)
+
+  if (!beast) {
+    beast = createBeastCompanion(kind, skillId, level, createBeastSpawnPoint(snapshot, index, total), commandPoint)
+    snapshot.beastCompanions.push(beast)
+    snapshot.floatingTexts.push(createFloatingText(beast.position, BEAST_STATS[kind].label, BEAST_STATS[kind].tint))
+  } else {
+    const refreshed = createBeastCompanion(kind, skillId, level, beast.reviveTimer > 0 ? createBeastSpawnPoint(snapshot, index, total) : beast.position, commandPoint)
+    Object.assign(beast, {
+      ...refreshed,
+      id: beast.id,
+      hp: Math.max(beast.hp, Math.min(refreshed.maxHp, beast.hp + refreshed.maxHp * 0.28)),
+      reviveTimer: 0,
+    })
+  }
+
+  beast.skillId = skillId
+  beast.commandPoint = commandPoint
+  beast.commandTtl = BEAST_COMMAND_TTL
+  beast.specialCooldown = 0.25
+  commandBeastSpecial(snapshot, beast, config)
 }
 
 const createHealthPickup = (position: Vector2) => ({
@@ -569,6 +916,11 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
   skillFields: snapshot.skillFields.map((field) => ({
     ...field,
     position: { ...field.position },
+  })),
+  beastCompanions: snapshot.beastCompanions.map((beast) => ({
+    ...beast,
+    position: { ...beast.position },
+    commandPoint: { ...beast.commandPoint },
   })),
   bursts: snapshot.bursts.map((burst) => ({
     ...burst,
@@ -738,6 +1090,44 @@ const createSkillProjectile = (
   })
 }
 
+const getCurrentBuildCounts = (snapshot: GameSnapshot) => {
+  return snapshot.activeSkills.reduce<Record<SkillBuildTag, number>>(
+    (counts, skill) => {
+      const definition = ARCHER_ACTIVE_SKILL_MAP[skill.skillId]
+      if (definition) {
+        counts[definition.buildTag] += 1
+      }
+
+      return counts
+    },
+    { pierce: 0, spread: 0, control: 0, beast: 0 },
+  )
+}
+
+const getPreferredBuildTag = (snapshot: GameSnapshot): SkillBuildTag | null => {
+  const counts = getCurrentBuildCounts(snapshot)
+  const sorted = (Object.entries(counts) as Array<[SkillBuildTag, number]>).sort((a, b) => b[1] - a[1])
+  return sorted[0][1] > 0 ? sorted[0][0] : null
+}
+
+const pickWeightedChoices = (
+  choices: SkillRewardChoice[],
+  count: number,
+  weight: (choice: SkillRewardChoice) => number,
+) => {
+  const remaining = [...choices]
+  const picked: SkillRewardChoice[] = []
+
+  while (picked.length < count && remaining.length > 0) {
+    const pool = remaining.flatMap((choice) => Array.from({ length: Math.max(1, Math.round(weight(choice))) }, () => choice))
+    const choice = sample(pool)
+    picked.push(choice)
+    remaining.splice(remaining.findIndex((candidate) => candidate.choiceId === choice.choiceId), 1)
+  }
+
+  return picked
+}
+
 const createRewardChoice = (mode: RewardChoiceMode, skillId: string): SkillRewardChoice => {
   if (mode === 'upgrade-passive') {
     const targetLevel = Math.min(5, ARCHER_FIXED_PASSIVE_LEVELS.length)
@@ -747,7 +1137,10 @@ const createRewardChoice = (mode: RewardChoiceMode, skillId: string): SkillRewar
       skillId,
       title: '固定被动升级',
       description: '提升鹰眼专注，提高弓箭手基础射程与基础箭矢穿透。',
+      buildTag: 'pierce',
+      tacticalTags: ['穿透直线', '普攻', '射程'],
       levelText: `下一阶：Lv.${targetLevel}`,
+      tacticalText: SKILL_BUILD_DESCRIPTIONS.pierce,
     }
   }
 
@@ -758,7 +1151,10 @@ const createRewardChoice = (mode: RewardChoiceMode, skillId: string): SkillRewar
     skillId,
     title: definition.name,
     description: definition.description,
+    buildTag: definition.buildTag,
+    tacticalTags: definition.tacticalTags,
     levelText: mode === 'new-active' ? '获得新技能' : '提升已有技能等级',
+    tacticalText: SKILL_BUILD_DESCRIPTIONS[definition.buildTag],
   }
 }
 
@@ -767,6 +1163,7 @@ export const buildPendingReward = (snapshot: GameSnapshot): PendingSkillReward =
   const newSkillChoices: SkillRewardChoice[] = []
   const activeSkillIds = snapshot.activeSkills.map((skill) => skill.skillId)
   const upgradable = snapshot.activeSkills.filter((skill) => skill.level < 5)
+  const preferredBuildTag = getPreferredBuildTag(snapshot)
 
   if (snapshot.fixedPassiveLevel < 5) {
     upgradeChoices.push(createRewardChoice('upgrade-passive', 'eagle-eye-focus'))
@@ -777,14 +1174,41 @@ export const buildPendingReward = (snapshot: GameSnapshot): PendingSkillReward =
   const availableNewSkills = ARCHER_ACTIVE_SKILLS.filter((skill) => !activeSkillIds.includes(skill.id))
   availableNewSkills.forEach((skill) => newSkillChoices.push(createRewardChoice('new-active', skill.id)))
 
-  const chosenUpgradeChoices = sampleSize(upgradeChoices, Math.min(3, upgradeChoices.length))
-  const chosenNewSkillChoices = sampleSize(
-    newSkillChoices,
-    Math.max(0, 3 - chosenUpgradeChoices.length),
-  )
+  const rewardWeight = (choice: SkillRewardChoice) => {
+    if (choice.mode === 'upgrade-active') {
+      return choice.buildTag === preferredBuildTag ? 5 : 3
+    }
+
+    if (choice.mode === 'new-active') {
+      return choice.buildTag === preferredBuildTag ? 4 : 1
+    }
+
+    return preferredBuildTag === 'pierce' ? 2 : 1
+  }
+
+  const forcedNewSkill = snapshot.activeSkills.length < PLAYER_ACTIVE_SKILL_SLOTS && newSkillChoices.length > 0
+    ? pickWeightedChoices(newSkillChoices, 1, rewardWeight)
+    : []
+  const remainingNewSkillChoices = newSkillChoices.filter((choice) => !forcedNewSkill.some((picked) => picked.choiceId === choice.choiceId))
+  const alreadyHasPreferredChoice = preferredBuildTag !== null && forcedNewSkill.some((choice) => choice.buildTag === preferredBuildTag)
+  const forcedBuildChoice = preferredBuildTag && !alreadyHasPreferredChoice
+    ? pickWeightedChoices(
+        [...upgradeChoices, ...remainingNewSkillChoices].filter((choice) => choice.buildTag === preferredBuildTag && choice.mode !== 'upgrade-passive'),
+        1,
+        rewardWeight,
+      )
+    : []
+  const mixedChoices = [...upgradeChoices, ...remainingNewSkillChoices].filter((choice) => {
+    return !forcedBuildChoice.some((picked) => picked.choiceId === choice.choiceId)
+  })
+  const chosenChoices = [
+    ...forcedNewSkill,
+    ...forcedBuildChoice,
+    ...pickWeightedChoices(mixedChoices, REWARD_CHOICE_COUNT - forcedNewSkill.length - forcedBuildChoice.length, rewardWeight),
+  ]
 
   return {
-    choices: [...chosenUpgradeChoices, ...chosenNewSkillChoices].slice(0, 3),
+    choices: chosenChoices.slice(0, REWARD_CHOICE_COUNT),
     source: 'level-clear',
   }
 }
@@ -822,6 +1246,7 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     remainingToSpawn: targetKills,
     eliteSpawnedThisLevel: false,
     spawnCooldown: 0.25,
+    levelTimer: DUNGEON_ENTRY_GRACE,
     elapsedTime: previous.elapsedTime,
     skillPoints: previous.skillPoints,
     skillAllocations: { ...previous.skillAllocations },
@@ -831,8 +1256,22 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     pendingSkillReward: null,
     aimPoint: { ...previous.aimPoint },
     mapObstacles: createLevelObstacles(nextLevel),
-    message: `${getLevelIntroMessage(nextLevel, targetKills)}，已恢复 ${HEALTH_PACK_HEAL} 点生命`,
-    player: createPlayer(previous.skillAllocations, previous.fixedPassiveLevel, previous.equippedWeaponId, healedHp),
+    beastCompanions: previous.beastCompanions.map((beast, index) => ({
+      ...beast,
+      position: keepInsideRoom({
+        x: WORLD_WIDTH / 2 + Math.cos((Math.PI * 2 * index) / Math.max(1, previous.beastCompanions.length)) * 34,
+        y: WORLD_HEIGHT / 2 + Math.sin((Math.PI * 2 * index) / Math.max(1, previous.beastCompanions.length)) * 34,
+      }, beast.size * 0.5),
+      hp: beast.reviveTimer > 0 ? Math.max(1, beast.maxHp * 0.5) : beast.hp,
+      reviveTimer: 0,
+      commandTtl: 0,
+      commandPoint: { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 },
+    })),
+    message: `${getLevelIntroMessage(nextLevel, targetKills)}，准备时间 ${DUNGEON_ENTRY_GRACE.toFixed(1)} 秒`,
+    player: {
+      ...createPlayer(previous.skillAllocations, previous.fixedPassiveLevel, previous.equippedWeaponId, healedHp),
+      hurtCooldown: DUNGEON_ENTRY_GRACE,
+    },
   }
 }
 
@@ -1028,6 +1467,17 @@ const triggerAutoAttack = (snapshot: GameSnapshot) => {
 const resolveSkillCast = (snapshot: GameSnapshot, skillInstance: ActiveSkillInstance, definition: ActiveSkillDefinition) => {
   const config = definition.levels[skillInstance.level - 1]
   const direction = getAimDirection(snapshot)
+  const beastKind = BEAST_SKILL_KIND[definition.id]
+
+  if (beastKind) {
+    const kinds: BeastKind[] = beastKind === 'pack' ? ['hawk', 'wolf', 'boar', 'bear', 'deer'] : [beastKind]
+    kinds.forEach((kind, index) => {
+      summonOrCommandBeast(snapshot, kind, definition.id, skillInstance.level, config, index, kinds.length)
+    })
+    snapshot.bursts.push(createBurst({ ...snapshot.player.position }, 'rgba(157, 213, 172, ALPHA)', beastKind === 'pack' ? 34 : 22))
+    skillInstance.cooldownRemaining = config.cooldown
+    return
+  }
 
   if (definition.kind === 'projectile' || definition.kind === 'spread' || definition.kind === 'beam' || definition.kind === 'orbit') {
     for (let index = 0; index < config.projectileCount; index += 1) {
@@ -1050,12 +1500,98 @@ const resolveSkillCast = (snapshot: GameSnapshot, skillInstance: ActiveSkillInst
 const updateActiveSkills = (snapshot: GameSnapshot, delta: number) => {
   snapshot.activeSkills.forEach((skillInstance) => {
     skillInstance.cooldownRemaining = Math.max(0, skillInstance.cooldownRemaining - delta)
-    const definition = ARCHER_ACTIVE_SKILL_MAP[skillInstance.skillId]
-    if (!definition || skillInstance.cooldownRemaining > 0) {
+  })
+}
+
+const updateBeastCompanions = (snapshot: GameSnapshot, delta: number) => {
+  snapshot.beastCompanions.forEach((beast, index) => {
+    beast.attackCooldown = Math.max(0, beast.attackCooldown - delta)
+    beast.hurtCooldown = Math.max(0, beast.hurtCooldown - delta)
+    beast.specialCooldown = Math.max(0, beast.specialCooldown - delta)
+    beast.commandTtl = Math.max(0, beast.commandTtl - delta)
+
+    if (beast.reviveTimer > 0) {
+      beast.reviveTimer = Math.max(0, beast.reviveTimer - delta)
+      if (beast.reviveTimer <= 0) {
+        beast.hp = beast.maxHp
+        beast.position = createBeastSpawnPoint(snapshot, index, Math.max(1, snapshot.beastCompanions.length))
+        beast.commandPoint = { ...snapshot.player.position }
+        snapshot.floatingTexts.push(createFloatingText(beast.position, `${BEAST_STATS[beast.kind].label}归队`, beast.tint))
+        snapshot.bursts.push(createBurst({ ...beast.position }, 'rgba(157, 213, 172, ALPHA)', 18))
+      }
       return
     }
 
-    resolveSkillCast(snapshot, skillInstance, definition)
+    const target = findNearbyEnemyForBeast(snapshot, beast)
+    const desiredPoint = beast.commandTtl > 0
+      ? beast.commandPoint
+      : target
+        ? target.position
+        : {
+            x: snapshot.player.position.x + Math.cos(index * 2.1 + snapshot.elapsedTime * 0.8) * BEAST_FOLLOW_DISTANCE,
+            y: snapshot.player.position.y + Math.sin(index * 2.1 + snapshot.elapsedTime * 0.8) * BEAST_FOLLOW_DISTANCE,
+          }
+    const toDesired = normalize({ x: desiredPoint.x - beast.position.x, y: desiredPoint.y - beast.position.y })
+    const desiredDistance = target ? beast.attackRange * 0.65 : 20
+
+    if (distance(beast.position, desiredPoint) > desiredDistance) {
+      beast.position = moveEnemyWithSteering(
+        beast.position,
+        beast.size * 0.5,
+        { x: toDesired.x * beast.speed * delta, y: toDesired.y * beast.speed * delta },
+        desiredPoint,
+        snapshot.mapObstacles,
+      )
+      beast.position = keepInsideRoom(beast.position, beast.size * 0.5)
+    }
+
+    if (target && beast.attackCooldown <= 0 && distance(beast.position, target.position) <= beast.attackRange + target.size * 0.5) {
+      damageEnemy(snapshot, target, beast.damage, beast.tint)
+      beast.attackCooldown = beast.attackInterval
+
+      if (beast.kind === 'wolf') {
+        target.slowTtl = Math.max(target.slowTtl, 0.9)
+        target.slowFactor = Math.max(target.slowFactor, 0.24)
+      }
+
+      if (beast.kind === 'deer') {
+        snapshot.player.hp = Math.min(snapshot.player.maxHp, snapshot.player.hp + 1.5)
+      }
+
+      snapshot.bursts.push(createBurst({ ...target.position }, beast.kind === 'hawk' ? 'rgba(251, 191, 36, ALPHA)' : 'rgba(157, 213, 172, ALPHA)', 8))
+    }
+  })
+
+  snapshot.enemies.forEach((enemy) => {
+    if (enemy.kind === 'ranged') {
+      return
+    }
+
+    const targetBeast = snapshot.beastCompanions
+      .filter((beast) => beast.reviveTimer <= 0)
+      .sort((a, b) => distance(a.position, enemy.position) - distance(b.position, enemy.position))[0]
+    if (!targetBeast || distance(targetBeast.position, enemy.position) > targetBeast.size * 0.45 + enemy.size * 0.5) {
+      return
+    }
+
+    damageBeast(snapshot, targetBeast, enemy.kind === 'boss' ? ENEMY_CONTACT_DAMAGE + 8 : enemy.kind === 'elite' ? ENEMY_CONTACT_DAMAGE + 4 : ENEMY_CONTACT_DAMAGE * 0.55)
+  })
+
+  snapshot.enemyProjectiles.forEach((projectile) => {
+    if (projectile.ttl <= 0) {
+      return
+    }
+
+    const targetBeast = snapshot.beastCompanions.find((beast) => {
+      return beast.reviveTimer <= 0 && distance(projectile.position, beast.position) < projectile.size + beast.size * 0.5
+    })
+
+    if (!targetBeast) {
+      return
+    }
+
+    damageBeast(snapshot, targetBeast, projectile.damage * 0.75)
+    projectile.ttl = 0
   })
 }
 
@@ -1443,12 +1979,16 @@ const preserveMetaProgress = (baseSnapshot: GameSnapshot, previous: GameSnapshot
 }
 
 const recordRunResult = (snapshot: GameSnapshot, earnedGold: number) => {
+  const activeSkillNames = snapshot.activeSkills.map((skill) => ARCHER_ACTIVE_SKILL_MAP[skill.skillId]?.name ?? skill.skillId)
+  const statSummary = `生命 ${snapshot.skillAllocations.vitality} / 力量 ${snapshot.skillAllocations.power} / 急速 ${snapshot.skillAllocations.haste} / 灵巧 ${snapshot.skillAllocations.agility}`
   const runRecord = {
     id: createId(),
     level: snapshot.level,
     kills: snapshot.kills,
     gold: earnedGold,
     elapsedTime: snapshot.elapsedTime,
+    activeSkillNames,
+    statSummary,
   }
   snapshot.runHistory = [runRecord, ...snapshot.runHistory]
     .sort((a, b) => b.level - a.level || b.kills - a.kills || a.elapsedTime - b.elapsedTime)
@@ -1461,13 +2001,23 @@ const recordRunResult = (snapshot: GameSnapshot, earnedGold: number) => {
 
 export const restartRunSnapshot = (current: GameSnapshot): GameSnapshot => {
   const next = preserveMetaProgress(createInitialSnapshot('running'), current)
-  next.message = getLevelIntroMessage(1, next.levelTargetKills)
+  next.levelTimer = DUNGEON_ENTRY_GRACE
+  next.player.hurtCooldown = DUNGEON_ENTRY_GRACE
+  next.message = `${getLevelIntroMessage(1, next.levelTargetKills)}，准备时间 ${DUNGEON_ENTRY_GRACE.toFixed(1)} 秒`
   return next
 }
 
 export const startRunSnapshot = (current: GameSnapshot): GameSnapshot => {
   const next = preserveMetaProgress(createInitialSnapshot('running'), current)
-  next.message = getLevelIntroMessage(1, next.levelTargetKills)
+  next.levelTimer = DUNGEON_ENTRY_GRACE
+  next.player.hurtCooldown = DUNGEON_ENTRY_GRACE
+  next.message = `${getLevelIntroMessage(1, next.levelTargetKills)}，准备时间 ${DUNGEON_ENTRY_GRACE.toFixed(1)} 秒`
+  return next
+}
+
+export const returnToVillageSnapshot = (current: GameSnapshot): GameSnapshot => {
+  const next = preserveMetaProgress(createInitialSnapshot('idle'), current)
+  next.message = '回到村庄篝火旁，准备下一次深入地下城'
   return next
 }
 
@@ -1558,6 +2108,34 @@ export const triggerDashSnapshot = (current: GameSnapshot): GameSnapshot => {
   return snapshot
 }
 
+export const triggerActiveSkillSnapshot = (current: GameSnapshot, slotIndex: number): GameSnapshot => {
+  const snapshot = cloneSnapshot(current)
+
+  if (snapshot.phase !== 'running') {
+    return snapshot
+  }
+
+  const skillInstance = snapshot.activeSkills[slotIndex]
+  if (!skillInstance) {
+    snapshot.message = `技能槽 ${slotIndex + 1} 还没有装备主动技能`
+    return snapshot
+  }
+
+  const definition = ARCHER_ACTIVE_SKILL_MAP[skillInstance.skillId]
+  if (!definition) {
+    return snapshot
+  }
+
+  if (skillInstance.cooldownRemaining > 0) {
+    snapshot.message = `${definition.name} 冷却中：${skillInstance.cooldownRemaining.toFixed(1)} 秒`
+    return snapshot
+  }
+
+  resolveSkillCast(snapshot, skillInstance, definition)
+  snapshot.message = `释放 ${definition.name}`
+  return snapshot
+}
+
 export const togglePauseSnapshot = (current: GameSnapshot): GameSnapshot => {
   const snapshot = cloneSnapshot(current)
 
@@ -1573,7 +2151,7 @@ export const togglePauseSnapshot = (current: GameSnapshot): GameSnapshot => {
     snapshot.phase = snapshot.phaseBeforePause
     snapshot.message = snapshot.phase === 'level-clear'
       ? snapshot.skillPoints > 0
-        ? `第 ${snapshot.level} 层肃清，请先完成三选一奖励与技能分配`
+        ? `第 ${snapshot.level} 层肃清，请先完成五选一奖励与技能分配`
         : '已继续战斗'
       : '已继续战斗'
     return snapshot
@@ -1633,14 +2211,21 @@ const addNewSkill = (snapshot: GameSnapshot, skillId: string) => {
   }
 
   snapshot.pendingSkillReward = {
-    choices: snapshot.activeSkills.map((skill) => ({
-      choiceId: createId(),
-      mode: 'new-active',
-      skillId: skill.skillId,
-      title: `替换 ${ARCHER_ACTIVE_SKILL_MAP[skill.skillId].name}`,
-      description: `放弃该技能以换取 ${ARCHER_ACTIVE_SKILL_MAP[skillId].name}`,
-      levelText: skill.skillId,
-    })),
+    choices: snapshot.activeSkills.map((skill) => {
+      const definition = ARCHER_ACTIVE_SKILL_MAP[skill.skillId]
+
+      return {
+        choiceId: createId(),
+        mode: 'new-active',
+        skillId: skill.skillId,
+        title: `替换 ${definition.name}`,
+        description: `放弃该技能以换取 ${ARCHER_ACTIVE_SKILL_MAP[skillId].name}`,
+        buildTag: definition.buildTag,
+        tacticalTags: definition.tacticalTags,
+        levelText: skill.skillId,
+        tacticalText: SKILL_BUILD_DESCRIPTIONS[definition.buildTag],
+      }
+    }),
     replacementSkillId: skillId,
   }
 }
@@ -1740,7 +2325,14 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
   const snapshot = cloneSnapshot(current)
   snapshot.elapsedTime += delta
 
-  if (snapshot.phase === 'idle' || snapshot.phase === 'game-over' || snapshot.phase === 'paused') {
+  if (snapshot.phase === 'idle') {
+    updatePlayerMovement(snapshot, input, delta)
+    updateBursts(snapshot, delta)
+    updateFloatingTexts(snapshot, delta)
+    return snapshot
+  }
+
+  if (snapshot.phase === 'game-over' || snapshot.phase === 'paused') {
     return snapshot
   }
 
@@ -1751,7 +2343,7 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
     }
 
     if (snapshot.pendingSkillReward) {
-      snapshot.message = '请先完成三选一技能奖励，或放弃本次奖励'
+      snapshot.message = '请先完成五选一技能奖励，或放弃本次奖励'
       return snapshot
     }
 
@@ -1778,9 +2370,21 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
   }
 
   updatePlayerMovement(snapshot, input, delta)
+  updateActiveSkills(snapshot, delta)
+
+  if (snapshot.levelTimer > 0) {
+    snapshot.levelTimer = Math.max(0, snapshot.levelTimer - delta)
+    snapshot.message = snapshot.levelTimer > 0
+      ? `${getLevelIntroMessage(snapshot.level, snapshot.levelTargetKills)}，准备时间 ${snapshot.levelTimer.toFixed(1)} 秒`
+      : getLevelIntroMessage(snapshot.level, snapshot.levelTargetKills)
+    updateBursts(snapshot, delta)
+    updateFloatingTexts(snapshot, delta)
+    return snapshot
+  }
+
   spawnWaveEnemies(snapshot)
   updateEnemies(snapshot, delta)
-  updateActiveSkills(snapshot, delta)
+  updateBeastCompanions(snapshot, delta)
   triggerEnemyAttacks(snapshot)
   triggerAutoAttack(snapshot)
   updateProjectileList(snapshot.projectiles, delta)
@@ -1799,10 +2403,19 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
   if (snapshot.player.hp <= 0) {
     const earnedGold = getGoldReward(snapshot.level, snapshot.kills)
     snapshot.phase = 'game-over'
+    snapshot.phaseBeforePause = 'running'
     snapshot.earnedGold = earnedGold
     snapshot.currency += earnedGold
     snapshot.bestLevel = Math.max(snapshot.bestLevel, snapshot.level)
     recordRunResult(snapshot, earnedGold)
+    snapshot.player = createPlayer(snapshot.skillAllocations, snapshot.fixedPassiveLevel, snapshot.equippedWeaponId, undefined, VILLAGE_POINTS.campfire)
+    snapshot.mapObstacles = createVillageObstacles()
+    snapshot.enemies = []
+    snapshot.projectiles = []
+    snapshot.enemyProjectiles = []
+    snapshot.skillFields = []
+    snapshot.beastCompanions = []
+    snapshot.pickups = []
     snapshot.message = `你在第 ${snapshot.level} 层倒下，击败 ${snapshot.kills} 只敌人，获得 ${earnedGold} 金币`
     return snapshot
   }
@@ -1817,7 +2430,7 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
     snapshot.levelTimer = LEVEL_CLEAR_DELAY
     snapshot.skillPoints += 1
     snapshot.pendingSkillReward = buildPendingReward(snapshot)
-    snapshot.message = `第 ${snapshot.level} 层肃清，获得 1 点属性点与 3 选 1 技能奖励`
+  snapshot.message = `第 ${snapshot.level} 层肃清，获得 1 点属性点与 5 选 1 技能奖励`
     return snapshot
   }
 

@@ -1,5 +1,78 @@
 import { PLAYER_BASE_ATTACK_RANGE } from './config'
-import type { ActiveSkillDefinition, FixedPassiveLevel, SkillLevelConfig } from './types'
+import type { ActiveSkillDefinition, FixedPassiveLevel, SkillBehaviorKind, SkillBuildTag, SkillLevelConfig } from './types'
+
+export const SKILL_BUILD_LABELS: Record<SkillBuildTag, string> = {
+  pierce: '穿透直线',
+  spread: '散射压制',
+  control: '区域控制',
+  beast: '野兽伙伴',
+}
+
+export const SKILL_BUILD_DESCRIPTIONS: Record<SkillBuildTag, string> = {
+  pierce: '强化单线穿透和远距离点杀，适合打 Boss 与拉直线怪群。',
+  spread: '强化扇形覆盖和多箭压制，适合处理中前期怪潮。',
+  control: '强化落点区域、减速、持续伤害和陷阱，适合处理分裂怪和密集怪群。',
+  beast: '呼唤野兽伙伴参与战斗，提供进攻、控制、防御或支援窗口。',
+}
+
+const beastSkillIds = new Set([
+  'decoy-feather',
+  'sentry-tower',
+  'ring-volley',
+  'revolving-feather',
+  'raptor-dive',
+  'god-hunt',
+])
+
+const inferBuildTag = (id: string, kind: SkillBehaviorKind): SkillBuildTag => {
+  if (beastSkillIds.has(id)) {
+    return 'beast'
+  }
+
+  if (kind === 'spread' || kind === 'orbit') {
+    return 'spread'
+  }
+
+  if (kind === 'rain' || kind === 'storm' || kind === 'trap' || kind === 'turret') {
+    return 'control'
+  }
+
+  return 'pierce'
+}
+
+const inferTacticalTags = (definition: Pick<ActiveSkillDefinition, 'buildTag' | 'kind'>, config: SkillLevelConfig) => {
+  const tags = [SKILL_BUILD_LABELS[definition.buildTag]]
+
+  if (config.pierce > 0) {
+    tags.push('穿透')
+  }
+
+  if (config.projectileCount >= 3) {
+    tags.push('多箭')
+  }
+
+  if (config.explosionRadius > 0) {
+    tags.push('爆裂')
+  }
+
+  if (config.effect === 'slow') {
+    tags.push('减速')
+  }
+
+  if (config.effect === 'burn') {
+    tags.push('灼烧')
+  }
+
+  if (config.effect === 'mark') {
+    tags.push('标记')
+  }
+
+  if (definition.kind === 'trap' || definition.kind === 'rain' || definition.kind === 'storm' || definition.kind === 'turret') {
+    tags.push('落点')
+  }
+
+  return Array.from(new Set(tags)).slice(0, 4)
+}
 
 const defaultLevel = (): SkillLevelConfig => ({
   cooldown: 3,
@@ -54,13 +127,20 @@ const skill = (
   kind: ActiveSkillDefinition['kind'],
   base: Partial<SkillLevelConfig>,
   growth: Partial<SkillLevelConfig>,
-): ActiveSkillDefinition => ({
-  id,
-  name,
-  description,
-  kind,
-  levels: createLevels(base, growth),
-})
+): ActiveSkillDefinition => {
+  const levels = createLevels(base, growth)
+  const buildTag = inferBuildTag(id, kind)
+
+  return {
+    id,
+    name,
+    description,
+    kind,
+    buildTag,
+    tacticalTags: inferTacticalTags({ buildTag, kind }, levels[0]),
+    levels,
+  }
+}
 
 export const ARCHER_FIXED_PASSIVE = {
   id: 'eagle-eye-focus',
@@ -88,7 +168,7 @@ export const ARCHER_ACTIVE_SKILLS: ActiveSkillDefinition[] = [
   skill('arrow-rain', '箭雨坠落', '在鼠标落点召唤箭雨。', 'rain', { damage: 3, cooldown: 4.5, range: 260, fieldRadius: 70, fieldTtl: 2.8, tickDamage: 3, tickInterval: 0.45, color: '#facc15' }, { damage: 0.7, cooldown: -0.12, fieldRadius: 10, fieldTtl: 0.25, tickDamage: 0.6 }),
   skill('arrow-screen', '箭幕推进', '射出一整片平行箭幕。', 'spread', { damage: 3.2, cooldown: 4.1, projectileCount: 8, spread: 0.72, range: 320 }, { damage: 0.8, cooldown: -0.12, projectileCount: 1, spread: 0.04 }),
   skill('meteor-cluster', '流星箭簇', '在前方大范围降下箭簇。', 'rain', { damage: 3.5, cooldown: 4.7, range: 300, fieldRadius: 84, fieldTtl: 2.4, tickDamage: 3.4, tickInterval: 0.42 }, { damage: 0.8, cooldown: -0.1, fieldRadius: 9, fieldTtl: 0.24 }),
-  skill('ring-volley', '环射轮舞', '以自身为中心射出一轮环形箭矢。', 'orbit', { damage: 3.6, cooldown: 5, projectileCount: 8, pierce: 1, range: 280 }, { damage: 0.7, cooldown: -0.1, projectileCount: 2, pierce: 0.2 }),
+  skill('ring-volley', '霜狼护阵', '召唤霜狼环绕护卫，撕咬靠近的敌群。', 'orbit', { damage: 3.6, cooldown: 5, projectileCount: 8, pierce: 1, range: 280, color: '#93c5fd' }, { damage: 0.7, cooldown: -0.1, projectileCount: 2, pierce: 0.2 }),
   skill('double-crescent', '双月弧矢', '两道弧形箭轨朝鼠标方向扩散。', 'spread', { damage: 4, cooldown: 3.8, projectileCount: 4, spread: 0.44, range: 340 }, { damage: 0.8, cooldown: -0.1, projectileCount: 1, spread: 0.04 }),
   skill('dome-suppression', '穹顶压制', '在前方区域持续落箭压制。', 'rain', { damage: 4.2, cooldown: 5.2, range: 320, fieldRadius: 92, fieldTtl: 3.4, tickDamage: 3.6, tickInterval: 0.4 }, { damage: 0.8, cooldown: -0.12, fieldRadius: 10, fieldTtl: 0.25, tickDamage: 0.5 }),
   skill('afterimage-salvo', '残影齐射', '连续多段延迟射出同向箭列。', 'spread', { damage: 3.5, cooldown: 4.2, projectileCount: 7, spread: 0.26, range: 340 }, { damage: 0.8, cooldown: -0.12, projectileCount: 1 }),
@@ -105,13 +185,13 @@ export const ARCHER_ACTIVE_SKILLS: ActiveSkillDefinition[] = [
   skill('pit-spikes', '陷坑钉射', '在前方生成地刺陷阱。', 'trap', { damage: 4.4, cooldown: 4.4, range: 240, fieldRadius: 56, fieldTtl: 4.2, tickDamage: 3.2, tickInterval: 0.5, color: '#d97706' }, { damage: 0.7, cooldown: -0.11, fieldRadius: 6, tickDamage: 0.6 }),
   skill('snare-line', '绊索箭', '在落点铺开绊线减速区域。', 'trap', { damage: 3.2, cooldown: 4.1, range: 270, fieldRadius: 72, fieldTtl: 4.5, tickDamage: 2.4, tickInterval: 0.42, effect: 'slow', effectStrength: 0.25 }, { damage: 0.6, cooldown: -0.1, fieldRadius: 7, tickDamage: 0.45 }),
   skill('shock-bolt', '震荡箭', '命中后在小范围内造成冲击。', 'projectile', { damage: 5, cooldown: 3.6, explosionRadius: 48, range: 300, color: '#fca5a5' }, { damage: 0.9, cooldown: -0.11, explosionRadius: 9 }),
-  skill('decoy-feather', '诱饵羽偶', '在前方部署会反击的诱饵箭塔。', 'turret', { damage: 3.2, cooldown: 6.4, range: 220, fieldRadius: 78, fieldTtl: 6, tickDamage: 3, tickInterval: 0.7, projectileCount: 2, spread: 0.18, projectileSpeed: 280, color: '#fda4af' }, { damage: 0.7, cooldown: -0.15, fieldTtl: 0.5, projectileCount: 0.4 }),
-  skill('sentry-tower', '哨戒箭塔', '插地后持续朝敌人射箭。', 'turret', { damage: 3.6, cooldown: 6.8, range: 260, fieldRadius: 84, fieldTtl: 6.5, tickDamage: 3.3, tickInterval: 0.65, projectileCount: 2, spread: 0.12, projectileSpeed: 300, color: '#fde047' }, { damage: 0.8, cooldown: -0.15, fieldTtl: 0.55, projectileCount: 0.5 }),
+  skill('decoy-feather', '灵鹿庇护', '召唤灵鹿在前方驻守，释放庇护箭光并为撤退创造窗口。', 'turret', { damage: 3.2, cooldown: 6.4, range: 220, fieldRadius: 78, fieldTtl: 6, tickDamage: 3, tickInterval: 0.7, projectileCount: 2, spread: 0.18, projectileSpeed: 280, color: '#fda4af' }, { damage: 0.7, cooldown: -0.15, fieldTtl: 0.5, projectileCount: 0.4 }),
+  skill('sentry-tower', '林熊护卫', '召唤林熊驻守目标点，持续反击并压住近战怪。', 'turret', { damage: 3.6, cooldown: 6.8, range: 260, fieldRadius: 84, fieldTtl: 6.5, tickDamage: 3.3, tickInterval: 0.65, projectileCount: 2, spread: 0.12, projectileSpeed: 300, color: '#fde047' }, { damage: 0.8, cooldown: -0.15, fieldTtl: 0.55, projectileCount: 0.5 }),
   skill('ice-prison', '冰锁囚笼', '在落点生成冰冷禁锢圈。', 'trap', { damage: 3.6, cooldown: 5.1, range: 250, fieldRadius: 74, fieldTtl: 4.8, tickDamage: 2.6, tickInterval: 0.4, effect: 'slow', effectStrength: 0.38, color: '#bfdbfe' }, { damage: 0.6, cooldown: -0.11, fieldRadius: 7, tickDamage: 0.45 }),
   skill('chain-reflect', '连锁折射', '多支折射箭沿鼠标方向扫荡敌群。', 'spread', { damage: 3.7, cooldown: 4.2, projectileCount: 7, spread: 0.32, pierce: 2, range: 340, color: '#67e8f9' }, { damage: 0.7, cooldown: -0.1, projectileCount: 1, pierce: 0.4 }),
   skill('double-star', '双星追击', '并排两支星矢同时穿刺。', 'projectile', { damage: 4.4, cooldown: 3.3, projectileCount: 2, spread: 0.08, pierce: 1, range: 360, color: '#fef3c7' }, { damage: 0.8, cooldown: -0.11, projectileCount: 0.4, pierce: 0.25 }),
   skill('spiral-break', '螺旋破空', '旋转箭束缠绕前行。', 'orbit', { damage: 3.5, cooldown: 4.6, projectileCount: 10, spread: 6.28, range: 260, color: '#a78bfa' }, { damage: 0.7, cooldown: -0.1, projectileCount: 2 }),
-  skill('revolving-feather', '回旋羽刃', '回旋羽刃形成短时近身清场。', 'orbit', { damage: 3.8, cooldown: 4.4, projectileCount: 8, spread: 6.28, range: 240, color: '#fcd34d' }, { damage: 0.7, cooldown: -0.1, projectileCount: 2 }),
+  skill('revolving-feather', '野猪冲阵', '呼唤野猪群从身侧冲出，短时撕开近身包围。', 'orbit', { damage: 3.8, cooldown: 4.4, projectileCount: 8, spread: 6.28, range: 240, color: '#fcd34d' }, { damage: 0.7, cooldown: -0.1, projectileCount: 2 }),
   skill('feather-storm', '旋羽风暴', '在前方生成旋羽风暴区域。', 'storm', { damage: 3.8, cooldown: 5.5, range: 250, fieldRadius: 78, fieldTtl: 4.5, tickDamage: 3.2, tickInterval: 0.32, color: '#f9a8d4' }, { damage: 0.6, cooldown: -0.1, fieldRadius: 7, tickDamage: 0.45, fieldTtl: 0.28 }),
   skill('cross-cut', '交叉切射', '形成 X 型交叉箭轨。', 'spread', { damage: 4.1, cooldown: 4.1, projectileCount: 6, spread: 0.68, range: 340 }, { damage: 0.8, cooldown: -0.1, projectileCount: 1, spread: 0.03 }),
   skill('sun-piercer', '贯日长虹', '极长射程的贯穿箭潮。', 'beam', { damage: 6.4, cooldown: 5.2, range: 560, pierce: 3, speed: 380, color: '#fde047' }, { damage: 1.2, cooldown: -0.14, range: 35, pierce: 0.5 }),
@@ -125,7 +205,7 @@ export const ARCHER_ACTIVE_SKILLS: ActiveSkillDefinition[] = [
   skill('starfire-fall', '星火坠矢', '火焰箭群从空中坠落并灼烧。', 'rain', { damage: 4.6, cooldown: 5.7, range: 290, fieldRadius: 86, fieldTtl: 3.6, tickDamage: 3.6, tickInterval: 0.36, effect: 'burn', effectStrength: 2.2, color: '#fb923c' }, { damage: 0.8, cooldown: -0.12, fieldRadius: 8, tickDamage: 0.5, effectStrength: 0.5 }),
   skill('rift-storm', '裂界风暴', '大型持续箭风暴。', 'storm', { damage: 4.6, cooldown: 6.1, range: 280, fieldRadius: 92, fieldTtl: 5, tickDamage: 3.8, tickInterval: 0.3, color: '#c084fc' }, { damage: 0.7, cooldown: -0.12, fieldRadius: 8, tickDamage: 0.45, fieldTtl: 0.32 }),
   skill('sky-judgement', '苍穹审判', '超远距离贯穿箭潮。', 'beam', { damage: 7.2, cooldown: 6.5, range: 620, pierce: 4, speed: 410, color: '#fde68a' }, { damage: 1.3, cooldown: -0.14, range: 38, pierce: 0.6 }),
-  skill('god-hunt', '狩神降临', '短时间内连续引发多段高阶箭击。', 'orbit', { damage: 5, cooldown: 7.2, projectileCount: 14, spread: 6.28, range: 300, color: '#ffffff' }, { damage: 0.9, cooldown: -0.15, projectileCount: 2 }),
+  skill('god-hunt', '百兽协猎', '短时间内呼唤多只野兽协同进攻，连续撕裂周围敌群。', 'orbit', { damage: 5, cooldown: 7.2, projectileCount: 14, spread: 6.28, range: 300, color: '#ffffff' }, { damage: 0.9, cooldown: -0.15, projectileCount: 2 }),
   skill('moonshard-volley', '月碎连矢', '碎月箭雨覆盖前方区域。', 'spread', { damage: 4.2, cooldown: 4.4, projectileCount: 7, spread: 0.4, range: 350, color: '#e9d5ff' }, { damage: 0.8, cooldown: -0.1, projectileCount: 1 }),
   skill('sunflare-sweep', '炽阳扫射', '发射炽热扫射箭列。', 'spread', { damage: 4.1, cooldown: 4.2, projectileCount: 8, spread: 0.5, range: 340, color: '#fb923c' }, { damage: 0.8, cooldown: -0.1, projectileCount: 1 }),
   skill('azure-barrage', '苍穹连雨', '蓝羽箭阵朝鼠标方向齐落。', 'rain', { damage: 4.1, cooldown: 5.2, range: 310, fieldRadius: 88, fieldTtl: 3.2, tickDamage: 3.3, tickInterval: 0.36, color: '#60a5fa' }, { damage: 0.7, cooldown: -0.11, fieldRadius: 7, tickDamage: 0.45 }),

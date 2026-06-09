@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_FIXED_PASSIVE } from '../../game/archerSkills'
+import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_FIXED_PASSIVE, SKILL_BUILD_LABELS } from '../../game/archerSkills'
 import type { SkillStat } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
 
@@ -43,10 +43,19 @@ const upgradeItems: Array<{
 
 const Panel = ({ title, children }: { title: string; children: ReactNode }) => {
   return (
-    <section className="border-2 border-[#08100b] bg-[#111913] p-4 shadow-[0_0_0_2px_rgba(157,213,172,0.1)]">
-      <h3 className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#9dd5ac] md:text-[10px]">{title}</h3>
-      <div className="mt-3">{children}</div>
+    <section className="border-2 border-[#08100b] bg-[#111913] p-5 shadow-[0_0_0_2px_rgba(157,213,172,0.08)] md:p-6">
+      <h3 className="font-pixel text-[10px] uppercase tracking-[0.18em] text-[#9dd5ac] md:text-xs">{title}</h3>
+      <div className="mt-4">{children}</div>
     </section>
+  )
+}
+
+const StatPill = ({ label, value }: { label: string; value: string }) => {
+  return (
+    <div className="border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 md:px-5 md:py-4">
+      <p className="font-pixel text-[9px] uppercase tracking-[0.14em] text-[#9dd5ac] md:text-[10px]">{label}</p>
+      <p className="mt-2 font-pixel text-[11px] uppercase tracking-[0.1em] text-[#f4f0d7] md:text-sm">{value}</p>
+    </div>
   )
 }
 
@@ -59,26 +68,30 @@ export function GamePauseOverlay() {
   const progress = Math.round((state.exp / Math.max(state.expToNext, 1)) * 100)
   const canSpend = state.phase === 'level-clear' && state.skillPoints > 0
   const hasForcedReward = state.pendingSkillReward !== null
+  const skillSummary = [
+    `${ARCHER_FIXED_PASSIVE.name} Lv.${state.fixedPassiveLevel}`,
+    ...state.activeSkills.map((skill) => `${ARCHER_ACTIVE_SKILL_MAP[skill.skillId].name} Lv.${skill.level}`),
+  ].join(' / ')
 
   if (state.phase !== 'paused' && state.phase !== 'level-clear') {
     return null
   }
 
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(3,8,6,0.74)] p-4">
-      <div className="pointer-events-auto pixel-panel w-full max-w-[1180px] p-5 md:p-6">
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(3,8,6,0.74)] p-2 md:p-4">
+      <div className="pointer-events-auto pixel-panel max-h-[94vh] w-[min(97vw,1740px)] overflow-y-auto p-6 md:p-8">
         <div className="mb-5 flex items-center justify-between gap-4">
           <div>
-            <p className="font-pixel text-[9px] uppercase tracking-[0.22em] text-[#9dd5ac] md:text-[10px]">
+            <p className="font-pixel text-[10px] uppercase tracking-[0.22em] text-[#9dd5ac] md:text-xs">
               {state.phase === 'paused' ? '游戏暂停' : '层间分配'}
             </p>
-            <h2 className="mt-2 font-pixel text-sm uppercase tracking-[0.18em] text-[#f4f0d7] md:text-base">
-              {state.phase === 'paused' ? '弓箭手暂停菜单' : '请先完成成长与技能选择'}
+            <h2 className="mt-3 font-pixel text-base uppercase tracking-[0.18em] text-[#f4f0d7] md:text-2xl">
+              {state.phase === 'paused' ? '弓箭手暂停菜单' : '选择下一层成长'}
             </h2>
           </div>
           <button
             type="button"
-            className="pixel-button px-4 py-3 font-pixel text-[10px] uppercase tracking-[0.18em]"
+            className="pixel-button px-5 py-4 font-pixel text-[11px] uppercase tracking-[0.18em] md:px-6 md:text-xs"
             onClick={togglePause}
             disabled={(state.phase === 'level-clear' && (state.skillPoints > 0 || state.pendingSkillReward !== null)) || (state.phase === 'paused' && hasForcedReward)}
           >
@@ -86,110 +99,93 @@ export function GamePauseOverlay() {
           </button>
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
-          <div className="space-y-4">
-            <Panel title="本层结果">
-              <div className="space-y-3 text-xl text-[#dfe7d5]">
-                <p>层数：第 {state.level} 层</p>
-                <p>击杀：{state.levelKills}/{state.levelTargetKills}</p>
-                <p>生命：{Math.max(0, Math.round(state.player.hp))}/{state.player.maxHp}</p>
-                <p className="text-[#9dd5ac]">{state.message}</p>
-              </div>
-            </Panel>
+        <div className="mb-4 grid gap-3 md:grid-cols-4">
+          <StatPill label="层数" value={`第 ${state.level} 层`} />
+          <StatPill label="生命" value={`${Math.max(0, Math.round(state.player.hp))}/${state.player.maxHp}`} />
+          <StatPill label="击杀" value={`${state.levelKills}/${state.levelTargetKills}`} />
+          <StatPill label="属性点" value={`${state.skillPoints}`} />
+        </div>
 
-            <Panel title="已携带技能">
-              <div className="space-y-2 text-xl text-[#dfe7d5]">
-                <p>固定被动：{ARCHER_FIXED_PASSIVE.name} Lv.{state.fixedPassiveLevel}</p>
-                {state.activeSkills.length === 0 ? <p>主动技能槽为空</p> : null}
-                {state.activeSkills.map((skill) => (
-                  <p key={skill.skillId}>{ARCHER_ACTIVE_SKILL_MAP[skill.skillId].name} Lv.{skill.level}</p>
-                ))}
-              </div>
-            </Panel>
+        <div className="mb-5 border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 md:px-5">
+          <p className="truncate font-pixel text-[9px] uppercase tracking-[0.12em] text-[#9dd5ac] md:text-[11px]">
+            {skillSummary || '暂无主动技能'}
+          </p>
+        </div>
 
-            <Panel title="下一层期待">
-              <div className="space-y-2 text-lg text-[#dfe7d5]">
-                <p>第 3 层：冲锋怪</p>
-                <p>第 5 层：精英奖励</p>
-                <p>第 7 层：分裂怪</p>
-                <p>第 9 层：爆裂怪</p>
-                <p>第 10 层：小 Boss</p>
-              </div>
-            </Panel>
-          </div>
-
-          <div className="space-y-4">
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1.18fr)_minmax(420px,0.82fr)]">
+          <div className="space-y-5">
             <Panel title="局内成长">
-              <div className="mb-3 flex items-center justify-between gap-3 text-[#9dd5ac]">
-                <span className="font-pixel text-[8px] uppercase tracking-[0.2em] md:text-[9px]">关卡进度</span>
-                <span className="font-pixel text-[8px] text-[#f4f0d7] md:text-[9px]">{progress}%</span>
+              <div className="flex items-center justify-between gap-3 text-[#9dd5ac]">
+                <span className="font-pixel text-[9px] uppercase tracking-[0.2em] md:text-[11px]">关卡进度</span>
+                <span className="font-pixel text-[9px] text-[#f4f0d7] md:text-[11px]">{progress}%</span>
               </div>
-              <div className="h-4 border-2 border-[#08100b] bg-[#09100b] p-[2px]">
+              <div className="mt-3 h-4 border-2 border-[#08100b] bg-[#09100b] p-[2px]">
                 <div
                   aria-label="经验进度"
                   className="h-full bg-[linear-gradient(90deg,#fbbf24,#f97316)] transition-all duration-300"
                   style={{ width: `${progress}%` }}
                 />
               </div>
-              <p className="mt-3 text-xl text-[#dfe7d5]">
-                {state.phase === 'level-clear'
-                  ? state.pendingSkillReward
-                    ? '先选择一个会改变战斗风格的职业奖励。'
-                    : state.skillPoints > 0
-                      ? `还剩 ${state.skillPoints} 点属性点，选择一个能被看见的成长方向。`
-                      : '奖励已处理完成，准备进入下一层。'
-                  : state.pendingSkillReward
-                    ? '精英怪掉落了额外技能奖励，请先完成选择。'
-                    : '按 ESC 查看当前属性、职业技能与成长奖励。'}
-              </p>
             </Panel>
 
             {state.pendingSkillReward ? (
-              <Panel title="三选一技能奖励">
-                <div className="grid gap-3 md:grid-cols-3">
+              <Panel title="技能奖励">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                   {state.pendingSkillReward.choices.map((choice) => (
-                    <div key={choice.choiceId} className="border-2 border-[#08100b] bg-[#121b16] px-3 py-3 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]">
-                      <p className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#f4f0d7] md:text-[10px]">{choice.title}</p>
-                      <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">{choice.description}</p>
-                      <p className="mt-2 font-pixel text-[8px] uppercase tracking-[0.16em] text-[#9dd5ac] md:text-[9px]">{choice.levelText}</p>
-                      <button
-                        type="button"
-                        className="pixel-button mt-3 px-3 py-2 font-pixel text-[10px] uppercase tracking-[0.16em]"
-                        onClick={() => acceptSkillReward(choice.choiceId)}
-                      >
-                        选择
-                      </button>
-                    </div>
+                    <button
+                      key={choice.choiceId}
+                      type="button"
+                      className="border-2 border-[#08100b] bg-[#121b16] px-5 py-5 text-left shadow-[0_0_0_2px_rgba(157,213,172,0.08)] transition hover:border-amber-300 hover:bg-[rgba(249,115,22,0.16)]"
+                      onClick={() => acceptSkillReward(choice.choiceId)}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-pixel text-[10px] uppercase tracking-[0.16em] text-[#f4f0d7] md:text-xs">{choice.title}</p>
+                        <span className="border border-[rgba(251,191,36,0.35)] bg-[rgba(251,191,36,0.12)] px-2 py-1 font-pixel text-[8px] uppercase tracking-[0.12em] text-amber-300">
+                          {SKILL_BUILD_LABELS[choice.buildTag]}
+                        </span>
+                      </div>
+                      <p className="mt-3 text-2xl leading-tight text-[#dfe7d5]">{choice.description}</p>
+                      <p className="mt-3 text-lg leading-tight text-[#9dd5ac]">{choice.tacticalText}</p>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {choice.tacticalTags.map((tag) => (
+                          <span key={tag} className="border border-[rgba(157,213,172,0.22)] bg-[rgba(8,16,11,0.5)] px-2 py-1 font-pixel text-[7px] uppercase tracking-[0.12em] text-[#9dd5ac]">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                      <p className="mt-4 font-pixel text-[9px] uppercase tracking-[0.14em] text-amber-300 md:text-[10px]">{choice.levelText}</p>
+                    </button>
                   ))}
                 </div>
                 <button
                   type="button"
-                  className="mt-4 border-2 border-[#08100b] bg-[#111913] px-4 py-3 font-pixel text-[10px] uppercase tracking-[0.16em] text-[#f4f0d7] shadow-[0_0_0_2px_rgba(157,213,172,0.08)]"
+                  className="mt-4 border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 font-pixel text-[10px] uppercase tracking-[0.14em] text-[#9dd5ac]"
                   onClick={declineSkillReward}
                 >
-                  放弃本次奖励
+                  放弃奖励
                 </button>
               </Panel>
             ) : null}
+          </div>
 
+          <div className="space-y-5">
             <Panel title={`剩余属性点 ${state.skillPoints} 点`}>
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid gap-3">
                 {upgradeItems.map((item) => (
-                  <div key={item.key} className="border-2 border-[#08100b] bg-[#121b16] px-3 py-3 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]">
-                    <div className="flex items-start justify-between gap-3">
+                  <div key={item.key} className="border-2 border-[#08100b] bg-[#121b16] px-4 py-4 shadow-[0_0_0_2px_rgba(157,213,172,0.06)]">
+                    <div className="flex items-center justify-between gap-4">
                       <div>
-                        <p className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#f4f0d7] md:text-[10px]">{item.label}</p>
-                        <p className="mt-2 inline-block border-2 border-[#08100b] bg-[rgba(251,191,36,0.16)] px-2 py-1 font-pixel text-[8px] uppercase tracking-[0.14em] text-amber-300">
-                          {item.badge}
-                        </p>
-                        <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">{item.description}</p>
-                        <p className="mt-2 font-pixel text-[8px] uppercase tracking-[0.18em] text-[#9dd5ac] md:text-[9px]">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-pixel text-[10px] uppercase tracking-[0.16em] text-[#f4f0d7] md:text-xs">{item.label}</p>
+                          <p className="font-pixel text-[9px] uppercase tracking-[0.12em] text-amber-300">{item.badge}</p>
+                        </div>
+                        <p className="mt-3 font-pixel text-[9px] uppercase tracking-[0.14em] text-[#9dd5ac] md:text-[10px]">
                           {item.getValue(state)}
                         </p>
                       </div>
                       <button
                         type="button"
-                        className="pixel-button px-3 py-2 font-pixel text-[10px] uppercase tracking-[0.16em] disabled:translate-x-0 disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+                        className="pixel-button px-4 py-3 font-pixel text-xs uppercase tracking-[0.16em] disabled:translate-x-0 disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
                         onClick={() => spendSkillPoint(item.key)}
                         disabled={!canSpend}
                       >
