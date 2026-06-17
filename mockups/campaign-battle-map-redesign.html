@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>10 战役战斗地图重设计提案</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #061010;
+        --panel: rgba(6, 18, 18, 0.9);
+        --panel-strong: rgba(5, 14, 14, 0.96);
+        --border: rgba(100, 220, 210, 0.22);
+        --text: #e7fffb;
+        --muted: #8dc7c0;
+        --soft: #6aa7a2;
+        --accent: #6af4e4;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "SFMono-Regular", "Consolas", "Menlo", monospace;
+        background:
+          radial-gradient(circle at top, rgba(54, 126, 118, 0.18), transparent 34%),
+          linear-gradient(180deg, #020707 0%, #071212 100%);
+        color: var(--text);
+      }
+
+      .page {
+        width: min(1700px, calc(100vw - 28px));
+        margin: 18px auto 42px;
+      }
+
+      .hero {
+        background: linear-gradient(180deg, rgba(7, 22, 22, 0.96), rgba(5, 14, 14, 0.94));
+        border: 1px solid var(--border);
+        border-radius: 22px;
+        padding: 24px 26px;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.34);
+      }
+
+      .eyebrow {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(106, 244, 228, 0.28);
+        color: var(--accent);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+      }
+
+      h1 {
+        margin: 14px 0 10px;
+        font-size: 28px;
+        letter-spacing: 0.03em;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 1180px;
+        color: var(--muted);
+        line-height: 1.75;
+        font-size: 14px;
+      }
+
+      .legend {
+        margin-top: 18px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .legend span {
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(11, 29, 29, 0.86);
+        border: 1px solid rgba(120, 207, 198, 0.16);
+        color: #d9fffb;
+        font-size: 12px;
+      }
+
+      .grid {
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        overflow: hidden;
+        box-shadow: 0 16px 38px rgba(0, 0, 0, 0.26);
+      }
+
+      .card-head {
+        padding: 16px 18px 12px;
+        background: linear-gradient(180deg, rgba(12, 30, 30, 0.85), rgba(7, 18, 18, 0.92));
+        border-bottom: 1px solid rgba(111, 215, 204, 0.12);
+      }
+
+      .card-stage {
+        color: var(--accent);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        margin-bottom: 8px;
+      }
+
+      .card-title {
+        margin: 0 0 8px;
+        font-size: 24px;
+      }
+
+      .card-subtitle {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.65;
+        font-size: 13px;
+      }
+
+      .preview-wrap {
+        padding: 16px;
+        background: rgba(4, 10, 10, 0.9);
+      }
+
+      .preview {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        display: block;
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: #050909;
+      }
+
+      .meta {
+        padding: 16px 18px 18px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px 18px;
+      }
+
+      .meta-block {
+        background: rgba(8, 20, 20, 0.8);
+        border: 1px solid rgba(111, 215, 204, 0.08);
+        border-radius: 14px;
+        padding: 12px;
+      }
+
+      .meta-block h3 {
+        margin: 0 0 8px;
+        color: var(--accent);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+      }
+
+      .meta-block p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.7;
+        font-size: 12px;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .chip {
+        padding: 6px 8px;
+        border-radius: 999px;
+        background: rgba(12, 31, 31, 0.86);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: #ebfffb;
+        font-size: 11px;
+        line-height: 1;
+      }
+
+      .footer-note {
+        margin-top: 18px;
+        padding: 16px 18px;
+        border-radius: 16px;
+        border: 1px dashed rgba(107, 207, 198, 0.26);
+        color: var(--soft);
+        background: rgba(6, 15, 15, 0.8);
+        line-height: 1.7;
+        font-size: 13px;
+      }
+
+      @media (max-width: 1100px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .meta {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <span class="eyebrow">独立提案 · 未实装</span>
+        <h1>10 个战役战斗地图重设计方案</h1>
+        <p>
+          这份页面只展示战斗地图背景与障碍物的重设计方向，不改战斗逻辑、不改角色页面交互。
+          我按你现在的 10 个战役主题分别做了独立地图概念，每关都有更明确的空间气质、障碍物主题语言和高清高密度像素场景表达。
+          你只需要确认整体方向和各关风格，确认后我再把它们拆成真正可落地的游戏地图绘制方案。
+        </p>
+        <div class="legend">
+          <span>目标：提升战斗地图质感</span>
+          <span>只改：背景地图 + 障碍物视觉</span>
+          <span>不改：敌人逻辑 / 技能 / UI 交互</span>
+          <span>输出：10 关独立概念图</span>
+        </div>
+      </section>
+
+      <section id="cards" class="grid"></section>
+
+      <section class="footer-note">
+        当前展示的是“方向提案版”。确认后我再进入下一步，把这 10 套方案收敛成适合你当前 Canvas 项目的实装素材语言，
+        包括地砖集、边墙集、障碍物类型映射、每关的装饰密度和统一性能约束。
+      </section>
+    </main>
+
+    <script>
+      const stages = [
+        {
+          id: 1,
+          name: '死契地牢',
+          subtitle: '冷青石砖、锁链刑具、封印祭坛，整体像被遗忘的地下监牢。',
+          floor: '#122322',
+          floorAlt: '#1c3736',
+          shadow: '#060c0c',
+          accent: '#71e4d5',
+          accentSoft: '#2b6f69',
+          warning: '#b7f3ee',
+          glow: '#98fff3',
+          line: '#3e5f5c',
+          props: '#6d7f7c',
+          metal: '#d8ece8',
+          layout: '中央封印仪式区 + 四周断柱与吊链，强调“监牢竞技场”氛围。',
+          obstacles: ['封印石柱', '刑具残台', '锁链吊架', '下沉阶梯'],
+          detail: '边缘做冷光刻痕和旧牢门结构，主战区保留清晰可走位的开阔中场。',
+          hooks: ['中轴封印阵', '边缘铁链', '台阶入口', '青绿冷光'],
+          terrain: '破碎石砖 / 仪式纹样 / 铁锈污渍',
+        },
+        {
+          id: 2,
+          name: '吸血鬼古堡',
+          subtitle: '酒红黑石、血色长毯、烛台和哥特窗影，像一座战斗中的宴会厅。',
+          floor: '#271217',
+          floorAlt: '#43191e',
+          shadow: '#080506',
+          accent: '#f87171',
+          accentSoft: '#7f1d1d',
+          warning: '#ffd5d2',
+          glow: '#ffb6b0',
+          line: '#7b3439',
+          props: '#5d3423',
+          metal: '#dbc2a0',
+          layout: '长廊式大厅 + 血毯主轴 + 两侧石棺与烛台，突出古堡贵族感。',
+          obstacles: ['石棺组', '断裂长桌', '烛台底座', '哥特窗柱'],
+          detail: '地面不再只是红黑平铺，而是有宴会厅纹样、裂缝和血迹拖痕。',
+          hooks: ['血色地毯', '尖拱窗影', '烛火光圈', '石棺群'],
+          terrain: '暗红砖 / 金属镶边 / 古堡裂纹',
+        },
+        {
+          id: 3,
+          name: '狼人黑森林',
+          subtitle: '月光林地、断木路面、狩猎陷阱和兽骨图腾，整体更偏荒野猎场。',
+          floor: '#12201a',
+          floorAlt: '#1a3027',
+          shadow: '#040a08',
+          accent: '#99cbff',
+          accentSoft: '#203c5a',
+          warning: '#e5f0ff',
+          glow: '#d2ebff',
+          line: '#456661',
+          props: '#425333',
+          metal: '#d4dfe7',
+          layout: '林间 clearing + 树根障碍 + 两侧高草与骨堆，让走位更像在林地缠斗。',
+          obstacles: ['盘根树桩', '狼骨祭柱', '猎人陷坑', '倒木路障'],
+          detail: '加入月光斑块、潮湿土路、野兽抓痕和林雾冷色层次。',
+          hooks: ['月光斑驳', '树根迷线', '骨图腾', '猎场陷阱'],
+          terrain: '泥土碎石 / 枯叶 / 潮湿苔痕',
+        },
+        {
+          id: 4,
+          name: '女巫沼泽',
+          subtitle: '毒绿湿地、木桥浮岛、沼气火和诅咒图腾，空间气质更阴湿诡异。',
+          floor: '#132417',
+          floorAlt: '#1d381e',
+          shadow: '#050a05',
+          accent: '#b8f24c',
+          accentSoft: '#4d7b19',
+          warning: '#ecd7ff',
+          glow: '#d7ff89',
+          line: '#5b7a39',
+          props: '#614831',
+          metal: '#91a07a',
+          layout: '水洼分割 + 木桥连接 + 浮岛战区，整体呈“危险地表 + 安全踏区”的视觉逻辑。',
+          obstacles: ['枯树根团', '女巫锅台', '沼泽图腾', '木桥断桩'],
+          detail: '水面有荧绿反光与薄雾，地面出现泥浆、腐烂植物和咒纹痕迹。',
+          hooks: ['毒池反光', '诅咒木桥', '泥沼浮岛', '幽绿雾气'],
+          terrain: '湿泥 / 苔藓 / 毒液水纹',
+        },
+        {
+          id: 5,
+          name: '兽人战争营地',
+          subtitle: '焦土、木刺寨墙、战鼓台和火盆，强调粗粝、压迫和前线营地感。',
+          floor: '#261d15',
+          floorAlt: '#39291c',
+          shadow: '#090604',
+          accent: '#ff8e3c',
+          accentSoft: '#7d3410',
+          warning: '#ffe0d1',
+          glow: '#ffc18e',
+          line: '#86552f',
+          props: '#6c4526',
+          metal: '#b9c3c9',
+          layout: '开阔战场 + 斜向路障 + 鼓台和营火点位，突出战地推进气氛。',
+          obstacles: ['战鼓高台', '木刺栅栏', '补给箱堆', '熄灭火盆'],
+          detail: '地表有碳灰、车辙、兽人旗帜和营地踩踏痕迹。',
+          hooks: ['焦土主路', '寨墙尖刺', '战鼓台', '前线火盆'],
+          terrain: '黄褐泥地 / 烧灼痕 / 营地木板',
+        },
+        {
+          id: 6,
+          name: '精灵失落圣林',
+          subtitle: '圣光林地、白石遗迹、古树根脉和星辉法阵，画面要更神圣空灵。',
+          floor: '#102218',
+          floorAlt: '#1a3521',
+          shadow: '#040908',
+          accent: '#ecf7c7',
+          accentSoft: '#618642',
+          warning: '#ffffff',
+          glow: '#fff6c9',
+          line: '#789f55',
+          props: '#506e41',
+          metal: '#f0e6c7',
+          layout: '林间圣坛 + 环形古树根脉 + 白石断墙，塑造被遗忘的圣林祭场。',
+          obstacles: ['月白石柱', '古树根网', '圣坛碎片', '发光花坛'],
+          detail: '地面出现柔和光斑、发光花叶、断裂祭坛和精灵纹路。',
+          hooks: ['星辉法环', '白石遗迹', '树根环场', '圣林微光'],
+          terrain: '青苔石板 / 花叶 / 圣纹细线',
+        },
+        {
+          id: 7,
+          name: '巨魔与地精矿坑',
+          subtitle: '矿道铁轨、矿车、木架和炸药桶，让战场更像危险矿井。',
+          floor: '#1f1a14',
+          floorAlt: '#2e2820',
+          shadow: '#070503',
+          accent: '#f4c94f',
+          accentSoft: '#7a5310',
+          warning: '#fff0bd',
+          glow: '#ffd978',
+          line: '#8f6823',
+          props: '#695039',
+          metal: '#a9b8c3',
+          layout: '多段铁轨交错 + 矿坑竖井口 + 临时脚手架，战场更具工业危险感。',
+          obstacles: ['矿车残骸', '支撑木架', '爆破桶堆', '竖井护栏'],
+          detail: '地面加入矿渣、铁轨、灯火照明和石壁碎块。',
+          hooks: ['交叉铁轨', '矿井口', '吊灯阴影', '炸药区'],
+          terrain: '矿尘石地 / 木板路 / 金属轨道',
+        },
+        {
+          id: 8,
+          name: '鱼人潮汐神殿',
+          subtitle: '海蓝石砖、潮水台阶、珊瑚遗迹和破损神像，突出水下神殿的潮湿感。',
+          floor: '#0f2028',
+          floorAlt: '#153541',
+          shadow: '#03080b',
+          accent: '#76ecff',
+          accentSoft: '#165f75',
+          warning: '#dafaff',
+          glow: '#aef7ff',
+          line: '#2d8296',
+          props: '#36626a',
+          metal: '#dbe8ee',
+          layout: '中央祭池 + 外环石阶 + 水域切分，形成神殿式同心结构。',
+          obstacles: ['潮池祭坛', '珊瑚石柱', '神像残块', '潮汐台阶'],
+          detail: '地面有海水反光、贝壳碎片、鱼人符文和青蓝发光边线。',
+          hooks: ['潮汐水池', '蓝白反光', '珊瑚遗迹', '神殿同心圈'],
+          terrain: '海蚀石面 / 水纹 / 盐渍裂痕',
+        },
+        {
+          id: 9,
+          name: '牛头人迷宫',
+          subtitle: '厚重黄褐石墙、角状雕纹、迷宫节点和祭祀火盆，突出方向压迫感。',
+          floor: '#231b15',
+          floorAlt: '#36291d',
+          shadow: '#090503',
+          accent: '#d9a660',
+          accentSoft: '#7c4419',
+          warning: '#fff0d8',
+          glow: '#ffd3a0',
+          line: '#9b6431',
+          props: '#6e4827',
+          metal: '#ddd9d0',
+          layout: '迷宫节点 + 对称十字厅 + 厚墙角区，障碍物更像迷宫结构本身。',
+          obstacles: ['迷宫石墙', '牛角祭柱', '石火盆', '转角封门'],
+          detail: '地砖压纹更几何，边缘做迷宫路径符号和祭祀烧灼痕。',
+          hooks: ['厚墙节点', '几何压纹', '牛角图腾', '祭火中庭'],
+          terrain: '赭石砖 / 刻纹路径 / 灰烬堆积',
+        },
+        {
+          id: 10,
+          name: '巨龙审判火山',
+          subtitle: '黑曜熔岩、裂谷火线、龙骨祭坛和焦黑石台，是最终战役的压轴场。',
+          floor: '#1c100e',
+          floorAlt: '#311716',
+          shadow: '#050202',
+          accent: '#ffb54b',
+          accentSoft: '#7b2f12',
+          warning: '#fff0c4',
+          glow: '#ffd07f',
+          line: '#b0471c',
+          props: '#4a2518',
+          metal: '#f0ddba',
+          layout: '熔岩裂隙贯穿 + 岩台分层 + 龙骨主祭坛，形成终局压迫感和高戏剧性。',
+          obstacles: ['龙骨残骸', '熔岩石台', '黑曜尖刺', '审判祭坛'],
+          detail: '地表有岩浆脉动、碎裂焦岩、热浪光和火山灰层。',
+          hooks: ['熔岩裂谷', '黑曜骨刺', '终局祭坛', '火山流光'],
+          terrain: '焦黑岩面 / 熔流裂隙 / 赤橙热光',
+        },
+      ]
+
+      const cards = document.getElementById('cards')
+
+      const tileRects = (seed, count, width, height, colors) => {
+        let out = ''
+        for (let i = 0; i < count; i += 1) {
+          const x = 28 + ((i * (seed * 17 + 41)) % (width - 88))
+          const y = 26 + ((i * (seed * 23 + 29)) % (height - 82))
+          const w = 18 + ((i * 7 + seed * 3) % 34)
+          const h = 10 + ((i * 9 + seed * 5) % 26)
+          const fill = colors[i % colors.length]
+          const opacity = 0.07 + ((i * 13) % 11) * 0.018
+          out += `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" opacity="${opacity.toFixed(2)}" rx="2" />`
+        }
+        return out
+      }
+
+      const runeMarks = (seed, count, width, height, color) => {
+        let out = ''
+        for (let i = 0; i < count; i += 1) {
+          const x = 24 + ((i * (seed * 31 + 19)) % (width - 70))
+          const y = 22 + ((i * (seed * 11 + 43)) % (height - 64))
+          const vertical = i % 2 === 0
+          if (vertical) {
+            out += `<rect x="${x}" y="${y}" width="4" height="18" fill="${color}" opacity="0.18" />`
+            out += `<rect x="${x - 5}" y="${y + 7}" width="14" height="3" fill="${color}" opacity="0.12" />`
+          } else {
+            out += `<rect x="${x}" y="${y}" width="16" height="3" fill="${color}" opacity="0.14" />`
+            out += `<rect x="${x + 6}" y="${y - 7}" width="3" height="16" fill="${color}" opacity="0.11" />`
+          }
+        }
+        return out
+      }
+
+      const pillars = (seed, count, width, height, palette) => {
+        let out = ''
+        for (let i = 0; i < count; i += 1) {
+          const x = 90 + ((i * (seed * 37 + 73)) % (width - 190))
+          const y = 70 + ((i * (seed * 19 + 101)) % (height - 160))
+          out += `
+            <g transform="translate(${x} ${y})">
+              <rect x="-20" y="-20" width="40" height="40" fill="${palette.base}" />
+              <rect x="-16" y="-16" width="32" height="32" fill="${palette.mid}" />
+              <rect x="-10" y="-12" width="8" height="24" fill="${palette.light}" opacity="0.95" />
+              <rect x="2" y="-12" width="8" height="24" fill="${palette.light}" opacity="0.62" />
+              <rect x="-28" y="20" width="56" height="8" fill="${palette.plinth}" />
+            </g>
+          `
+        }
+        return out
+      }
+
+      const scenicObstacles = (stage, width, height) => {
+        const centerX = width / 2
+        const centerY = height / 2
+        if (stage.id === 1) {
+          return `
+            <rect x="${centerX - 72}" y="${centerY - 10}" width="144" height="20" fill="${stage.accent}" opacity="0.14" />
+            <rect x="${centerX - 10}" y="${centerY - 70}" width="20" height="140" fill="${stage.accent}" opacity="0.14" />
+            <rect x="${centerX - 46}" y="${centerY - 46}" width="92" height="92" rx="10" stroke="${stage.glow}" stroke-width="4" opacity="0.35" fill="none" />
+          `
+        }
+        if (stage.id === 2) {
+          return `
+            <rect x="${centerX - 40}" y="48" width="80" height="${height - 96}" fill="${stage.warning}" opacity="0.12" />
+            <rect x="${centerX - 34}" y="60" width="68" height="${height - 120}" fill="${stage.accent}" opacity="0.18" />
+            <rect x="${centerX - 140}" y="${centerY - 22}" width="280" height="44" fill="#16090b" opacity="0.44" />
+          `
+        }
+        if (stage.id === 3) {
+          return `
+            <path d="M 66 ${height - 70} C 180 ${height - 160}, 260 ${height - 40}, 370 ${height - 118}" stroke="${stage.props}" stroke-width="26" fill="none" opacity="0.78" />
+            <path d="M ${width - 72} 74 C ${width - 180} 180, ${width - 230} 90, ${width - 340} 170" stroke="${stage.props}" stroke-width="22" fill="none" opacity="0.76" />
+          `
+        }
+        if (stage.id === 4) {
+          return `
+            <ellipse cx="${centerX}" cy="${centerY}" rx="128" ry="64" fill="${stage.accentSoft}" opacity="0.32" />
+            <ellipse cx="${centerX}" cy="${centerY}" rx="84" ry="38" fill="${stage.accent}" opacity="0.22" />
+            <rect x="${centerX - 150}" y="${centerY - 8}" width="300" height="16" fill="${stage.props}" opacity="0.6" />
+          `
+        }
+        if (stage.id === 5) {
+          return `
+            <rect x="46" y="${centerY - 14}" width="${width - 92}" height="28" fill="${stage.props}" opacity="0.2" />
+            <g opacity="0.75">
+              <rect x="120" y="76" width="12" height="120" fill="${stage.props}" />
+              <rect x="114" y="70" width="24" height="10" fill="${stage.accent}" />
+              <rect x="${width - 132}" y="${height - 196}" width="12" height="120" fill="${stage.props}" />
+              <rect x="${width - 138}" y="${height - 82}" width="24" height="10" fill="${stage.accent}" />
+            </g>
+          `
+        }
+        if (stage.id === 6) {
+          return `
+            <circle cx="${centerX}" cy="${centerY}" r="108" fill="${stage.accent}" opacity="0.08" />
+            <circle cx="${centerX}" cy="${centerY}" r="82" stroke="${stage.warning}" stroke-width="4" opacity="0.3" fill="none" />
+            <path d="M ${centerX - 220} ${height - 84} C ${centerX - 170} ${height - 160}, ${centerX - 90} ${height - 88}, ${centerX - 14} ${height - 144}" stroke="${stage.props}" stroke-width="28" fill="none" opacity="0.72" />
+            <path d="M ${centerX + 220} ${height - 84} C ${centerX + 170} ${height - 160}, ${centerX + 90} ${height - 88}, ${centerX + 14} ${height - 144}" stroke="${stage.props}" stroke-width="28" fill="none" opacity="0.72" />
+          `
+        }
+        if (stage.id === 7) {
+          return `
+            <rect x="64" y="${centerY - 46}" width="${width - 128}" height="6" fill="${stage.metal}" opacity="0.36" />
+            <rect x="64" y="${centerY - 20}" width="${width - 128}" height="6" fill="${stage.metal}" opacity="0.36" />
+            <rect x="${centerX - 24}" y="${centerY - 70}" width="48" height="90" fill="${stage.props}" opacity="0.55" />
+            <rect x="${centerX - 44}" y="${centerY + 20}" width="88" height="24" fill="${stage.line}" opacity="0.65" />
+          `
+        }
+        if (stage.id === 8) {
+          return `
+            <circle cx="${centerX}" cy="${centerY}" r="116" fill="${stage.accent}" opacity="0.08" />
+            <circle cx="${centerX}" cy="${centerY}" r="92" stroke="${stage.glow}" stroke-width="4" opacity="0.34" fill="none" />
+            <circle cx="${centerX}" cy="${centerY}" r="64" fill="${stage.accentSoft}" opacity="0.22" />
+            <rect x="${centerX - 180}" y="${centerY - 10}" width="360" height="20" fill="${stage.warning}" opacity="0.06" />
+          `
+        }
+        if (stage.id === 9) {
+          return `
+            <rect x="${centerX - 160}" y="${centerY - 18}" width="320" height="36" fill="${stage.props}" opacity="0.4" />
+            <rect x="${centerX - 18}" y="${centerY - 120}" width="36" height="240" fill="${stage.props}" opacity="0.4" />
+            <rect x="${centerX - 220}" y="${centerY - 80}" width="64" height="160" fill="${stage.line}" opacity="0.3" />
+            <rect x="${centerX + 156}" y="${centerY - 80}" width="64" height="160" fill="${stage.line}" opacity="0.3" />
+          `
+        }
+        return `
+          <path d="M 48 ${height - 112} C 170 ${height - 80}, 290 ${height - 156}, 410 ${height - 110} C 520 ${height - 70}, 660 ${height - 150}, ${width - 44} ${height - 96}" stroke="${stage.accent}" stroke-width="30" fill="none" opacity="0.24" />
+          <path d="M 104 90 C 210 140, 280 68, 360 120 C 452 176, 540 88, 650 130" stroke="${stage.warning}" stroke-width="10" fill="none" opacity="0.18" />
+          <rect x="${centerX - 74}" y="${centerY - 54}" width="148" height="108" fill="${stage.props}" opacity="0.34" />
+        `
+      }
+
+      const peripheralLights = (stage, width, height) => {
+        const points = [
+          [70, 56],
+          [width - 70, 56],
+          [70, height - 56],
+          [width - 70, height - 56],
+          [width / 2, 52],
+          [width / 2, height - 52],
+        ]
+        return points.map(([x, y]) => `
+          <g>
+            <circle cx="${x}" cy="${y}" r="26" fill="${stage.accent}" opacity="0.08" />
+            <rect x="${x - 5}" y="${y - 2}" width="10" height="30" fill="${stage.props}" />
+            <rect x="${x - 9}" y="${y - 14}" width="18" height="14" fill="${stage.accent}" opacity="0.88" />
+            <rect x="${x - 4}" y="${y - 28}" width="8" height="14" fill="${stage.warning}" opacity="0.84" />
+          </g>
+        `).join('')
+      }
+
+      const cardSvg = (stage) => {
+        const width = 960
+        const height = 540
+        return `
+          <svg class="preview" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" aria-label="${stage.name} 战斗地图预览">
+            <defs>
+              <linearGradient id="bg-${stage.id}" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="${stage.shadow}" />
+                <stop offset="1" stop-color="${stage.floor}" />
+              </linearGradient>
+              <radialGradient id="glow-${stage.id}" cx="0.5" cy="0.5" r="0.7">
+                <stop offset="0" stop-color="${stage.accent}" stop-opacity="0.18" />
+                <stop offset="1" stop-color="${stage.accent}" stop-opacity="0" />
+              </radialGradient>
+            </defs>
+
+            <rect width="${width}" height="${height}" fill="url(#bg-${stage.id})" />
+            <rect x="14" y="14" width="${width - 28}" height="${height - 28}" rx="18" fill="${stage.floor}" stroke="${stage.accentSoft}" stroke-width="2" />
+            <rect x="40" y="40" width="${width - 80}" height="${height - 80}" rx="14" fill="${stage.floorAlt}" />
+            <rect x="40" y="40" width="${width - 80}" height="${height - 80}" rx="14" fill="url(#glow-${stage.id})" />
+
+            ${tileRects(stage.id, 120, width, height, [stage.floorAlt, stage.floor, stage.shadow, stage.accentSoft])}
+            ${runeMarks(stage.id, 44, width, height, stage.warning)}
+            ${scenicObstacles(stage, width, height)}
+            ${pillars(stage.id, 6, width, height, {
+              base: stage.shadow,
+              mid: stage.props,
+              light: stage.warning,
+              plinth: stage.line,
+            })}
+            ${peripheralLights(stage, width, height)}
+
+            <rect x="72" y="72" width="${width - 144}" height="${height - 144}" rx="10" stroke="${stage.warning}" stroke-width="2" opacity="0.12" fill="none" />
+            <rect x="110" y="110" width="${width - 220}" height="${height - 220}" rx="8" stroke="${stage.accent}" stroke-width="2" opacity="0.08" fill="none" />
+
+            <g>
+              <rect x="28" y="24" width="260" height="56" rx="10" fill="#041010" opacity="0.92" stroke="${stage.accentSoft}" stroke-width="2" />
+              <text x="48" y="48" fill="${stage.accent}" font-size="14" font-family="monospace">第 ${stage.id} 关 · ${stage.name}</text>
+              <text x="48" y="68" fill="${stage.warning}" font-size="11" font-family="monospace">Battlefield Concept Preview</text>
+            </g>
+          </svg>
+        `
+      }
+
+      const createCard = (stage) => {
+        const el = document.createElement('article')
+        el.className = 'card'
+        el.innerHTML = `
+          <header class="card-head">
+            <div class="card-stage">第 ${stage.id} 关</div>
+            <h2 class="card-title">${stage.name}</h2>
+            <p class="card-subtitle">${stage.subtitle}</p>
+          </header>
+          <div class="preview-wrap">${cardSvg(stage)}</div>
+          <div class="meta">
+            <section class="meta-block">
+              <h3>地图布局</h3>
+              <p>${stage.layout}</p>
+            </section>
+            <section class="meta-block">
+              <h3>障碍物语言</h3>
+              <div class="chips">${stage.obstacles.map((item) => `<span class="chip">${item}</span>`).join('')}</div>
+            </section>
+            <section class="meta-block">
+              <h3>地表细节</h3>
+              <p>${stage.detail}</p>
+            </section>
+            <section class="meta-block">
+              <h3>关键词</h3>
+              <div class="chips">
+                ${stage.hooks.map((item) => `<span class="chip">${item}</span>`).join('')}
+                <span class="chip">${stage.terrain}</span>
+              </div>
+            </section>
+          </div>
+        `
+        return el
+      }
+
+      stages.forEach((stage) => cards.appendChild(createCard(stage)))
+    </script>
+  </body>
+  </html>

@@ -1,5 +1,4 @@
 import {
-  PALETTE,
   ROOM_PADDING,
   TILE_SIZE,
   TORCHES,
@@ -7,6 +6,7 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from './config'
+import { getCampaignThemeForLevel } from './campaignThemes'
 import { drawBeastCompanionSprite, drawEnemySprite, drawFloorTile, drawObstacleSprite, drawPickupSprite, drawPlayerSprite, drawProjectileSprite, drawTorch } from './sprites'
 import { drawReferenceArt } from './referenceArt'
 import type { BeastCompanion, Enemy, GameSnapshot, Player } from './types'
@@ -17,23 +17,78 @@ const pixel = (ctx: CanvasRenderingContext2D, x: number, y: number, width: numbe
   ctx.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(width)), Math.max(1, Math.round(height)))
 }
 
-const drawFrame = (ctx: CanvasRenderingContext2D) => {
-  ctx.fillStyle = PALETTE.wall
+const drawFrame = (ctx: CanvasRenderingContext2D, level: number) => {
+  const theme = getCampaignThemeForLevel(level)
+  ctx.fillStyle = theme.floorDark
   ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
-  ctx.fillStyle = '#0c130f'
+  ctx.fillStyle = theme.shadow
   ctx.fillRect(ROOM_PADDING - 6, ROOM_PADDING - 6, WORLD_WIDTH - (ROOM_PADDING - 6) * 2, WORLD_HEIGHT - (ROOM_PADDING - 6) * 2)
-  ctx.fillStyle = 'rgba(157, 213, 172, 0.1)'
+  ctx.fillStyle = `${theme.accent}18`
   ctx.fillRect(ROOM_PADDING, ROOM_PADDING, WORLD_WIDTH - ROOM_PADDING * 2, 8)
   ctx.fillRect(ROOM_PADDING, WORLD_HEIGHT - ROOM_PADDING - 8, WORLD_WIDTH - ROOM_PADDING * 2, 8)
   ctx.fillRect(ROOM_PADDING, ROOM_PADDING, 8, WORLD_HEIGHT - ROOM_PADDING * 2)
   ctx.fillRect(WORLD_WIDTH - ROOM_PADDING - 8, ROOM_PADDING, 8, WORLD_HEIGHT - ROOM_PADDING * 2)
+
+  for (let mark = 0; mark < 18; mark += 1) {
+    const x = ROOM_PADDING + 18 + ((mark * 83) % (WORLD_WIDTH - ROOM_PADDING * 2 - 36))
+    const y = mark % 2 === 0 ? ROOM_PADDING + 9 : WORLD_HEIGHT - ROOM_PADDING - 13
+    pixel(ctx, x, y, mark % 3 === 0 ? 16 : 10, 2, theme.floorLine)
+    pixel(ctx, x + 2, y + (mark % 2 === 0 ? 3 : -3), 4, 2, theme.accent)
+  }
+
+  if (theme.stage === 1) {
+    for (let chain = 0; chain < 10; chain += 1) {
+      const x = ROOM_PADDING + 28 + chain * 86
+      pixel(ctx, x, ROOM_PADDING + 12, 3, 18, theme.metal)
+      pixel(ctx, x - 3, ROOM_PADDING + 18, 9, 3, theme.metal)
+    }
+  } else if (theme.stage === 2) {
+    pixel(ctx, WORLD_WIDTH / 2 - 120, ROOM_PADDING + 12, 240, 7, '#4a1118')
+    pixel(ctx, WORLD_WIDTH / 2 - 98, ROOM_PADDING + 14, 196, 2, theme.metal)
+  } else if (theme.stage === 3) {
+    for (let claw = 0; claw < 7; claw += 1) {
+      pixel(ctx, ROOM_PADDING + 60 + claw * 118, ROOM_PADDING + 12, 2, 24, theme.accent)
+      pixel(ctx, ROOM_PADDING + 67 + claw * 118, ROOM_PADDING + 16, 2, 21, theme.floorLine)
+    }
+  } else if (theme.stage === 4) {
+    for (let mist = 0; mist < 14; mist += 1) {
+      pixel(ctx, ROOM_PADDING + 30 + mist * 63, WORLD_HEIGHT - ROOM_PADDING - 20, 34, 3, 'rgba(163, 230, 53, 0.2)')
+    }
+  } else if (theme.stage === 5) {
+    for (let stake = 0; stake < 13; stake += 1) {
+      pixel(ctx, ROOM_PADDING + 32 + stake * 69, ROOM_PADDING + 7, 5, 28, '#5b3416')
+      pixel(ctx, ROOM_PADDING + 31 + stake * 69, ROOM_PADDING + 4, 7, 5, '#8a552c')
+    }
+  } else if (theme.stage === 6) {
+    for (let mote = 0; mote < 22; mote += 1) {
+      pixel(ctx, ROOM_PADDING + 20 + ((mote * 41) % (WORLD_WIDTH - ROOM_PADDING * 2 - 40)), ROOM_PADDING + 10 + (mote % 3) * 8, 2, 2, mote % 2 === 0 ? '#fef3c7' : '#bef264')
+    }
+  } else if (theme.stage === 7) {
+    for (let rail = 0; rail < 2; rail += 1) {
+      pixel(ctx, ROOM_PADDING + 20, WORLD_HEIGHT - ROOM_PADDING - 25 + rail * 8, WORLD_WIDTH - ROOM_PADDING * 2 - 40, 2, '#5b3416')
+    }
+  } else if (theme.stage === 8) {
+    for (let wave = 0; wave < 16; wave += 1) {
+      pixel(ctx, ROOM_PADDING + 28 + wave * 54, WORLD_HEIGHT - ROOM_PADDING - 19 + (wave % 2) * 5, 28, 2, '#67e8f9')
+    }
+  } else if (theme.stage === 9) {
+    for (let block = 0; block < 10; block += 1) {
+      pixel(ctx, ROOM_PADDING + 48 + block * 84, ROOM_PADDING + 12, 26, 8, '#6b4423')
+      pixel(ctx, ROOM_PADDING + 56 + block * 84, ROOM_PADDING + 15, 10, 2, theme.accent)
+    }
+  } else {
+    for (let crack = 0; crack < 12; crack += 1) {
+      pixel(ctx, ROOM_PADDING + 36 + crack * 72, WORLD_HEIGHT - ROOM_PADDING - 22, 26, 2, '#f97316')
+      pixel(ctx, ROOM_PADDING + 42 + crack * 72, WORLD_HEIGHT - ROOM_PADDING - 25, 10, 1, '#fbbf24')
+    }
+  }
 }
 
-const drawFloor = (ctx: CanvasRenderingContext2D) => {
+const drawFloor = (ctx: CanvasRenderingContext2D, level: number) => {
   let tileIndex = 0
   for (let y = ROOM_PADDING; y < WORLD_HEIGHT - ROOM_PADDING; y += TILE_SIZE) {
     for (let x = ROOM_PADDING; x < WORLD_WIDTH - ROOM_PADDING; x += TILE_SIZE) {
-      drawFloorTile(ctx, x, y, tileIndex)
+      drawFloorTile(ctx, x, y, tileIndex, level)
       tileIndex += 1
     }
   }
@@ -211,6 +266,32 @@ const drawSkillFields = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => 
     ctx.fill()
     ctx.stroke()
 
+    if (state.equippedWeaponId === 'embercore-composite') {
+      pixel(ctx, field.position.x - field.radius * 0.62, field.position.y, field.radius * 1.24, 2, 'rgba(251, 146, 60, 0.34)')
+      pixel(ctx, field.position.x, field.position.y - field.radius * 0.62, 2, field.radius * 1.24, 'rgba(249, 115, 22, 0.26)')
+    } else if (state.equippedWeaponId === 'frostline-warbow') {
+      for (let shard = 0; shard < 8; shard += 1) {
+        const angle = shard * 0.78 + state.elapsedTime * 0.35
+        pixel(ctx, field.position.x + Math.cos(angle) * field.radius * 0.72, field.position.y + Math.sin(angle) * field.radius * 0.72, 4, 8, '#dbeafe')
+      }
+    } else if (state.equippedWeaponId === 'windsplit-serpent-bow') {
+      for (let line = 0; line < 5; line += 1) {
+        const y = field.position.y - field.radius * 0.5 + line * field.radius * 0.25
+        pixel(ctx, field.position.x - field.radius * 0.76, y + Math.sin(state.elapsedTime * 6 + line) * 3, field.radius * 1.52, 1, 'rgba(167, 243, 208, 0.28)')
+      }
+    } else if (state.equippedWeaponId === 'moonshadow-arc-bow') {
+      ctx.strokeStyle = 'rgba(192, 132, 252, 0.38)'
+      ctx.beginPath()
+      ctx.arc(field.position.x + 4, field.position.y - 4, field.radius * 0.72, 0.4, Math.PI * 1.7)
+      ctx.stroke()
+    } else if (state.equippedWeaponId === 'yang-birch-bow' || state.equippedWeaponId === 'skybreaker-judgement-bow') {
+      const rays = state.equippedWeaponId === 'skybreaker-judgement-bow' ? 12 : 8
+      for (let ray = 0; ray < rays; ray += 1) {
+        const angle = state.elapsedTime * 0.45 + (Math.PI * 2 * ray) / rays
+        pixel(ctx, field.position.x + Math.cos(angle) * field.radius * 0.38, field.position.y + Math.sin(angle) * field.radius * 0.38, field.radius * 0.42, 1, ray % 2 === 0 ? '#fef3c7' : '#fbbf24')
+      }
+    }
+
     if (field.kind === 'rain') {
       for (let index = 0; index < 18; index += 1) {
         const angle = index * 2.399
@@ -284,6 +365,314 @@ const drawSkillFields = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => 
   })
 }
 
+const drawEnemySkillEffects = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
+  state.enemySkillEffects.forEach((effect) => {
+    if (effect.kind === 'ricochet-link' && effect.targetPosition) {
+      const alpha = Math.max(0, Math.min(1, effect.ttl / 0.24))
+      ctx.save()
+      ctx.globalAlpha = alpha
+      ctx.strokeStyle = 'rgba(253, 230, 138, 0.85)'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.moveTo(effect.position.x, effect.position.y)
+      const midX = (effect.position.x + effect.targetPosition.x) / 2
+      const midY = (effect.position.y + effect.targetPosition.y) / 2 - 10
+      ctx.lineTo(midX, midY)
+      ctx.lineTo(effect.targetPosition.x, effect.targetPosition.y)
+      ctx.stroke()
+      pixel(ctx, effect.targetPosition.x - 4, effect.targetPosition.y - 4, 8, 8, '#fef3c7')
+      ctx.restore()
+      return
+    }
+
+    if (effect.kind === 'lightning-shock') {
+      const theme = getCampaignThemeForLevel(state.level)
+      const progress = Math.min(1, effect.age / 0.34)
+      const alpha = Math.max(0, 1 - progress)
+      const radius = (effect.range ?? 34) * (0.45 + progress * 0.75)
+      ctx.save()
+      ctx.globalAlpha = alpha
+      ctx.strokeStyle = theme.stage === 8 ? 'rgba(103, 232, 249, 0.95)' : `${theme.warning}dd`
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.arc(effect.position.x, effect.position.y, radius, 0, Math.PI * 2)
+      ctx.stroke()
+      for (let spark = 0; spark < 8; spark += 1) {
+        const angle = spark * 0.78 + state.elapsedTime * 8
+        pixel(ctx, effect.position.x + Math.cos(angle) * radius - 2, effect.position.y + Math.sin(angle) * radius - 2, 4, 4, spark % 2 === 0 ? theme.accent : theme.warning)
+      }
+      ctx.restore()
+      return
+    }
+
+    if (effect.kind === 'skeleton-slash') {
+      const theme = getCampaignThemeForLevel(state.level)
+      const direction = effect.direction ?? { x: 1, y: 0 }
+      const angle = Math.atan2(direction.y, direction.x)
+      const alpha = Math.max(0, Math.min(1, effect.ttl / 0.26))
+      const range = effect.range ?? 30
+      const side = Math.sin(state.elapsedTime * 18) > 0 ? 1 : -1
+      ctx.save()
+      ctx.translate(effect.position.x, effect.position.y)
+      ctx.rotate(angle)
+      ctx.globalAlpha = alpha * 0.95
+      ctx.strokeStyle = 'rgba(251, 113, 133, 0.8)'
+      ctx.lineWidth = 8
+      ctx.beginPath()
+      ctx.arc(0, side * range * 0.08, range * 0.9, -0.72, 0.62)
+      ctx.stroke()
+      ctx.strokeStyle = `${theme.metal}f2`
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.arc(0, side * range * 0.08, range * 0.78, -0.66, 0.52)
+      ctx.stroke()
+      ctx.strokeStyle = 'rgba(255, 237, 213, 0.95)'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.arc(0, side * range * 0.08, range * 0.62, -0.48, 0.36)
+      ctx.stroke()
+      pixel(ctx, range * 0.52, -5, range * 0.44, 3, 'rgba(248, 113, 113, 0.86)')
+      pixel(ctx, range * 0.22, side * 7 - 2, range * 0.28, 3, theme.metal)
+      for (let spark = 0; spark < 7; spark += 1) {
+        const sparkX = range * (0.26 + spark * 0.085)
+        const sparkY = side * (-12 + (spark % 3) * 8)
+        pixel(ctx, sparkX, sparkY, 3, 3, spark % 2 === 0 ? '#fca5a5' : '#fef3c7')
+      }
+      ctx.restore()
+      return
+    }
+
+    if (effect.kind === 'skeleton-whirlwind') {
+      const theme = getCampaignThemeForLevel(state.level)
+      const progress = Math.min(1, effect.age / Math.max(effect.age + effect.ttl, 0.01))
+      const alpha = Math.max(0.18, Math.min(1, effect.ttl / 0.82))
+      const radius = effect.range ?? 64
+      ctx.save()
+      ctx.globalAlpha = alpha * 0.92
+      for (let blade = 0; blade < 5; blade += 1) {
+        const angle = state.elapsedTime * 18 + blade * Math.PI * 0.42 + progress * Math.PI
+        const ringRadius = radius * (0.46 + blade * 0.075)
+        ctx.strokeStyle = blade % 2 === 0 ? 'rgba(248, 113, 113, 0.78)' : `${theme.metal}d8`
+        ctx.lineWidth = blade % 2 === 0 ? 5 : 2.5
+        ctx.beginPath()
+        ctx.arc(effect.position.x, effect.position.y, ringRadius, angle, angle + 0.92)
+        ctx.stroke()
+        const tipAngle = angle + 0.92
+        pixel(ctx, effect.position.x + Math.cos(tipAngle) * ringRadius - 4, effect.position.y + Math.sin(tipAngle) * ringRadius - 4, 8, 8, blade % 2 === 0 ? '#f87171' : theme.metal)
+        pixel(ctx, effect.position.x + Math.cos(angle + 0.3) * ringRadius - 2, effect.position.y + Math.sin(angle + 0.3) * ringRadius - 2, 4, 4, '#fef3c7')
+      }
+      ctx.globalAlpha = alpha * 0.45
+      ctx.strokeStyle = 'rgba(192, 132, 252, 0.72)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(effect.position.x, effect.position.y, radius, 0, Math.PI * 2)
+      ctx.stroke()
+      for (let spark = 0; spark < 18; spark += 1) {
+        const angle = state.elapsedTime * 12 + spark * 0.82
+        const sparkRadius = radius * (0.32 + (spark % 5) * 0.12)
+        pixel(ctx, effect.position.x + Math.cos(angle) * sparkRadius - 2, effect.position.y + Math.sin(angle) * sparkRadius - 2, 4, 4, spark % 3 === 0 ? '#fecaca' : '#fb7185')
+      }
+      ctx.restore()
+      return
+    }
+
+    if (effect.kind === 'skeleton-knight-charge') {
+      const direction = effect.direction ?? { x: 1, y: 0 }
+      const angle = Math.atan2(direction.y, direction.x)
+      const alpha = Math.max(0, Math.min(1, effect.ttl / 0.46))
+      const range = effect.range ?? 96
+      ctx.save()
+      ctx.translate(effect.position.x, effect.position.y)
+      ctx.rotate(angle)
+      ctx.globalAlpha = alpha
+      for (let streak = 0; streak < 8; streak += 1) {
+        const y = -18 + streak * 5
+        const length = range * (0.42 + streak * 0.035)
+        pixel(ctx, -length - streak * 3, y, length, streak % 2 === 0 ? 4 : 2, streak % 2 === 0 ? 'rgba(127, 29, 29, 0.72)' : 'rgba(254, 243, 199, 0.78)')
+      }
+      pixel(ctx, -range * 0.18, -3, range * 0.62, 5, 'rgba(254, 243, 199, 0.92)')
+      pixel(ctx, range * 0.32, -7, 12, 14, '#f97316')
+      for (let dust = 0; dust < 18; dust += 1) {
+        pixel(ctx, -range * 0.7 + dust * 7, 16 + (dust % 4) * 3, dust % 3 === 0 ? 5 : 3, 2, dust % 2 === 0 ? '#cbd5e1' : '#f97316')
+      }
+      ctx.restore()
+      return
+    }
+
+    if (effect.kind === 'skeleton-knight-stab') {
+      const direction = effect.direction ?? { x: 1, y: 0 }
+      const angle = Math.atan2(direction.y, direction.x)
+      const alpha = Math.max(0, Math.min(1, effect.ttl / 0.24))
+      const range = effect.range ?? 62
+      ctx.save()
+      ctx.translate(effect.position.x, effect.position.y)
+      ctx.rotate(angle)
+      ctx.globalAlpha = alpha
+      pixel(ctx, -range * 0.12, -2, range * 0.9, 4, 'rgba(254, 243, 199, 0.9)')
+      pixel(ctx, range * 0.5, -6, 12, 12, '#f97316')
+      pixel(ctx, range * 0.18, 4, range * 0.36, 2, 'rgba(248, 113, 113, 0.78)')
+      for (let chip = 0; chip < 8; chip += 1) {
+        pixel(ctx, range * 0.42 + chip * 4, -14 + (chip % 5) * 6, 3, 3, chip % 2 === 0 ? '#fef3c7' : '#fb7185')
+      }
+      ctx.restore()
+      return
+    }
+
+    if (effect.kind === 'skeleton-knight-block') {
+      const alpha = Math.max(0, Math.min(1, effect.ttl / 0.34))
+      const radius = effect.range ?? 38
+      ctx.save()
+      ctx.globalAlpha = alpha
+      ctx.strokeStyle = 'rgba(254, 243, 199, 0.95)'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.arc(effect.position.x, effect.position.y, radius * 0.72, -0.9, 0.9)
+      ctx.stroke()
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.84)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(effect.position.x - 2, effect.position.y, radius, -0.8, 0.8)
+      ctx.stroke()
+      for (let mote = 0; mote < 14; mote += 1) {
+        const angle = -0.95 + mote * 0.15
+        pixel(ctx, effect.position.x + Math.cos(angle) * radius - 2, effect.position.y + Math.sin(angle) * radius - 2, 4, 4, mote % 2 === 0 ? '#fef3c7' : '#fbbf24')
+      }
+      ctx.restore()
+      return
+    }
+
+    if (effect.kind === 'ooze-split') {
+      const alpha = Math.max(0, Math.min(1, effect.ttl / 0.46))
+      const radius = effect.range ?? 34
+      ctx.save()
+      ctx.globalAlpha = alpha
+      pixel(ctx, effect.position.x - radius * 0.45, effect.position.y - 5, radius * 0.9, 5, '#bef264')
+      pixel(ctx, effect.position.x - 2, effect.position.y - radius * 0.42, 4, radius * 0.8, '#d9ff79')
+      for (let mote = 0; mote < 22; mote += 1) {
+        const angle = mote * 0.58 + state.elapsedTime * 7
+        const spread = radius * (0.25 + (mote % 5) * 0.13)
+        pixel(ctx, effect.position.x + Math.cos(angle) * spread - 2, effect.position.y + Math.sin(angle) * spread * 0.68 - 2, mote % 3 === 0 ? 5 : 3, 3, mote % 2 === 0 ? '#a3e635' : '#d9ff79')
+      }
+      ctx.restore()
+      return
+    }
+
+    if (effect.kind === 'fire-sac-explosion') {
+      const alpha = Math.max(0, Math.min(1, effect.ttl / 0.52))
+      const progress = Math.min(1, effect.age / Math.max(effect.age + effect.ttl, 0.01))
+      const radius = (effect.range ?? 64) * (0.45 + progress * 0.65)
+      ctx.save()
+      ctx.globalAlpha = alpha * 0.2
+      ctx.fillStyle = 'rgba(249, 115, 22, 0.38)'
+      ctx.beginPath()
+      ctx.arc(effect.position.x, effect.position.y, radius, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.globalAlpha = alpha
+      for (let ring = 0; ring < 4; ring += 1) {
+        ctx.strokeStyle = ring === 0 ? 'rgba(254, 240, 163, 0.92)' : ring === 1 ? 'rgba(251, 146, 60, 0.78)' : 'rgba(127, 29, 29, 0.66)'
+        ctx.lineWidth = ring === 0 ? 3 : 2
+        ctx.beginPath()
+        ctx.arc(effect.position.x, effect.position.y, radius * (0.32 + ring * 0.16), progress * 1.8 + ring * 0.38, Math.PI * 1.55 + progress * 2.2 + ring * 0.38)
+        ctx.stroke()
+      }
+      ctx.globalAlpha = alpha * 0.95
+      pixel(ctx, effect.position.x - 8, effect.position.y - 8, 16, 16, 'rgba(249, 115, 22, 0.82)')
+      pixel(ctx, effect.position.x - 4, effect.position.y - 5, 8, 9, '#fff0a3')
+      pixel(ctx, effect.position.x + 3, effect.position.y - 11, 5, 4, '#fed7aa')
+      pixel(ctx, effect.position.x - 12, effect.position.y + 3, 6, 3, '#7c2d12')
+      pixel(ctx, effect.position.x + 8, effect.position.y + 5, 7, 3, '#431407')
+      for (let shard = 0; shard < 18; shard += 1) {
+        const angle = shard * 0.72 + progress * 1.4
+        const spread = radius * (0.24 + (shard % 6) * 0.075)
+        const sx = effect.position.x + Math.cos(angle) * spread
+        const sy = effect.position.y + Math.sin(angle) * spread * 0.72
+        pixel(ctx, sx - 3, sy - 2, shard % 3 === 0 ? 7 : 5, shard % 2 === 0 ? 3 : 4, shard % 4 === 0 ? '#fed7aa' : shard % 2 === 0 ? '#7c2d12' : '#431407')
+        pixel(ctx, sx + 1, sy - 3, 2, 2, shard % 3 === 0 ? '#fff0a3' : '#f97316')
+      }
+      for (let ember = 0; ember < 52; ember += 1) {
+        const angle = ember * 0.49 + state.elapsedTime * 6
+        const spread = radius * (0.18 + (ember % 9) * 0.075)
+        const size = ember % 11 === 0 ? 5 : ember % 4 === 0 ? 4 : 2
+        pixel(ctx, effect.position.x + Math.cos(angle) * spread - size / 2, effect.position.y + Math.sin(angle) * spread * 0.82 - size / 2, size, Math.max(2, size - 1), ember % 5 === 0 ? '#fef3c7' : ember % 3 === 0 ? '#f97316' : ember % 2 === 0 ? '#dc2626' : '#7f1d1d')
+      }
+      ctx.restore()
+      return
+    }
+
+    if (effect.kind !== 'hellhound-breath') {
+      return
+    }
+
+    const direction = effect.direction ?? { x: 1, y: 0 }
+    const theme = getCampaignThemeForLevel(state.level)
+    const angle = Math.atan2(direction.y, direction.x)
+    const range = effect.range ?? 84
+    const halfAngle = effect.halfAngle ?? 0.62
+    const fadeIn = !effect.fadeIn || effect.fadeIn <= 0 ? 1 : Math.min(1, effect.age / effect.fadeIn)
+    const fadeOut = !effect.fadeOut || effect.fadeOut <= 0 ? 1 : Math.min(1, effect.ttl / effect.fadeOut)
+    const alpha = Math.max(0, Math.min(1, fadeIn, fadeOut))
+    const bloom = 0.35 + alpha * 0.65
+    const flameReach = range * (0.45 + fadeIn * 0.55)
+    const originX = effect.position.x
+    const originY = effect.position.y
+
+    ctx.save()
+    ctx.globalAlpha = alpha * 0.34
+    ctx.beginPath()
+    ctx.moveTo(originX, originY)
+    ctx.arc(originX, originY, flameReach, angle - halfAngle, angle + halfAngle)
+    ctx.closePath()
+    ctx.fillStyle = `${theme.warning}75`
+    ctx.fill()
+
+    ctx.globalAlpha = alpha
+    for (let index = 0; index < 64; index += 1) {
+      const lane = index % 11
+      const row = Math.floor(index / 11)
+      const flicker = Math.sin(state.elapsedTime * 34 + index * 1.7) * 0.1
+      const curl = Math.cos(state.elapsedTime * 23 + lane * 1.3 + row) * 0.075
+      const laneRatio = lane / 10
+      const flameAngle = angle - halfAngle * 0.92 + laneRatio * halfAngle * 1.84 + flicker + curl
+      const lengthRatio = Math.min(1, 0.14 + row * 0.12 + (lane % 3) * 0.035 + Math.sin(state.elapsedTime * 27 + index) * 0.045)
+      const length = flameReach * lengthRatio
+      const width = Math.max(3, (16 - row * 1.65 + (lane % 2) * 3) * bloom)
+      const color = row <= 1
+        ? lane % 2 === 0 ? theme.metal : theme.accent
+        : lane % 4 === 0
+          ? theme.accent
+          : lane % 4 === 1
+            ? theme.warning
+            : lane % 4 === 2
+              ? theme.floorLine
+              : theme.accentSoft
+      pixel(
+        ctx,
+        originX + Math.cos(flameAngle) * length - width / 2,
+        originY + Math.sin(flameAngle) * length - width / 2,
+        width,
+        width,
+        color,
+      )
+    }
+
+    ctx.globalAlpha = alpha * 0.86
+    for (let lane = 0; lane < 7; lane += 1) {
+      const flameAngle = angle - halfAngle * 0.78 + (lane / 6) * halfAngle * 1.56 + Math.sin(state.elapsedTime * 24 + lane) * 0.075
+      ctx.strokeStyle = lane === 3 ? `${theme.metal}db` : `${theme.warning}9e`
+      ctx.lineWidth = lane === 3 ? 4 : 2.5
+      ctx.beginPath()
+      ctx.moveTo(originX, originY)
+      ctx.lineTo(originX + Math.cos(flameAngle) * flameReach * (0.54 + lane * 0.045), originY + Math.sin(flameAngle) * flameReach * (0.54 + lane * 0.045))
+      ctx.stroke()
+    }
+
+    ctx.globalAlpha = alpha
+    pixel(ctx, originX - 7, originY - 7, 14, 14, theme.metal)
+    pixel(ctx, originX - 4, originY - 4, 8, 8, theme.warning)
+    ctx.restore()
+  })
+}
+
 const drawAimCursor = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
   const { x, y } = state.aimPoint
   ctx.fillStyle = '#f472b6'
@@ -291,8 +680,34 @@ const drawAimCursor = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
   ctx.fillRect(x - 1, y - 10, 2, 20)
 }
 
+const drawEnemyStatusIndicators = (ctx: CanvasRenderingContext2D, enemy: Enemy, time: number) => {
+  const topY = enemy.position.y - enemy.size * 0.82
+
+  if (enemy.markStacks > 0) {
+    const width = 10 + enemy.markStacks * 4
+    pixel(ctx, enemy.position.x - width / 2, topY - 17, width, 10, 'rgba(244, 114, 182, 0.8)')
+    for (let index = 0; index < enemy.markStacks; index += 1) {
+      pixel(ctx, enemy.position.x - width / 2 + 3 + index * 4, topY - 14, 2, 4, '#fdf2f8')
+    }
+  }
+
+  if (enemy.burnTtl > 0) {
+    const flicker = Math.sin(time * 18 + enemy.position.x * 0.02) * 2
+    pixel(ctx, enemy.position.x - enemy.size * 0.28, topY - 4 + flicker, 5, 9, '#f97316')
+    pixel(ctx, enemy.position.x - enemy.size * 0.21, topY - 8 + flicker, 3, 8, '#fef3c7')
+    pixel(ctx, enemy.position.x + enemy.size * 0.18, enemy.position.y - enemy.size * 0.3 - flicker, 4, 7, '#fb923c')
+  }
+
+  if (enemy.slowTtl > 0) {
+    const shimmer = Math.sin(time * 10 + enemy.position.y * 0.02) * 0.25 + 0.55
+    pixel(ctx, enemy.position.x - enemy.size * 0.45, enemy.position.y + enemy.size * 0.36, enemy.size * 0.9, 3, `rgba(147, 197, 253, ${shimmer})`)
+    pixel(ctx, enemy.position.x - enemy.size * 0.34, enemy.position.y - enemy.size * 0.48, 4, 4, '#dbeafe')
+    pixel(ctx, enemy.position.x + enemy.size * 0.26, enemy.position.y - enemy.size * 0.3, 3, 3, '#bfdbfe')
+  }
+}
+
 const drawObstacles = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
-  state.mapObstacles.forEach((obstacle) => drawObstacleSprite(ctx, obstacle))
+  state.mapObstacles.forEach((obstacle) => drawObstacleSprite(ctx, obstacle, state.level))
 }
 
 const drawPickups = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
@@ -621,7 +1036,7 @@ const drawVillage = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
   }
   drawHouseCompletionDetails(ctx, VILLAGE_POINTS.chief.x, VILLAGE_POINTS.chief.y)
   drawVillageNpc(ctx, VILLAGE_POINTS.chief.x - 42, VILLAGE_POINTS.chief.y - 6, '#5b6f54', '#fbbf24', state.elapsedTime)
-  drawVillageObjectLabel(ctx, '猎人之家', VILLAGE_POINTS.chief.x, VILLAGE_POINTS.chief.y + 48)
+  drawVillageObjectLabel(ctx, '猎手之家', VILLAGE_POINTS.chief.x, VILLAGE_POINTS.chief.y + 48)
 
   drawPortalAndBoard(ctx, state)
 }
@@ -633,22 +1048,24 @@ export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot) =
   if (state.phase === 'idle' || state.phase === 'game-over') {
     drawVillage(ctx, state)
   } else {
-    drawFrame(ctx)
-    drawFloor(ctx)
+    drawFrame(ctx, state.level)
+    drawFloor(ctx, state.level)
     TORCHES.forEach((torch) => drawTorch(ctx, torch.x, torch.y, state.elapsedTime))
     drawObstacles(ctx, state)
     drawPickups(ctx, state)
     drawSkillFields(ctx, state)
+    drawEnemySkillEffects(ctx, state)
 
-    state.projectiles.forEach((projectile) => drawProjectileSprite(ctx, projectile, state.elapsedTime))
+    state.projectiles.forEach((projectile) => drawProjectileSprite(ctx, projectile, state.elapsedTime, state.equippedWeaponId))
     state.enemyProjectiles.forEach((projectile) => drawProjectileSprite(ctx, projectile, state.elapsedTime))
     state.beastCompanions.forEach((beast) => {
       drawBeastCompanionSprite(ctx, beast, state.elapsedTime)
       drawBeastHealthBar(ctx, beast)
     })
     state.enemies.forEach((enemy) => {
-      drawEnemySprite(ctx, enemy, state.elapsedTime)
+      drawEnemySprite(ctx, enemy, state.elapsedTime, state.level)
       drawEnemyHealthBar(ctx, enemy)
+      drawEnemyStatusIndicators(ctx, enemy, state.elapsedTime)
     })
   }
 
@@ -664,6 +1081,7 @@ export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot) =
     drawAimCursor(ctx, state)
   }
 
-  ctx.strokeStyle = 'rgba(157, 213, 172, 0.25)'
+  const theme = getCampaignThemeForLevel(state.level)
+  ctx.strokeStyle = state.phase === 'idle' ? 'rgba(157, 213, 172, 0.25)' : `${theme.accent}40`
   ctx.strokeRect(ROOM_PADDING - 2, ROOM_PADDING - 2, WORLD_WIDTH - (ROOM_PADDING - 2) * 2, WORLD_HEIGHT - (ROOM_PADDING - 2) * 2)
 }

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>地牢战斗地图概念稿</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #061010;
+        --panel: rgba(7, 18, 18, 0.9);
+        --border: rgba(93, 210, 200, 0.35);
+        --text: #e5fffb;
+        --muted: #8bc7c1;
+        --accent: #63efe1;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "SFMono-Regular", "Consolas", "Menlo", monospace;
+        background:
+          radial-gradient(circle at top, rgba(50, 110, 104, 0.22), transparent 45%),
+          linear-gradient(180deg, #030808 0%, #071212 100%);
+        color: var(--text);
+      }
+
+      .page {
+        width: min(1600px, calc(100vw - 32px));
+        margin: 24px auto 40px;
+        display: grid;
+        grid-template-columns: 1.2fr 320px;
+        gap: 20px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+        overflow: hidden;
+      }
+
+      .hero {
+        padding: 18px 22px;
+        border-bottom: 1px solid rgba(93, 210, 200, 0.18);
+      }
+
+      .hero h1 {
+        margin: 0 0 8px;
+        font-size: 22px;
+        letter-spacing: 0.04em;
+      }
+
+      .hero p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.65;
+        font-size: 14px;
+      }
+
+      .artboard {
+        padding: 18px;
+      }
+
+      .artboard img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 16px;
+        border: 1px solid rgba(99, 239, 225, 0.16);
+        image-rendering: pixelated;
+        background: #040909;
+      }
+
+      .notes {
+        padding: 18px;
+      }
+
+      .notes h2 {
+        margin: 0 0 12px;
+        font-size: 16px;
+        color: var(--accent);
+      }
+
+      .notes ul {
+        margin: 0 0 18px;
+        padding-left: 18px;
+        color: var(--muted);
+        line-height: 1.7;
+        font-size: 13px;
+      }
+
+      .chip-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .chip {
+        padding: 7px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(99, 239, 225, 0.22);
+        color: var(--text);
+        background: rgba(10, 28, 28, 0.8);
+        font-size: 12px;
+      }
+
+      @media (max-width: 1100px) {
+        .page {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="panel">
+        <div class="hero">
+          <h1>像素地牢战斗地图概念稿</h1>
+          <p>这是一张独立草案，不接入当前项目逻辑。方向上强化了冷色石砖、遗迹支柱、符文仪式场和高密度细节，目标是让战斗地图更像“可探索的地牢战场”。</p>
+        </div>
+        <div class="artboard">
+          <img src="./dungeon-battlefield-concept.svg" alt="像素地牢战斗地图概念稿" />
+        </div>
+      </section>
+
+      <aside class="panel notes">
+        <h2>视觉方向</h2>
+        <ul>
+          <li>主色调改为深青黑石砖，减少当前地图的平铺感。</li>
+          <li>加入中心仪式区、四角火炬、边缘台阶，形成地牢空间层次。</li>
+          <li>障碍物不再只是小建筑块，而是“断柱、祭台、封印石阵”这类更有主题感的造型。</li>
+          <li>地面细节提高密度，强调裂纹、磨损、发光符文和冷暖混合光源。</li>
+        </ul>
+
+        <h2>适合后续拆分的素材</h2>
+        <div class="chip-list">
+          <span class="chip">地砖集</span>
+          <span class="chip">边墙集</span>
+          <span class="chip">断柱障碍</span>
+          <span class="chip">祭坛/封印阵</span>
+          <span class="chip">火炬光源</span>
+          <span class="chip">台阶入口</span>
+          <span class="chip">裂纹贴花</span>
+          <span class="chip">血迹贴花</span>
+        </div>
+      </aside>
+    </main>
+  </body>
+</html>

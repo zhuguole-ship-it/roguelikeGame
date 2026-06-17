@@ -21,16 +21,23 @@ export function GameStatusBar() {
   const professionId = useGameStore((state) => state.professionId)
   const equippedWeaponId = useGameStore((state) => state.equippedWeaponId)
   const activeSkills = useGameStore((state) => state.activeSkills)
+  const beastCompanions = useGameStore((state) => state.beastCompanions)
+  const hasBoss = useGameStore((state) => state.enemies.some((enemy) => enemy.kind === 'boss'))
 
   if (phase === 'idle' || phase === 'game-over') {
     return null
   }
 
+  const targetLabel = hasBoss
+    ? '◆ Boss优先'
+    : targetPriority === 'melee'
+      ? '⚔ 近战优先'
+      : '◎ 远程优先'
   const items = [
     { label: '职业', value: professionId === 'archer' ? '弓箭手' : professionId },
     { label: '武器', value: equippedWeaponId ? WEAPON_DEFINITION_MAP[equippedWeaponId].name : '默认猎弓' },
     { label: '生命', value: `${Math.max(0, Math.round(hp))}/${maxHp}` },
-    { label: '目标', value: targetPriority === 'melee' ? '近战优先' : '远程优先' },
+    { label: '目标', value: targetLabel },
     { label: '当前层数', value: `第 ${level} 层` },
   ]
   const skillKeys = ['Q', 'E', 'R']
@@ -69,6 +76,14 @@ export function GameStatusBar() {
             const definition = skill ? ARCHER_ACTIVE_SKILL_MAP[skill.skillId] : null
             const cooldown = skill ? Math.ceil(skill.cooldownRemaining * 10) / 10 : 0
             const ready = Boolean(skill && cooldown <= 0)
+            const beast = skill ? beastCompanions.find((companion) => companion.skillId === skill.skillId) : null
+            const beastState = beast
+              ? beast.reviveTimer > 0
+                ? `复苏 ${beast.reviveTimer.toFixed(1)}s`
+                : `伙伴 ${Math.round(beast.hp)}/${beast.maxHp}`
+              : definition?.buildTag === 'beast'
+                ? '未召唤'
+                : null
 
             return (
               <div key={key} className="min-w-0 border border-[rgba(218,165,71,0.48)] bg-[rgba(8,16,11,0.68)] px-2 py-1 shadow-[inset_0_0_0_1px_rgba(244,240,215,0.06)]">
@@ -79,7 +94,7 @@ export function GameStatusBar() {
                   </span>
                 </div>
                 <p className="mt-1 truncate font-pixel text-[6px] text-[#9dd5ac]">
-                  {skill && definition ? `${SKILL_BUILD_LABELS[definition.buildTag]} / ${ready ? 'READY' : `${cooldown.toFixed(1)}s`}` : 'LOCKED'}
+                  {skill && definition ? `${beastState ?? SKILL_BUILD_LABELS[definition.buildTag]} / ${ready ? 'READY' : `${cooldown.toFixed(1)}s`}` : 'LOCKED'}
                 </p>
               </div>
             )

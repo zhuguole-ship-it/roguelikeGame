@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>10 战役战斗地图高清重设计预览</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #040909;
+        --panel: rgba(7, 18, 18, 0.94);
+        --panel-2: rgba(9, 24, 24, 0.9);
+        --border: rgba(102, 224, 212, 0.22);
+        --text: #e9fffb;
+        --muted: #96cac4;
+        --accent: #6af5e4;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "SFMono-Regular", "Consolas", "Menlo", monospace;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top, rgba(70, 146, 137, 0.18), transparent 34%),
+          linear-gradient(180deg, #020707 0%, #071010 100%);
+      }
+
+      .page {
+        width: min(1780px, calc(100vw - 28px));
+        margin: 18px auto 44px;
+      }
+
+      .hero {
+        background: linear-gradient(180deg, rgba(8, 22, 22, 0.96), rgba(6, 15, 15, 0.94));
+        border: 1px solid var(--border);
+        border-radius: 22px;
+        padding: 24px 26px;
+        box-shadow: 0 24px 52px rgba(0, 0, 0, 0.34);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(106, 245, 228, 0.3);
+        color: var(--accent);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+      }
+
+      h1 {
+        margin: 14px 0 10px;
+        font-size: 30px;
+        line-height: 1.2;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 1240px;
+        color: var(--muted);
+        line-height: 1.8;
+        font-size: 14px;
+      }
+
+      .hero-note {
+        margin-top: 16px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .hero-note div {
+        padding: 10px 12px;
+        border-radius: 14px;
+        background: rgba(9, 25, 25, 0.88);
+        border: 1px solid rgba(106, 245, 228, 0.12);
+        color: var(--text);
+        font-size: 12px;
+      }
+
+      .cards {
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      .card {
+        overflow: hidden;
+        border-radius: 20px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        box-shadow: 0 16px 42px rgba(0, 0, 0, 0.3);
+      }
+
+      .card-head {
+        padding: 16px 18px 12px;
+        background: linear-gradient(180deg, rgba(12, 32, 32, 0.84), rgba(8, 19, 19, 0.92));
+        border-bottom: 1px solid rgba(106, 245, 228, 0.1);
+      }
+
+      .stage {
+        color: var(--accent);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        margin-bottom: 8px;
+      }
+
+      .title {
+        margin: 0 0 8px;
+        font-size: 24px;
+      }
+
+      .subtitle {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.7;
+        font-size: 13px;
+      }
+
+      .preview {
+        padding: 16px;
+        background: rgba(4, 10, 10, 0.95);
+      }
+
+      .preview img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        object-fit: cover;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: #081010;
+      }
+
+      .meta {
+        padding: 16px 18px 18px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px 18px;
+      }
+
+      .box {
+        padding: 12px;
+        border-radius: 14px;
+        background: var(--panel-2);
+        border: 1px solid rgba(106, 245, 228, 0.08);
+      }
+
+      .box h3 {
+        margin: 0 0 8px;
+        color: var(--accent);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+      }
+
+      .box p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.75;
+        font-size: 12px;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .chip {
+        padding: 6px 9px;
+        border-radius: 999px;
+        background: rgba(14, 32, 32, 0.92);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: var(--text);
+        font-size: 11px;
+        line-height: 1;
+      }
+
+      .footer {
+        margin-top: 18px;
+        padding: 16px 18px;
+        border-radius: 16px;
+        border: 1px dashed rgba(106, 245, 228, 0.24);
+        background: rgba(6, 15, 15, 0.8);
+        color: var(--muted);
+        line-height: 1.75;
+        font-size: 13px;
+      }
+
+      @media (max-width: 1200px) {
+        .cards {
+          grid-template-columns: 1fr;
+        }
+
+        .meta {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-note {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 700px) {
+        .hero-note {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <span class="eyebrow">高清版重做 · 顶视图 · 无边界 · 未接入项目</span>
+        <h1>10 个战役战斗地图高清高密度重设计预览</h1>
+        <p>
+          这次我直接按“顶视图 + 地表切片 + 无边界无限延展”的方向，给每个战役做像素战斗地图视觉稿。
+          重点解决六件事：纯顶视图、像无限地图中的一块地表切片、地图没有边界、障碍物不再雷同、地表细节肉眼可见、每一关的空间气质和素材语言彻底拉开。
+          这些图仅用于确认风格，不会自动实装到你的项目。
+        </p>
+        <div class="hero-note">
+          <div>统一为纯顶视图：top-down / orthographic / pure overhead，排除斜视和等距透视。</div>
+          <div>地表切片感：像从无限大地图中截出的一块战斗区域，不是完整场景构图。</div>
+          <div>地图无边界：不出现房间框、封闭墙圈、场地外框，视觉上可无限延展。</div>
+          <div>障碍物彻底区分：每关专属，不再复用同一套柱子/箱子。</div>
+          <div>地表细节拉满：裂缝、纹样、污渍、轨道、水痕、熔流都会明确出现。</div>
+          <div>画面清晰度优先：统一按高清高密度像素概念图生成。</div>
+        </div>
+      </section>
+
+      <section id="cards" class="cards"></section>
+
+      <section class="footer">
+        如果这版方向对了，我下一步会把这些“高清概念图”收敛成适合你当前项目的实际战斗地图资产语言：
+        包括每关的地砖集、无边界过渡层、障碍物类型映射、局部装饰层和颜色层级，确保进项目后依然保持战斗可读性。
+      </section>
+    </main>
+
+    <script>
+      const IMAGE_API = 'https://coresg-normal.trae.ai/api/ide/v1/text_to_image'
+
+      const stages = [
+        {
+          id: 1,
+          name: '死契地牢',
+          subtitle: '顶视图地下监牢地表切片，冷青石砖、封印祭坛、铁链和刑具，像无限地图中的一块区域。',
+          prompt:
+            'pure top down orthographic overhead pixel art roguelike dungeon ground slice, ultra detailed, maximum texture density, crisp HD pixel illustration, seamless infinite map chunk, edge to edge terrain, cropped world slice, no border, no room frame, no outer wall, no arena edge, no corner framing, no composition framing, no scenic room layout, true bird view, no perspective, no isometric, cold teal prison dungeon floor with chained stone pillars, scattered ritual seal fragments, broken torture platforms, loose hanging chains, worn prison debris, cracked rune floor, mossy wet stone bricks, glowing cyan glyphs, torch soot stains, distributed obstacles, readable combat surface, handcrafted premium game environment, no characters, no UI, no text',
+          obstacles: ['封印祭坛', '刑具残台', '锁链石柱', '牢门断墙'],
+          terrain: ['裂纹石砖', '冷光符文', '铁锈污渍', '潮湿苔痕'],
+          detail:
+            '地面必须能看见监牢砖缝、封印纹样、铁锈拖痕和潮湿反光，边缘出现牢门与锁链结构。',
+        },
+        {
+          id: 2,
+          name: '吸血鬼古堡',
+          subtitle: '哥特宴会厅战场，血色长毯、石棺、烛台和窗影都要明显可见。',
+          prompt:
+            'pure top down orthographic overhead pixel art gothic castle ground slice, ultra detailed, maximum texture density, high clarity pixel scene, seamless infinite map chunk, edge to edge terrain, cropped world slice, no border, no room frame, no outer wall, no arena edge, no corner framing, no composition framing, no scenic hall layout, true bird view, no perspective, no isometric, vampire castle floor with crimson carpet strips, stone coffins, broken banquet tables, tall candle stands, gothic shadow patterns cast onto floor, black red marble floor, blood drag stains, gold trim fragments, shattered stained glass reflections on floor, luxurious ruined castle ground slice, distributed obstacles, no characters, no UI, no text',
+          obstacles: ['石棺群', '断裂长桌', '高烛台底座', '哥特窗柱'],
+          terrain: ['血毯主轴', '宴会厅纹样', '血迹拖痕', '黑红大理石'],
+          detail:
+            '要直接看到血色长毯、古堡拼花、石棺边角、烛台投光和窗棂阴影，而不是一片单纯红黑地板。',
+        },
+        {
+          id: 3,
+          name: '狼人黑森林',
+          subtitle: '月夜猎场，树根、倒木、兽骨和泥路的野性要完全立起来。',
+          prompt:
+            'pure top down orthographic overhead pixel art moonlit black forest ground slice, ultra detailed, maximum prop density, crisp HD pixel environment, seamless infinite map chunk, edge to edge terrain, cropped world slice, no border, no room frame, no outer wall, no arena edge, no framing tree walls, no composition framing, no scenic clearing composition, true bird view, no perspective, no isometric, werewolf hunting ground with twisted exposed roots, fallen logs, bone totems, muddy trails, moonlight patches on ground, claw marks, dead leaves, wet ground reflections, hunting traps, dark blue green forest floor slice, distributed obstacles, no characters, no UI, no text',
+          obstacles: ['盘根树桩', '倒木路障', '兽骨图腾', '猎场陷阱'],
+          terrain: ['泥路分层', '月光斑块', '枯叶堆', '抓痕泥印'],
+          detail:
+            '地面要看得到泥土与落叶层次、树根拱起、狼爪抓痕和月光照在潮湿路面上的反差。',
+        },
+        {
+          id: 4,
+          name: '女巫沼泽',
+          subtitle: '毒池、木桥、沼气火、咒术痕迹，空间必须一眼看出是诅咒湿地。',
+          prompt:
+            'pure top down orthographic overhead pixel art cursed swamp ground slice, ultra detailed, maximum texture density, sharp HD pixel art, seamless infinite map chunk, edge to edge terrain, cropped world slice, no border, no room frame, no outer wall, no arena edge, no island silhouette framing, no cliff ring, no composition framing, true bird view, no perspective, no isometric, witch marsh with toxic green pools, rotten wooden bridge fragments, spell totems, bubbling mud, swamp fog patches, glowing curse sigils on ground, dead tree roots entering frame naturally, alchemy cauldrons, damp moss, eerie green reflections, distributed obstacles, no characters, no UI, no text',
+          obstacles: ['枯木桥桩', '女巫锅台', '诅咒图腾', '树根泥丘'],
+          terrain: ['毒池水纹', '烂泥脚印', '沼气雾层', '咒术痕迹'],
+          detail:
+            '沼泽感要靠水面荧光、泥浆深浅、断桥木板和诅咒图腾周围的咒纹来明确呈现。',
+        },
+        {
+          id: 5,
+          name: '兽人战争营地',
+          subtitle: '前线营地要有焦土、寨墙、战鼓和补给痕迹，不能只是棕色地面。',
+          prompt:
+            'pure top down orthographic overhead pixel art orc war camp ground slice, ultra detailed, maximum prop density, crisp HD pixel environment, seamless infinite map chunk, edge to edge terrain, cropped world slice, no border, no room frame, no outer wall, no arena edge, no composition framing, no scenic camp enclosure, true bird view, no perspective, no isometric, scorched earth ground with spiked barricade fragments, war drums, supply crates, weapon racks, ash stains, wagon wheel tracks, charred dirt, fire braziers, torn banners, rough military camp traces across terrain, distributed obstacles, no characters, no UI, no text',
+          obstacles: ['战鼓高台', '木刺寨墙', '补给箱堆', '武器架'],
+          terrain: ['焦土地表', '车辙压痕', '灰烬堆积', '旗帜残布'],
+          detail:
+            '必须能直接看到被踩烂的营地道路、焦黑泥地、车轮印、兽人旗帜和鼓台周边战备痕迹。',
+        },
+        {
+          id: 6,
+          name: '精灵失落圣林',
+          subtitle: '白石遗迹与圣林光斑要高密度但通透，像神圣森林祭场。',
+          prompt:
+            'pure top down orthographic overhead pixel art sacred lost elf forest ground slice, ultra detailed, maximum texture density, crystal clear HD pixel illustration, seamless infinite map chunk, edge to edge terrain, cropped world slice, no border, no room frame, no outer wall, no arena edge, no composition framing, no scenic shrine layout, true bird view, no perspective, no isometric, luminous forest ground with white stone ruin fragments, ancient roots, glowing flower beds, starlight rune fragments, mossy marble paths, soft holy light on floor, elegant altar pieces, sacred leaves, magical pollen, distributed obstacles, no characters, no UI, no text',
+          obstacles: ['白石祭坛', '古树根网', '发光花坛', '断裂圣柱'],
+          terrain: ['圣纹石板', '花叶散落', '星辉光斑', '青苔裂缝'],
+          detail:
+            '要看得到白石裂纹、圣坛碎片、花叶发光边缘、树根盘绕和法阵微光，而不是普通绿色场地。',
+        },
+        {
+          id: 7,
+          name: '巨魔与地精矿坑',
+          subtitle: '矿井工业感要拉满，铁轨、矿车、木架、竖井和矿渣都得清晰可见。',
+          prompt:
+            'pure top down orthographic overhead pixel art goblin troll mine ground slice, ultra detailed, maximum environment density, crisp HD pixel art, seamless infinite map chunk, edge to edge terrain, cropped world slice, no border, no room frame, no outer wall, no arena edge, no composition framing, no scenic cavern walls, true bird view, no perspective, no isometric, underground mining ground with crossing rail tracks, mine carts, wooden support scaffolds, explosive barrels, ore piles, shaft openings implied in floor, lantern lighting, dust and gravel, rusty machinery parts, dangerous industrial cavern floor slice, distributed obstacles, no characters, no UI, no text',
+          obstacles: ['矿车残骸', '支撑木架', '炸药桶堆', '竖井护栏'],
+          terrain: ['交叉铁轨', '矿渣碎石', '矿灯投光', '木板作业区'],
+          detail:
+            '地面要明显分出铁轨区、矿渣区和木板通道，矿车与竖井结构必须一眼识别。',
+        },
+        {
+          id: 8,
+          name: '鱼人潮汐神殿',
+          subtitle: '水下神殿需要潮池、珊瑚、湿滑石阶和神像残块的层次感。',
+          prompt:
+            'pure top down orthographic overhead pixel art tidal murloc temple ground slice, ultra detailed, maximum texture density, high clarity pixel scene, seamless infinite map chunk, edge to edge terrain, cropped world slice, no border, no room frame, no outer wall, no arena edge, no composition framing, no scenic temple enclosure, true bird view, no perspective, no isometric, sea temple floor with tidal pools, concentric stone stair fragments, coral ruins, broken sea god statues, wet blue stone floor, shell debris, glowing aqua runes, water reflections, salt erosion cracks, sacred flooded temple ground slice, distributed obstacles, no characters, no UI, no text',
+          obstacles: ['潮池祭坛', '珊瑚石柱', '神像残块', '海蚀台阶'],
+          terrain: ['海水反光', '盐渍裂痕', '贝壳碎片', '青蓝符纹'],
+          detail:
+            '要能直接看见潮湿石砖、水波反光、珊瑚附着、神像破片和海蚀边缘，不然神殿感立不起来。',
+        },
+        {
+          id: 9,
+          name: '牛头人迷宫',
+          subtitle: '迷宫结构本身就是障碍物，厚重石墙和祭火节点必须明显区分。',
+          prompt:
+            'pure top down orthographic overhead pixel art minotaur labyrinth ground slice, ultra detailed, maximum prop density, crisp HD pixel environment, seamless infinite map chunk, edge to edge terrain, cropped world slice, no border, no room frame, no outer wall, no arena edge, no composition framing, no full maze room layout, true bird view, no perspective, no isometric, heavy sandstone maze ground with thick wall segments crossing through frame, horn totems, ritual braziers, geometric floor carvings, maze junction markers, dust, soot, ancient bull worship architecture, distributed obstacles, no characters, no UI, no text',
+          obstacles: ['迷宫石墙', '牛角祭柱', '祭祀火盆', '封门拐角'],
+          terrain: ['几何压纹', '迷宫路径符号', '灰烬烧痕', '黄褐石砖'],
+          detail:
+            '不是简单石板地，而是要看见迷宫路径刻纹、节点方向符号、祭火炭痕和厚墙阴影压迫感。',
+        },
+        {
+          id: 10,
+          name: '巨龙审判火山',
+          subtitle: '终局火山必须有熔岩裂谷、龙骨祭坛、黑曜石刺和热浪压迫感。',
+          prompt:
+            'pure top down orthographic overhead pixel art volcanic dragon judgement ground slice, ultra detailed, maximum texture density, crystal clear HD pixel art, seamless infinite map chunk, edge to edge terrain, cropped world slice, no border, no room frame, no outer wall, no arena edge, no composition framing, no scenic volcano bowl, true bird view, no perspective, no isometric, battlefield floor with lava fissures, obsidian spikes, dragon bone altar remains, scorched rock platforms, flowing magma veins, ash clouds drifting over ground, molten glow reflections, cracked basalt, burning runes, distributed obstacles, no characters, no UI, no text',
+          obstacles: ['龙骨祭坛', '熔岩石台', '黑曜尖刺', '审判残碑'],
+          terrain: ['熔流裂隙', '焦黑岩面', '火山灰层', '热浪高光'],
+          detail:
+            '地面必须能看出熔岩脉络、焦黑玄武岩、热光反射和终局祭坛周边烧灼痕迹。',
+        },
+      ]
+
+      const cards = document.getElementById('cards')
+
+      const PROMPT_SUFFIX =
+        'tileable terrain slice, infinite roguelike battlefield chunk, edge to edge detail, no walls at edges, no framing elements, no vignette composition, no scene border'
+
+      const imageUrl = (prompt, stageId) => {
+        const version = `terrain-slice-v3-stage-${stageId}`
+        return `${IMAGE_API}?prompt=${encodeURIComponent(`${prompt}, ${PROMPT_SUFFIX}`)}&image_size=landscape_16_9&v=${version}`
+      }
+
+      const createCard = (stage) => {
+        const el = document.createElement('article')
+        el.className = 'card'
+        el.innerHTML = `
+          <header class="card-head">
+            <div class="stage">第 ${stage.id} 关</div>
+            <h2 class="title">${stage.name}</h2>
+            <p class="subtitle">${stage.subtitle}</p>
+          </header>
+          <div class="preview">
+            <img src="${imageUrl(stage.prompt, stage.id)}" alt="${stage.name} 战斗地图高清概念图" loading="lazy" />
+          </div>
+          <div class="meta">
+            <section class="box">
+              <h3>专属障碍物</h3>
+              <div class="chips">${stage.obstacles.map((item) => `<span class="chip">${item}</span>`).join('')}</div>
+            </section>
+            <section class="box">
+              <h3>必须可见的地表细节</h3>
+              <div class="chips">${stage.terrain.map((item) => `<span class="chip">${item}</span>`).join('')}</div>
+            </section>
+            <section class="box">
+              <h3>这关的视觉重点</h3>
+              <p>${stage.detail}</p>
+            </section>
+            <section class="box">
+              <h3>生成标准</h3>
+              <p>高清晰度像素概念图、纯顶视图、高密度素材铺陈、无边界可延展地表、无角色无 UI，专门用于确认地图风格。</p>
+            </section>
+          </div>
+        `
+        return el
+      }
+
+      stages.forEach((stage) => cards.appendChild(createCard(stage)))
+    </script>
+  </body>
+</html>

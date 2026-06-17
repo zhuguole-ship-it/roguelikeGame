@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>10 战役无边界地表切片预览</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #030808;
+        --panel: rgba(6, 16, 16, 0.72);
+        --line: rgba(102, 224, 212, 0.18);
+        --text: #ebfffb;
+        --muted: #95cbc5;
+        --accent: #6af5e4;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at top, rgba(62, 133, 125, 0.16), transparent 28%),
+          linear-gradient(180deg, #020707 0%, #051010 100%);
+        color: var(--text);
+        font-family: "SFMono-Regular", "Consolas", "Menlo", monospace;
+      }
+
+      .shell {
+        width: min(1880px, calc(100vw - 24px));
+        margin: 16px auto 48px;
+      }
+
+      .hero {
+        padding: 22px 24px 24px;
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(7, 22, 22, 0.9), rgba(6, 14, 14, 0.78));
+      }
+
+      .eyebrow {
+        display: inline-block;
+        padding: 5px 10px;
+        color: var(--accent);
+        border: 1px solid rgba(106, 245, 228, 0.28);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+      }
+
+      h1 {
+        margin: 14px 0 10px;
+        font-size: 30px;
+        line-height: 1.2;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 1320px;
+        color: var(--muted);
+        line-height: 1.85;
+        font-size: 14px;
+      }
+
+      .hero-grid {
+        margin-top: 16px;
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .hero-grid div {
+        padding: 10px 12px;
+        border: 1px solid rgba(106, 245, 228, 0.1);
+        background: rgba(8, 23, 23, 0.7);
+        color: var(--text);
+        font-size: 12px;
+        line-height: 1.7;
+      }
+
+      .terrain-list {
+        margin-top: 16px;
+      }
+
+      .terrain-row {
+        position: relative;
+        margin-top: 16px;
+        border-top: 1px solid rgba(106, 245, 228, 0.12);
+        border-bottom: 1px solid rgba(106, 245, 228, 0.12);
+        background: rgba(4, 12, 12, 0.48);
+      }
+
+      .terrain-head {
+        padding: 18px 20px 14px;
+        background: linear-gradient(180deg, rgba(9, 27, 27, 0.68), rgba(6, 16, 16, 0.22));
+      }
+
+      .terrain-index {
+        color: var(--accent);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        margin-bottom: 8px;
+      }
+
+      .terrain-title {
+        margin: 0 0 8px;
+        font-size: 22px;
+      }
+
+      .terrain-desc {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.8;
+        font-size: 13px;
+        max-width: 1400px;
+      }
+
+      .strip {
+        position: relative;
+        width: 100%;
+        min-height: 420px;
+        overflow: hidden;
+        background: #040909;
+      }
+
+      .strip img,
+      .strip svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        min-height: 420px;
+      }
+
+      .overlay {
+        position: absolute;
+        left: 18px;
+        top: 18px;
+        max-width: min(540px, 52vw);
+        padding: 12px 14px;
+        background: rgba(4, 14, 14, 0.72);
+        border: 1px solid rgba(106, 245, 228, 0.14);
+        backdrop-filter: blur(4px);
+      }
+
+      .overlay-title {
+        margin: 0 0 8px;
+        color: var(--accent);
+        font-size: 12px;
+        letter-spacing: 0.08em;
+      }
+
+      .overlay p {
+        margin: 0;
+        color: #d8fffa;
+        line-height: 1.75;
+        font-size: 12px;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .chip {
+        padding: 6px 8px;
+        background: rgba(10, 30, 30, 0.84);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: var(--text);
+        font-size: 11px;
+        line-height: 1;
+      }
+
+      .foot {
+        margin-top: 18px;
+        padding: 16px 18px;
+        border: 1px dashed rgba(106, 245, 228, 0.22);
+        color: var(--muted);
+        background: rgba(7, 16, 16, 0.6);
+        line-height: 1.85;
+        font-size: 13px;
+      }
+
+      @media (max-width: 1100px) {
+        .hero-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .overlay {
+          max-width: calc(100% - 36px);
+        }
+      }
+
+      @media (max-width: 700px) {
+        .hero-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .strip {
+          min-height: 340px;
+        }
+
+        .strip img {
+          min-height: 340px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <span class="eyebrow">无边界连续地表预览 · 未接入项目</span>
+        <h1>10 个战役无边界地表切片预览</h1>
+        <p>
+          这一版彻底取消“正方形地图块”和“完整场景构图”的做法。
+          现在每一关都只展示成一段从无限大 roguelike 地图里截出来的连续地表切片，
+          严禁出现四面墙、门洞、房间外壳、悬崖围边、树墙围合、神殿壳体或任何构图收边。
+          你先只看方向，确认没有问题后我再做下一步。
+        </p>
+        <div class="hero-grid">
+          <div>纯顶视图，不要斜视、不要等距、不要场景透视。</div>
+          <div>像地表切片，不像完整插画场景。</div>
+          <div>边到边铺满，不要出现“地图被框在一个方块里”的感觉。</div>
+          <div>障碍物自然散落，不准拿墙、门、树圈、崖边去围出地图外轮廓。</div>
+        </div>
+      </section>
+
+      <section id="terrain-list" class="terrain-list"></section>
+
+      <section class="foot">
+        如果这版方向正确，我下一步才会把它继续推向“最高密度”，并收敛成真正可实装的战斗地表素材语言。
+        你确认前，我不会去动项目战斗地图代码。
+      </section>
+    </main>
+
+    <script>
+      const terrainStages = [
+        {
+          id: 1,
+          name: '死契地牢',
+          desc: '冷青石砖地表切片，只保留地面材质、锁链残件和刑具底座，不允许再出现牢门和墙面。',
+          palette: {
+            base: '#123538',
+            alt: '#1e5555',
+            dark: '#0a1718',
+            line: '#5ab5b0',
+            accent: '#9cf7ef',
+            warm: '#d98f52',
+            moss: '#628f43',
+          },
+          chips: ['封印碎纹', '锁链残件', '潮湿砖缝', '铁锈污痕'],
+          features: ['stone-grid', 'seal-glyph', 'chains', 'pedestals', 'moss'],
+        },
+        {
+          id: 2,
+          name: '吸血鬼古堡',
+          desc: '黑红大理石地表切片，只看地面拼花、血毯残段、烛台底座和石棺碎角，不准再形成大厅外壳。',
+          palette: {
+            base: '#151218',
+            alt: '#2d1b22',
+            dark: '#070609',
+            line: '#6d5f4f',
+            accent: '#bda06e',
+            warm: '#b54e52',
+            moss: '#53333d',
+          },
+          chips: ['血毯残段', '血痕拖尾', '黑红石纹', '金边拼花'],
+          features: ['marble-grid', 'carpet', 'blood', 'candle-bases', 'gold-inlay'],
+        },
+        {
+          id: 3,
+          name: '狼人黑森林',
+          desc: '森林地表切片，只看地面、树根、倒木、泥路和骨头散布，不准再用整圈树木围住画面。',
+          palette: {
+            base: '#143935',
+            alt: '#21554c',
+            dark: '#081513',
+            line: '#6a7b4f',
+            accent: '#8ed8ff',
+            warm: '#8c5d3f',
+            moss: '#4d7e3c',
+          },
+          chips: ['泥路水痕', '树根横穿', '倒木断面', '兽骨散落'],
+          features: ['grass-noise', 'mud-path', 'roots', 'logs', 'bones', 'puddles'],
+        },
+        {
+          id: 4,
+          name: '女巫沼泽',
+          desc: '诅咒沼泽地表切片，毒池、木桥残段、泥浆和咒术符号连续延展，不准再有岛状悬崖包边。',
+          palette: {
+            base: '#17352b',
+            alt: '#245845',
+            dark: '#0a1712',
+            line: '#7ceb6d',
+            accent: '#8effb5',
+            warm: '#95683b',
+            moss: '#8ca94a',
+          },
+          chips: ['毒池延展', '烂泥深浅', '断桥残木', '咒纹地表'],
+          features: ['swamp-pools', 'mud-islands', 'planks', 'runes', 'bubbles', 'moss'],
+        },
+        {
+          id: 5,
+          name: '兽人战争营地',
+          desc: '焦土营地地表切片，木刺、战鼓、箱堆和车辙只作为散落战地元素，不准再围成营地边线。',
+          palette: {
+            base: '#3a261c',
+            alt: '#5a3825',
+            dark: '#130b07',
+            line: '#9b6a40',
+            accent: '#f3b364',
+            warm: '#f36e36',
+            moss: '#5f512f',
+          },
+          chips: ['焦土灰烬', '战地车辙', '木刺残片', '营地补给痕迹'],
+          features: ['dirt-noise', 'wheel-ruts', 'embers', 'crates', 'stakes', 'drums'],
+        },
+        {
+          id: 6,
+          name: '精灵失落圣林',
+          desc: '圣林地表切片，白石遗迹碎片、发光花坛、树根和星辉法纹镶在连续地面里，不准再出现完整祭场壳体。',
+          palette: {
+            base: '#234130',
+            alt: '#355d42',
+            dark: '#0b1710',
+            line: '#d7eac2',
+            accent: '#fff2a8',
+            warm: '#b1db7f',
+            moss: '#7dac57',
+          },
+          chips: ['白石碎片', '花坛微光', '圣纹痕迹', '树根蔓延'],
+          features: ['grass-noise', 'marble-trace', 'roots', 'flower-glow', 'holy-runes', 'ruins'],
+        },
+        {
+          id: 7,
+          name: '巨魔与地精矿坑',
+          desc: '矿坑地表切片，交叉铁轨、矿车残骸、木架和矿渣在地表上连续出现，不准再出现洞壁包边。',
+          palette: {
+            base: '#2c241f',
+            alt: '#453930',
+            dark: '#0e0b09',
+            line: '#a98d58',
+            accent: '#e4c176',
+            warm: '#d98a39',
+            moss: '#6f6142',
+          },
+          chips: ['交叉铁轨', '矿渣碎石', '矿车残骸', '木架残件'],
+          features: ['gravel-noise', 'rail-tracks', 'ore-piles', 'cart-parts', 'timbers', 'dust'],
+        },
+        {
+          id: 8,
+          name: '鱼人潮汐神殿',
+          desc: '潮汐神殿地表切片，潮池、珊瑚、湿滑石阶碎段和神像残块嵌在地表上，不准再出现完整神殿壳体。',
+          palette: {
+            base: '#1a3640',
+            alt: '#295361',
+            dark: '#081318',
+            line: '#73d7e7',
+            accent: '#b7f7ff',
+            warm: '#78b8bc',
+            moss: '#4f8177',
+          },
+          chips: ['潮池水纹', '珊瑚附着', '海蚀台阶碎段', '青蓝符痕'],
+          features: ['stone-grid', 'tide-pools', 'coral', 'shells', 'aqua-runes', 'stair-fragments'],
+        },
+        {
+          id: 9,
+          name: '牛头人迷宫',
+          desc: '迷宫地表切片，石墙段和节点标记横穿地面，但不准再构成完整封闭迷宫房间。',
+          palette: {
+            base: '#473325',
+            alt: '#6a4a32',
+            dark: '#130b07',
+            line: '#c18c4a',
+            accent: '#f0c887',
+            warm: '#a54c2e',
+            moss: '#7b6a3f',
+          },
+          chips: ['石墙断段', '节点符号', '祭火炭痕', '几何压纹'],
+          features: ['sand-grid', 'maze-lines', 'wall-segments', 'totems', 'braziers', 'carvings'],
+        },
+        {
+          id: 10,
+          name: '巨龙审判火山',
+          desc: '火山地表切片，熔岩裂隙、龙骨碎件、黑曜尖刺和热浪光斑直接铺满地表，不准再出现终局祭坛舞台。',
+          palette: {
+            base: '#2e1713',
+            alt: '#4d2420',
+            dark: '#0d0504',
+            line: '#ef7a2c',
+            accent: '#ffd37a',
+            warm: '#ff552a',
+            moss: '#695240',
+          },
+          chips: ['熔岩裂隙', '黑曜骨刺', '焦黑岩面', '火山灰层'],
+          features: ['basalt-grid', 'lava-rifts', 'obsidian', 'bone-fragments', 'ash', 'burned-runes'],
+        },
+      ]
+
+      const list = document.getElementById('terrain-list')
+
+      const pixelRect = (x, y, w, h, fill, opacity = 1) =>
+        `<rect x="${Math.round(x)}" y="${Math.round(y)}" width="${Math.round(w)}" height="${Math.round(h)}" fill="${fill}" opacity="${opacity}" />`
+
+      const makeRng = (seed) => {
+        let value = seed >>> 0
+        return () => {
+          value = (value * 1664525 + 1013904223) >>> 0
+          return value / 4294967296
+        }
+      }
+
+      const scatterRects = (rng, width, height, count, colors) => {
+        let out = ''
+        for (let i = 0; i < count; i += 1) {
+          const x = rng() * width
+          const y = rng() * height
+          const w = 6 + rng() * 40
+          const h = 4 + rng() * 26
+          const fill = colors[Math.floor(rng() * colors.length)]
+          out += pixelRect(x, y, w, h, fill, 0.07 + rng() * 0.1)
+        }
+        return out
+      }
+
+      const scatterDots = (rng, width, height, count, color) => {
+        let out = ''
+        for (let i = 0; i < count; i += 1) {
+          out += pixelRect(rng() * width, rng() * height, 2 + rng() * 4, 2 + rng() * 4, color, 0.15 + rng() * 0.35)
+        }
+        return out
+      }
+
+      const scatterCracks = (rng, width, height, count, color) => {
+        let out = ''
+        for (let i = 0; i < count; i += 1) {
+          const x = rng() * width
+          const y = rng() * height
+          const len = 20 + rng() * 80
+          const steps = 3 + Math.floor(rng() * 5)
+          let cx = x
+          let cy = y
+          for (let s = 0; s < steps; s += 1) {
+            const dx = (rng() - 0.5) * len * 0.35
+            const dy = (rng() - 0.5) * len * 0.24
+            out += `<line x1="${cx.toFixed(1)}" y1="${cy.toFixed(1)}" x2="${(cx + dx).toFixed(1)}" y2="${(cy + dy).toFixed(1)}" stroke="${color}" stroke-width="${1 + Math.floor(rng() * 2)}" opacity="${(0.18 + rng() * 0.14).toFixed(2)}" />`
+            cx += dx
+            cy += dy
+          }
+        }
+        return out
+      }
+
+      const scatterPosts = (rng, width, height, count, palette) => {
+        let out = ''
+        for (let i = 0; i < count; i += 1) {
+          const x = 60 + rng() * (width - 120)
+          const y = 50 + rng() * (height - 100)
+          out += `
+            <g transform="translate(${x.toFixed(1)} ${y.toFixed(1)})">
+              ${pixelRect(-8, -8, 16, 16, palette.dark, 0.95)}
+              ${pixelRect(-5, -20, 10, 24, palette.alt, 0.9)}
+              ${pixelRect(-3, -18, 6, 8, palette.accent, 0.3)}
+            </g>
+          `
+        }
+        return out
+      }
+
+      const scatterChains = (rng, width, height, count, color) => {
+        let out = ''
+        for (let i = 0; i < count; i += 1) {
+          let x = 40 + rng() * (width - 80)
+          let y = 30 + rng() * (height - 60)
+          const links = 6 + Math.floor(rng() * 10)
+          for (let l = 0; l < links; l += 1) {
+            out += `<ellipse cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="6" ry="3" fill="none" stroke="${color}" stroke-width="2" opacity="${(0.25 + rng() * 0.18).toFixed(2)}" />`
+            x += (rng() - 0.5) * 24
+            y += (rng() - 0.5) * 20
+          }
+        }
+        return out
+      }
+
+      const scatterPaths = (rng, width, height, count, color, minW, maxW) => {
+        let out = ''
+        for (let i = 0; i < count; i += 1) {
+          const points = []
+          let x = rng() * width
+          let y = rng() * height
+          for (let p = 0; p < 5; p += 1) {
+            points.push(`${x.toFixed(1)},${y.toFixed(1)}`)
+            x += (rng() - 0.5) * 240
+            y += (rng() - 0.5) * 180
+          }
+          out += `<polyline points="${points.join(' ')}" fill="none" stroke="${color}" stroke-linecap="round" stroke-linejoin="round" stroke-width="${(minW + rng() * (maxW - minW)).toFixed(1)}" opacity="${(0.18 + rng() * 0.14).toFixed(2)}" />`
+        }
+        return out
+      }
+
+      const scatterCircles = (rng, width, height, count, colors, minR, maxR) => {
+        let out = ''
+        for (let i = 0; i < count; i += 1) {
+          const r = minR + rng() * (maxR - minR)
+          const fill = colors[Math.floor(rng() * colors.length)]
+          out += `<circle cx="${(rng() * width).toFixed(1)}" cy="${(rng() * height).toFixed(1)}" r="${r.toFixed(1)}" fill="${fill}" opacity="${(0.15 + rng() * 0.18).toFixed(2)}" />`
+        }
+        return out
+      }
+
+      const scatterSegments = (rng, width, height, count, palette) => {
+        let out = ''
+        for (let i = 0; i < count; i += 1) {
+          const x = 80 + rng() * (width - 160)
+          const y = 60 + rng() * (height - 120)
+          const w = 40 + rng() * 120
+          const h = 16 + rng() * 34
+          out += `
+            <g transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${Math.floor(rng() * 4) * 90})">
+              ${pixelRect(-w / 2, -h / 2, w, h, palette.dark, 0.92)}
+              ${pixelRect(-w / 2 + 4, -h / 2 + 4, w - 8, h - 8, palette.alt, 0.82)}
+            </g>
+          `
+        }
+        return out
+      }
+
+      const scatterRunes = (rng, width, height, count, color) => {
+        let out = ''
+        for (let i = 0; i < count; i += 1) {
+          const x = 40 + rng() * (width - 80)
+          const y = 40 + rng() * (height - 80)
+          out += `
+            ${pixelRect(x - 12, y - 2, 24, 4, color, 0.22)}
+            ${pixelRect(x - 2, y - 12, 4, 24, color, 0.22)}
+            ${pixelRect(x - 8, y - 8, 16, 16, 'none', 1).replace('fill="none"', `stroke="${color}" stroke-width="2" opacity="0.16"`)}
+          `
+        }
+        return out
+      }
+
+      const makeTerrainSvg = (stage) => {
+        const width = 1600
+        const height = 520
+        const rng = makeRng(stage.id * 7919)
+        const p = stage.palette
+
+        if (stage.id === 10) {
+          const lavaFissures = Array.from({ length: 6 }, (_, index) => {
+            const startX = 80 + index * 250
+            const startY = 40 + (index % 2) * 90
+            const points = [
+              `${startX},${startY}`,
+              `${startX + 60},${startY + 40}`,
+              `${startX + 20},${startY + 95}`,
+              `${startX + 110},${startY + 150}`,
+              `${startX + 70},${startY + 220}`,
+              `${startX + 150},${startY + 300}`,
+              `${startX + 120},${startY + 380}`,
+            ]
+            return `
+              <polyline points="${points.join(' ')}" fill="none" stroke="#2a0907" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" opacity="0.96" />
+              <polyline points="${points.join(' ')}" fill="none" stroke="#7d1d12" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" opacity="0.98" />
+              <polyline points="${points.join(' ')}" fill="none" stroke="#ff5c1b" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" opacity="0.98" />
+              <polyline points="${points.join(' ')}" fill="none" stroke="#ffd067" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" />
+            `
+          }).join('')
+
+          const obsidianSpikes = Array.from({ length: 26 }, (_, index) => {
+            const x = 40 + ((index * 59) % 1520)
+            const y = 60 + ((index * 83) % 380)
+            const w = 14 + (index % 4) * 8
+            const h = 32 + (index % 5) * 16
+            return `
+              <g transform="translate(${x} ${y})">
+                <polygon points="0,${h} ${w / 2},0 ${w},${h}" fill="#12090b" opacity="0.98" />
+                <polygon points="${w * 0.22},${h} ${w / 2},${h * 0.18} ${w * 0.78},${h}" fill="#3f1d22" opacity="0.84" />
+                <polygon points="${w * 0.42},${h * 0.8} ${w / 2},${h * 0.1} ${w * 0.58},${h * 0.8}" fill="#7a3a46" opacity="0.42" />
+              </g>
+            `
+          }).join('')
+
+          const boneFragments = Array.from({ length: 14 }, (_, index) => {
+            const x = 80 + ((index * 101) % 1420)
+            const y = 40 + ((index * 67) % 420)
+            const length = 42 + (index % 4) * 18
+            const angle = [18, -22, 34, -12, 48][index % 5]
+            return `
+              <g transform="translate(${x} ${y}) rotate(${angle})">
+                <rect x="${-length / 2}" y="-6" width="${length}" height="12" fill="#d8ccb3" opacity="0.95" />
+                <rect x="${-length / 2 - 8}" y="-10" width="14" height="20" fill="#f2ead8" opacity="0.95" />
+                <rect x="${length / 2 - 6}" y="-10" width="14" height="20" fill="#f2ead8" opacity="0.95" />
+              </g>
+            `
+          }).join('')
+
+          const ashClouds = Array.from({ length: 34 }, (_, index) => {
+            const x = 20 + ((index * 73) % 1560)
+            const y = 12 + ((index * 41) % 470)
+            const w = 60 + (index % 5) * 30
+            const h = 20 + (index % 4) * 10
+            return `
+              <ellipse cx="${x}" cy="${y}" rx="${w / 2}" ry="${h / 2}" fill="#6a5751" opacity="0.14" />
+              <ellipse cx="${x + 10}" cy="${y - 2}" rx="${w / 3}" ry="${h / 3}" fill="#97847e" opacity="0.08" />
+            `
+          }).join('')
+
+          const basaltPlates = Array.from({ length: 180 }, (_, index) => {
+            const x = (index % 20) * 86 - 10 + ((index * 17) % 12)
+            const y = Math.floor(index / 20) * 58 - 8 + ((index * 11) % 10)
+            const w = 78 + (index % 3) * 10
+            const h = 54 + (index % 2) * 8
+            const fill = ['#24110f', '#311815', '#3b1d19', '#281412'][index % 4]
+            return `
+              <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" opacity="0.78" />
+              <rect x="${x + 2}" y="${y + 2}" width="${w - 4}" height="${h - 4}" stroke="#4d2a23" stroke-width="2" opacity="0.42" fill="none" />
+            `
+          }).join('')
+
+          const emberDust = Array.from({ length: 420 }, (_, index) => {
+            const x = (index * 37) % 1600
+            const y = (index * 53) % 520
+            const size = 1 + (index % 3)
+            const color = ['#ff8d3d', '#ffd27a', '#9a6a58'][index % 3]
+            const opacity = [0.4, 0.68, 0.18][index % 3]
+            return pixelRect(x, y, size, size, color, opacity)
+          }).join('')
+
+          return `
+            <svg viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" aria-label="${stage.name}">
+              <defs>
+                <radialGradient id="lavaGlow" cx="50%" cy="50%" r="65%">
+                  <stop offset="0%" stop-color="#ff7a2f" stop-opacity="0.20" />
+                  <stop offset="100%" stop-color="#ff7a2f" stop-opacity="0" />
+                </radialGradient>
+              </defs>
+              <rect width="${width}" height="${height}" fill="#140706" />
+              <rect width="${width}" height="${height}" fill="url(#lavaGlow)" />
+              ${basaltPlates}
+              ${ashClouds}
+              ${lavaFissures}
+              ${obsidianSpikes}
+              ${boneFragments}
+              ${emberDust}
+              ${scatterCracks(rng, width, height, 28, '#100706')}
+              ${scatterDots(rng, width, height, 180, '#5c463f')}
+            </svg>
+          `
+        }
+
+        let extra = ''
+
+        if (stage.features.includes('stone-grid')) {
+          extra += scatterRects(rng, width, height, 260, [p.base, p.alt, p.dark])
+          extra += scatterCracks(rng, width, height, 34, p.line)
+        }
+        if (stage.features.includes('marble-grid')) {
+          extra += scatterRects(rng, width, height, 220, [p.base, p.alt, p.dark])
+          extra += scatterPaths(rng, width, height, 8, p.accent, 6, 18)
+        }
+        if (stage.features.includes('grass-noise')) {
+          extra += scatterRects(rng, width, height, 260, [p.base, p.alt, p.moss])
+          extra += scatterDots(rng, width, height, 200, p.moss)
+        }
+        if (stage.features.includes('dirt-noise') || stage.features.includes('gravel-noise') || stage.features.includes('sand-grid') || stage.features.includes('basalt-grid')) {
+          extra += scatterRects(rng, width, height, 260, [p.base, p.alt, p.dark])
+          extra += scatterDots(rng, width, height, 180, p.line)
+        }
+        if (stage.features.includes('mud-path')) {
+          extra += scatterPaths(rng, width, height, 4, '#4a3428', 22, 42)
+        }
+        if (stage.features.includes('swamp-pools')) {
+          extra += scatterCircles(rng, width, height, 22, ['#4ae381', '#72ff8f', '#2aa05c'], 10, 46)
+        }
+        if (stage.features.includes('tide-pools')) {
+          extra += scatterCircles(rng, width, height, 18, ['#57dcef', '#84f1ff', '#2ca5ba'], 14, 44)
+        }
+        if (stage.features.includes('lava-rifts')) {
+          extra += scatterPaths(rng, width, height, 7, p.warm, 8, 18)
+          extra += scatterPaths(rng, width, height, 7, p.accent, 2, 6)
+        }
+        if (stage.features.includes('roots')) {
+          extra += scatterPaths(rng, width, height, 10, '#241612', 8, 18)
+        }
+        if (stage.features.includes('logs')) {
+          extra += scatterSegments(rng, width, height, 10, { dark: '#2c170f', alt: p.warm })
+        }
+        if (stage.features.includes('bones') || stage.features.includes('bone-fragments')) {
+          extra += scatterSegments(rng, width, height, 12, { dark: '#cfc9b1', alt: '#f2ecd2' })
+        }
+        if (stage.features.includes('planks') || stage.features.includes('timbers')) {
+          extra += scatterSegments(rng, width, height, 12, { dark: '#4e301d', alt: '#8b613f' })
+        }
+        if (stage.features.includes('carpet')) {
+          extra += scatterPaths(rng, width, height, 5, '#8c1f2f', 26, 56)
+          extra += scatterDots(rng, width, height, 120, '#b62336')
+        }
+        if (stage.features.includes('blood')) {
+          extra += scatterCircles(rng, width, height, 24, ['#7d1220', '#b51728'], 6, 22)
+        }
+        if (stage.features.includes('candle-bases')) {
+          extra += scatterPosts(rng, width, height, 14, { dark: '#7a623e', alt: '#c6a167', accent: '#ffdca1' })
+        }
+        if (stage.features.includes('gold-inlay')) {
+          extra += scatterCracks(rng, width, height, 24, '#cfa865')
+        }
+        if (stage.features.includes('seal-glyph') || stage.features.includes('holy-runes') || stage.features.includes('aqua-runes') || stage.features.includes('burned-runes')) {
+          extra += scatterRunes(rng, width, height, 10, p.accent)
+        }
+        if (stage.features.includes('chains')) {
+          extra += scatterChains(rng, width, height, 12, '#8db0af')
+        }
+        if (stage.features.includes('pedestals') || stage.features.includes('candle-bases') || stage.features.includes('braziers') || stage.features.includes('totems')) {
+          extra += scatterPosts(rng, width, height, 10, { dark: p.dark, alt: p.alt, accent: p.accent })
+        }
+        if (stage.features.includes('moss')) {
+          extra += scatterCircles(rng, width, height, 22, [p.moss, p.alt], 6, 24)
+        }
+        if (stage.features.includes('wheel-ruts') || stage.features.includes('rail-tracks') || stage.features.includes('maze-lines') || stage.features.includes('marble-trace') || stage.features.includes('stair-fragments')) {
+          extra += scatterPaths(rng, width, height, 6, p.line, 4, 10)
+        }
+        if (stage.features.includes('embers')) {
+          extra += scatterDots(rng, width, height, 110, p.warm)
+        }
+        if (stage.features.includes('crates')) {
+          extra += scatterSegments(rng, width, height, 10, { dark: '#4e311f', alt: '#845633' })
+        }
+        if (stage.features.includes('drums')) {
+          extra += scatterCircles(rng, width, height, 10, ['#7a3d1f', '#b0602d'], 10, 18)
+        }
+        if (stage.features.includes('flower-glow')) {
+          extra += scatterCircles(rng, width, height, 28, ['#f7f3a2', '#d9ff93', '#9ff4b3'], 6, 18)
+        }
+        if (stage.features.includes('ruins')) {
+          extra += scatterSegments(rng, width, height, 8, { dark: '#6e725f', alt: '#d5dec4' })
+        }
+        if (stage.features.includes('ore-piles')) {
+          extra += scatterCircles(rng, width, height, 18, ['#8d7754', '#c7a87d', '#685542'], 8, 22)
+        }
+        if (stage.features.includes('cart-parts')) {
+          extra += scatterSegments(rng, width, height, 8, { dark: '#493429', alt: '#7d5e40' })
+        }
+        if (stage.features.includes('coral')) {
+          extra += scatterCircles(rng, width, height, 18, ['#7ee7ff', '#50bad1', '#88fff7'], 6, 18)
+        }
+        if (stage.features.includes('shells')) {
+          extra += scatterSegments(rng, width, height, 14, { dark: '#e3efe7', alt: '#b8d7dd' })
+        }
+        if (stage.features.includes('wall-segments')) {
+          extra += scatterSegments(rng, width, height, 8, { dark: '#2e1d12', alt: '#7c5a3e' })
+        }
+        if (stage.features.includes('obsidian')) {
+          extra += scatterSegments(rng, width, height, 12, { dark: '#12090b', alt: '#432124' })
+        }
+        if (stage.features.includes('ash')) {
+          extra += scatterDots(rng, width, height, 180, '#8c7264')
+        }
+
+        const svg = `
+          <svg viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" aria-label="${stage.name}">
+            <rect width="${width}" height="${height}" fill="${p.base}" />
+            ${scatterRects(rng, width, height, 320, [p.base, p.alt, p.dark, p.moss])}
+            ${scatterDots(rng, width, height, 240, p.line)}
+            ${extra}
+            ${scatterCracks(rng, width, height, 26, p.dark)}
+          </svg>
+        `
+
+        return svg
+      }
+
+      terrainStages.forEach((stage) => {
+        const row = document.createElement('article')
+        row.className = 'terrain-row'
+        row.innerHTML = `
+          <header class="terrain-head">
+            <div class="terrain-index">第 ${stage.id} 关</div>
+            <h2 class="terrain-title">${stage.name}</h2>
+            <p class="terrain-desc">${stage.desc}</p>
+          </header>
+          <div class="strip">
+            ${makeTerrainSvg(stage)}
+            <div class="overlay">
+              <h3 class="overlay-title">检视重点</h3>
+              <p>这一关现在只允许像“无限地图中的一段连续地表”，严禁四面墙、门洞、围墙、树圈、悬崖包边、神殿壳或任何完整房间。</p>
+              <div class="chips">${stage.chips.map((chip) => `<span class="chip">${chip}</span>`).join('')}</div>
+            </div>
+          </div>
+        `
+        list.appendChild(row)
+      })
+    </script>
+  </body>
+</html>

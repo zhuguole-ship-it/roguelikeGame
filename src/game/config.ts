@@ -32,6 +32,9 @@ export const POWER_DAMAGE_BONUS = 3
 export const HASTE_INTERVAL_REDUCTION = 0.04
 export const AGILITY_SPEED_BONUS = 14
 export const PLAYER_MIN_ATTACK_INTERVAL = 0.18
+export const CAMPAIGN_COUNT = 10
+export const FLOORS_PER_CAMPAIGN = 22
+export const MAX_CAMPAIGN_LEVEL = CAMPAIGN_COUNT * FLOORS_PER_CAMPAIGN
 
 export const TORCHES: Vector2[] = [
   { x: 44, y: 36 },
@@ -70,46 +73,268 @@ export const PALETTE = {
   text: '#f4f0d7',
 }
 
-export const isBossLevel = (level: number) => level > 0 && level % 10 === 0
-export const isEliteLevel = (level: number) => level > 0 && level % 5 === 0 && !isBossLevel(level)
-export const getLevelGoal = (level: number) => {
-  if (isBossLevel(level)) {
+export const getCampaignIndex = (level: number) => Math.min(CAMPAIGN_COUNT, Math.max(1, Math.ceil(level / FLOORS_PER_CAMPAIGN)))
+export const getCampaignFloor = (level: number) => ((Math.max(1, level) - 1) % FLOORS_PER_CAMPAIGN) + 1
+export const isBossLevel = (level: number) => getCampaignFloor(level) === FLOORS_PER_CAMPAIGN
+export type CampaignFloorPhase = 'intro' | 'horde-ramp' | 'combination' | 'theme-mechanic' | 'elite-pressure' | 'boss-prelude' | 'gatekeeper' | 'boss'
+export const getCampaignFloorPhase = (level: number): CampaignFloorPhase => {
+  const floor = getCampaignFloor(level)
+
+  if (floor === FLOORS_PER_CAMPAIGN) {
+    return 'boss'
+  }
+
+  if (floor === 21) {
+    return 'gatekeeper'
+  }
+
+  if (floor >= 19) {
+    return 'boss-prelude'
+  }
+
+  if (floor >= 15) {
+    return 'elite-pressure'
+  }
+
+  if (floor >= 13) {
+    return 'theme-mechanic'
+  }
+
+  if (floor >= 8) {
+    return 'combination'
+  }
+
+  if (floor >= 4) {
+    return 'horde-ramp'
+  }
+
+  return 'intro'
+}
+export const hasCampaignEnvironmentMechanic = (level: number) => getCampaignFloorPhase(level) === 'theme-mechanic'
+export const isBossPreludeLevel = (level: number) => getCampaignFloorPhase(level) === 'boss-prelude'
+export const isGatekeeperLevel = (level: number) => getCampaignFloorPhase(level) === 'gatekeeper'
+export const isEliteLevel = (level: number) => {
+  const floor = getCampaignFloor(level)
+  return floor > 0 && floor < FLOORS_PER_CAMPAIGN && floor % 3 === 0
+}
+export const getHordeMultiplier = (level: number) => {
+  const floor = getCampaignFloor(level)
+
+  if (floor === FLOORS_PER_CAMPAIGN) {
     return 1
   }
 
-  if (isEliteLevel(level)) {
-    return 8 + level
+  if (floor <= 1) {
+    return 1
   }
 
-  return 6 + level * 3
+  if (floor === 2) {
+    return 1.2
+  }
+
+  if (floor === 3) {
+    return 1.4
+  }
+
+  if (floor <= 5) {
+    return 1.6 + (floor - 4) * 0.2
+  }
+
+  if (floor <= 8) {
+    return 1.8 + (floor - 6) * 0.1
+  }
+
+  if (floor <= 15) {
+    return 2 + (floor - 9) * (0.1 / 6)
+  }
+
+  if (floor <= 20) {
+    return 2.2 + (floor - 16) * (0.1 / 4)
+  }
+
+  return 2.4
 }
-export const getExperienceTarget = (level: number) => getLevelGoal(level) * 18
-export const getSpawnInterval = (level: number) => Math.max(0.22, 0.66 - level * 0.035)
-export const getMaxEnemiesOnField = (level: number) => 4 + Math.min(6, Math.floor(level * 1.2))
-export const getEnemyCountWeight = (level: number) => Math.min(0.55, Math.max(0, (level - 3) * 0.08))
+
+export type HordeOnScreenTargets = {
+  normalMin: number
+  normalMax: number
+  burstMin: number
+  burstMax: number
+  hardCap: number
+}
+
+const CAMPAIGN_INTENSITY: Record<number, { hp: number; attack: number }> = {
+  1: { hp: 1, attack: 1 },
+  2: { hp: 1.25, attack: 1.15 },
+  3: { hp: 1.55, attack: 1.3 },
+  4: { hp: 1.9, attack: 1.5 },
+  5: { hp: 2.35, attack: 1.75 },
+  6: { hp: 2.9, attack: 2.05 },
+  7: { hp: 3.55, attack: 2.4 },
+  8: { hp: 4.35, attack: 2.8 },
+  9: { hp: 5.3, attack: 3.25 },
+  10: { hp: 6.5, attack: 3.8 },
+}
+
+export const getCampaignIntensity = (level: number) => CAMPAIGN_INTENSITY[getCampaignIndex(level)] ?? CAMPAIGN_INTENSITY[1]
+
+export const getFloorIntensity = (level: number) => {
+  const floor = getCampaignFloor(level)
+  if (floor <= 2) return 0.8
+  if (floor === 3) return 0.95
+  if (floor <= 5) return 1.05
+  if (floor <= 8) return 1.2
+  if (floor <= 11) return 1.38
+  if (floor === 12) return 1.5
+  if (floor <= 14) return 1.62
+  if (floor === 15) return 1.78
+  if (floor <= 17) return 1.9
+  if (floor === 18) return 2.05
+  if (floor <= 20) return 2.2
+  if (floor === 21) return 2.4
+  return 1
+}
+
+export const getHordeOnScreenTargets = (level: number): HordeOnScreenTargets => {
+  const campaign = getCampaignIndex(level)
+  if (campaign <= 2) {
+    return { normalMin: 30, normalMax: 45, burstMin: 55, burstMax: 70, hardCap: 80 }
+  }
+  if (campaign <= 5) {
+    return { normalMin: 50, normalMax: 75, burstMin: 85, burstMax: 115, hardCap: 130 }
+  }
+  if (campaign <= 8) {
+    return { normalMin: 75, normalMax: 110, burstMin: 120, burstMax: 160, hardCap: 180 }
+  }
+  return { normalMin: 110, normalMax: 155, burstMin: 170, burstMax: 230, hardCap: 260 }
+}
+
+export const getHordeDensityRatio = (level: number) => {
+  const floor = getCampaignFloor(level)
+  if (floor === FLOORS_PER_CAMPAIGN) return 0.58
+  if (floor <= 2) return 0.4
+  if (floor === 3) return 0.5
+  if (floor <= 8) return 0.65
+  if (floor <= 15) return 0.84
+  return 1
+}
+
+export const getCorrosiveSlimeRatio = (level: number) => {
+  const floor = getCampaignFloor(level)
+  if (floor === FLOORS_PER_CAMPAIGN) return 0.58
+  if (floor <= 2) return 0.4
+  if (floor === 3) return 0.48
+  if (floor <= 8) return 0.55
+  if (floor <= 15) return 0.63
+  return 0.68
+}
+
+export const getHighThreatRatio = (level: number) => {
+  const floor = getCampaignFloor(level)
+  if (floor <= 2) return 0.06
+  if (floor <= 8) return 0.08
+  return 0.1
+}
+
+export const getHordeNormalTarget = (level: number) => {
+  const targets = getHordeOnScreenTargets(level)
+  return Math.round(targets.normalMax * getHordeDensityRatio(level))
+}
+export const getEliteBudget = (level: number) => {
+  const floor = getCampaignFloor(level)
+  const campaignBonus = getCampaignIndex(level) >= 9 ? 1.25 : getCampaignIndex(level) >= 6 ? 0.75 : getCampaignIndex(level) >= 3 ? 0.35 : 0
+
+  if (!isEliteLevel(level)) {
+    return 0
+  }
+
+  if (floor >= 21) {
+    return 4 + campaignBonus
+  }
+
+  if (floor >= 18) {
+    return 3.5 + campaignBonus
+  }
+
+  if (floor >= 15) {
+    return 3 + campaignBonus
+  }
+
+  if (floor >= 12) {
+    return 2.5 + campaignBonus
+  }
+
+  if (floor >= 9) {
+    return 2 + campaignBonus
+  }
+
+  if (floor >= 6) {
+    return 1.5 + campaignBonus
+  }
+
+  return 1 + campaignBonus
+}
+export const getLevelGoal = (level: number) => {
+  if (isBossLevel(level)) {
+    return 1 + Math.min(8, 2 + getCampaignIndex(level))
+  }
+
+  const floor = getCampaignFloor(level)
+  const target = getHordeNormalTarget(level)
+  const clearMultiplier = floor <= 2 ? 1.25 : floor <= 8 ? 1.45 : 1.7
+  return Math.max(12, Math.round(target * clearMultiplier))
+}
+export const getExperienceTarget = (contractLevel: number) => 70 + Math.max(0, contractLevel - 1) * 28
+export const getSpawnInterval = (level: number) => {
+  const floor = getCampaignFloor(level)
+  const campaign = getCampaignIndex(level)
+  return Math.max(0.045, 0.36 - floor * 0.008 - campaign * 0.008 - (getHordeDensityRatio(level) - 0.4) * 0.12)
+}
+export const getMaxEnemiesOnField = (level: number) => {
+  if (isBossLevel(level)) {
+    return 1 + Math.min(12, 4 + getCampaignIndex(level))
+  }
+
+  const floor = getCampaignFloor(level)
+  const targets = getHordeOnScreenTargets(level)
+  const density = getHordeDensityRatio(level)
+  const targetCapacity = floor >= 16
+    ? targets.burstMax
+    : floor >= 9
+      ? Math.round(targets.normalMax + (targets.burstMax - targets.normalMax) * 0.35)
+      : targets.normalMax
+
+  return Math.min(
+    targets.hardCap,
+    Math.max(8, Math.round(targetCapacity * density)),
+  )
+}
+export const getEnemyCountWeight = (level: number) => Math.min(0.65, Math.max(0, (getCampaignFloor(level) - 3) * 0.06 + getCampaignIndex(level) * 0.025))
 
 export const getEnemyKind = (level: number, roll = Math.random()): EnemyKind => {
+  const floor = getCampaignFloor(level)
+
   if (isBossLevel(level)) {
     return 'boss'
   }
 
-  if (level < RANGED_MIN_LEVEL) {
-    if (level >= 3 && roll < 0.32) {
+  if (floor < RANGED_MIN_LEVEL) {
+    if (floor >= 3 && roll < 0.32) {
       return 'charger'
     }
 
     return 'melee'
   }
 
-  if (level >= 9 && roll < 0.22) {
+  if (floor >= 9 && roll < 0.22 + getEnemyCountWeight(level) * 0.18) {
     return 'bomber'
   }
 
-  if (level >= 7 && roll < 0.4) {
+  if (floor >= 7 && roll < 0.4) {
     return 'splitter'
   }
 
-  if (level >= 3 && roll < 0.58) {
+  if (floor >= 3 && roll < 0.58) {
     return 'charger'
   }
 
@@ -117,6 +342,8 @@ export const getEnemyKind = (level: number, roll = Math.random()): EnemyKind => 
 }
 
 export const getFeaturedEnemyKind = (level: number, spawnedCount: number): EnemyKind | null => {
+  const floor = getCampaignFloor(level)
+
   if (isBossLevel(level)) {
     return spawnedCount === 0 ? 'boss' : null
   }
@@ -125,15 +352,15 @@ export const getFeaturedEnemyKind = (level: number, spawnedCount: number): Enemy
     return spawnedCount === 0 ? 'elite' : null
   }
 
-  if (level >= 9 && spawnedCount % 4 === 0) {
+  if (floor >= 9 && spawnedCount % 4 === 0) {
     return 'bomber'
   }
 
-  if (level >= 7 && spawnedCount % 3 === 0) {
+  if (floor >= 7 && spawnedCount % 3 === 0) {
     return 'splitter'
   }
 
-  if (level >= 3 && spawnedCount % 3 === 0) {
+  if (floor >= 3 && spawnedCount % 3 === 0) {
     return 'charger'
   }
 
@@ -141,10 +368,16 @@ export const getFeaturedEnemyKind = (level: number, spawnedCount: number): Enemy
 }
 
 export const getEnemyStats = (level: number, kind: EnemyKind) => {
+  const campaign = getCampaignIntensity(level)
+  const floor = getFloorIntensity(level)
+  const scaleHp = (base: number) => base * campaign.hp * floor
+  const scaleAttack = (base: number) => base * campaign.attack * floor
+
   if (kind === 'boss') {
     return {
       hp: 520 + level * 42,
-      speed: 26 + level * 2,
+      attack: scaleAttack(64),
+      speed: 44,
       size: ENEMY_SIZE + 16,
       tint: '#f97316',
     }
@@ -152,8 +385,9 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
 
   if (kind === 'elite') {
     return {
-      hp: 170 + level * 18,
-      speed: 30 + level * 3,
+      hp: scaleHp(108),
+      attack: scaleAttack(32),
+      speed: 54,
       size: ENEMY_SIZE + 8,
       tint: '#c084fc',
     }
@@ -161,8 +395,9 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
 
   if (kind === 'ranged') {
     return {
-      hp: 30 + level * 7,
-      speed: 26 + level * 4,
+      hp: scaleHp(20),
+      attack: scaleAttack(16),
+      speed: 54,
       size: ENEMY_SIZE + 2,
       tint: PALETTE.rangedEnemy,
     }
@@ -170,8 +405,9 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
 
   if (kind === 'charger') {
     return {
-      hp: 34 + level * 8,
-      speed: 44 + level * 6,
+      hp: scaleHp(24),
+      attack: scaleAttack(20),
+      speed: 74,
       size: ENEMY_SIZE + 2,
       tint: '#fb7185',
     }
@@ -179,8 +415,9 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
 
   if (kind === 'splitter') {
     return {
-      hp: 44 + level * 9,
-      speed: 30 + level * 4,
+      hp: scaleHp(18),
+      attack: scaleAttack(12),
+      speed: 62,
       size: ENEMY_SIZE + 3,
       tint: '#a3e635',
     }
@@ -188,17 +425,19 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
 
   if (kind === 'bomber') {
     return {
-      hp: 28 + level * 7,
-      speed: 42 + level * 5,
+      hp: scaleHp(22),
+      attack: scaleAttack(22),
+      speed: 58,
       size: ENEMY_SIZE + 1,
       tint: '#f59e0b',
     }
   }
 
   return {
-    hp: 38 + level * 8,
-    speed: 36 + level * 6,
-    size: ENEMY_SIZE + Math.min(level, 4),
+    hp: scaleHp(22),
+    attack: scaleAttack(14),
+    speed: 58,
+    size: ENEMY_SIZE + Math.min(getCampaignFloor(level), 4),
     tint: PALETTE.enemy,
   }
 }

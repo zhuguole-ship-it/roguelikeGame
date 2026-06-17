@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Infinite Dungeon Slice Preview</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #030808;
+        --panel: rgba(5, 18, 18, 0.72);
+        --line: rgba(113, 228, 214, 0.24);
+        --text: #dcfffb;
+        --muted: #8fc6c1;
+        --accent: #6ef0e2;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #020606;
+        overflow: hidden;
+        font-family: "SFMono-Regular", "Consolas", "Menlo", monospace;
+      }
+
+      body {
+        background:
+          radial-gradient(circle at top, rgba(67, 134, 129, 0.14), transparent 32%),
+          linear-gradient(180deg, #020606 0%, #061110 100%);
+      }
+
+      .viewport {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      #map {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      @media (max-width: 720px) {
+        body {
+          overflow: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="viewport">
+      <svg id="map" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg" aria-label="roguelike infinite dungeon terrain slice">
+        <defs>
+          <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="8" />
+          </filter>
+        </defs>
+        <g id="parallax-root"></g>
+      </svg>
+
+    </main>
+
+    <script>
+      const svgNS = 'http://www.w3.org/2000/svg'
+      const root = document.getElementById('parallax-root')
+
+      const WIDTH = 1920
+      const HEIGHT = 1080
+      const palette = {
+        bg: '#091617',
+        stone0: '#102627',
+        stone1: '#153031',
+        stone2: '#1d3d3e',
+        stone3: '#285253',
+        seam: '#061112',
+        highlight: '#3d7474',
+        wet: '#5ba39d',
+        glow: '#77efe0',
+        glow2: '#52c4bb',
+        moss: '#5e8140',
+        rust: '#7b5037',
+        metal: '#8ca3a1',
+        plate: '#324d4e',
+        plateEdge: '#0d1d1e',
+      }
+
+      const rng = (() => {
+        let seed = 428571
+        return () => {
+          seed = (seed * 1664525 + 1013904223) >>> 0
+          return seed / 4294967296
+        }
+      })()
+
+      const create = (tag, attrs = {}) => {
+        const el = document.createElementNS(svgNS, tag)
+        Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value))
+        return el
+      }
+
+      const add = (parent, tag, attrs = {}) => {
+        const el = create(tag, attrs)
+        parent.appendChild(el)
+        return el
+      }
+
+      const layers = {
+        floor: add(root, 'g', { id: 'floor' }),
+        seams: add(root, 'g', { id: 'seams' }),
+        details: add(root, 'g', { id: 'details' }),
+        glyphs: add(root, 'g', { id: 'glyphs' }),
+        obstacles: add(root, 'g', { id: 'obstacles' }),
+        highlights: add(root, 'g', { id: 'highlights' }),
+      }
+
+      add(layers.floor, 'rect', { x: 0, y: 0, width: WIDTH, height: HEIGHT, fill: palette.bg })
+
+      const noiseRects = (count, colors, minW, maxW, minH, maxH, opacityMin, opacityMax, target, round = 0) => {
+        for (let i = 0; i < count; i += 1) {
+          add(target, 'rect', {
+            x: Math.round(rng() * WIDTH - maxW / 2),
+            y: Math.round(rng() * HEIGHT - maxH / 2),
+            width: Math.round(minW + rng() * (maxW - minW)),
+            height: Math.round(minH + rng() * (maxH - minH)),
+            fill: colors[Math.floor(rng() * colors.length)],
+            opacity: (opacityMin + rng() * (opacityMax - opacityMin)).toFixed(2),
+            rx: round,
+          })
+        }
+      }
+
+      const ROWS = 15
+      const COLS = 24
+      const tileW = WIDTH / COLS
+      const tileH = HEIGHT / ROWS
+
+      for (let row = -1; row <= ROWS; row += 1) {
+        for (let col = -1; col <= COLS; col += 1) {
+          const x = col * tileW
+          const y = row * tileH
+          const tone = [palette.stone0, palette.stone1, palette.stone2, palette.stone3][Math.floor(rng() * 4)]
+          const inset = 2 + Math.floor(rng() * 4)
+          const crackOffsetX = 10 + Math.floor(rng() * 18)
+          const crackOffsetY = 8 + Math.floor(rng() * 16)
+
+          add(layers.floor, 'rect', {
+            x: Math.round(x),
+            y: Math.round(y),
+            width: Math.ceil(tileW) + 1,
+            height: Math.ceil(tileH) + 1,
+            fill: tone,
+            opacity: (0.94 + rng() * 0.05).toFixed(2),
+          })
+
+          add(layers.floor, 'rect', {
+            x: Math.round(x + inset),
+            y: Math.round(y + inset),
+            width: Math.ceil(tileW) - inset * 2,
+            height: Math.ceil(tileH) - inset * 2,
+            fill: rng() > 0.5 ? palette.stone2 : palette.stone1,
+            opacity: 0.12 + rng() * 0.07,
+          })
+
+          add(layers.seams, 'rect', {
+            x: Math.round(x),
+            y: Math.round(y),
+            width: Math.ceil(tileW) + 1,
+            height: 3,
+            fill: palette.seam,
+            opacity: 0.72,
+          })
+
+          add(layers.seams, 'rect', {
+            x: Math.round(x),
+            y: Math.round(y),
+            width: 3,
+            height: Math.ceil(tileH) + 1,
+            fill: palette.seam,
+            opacity: 0.72,
+          })
+
+          add(layers.highlights, 'rect', {
+            x: Math.round(x + 3),
+            y: Math.round(y + 3),
+            width: Math.ceil(tileW * 0.38),
+            height: 2,
+            fill: palette.highlight,
+            opacity: 0.12 + rng() * 0.09,
+          })
+
+          if ((row + col) % 3 === 0) {
+            add(layers.details, 'path', {
+              d: `M ${Math.round(x + crackOffsetX)} ${Math.round(y + crackOffsetY)} L ${Math.round(x + crackOffsetX + 18)} ${Math.round(y + crackOffsetY + 8)} L ${Math.round(x + crackOffsetX + 10)} ${Math.round(y + crackOffsetY + 20)}`,
+              fill: 'none',
+              stroke: palette.seam,
+              'stroke-width': 2,
+              opacity: 0.3,
+              'stroke-linecap': 'round',
+              'stroke-linejoin': 'round',
+            })
+          }
+        }
+      }
+
+      noiseRects(420, [palette.stone1, palette.stone2, palette.stone3, palette.seam], 8, 24, 6, 18, 0.05, 0.12, layers.details)
+      noiseRects(120, [palette.moss], 10, 36, 6, 20, 0.14, 0.28, layers.details, 2)
+      noiseRects(90, [palette.rust], 8, 22, 4, 12, 0.12, 0.22, layers.details, 2)
+
+      for (let i = 0; i < 360; i += 1) {
+        add(layers.highlights, 'rect', {
+          x: Math.round(rng() * WIDTH),
+          y: Math.round(rng() * HEIGHT),
+          width: 1 + Math.floor(rng() * 3),
+          height: 1 + Math.floor(rng() * 3),
+          fill: i % 5 === 0 ? palette.glow : palette.wet,
+          opacity: (0.06 + rng() * 0.18).toFixed(2),
+        })
+      }
+
+      const makeCrack = (x, y, length, bends, color, width, opacity) => {
+        let d = `M ${x} ${y}`
+        let cx = x
+        let cy = y
+        for (let i = 0; i < bends; i += 1) {
+          cx += (rng() - 0.5) * length * 0.42
+          cy += (rng() - 0.5) * length * 0.22
+          d += ` L ${cx.toFixed(1)} ${cy.toFixed(1)}`
+        }
+        add(layers.details, 'path', {
+          d,
+          fill: 'none',
+          stroke: color,
+          'stroke-width': width,
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          opacity,
+        })
+      }
+
+      for (let i = 0; i < 54; i += 1) {
+        makeCrack(rng() * WIDTH, rng() * HEIGHT, 80 + rng() * 80, 4 + Math.floor(rng() * 4), palette.seam, 2 + Math.floor(rng() * 2), (0.22 + rng() * 0.14).toFixed(2))
+      }
+
+      const makeSealFragment = (cx, cy, scale, rotate) => {
+        const group = add(layers.glyphs, 'g', {
+          transform: `translate(${cx} ${cy}) scale(${scale}) rotate(${rotate})`,
+          opacity: 0.42,
+        })
+
+        add(group, 'circle', {
+          cx: 0,
+          cy: 0,
+          r: 62,
+          fill: 'none',
+          stroke: palette.glow,
+          'stroke-width': 6,
+          'stroke-dasharray': '36 24 18 28',
+          'stroke-linecap': 'round',
+          filter: 'url(#softGlow)',
+        })
+
+        add(group, 'path', {
+          d: 'M -44 0 L -12 -32 L 14 -32 L 44 0 L 14 30 L -14 30 Z',
+          fill: 'none',
+          stroke: palette.glow2,
+          'stroke-width': 5,
+          opacity: 0.9,
+        })
+
+        add(group, 'path', {
+          d: 'M -22 -10 L 0 -32 L 20 -10 L 8 18 L -10 18 Z',
+          fill: 'none',
+          stroke: palette.glow,
+          'stroke-width': 4,
+          opacity: 0.84,
+        })
+
+        add(group, 'path', {
+          d: 'M -56 -8 L -18 -8 M 20 8 L 58 8',
+          fill: 'none',
+          stroke: palette.glow2,
+          'stroke-width': 4,
+          opacity: 0.8,
+        })
+      }
+
+      ;[
+        [210, 210, 0.86, 14],
+        [910, 170, 1.08, -18],
+        [1610, 245, 0.82, 28],
+        [400, 720, 1.18, -12],
+        [1180, 660, 0.92, 22],
+        [1710, 790, 1.06, -8],
+      ].forEach(([x, y, scale, rot]) => makeSealFragment(x, y, scale, rot))
+
+      const makeChainCluster = (x, y, links, spread, rotation) => {
+        const group = add(layers.obstacles, 'g', {
+          transform: `translate(${x} ${y}) rotate(${rotation})`,
+          opacity: 0.82,
+        })
+
+        let cx = 0
+        let cy = 0
+        for (let i = 0; i < links; i += 1) {
+          add(group, 'ellipse', {
+            cx,
+            cy,
+            rx: 12,
+            ry: 7,
+            fill: 'none',
+            stroke: palette.metal,
+            'stroke-width': 3.5,
+          })
+          add(group, 'ellipse', {
+            cx,
+            cy,
+            rx: 8,
+            ry: 4,
+            fill: 'none',
+            stroke: '#c6d6d4',
+            'stroke-width': 1,
+            opacity: 0.32,
+          })
+          cx += (rng() - 0.5) * spread
+          cy += (rng() - 0.5) * spread
+        }
+      }
+
+      ;[
+        [150, 340, 8, 28, 10],
+        [560, 278, 11, 26, -24],
+        [930, 418, 10, 24, 17],
+        [1380, 320, 9, 30, -9],
+        [1710, 452, 12, 26, 15],
+        [270, 860, 10, 24, -18],
+        [690, 790, 13, 22, 8],
+        [1250, 850, 10, 26, -14],
+        [1620, 900, 9, 22, 21],
+      ].forEach(([x, y, links, spread, rot]) => makeChainCluster(x, y, links, spread, rot))
+
+      const makeBase = (x, y, scale, rot) => {
+        const group = add(layers.obstacles, 'g', {
+          transform: `translate(${x} ${y}) scale(${scale}) rotate(${rot})`,
+          opacity: 0.96,
+        })
+
+        add(group, 'path', {
+          d: 'M -70 -36 L 70 -36 L 88 0 L 70 36 L -70 36 L -88 0 Z',
+          fill: palette.plateEdge,
+        })
+
+        add(group, 'path', {
+          d: 'M -58 -28 L 58 -28 L 72 0 L 58 28 L -58 28 L -72 0 Z',
+          fill: palette.plate,
+        })
+
+        add(group, 'path', {
+          d: 'M -40 -16 L 40 -16 L 50 0 L 40 16 L -40 16 L -50 0 Z',
+          fill: palette.stone1,
+          opacity: 0.84,
+        })
+
+        ;[
+          [-50, -18],
+          [50, -18],
+          [-50, 18],
+          [50, 18],
+        ].forEach(([bx, by]) => {
+          add(group, 'circle', {
+            cx: bx,
+            cy: by,
+            r: 6,
+            fill: palette.rust,
+            opacity: 0.88,
+          })
+          add(group, 'circle', {
+            cx: bx,
+            cy: by,
+            r: 2,
+            fill: palette.metal,
+            opacity: 0.78,
+          })
+        })
+
+        add(group, 'path', {
+          d: 'M -52 -24 L 10 -24 L 20 -6 L 48 -6',
+          fill: 'none',
+          stroke: palette.highlight,
+          'stroke-width': 3,
+          opacity: 0.24,
+        })
+      }
+
+      ;[
+        [260, 150, 1, 12],
+        [740, 250, 1.08, -10],
+        [1220, 170, 0.94, 18],
+        [1660, 190, 1.02, -14],
+        [430, 500, 0.9, 8],
+        [980, 470, 1.16, -6],
+        [1450, 540, 1.02, 13],
+        [220, 820, 1.1, -12],
+        [700, 820, 0.96, 16],
+        [1160, 800, 1.08, -9],
+        [1600, 840, 1, 10],
+      ].forEach(([x, y, scale, rot]) => makeBase(x, y, scale, rot))
+
+      const wetLayer = add(root, 'g', { id: 'wet-layer', opacity: 0.2 })
+      ;[
+        [140, 220, 120, 42],
+        [590, 135, 170, 48],
+        [980, 310, 210, 52],
+        [1490, 250, 180, 46],
+        [360, 650, 220, 58],
+        [1140, 640, 260, 64],
+        [1680, 700, 180, 44],
+        [620, 940, 250, 54],
+      ].forEach(([x, y, w, h]) => {
+        add(wetLayer, 'ellipse', {
+          cx: x,
+          cy: y,
+          rx: w / 2,
+          ry: h / 2,
+          fill: palette.wet,
+          opacity: 0.14,
+        })
+      })
+
+      const patina = add(root, 'g', { id: 'patina', opacity: 0.16 })
+      noiseRects(120, [palette.moss, palette.rust, palette.stone2], 18, 80, 10, 34, 0.08, 0.22, patina, 2)
+
+      const parallaxRoot = document.getElementById('parallax-root')
+      let mx = 0
+      let my = 0
+      let t = 0
+
+      window.addEventListener('pointermove', (event) => {
+        mx = event.clientX / window.innerWidth - 0.5
+        my = event.clientY / window.innerHeight - 0.5
+      })
+
+      const animate = () => {
+        t += 0.016
+        const px = mx * 6
+        const py = my * 5
+        parallaxRoot.setAttribute('transform', `translate(${px.toFixed(2)} ${py.toFixed(2)})`)
+        wetLayer.setAttribute('opacity', (0.16 + (Math.sin(t * 1.4) + 1) * 0.03).toFixed(2))
+        layers.glyphs.setAttribute('opacity', (0.72 + (Math.sin(t * 2.1) + 1) * 0.06).toFixed(2))
+        requestAnimationFrame(animate)
+      }
+
+      animate()
+    </script>
+  </body>
+</html>
