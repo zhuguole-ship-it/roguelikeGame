@@ -3,7 +3,7 @@ import { Coins, RotateCcw } from 'lucide-react'
 
 import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, ARCHER_FIXED_PASSIVE, ARCHER_FIXED_PASSIVE_LEVELS, SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
 import { ACTIVE_SKILL_DAMAGE_MULTIPLIER, FLOORS_PER_CAMPAIGN, isBossLevel, isEliteLevel } from '../../game/config'
-import { CAMPAIGN_MONSTER_THEMES, getCampaignFloorEnemyPool, type CampaignEnemyArchetype } from '../../game/campaignMonsters'
+import { CAMPAIGN_MONSTER_THEMES, getCampaignFloorEnemyPool, getCampaignLootProfile, type CampaignEnemyArchetype } from '../../game/campaignMonsters'
 import {
   EQUIPMENT_MATERIAL_IDS,
   EQUIPMENT_MATERIAL_LABELS,
@@ -831,6 +831,7 @@ export function GameOverlay() {
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {CAMPAIGN_MONSTER_THEMES.map((theme) => {
                     const active = selectedCampaign === theme.campaign
+                    const lootProfile = getCampaignLootProfile(theme.campaign)
                     return (
                       <button
                         key={theme.campaign}
@@ -847,6 +848,7 @@ export function GameOverlay() {
                         <p className="mt-2 text-[0.95rem] leading-tight text-[#9dd5ac]">
                           Boss：{theme.boss.name} · 22 层 · 每 3 层精英
                         </p>
+                        <p className="mt-2 text-[0.9rem] leading-tight text-amber-200">{lootProfile.portalHint}</p>
                       </button>
                     )
                   })}
@@ -855,6 +857,16 @@ export function GameOverlay() {
 
               <SectionPanel eyebrow="当前选择" title={CAMPAIGN_MONSTER_THEMES[selectedCampaign - 1]?.name ?? '死契地牢'}>
                 <div className="border-2 border-[#08100b] bg-[#101913] p-4">
+                  {(() => {
+                    const lootProfile = getCampaignLootProfile(selectedCampaign)
+                    return (
+                      <div className="mb-4 grid gap-2 text-[0.95rem] leading-tight text-[#dfe7d5]">
+                        <p><span className="font-pixel text-[8px] text-[#9dd5ac]">刷装理由</span> {lootProfile.primaryLootReason}</p>
+                        <p><span className="font-pixel text-[8px] text-[#9dd5ac]">推荐状态</span> {lootProfile.recommendedState}</p>
+                        <p><span className="font-pixel text-[8px] text-[#9dd5ac]">主题威胁</span> {lootProfile.themeThreat}</p>
+                      </div>
+                    )
+                  })()}
                   <p className="font-pixel text-[9px] uppercase tracking-[0.14em] text-amber-300">入口层数</p>
                   <p className="mt-3 text-2xl text-[#f4f0d7]">第 1 层 / 目标独立进度</p>
                   <p className="mt-3 text-lg leading-tight text-[#9dd5ac]">
@@ -1242,6 +1254,7 @@ export function GameOverlay() {
                   {CAMPAIGN_MONSTER_THEMES.map((theme) => {
                     const floorRows = buildCampaignFloorRows(theme)
                     const previewMonsters = getUniqueCampaignMonsters(theme)
+                    const lootProfile = getCampaignLootProfile(theme.campaign)
 
                     return (
                       <article
@@ -1259,6 +1272,11 @@ export function GameOverlay() {
                             <span className="border border-[rgba(246,200,111,0.35)] px-2 py-1 font-pixel text-[7px] text-amber-300">精英 3/6/9/12/15/18/21</span>
                             <span className="border border-[rgba(246,200,111,0.35)] px-2 py-1 font-pixel text-[7px] text-amber-300">Boss：{theme.boss.name}</span>
                           </div>
+                        </div>
+                        <div className="mt-3 grid gap-2 border border-[rgba(157,213,172,0.12)] bg-[#0d1711] p-3 text-[0.95rem] leading-tight text-[#dfe7d5] md:grid-cols-3">
+                          <p><span className="font-pixel text-[8px] text-[#9dd5ac]">刷装</span> {lootProfile.primaryLootReason}</p>
+                          <p><span className="font-pixel text-[8px] text-[#9dd5ac]">推荐</span> {lootProfile.recommendedState}</p>
+                          <p><span className="font-pixel text-[8px] text-[#9dd5ac]">威胁</span> {lootProfile.themeThreat}</p>
                         </div>
 
                         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">

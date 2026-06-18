@@ -15,10 +15,14 @@ import {
   getEnemyChargeMoveSpeed,
   getEnemyEffectiveMoveSpeed,
   getEnemyEffectiveSpeedSoftCap,
+  getRouteObjectiveExtraThreatCap,
+  getRouteObjectiveLimit,
+  getRouteObjectiveRewardCap,
   purchaseWeaponSnapshot,
   reforgeEquipmentSnapshot,
   restartRunSnapshot,
   selectCampaignSnapshot,
+  startRunSnapshot,
   triggerActiveSkillSnapshot,
   triggerDashSnapshot,
   toggleEquipmentModifierLockSnapshot,
@@ -30,8 +34,8 @@ import {
   updateAimPointSnapshot,
 } from './engine'
 import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, LV5_QUALITATIVE_TEXT } from './archerSkills'
-import { CAMPAIGN_MONSTER_THEMES, CORROSIVE_SLIME_ARCHETYPE, getCampaignFloorEnemyPool } from './campaignMonsters'
-import { FLOORS_PER_CAMPAIGN, getCampaignFloorPhase, getCorrosiveSlimeRatio, getEliteBudget, getHordeMultiplier, getLevelGoal, getMaxEnemiesOnField, hasCampaignEnvironmentMechanic, isBossPreludeLevel } from './config'
+import { CAMPAIGN_LOOT_PROFILES, CAMPAIGN_MONSTER_THEMES, CORROSIVE_SLIME_ARCHETYPE, getCampaignFloorEnemyPool, getCampaignLootProfile } from './campaignMonsters'
+import { FLOORS_PER_CAMPAIGN, INFINITE_ACTIVE_CHUNK_LIMIT, INFINITE_ENEMY_RECYCLE_DISTANCE, INFINITE_OBSTACLE_SAFE_RADIUS, INFINITE_SPAWN_MAX_DISTANCE, INFINITE_SPAWN_MIN_DISTANCE, WORLD_WIDTH, getCampaignFloorPhase, getCorrosiveSlimeRatio, getEliteBudget, getHordeMultiplier, getLevelGoal, getMaxEnemiesOnField, hasCampaignEnvironmentMechanic, isBossPreludeLevel } from './config'
 import { createEquipmentDrop, getEquipmentBonusSummary, SKILL_EQUIPMENT_LINKS } from './equipment'
 import type { Enemy, EquipmentItem, EquipmentSetId, EquipmentSlot, MapObstacle, Projectile, SkillField } from './types'
 import { distance } from '../utils/math'
@@ -142,7 +146,7 @@ describe('game engine', () => {
 
   const estimateArrowRainCorrosiveClearCapacity = (skillLevel: number, equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>> = {}) => {
     const snapshot = createInitialSnapshot('running')
-    snapshot.remainingToSpawn = 0
+    snapshot.remainingToSpawn = 1
     snapshot.player.attackCooldown = 999
     snapshot.player.position = { x: 180, y: 200 }
     snapshot.aimPoint = { x: 480, y: 280 }
@@ -263,6 +267,23 @@ describe('game engine', () => {
     expect(started.message).toContain('精灵失落圣林')
   })
 
+  it('keeps real start and portal entrances in infinite mode for ordinary floors', () => {
+    const startButtonRun = startRunSnapshot(createInitialSnapshot('idle'))
+    expect(startButtonRun.level).toBe(1)
+    expect(startButtonRun.battlefield.mode).toBe('infinite')
+
+    ;[1, 5, 10].forEach((campaign) => {
+      const portalRun = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), campaign))
+      expect(portalRun.level).toBe((campaign - 1) * FLOORS_PER_CAMPAIGN + 1)
+      expect(portalRun.battlefield.mode).toBe('infinite')
+    })
+
+    const ended = forfeitRunSnapshot(startButtonRun)
+    const restarted = restartRunSnapshot(ended)
+    expect(ended.battlefield.mode).toBe('village')
+    expect(restarted.battlefield.mode).toBe('infinite')
+  })
+
   it('keeps each campaign first floor enemy pool themed and varied', () => {
     CAMPAIGN_MONSTER_THEMES.forEach((theme) => {
       const level = (theme.campaign - 1) * FLOORS_PER_CAMPAIGN + 1
@@ -301,6 +322,38 @@ describe('game engine', () => {
       expect(run.enemies.some((enemy) => enemy.archetypeId === CORROSIVE_SLIME_ARCHETYPE.id)).toBe(true)
       expect(ids.size).toBeGreaterThanOrEqual(2)
     })
+  })
+
+  it('defines campaign farming reasons and keeps drop bias flexible', () => {
+    expect(CAMPAIGN_LOOT_PROFILES).toHaveLength(10)
+    CAMPAIGN_LOOT_PROFILES.forEach((profile) => {
+      expect(profile.dropFocus.length).toBeGreaterThan(0)
+      expect(profile.primaryLootReason.length).toBeGreaterThan(4)
+      expect(profile.recommendedState.length).toBeGreaterThan(4)
+      expect(profile.themeThreat.length).toBeGreaterThan(4)
+      expect(profile.bossName.length).toBeGreaterThan(2)
+      expect(profile.portalHint).toContain('刷')
+    })
+    expect(getCampaignLootProfile(1).dropFocus).toContain('pierce')
+    expect(getCampaignLootProfile(3).dropFocus).toContain('beast')
+    expect(getCampaignLootProfile(10).dropFocus).toEqual(expect.arrayContaining(['pierce', 'spread', 'control', 'beast']))
+
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const focused = createEquipmentDrop(45, 'boss-legacy', () => 'campaign-focused', {
+      preferredBuildTag: getCampaignLootProfile(3).dropFocus[0],
+      unlockedSlots: ['weapon'],
+    })
+    expect(focused?.buildTag).toBe('beast')
+    vi.restoreAllMocks()
+
+    vi.spyOn(Math, 'random').mockReturnValue(0.95)
+    const offTheme = createEquipmentDrop(45, 'boss-legacy', () => 'campaign-flexible', {
+      preferredBuildTag: getCampaignLootProfile(3).dropFocus[0],
+      unlockedSlots: ['weapon'],
+    })
+    expect(offTheme?.buildTag).not.toBe('beast')
+    expect(offTheme?.buildTag).toBe('general')
+    vi.restoreAllMocks()
   })
 
   it('scales horde density caps and corrosive slime ratios by campaign and floor band', () => {
@@ -417,6 +470,167 @@ describe('game engine', () => {
     expect(late?.isFodder).toBe(true)
     expect(late?.maxHp ?? 0).toBeGreaterThan((early?.maxHp ?? 0) * 6)
     expect(late?.speed ?? 999).toBeLessThanOrEqual(54)
+  })
+
+  it('spawns short-route objectives within floor-band limits and away from the player', () => {
+    ;[
+      { floor: 1, expectedLimit: 1 },
+      { floor: 6, expectedLimit: 2 },
+      { floor: 15, expectedLimit: 3 },
+    ].forEach(({ floor, expectedLimit }) => {
+      let snapshot = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), 5))
+      snapshot.level = (5 - 1) * FLOORS_PER_CAMPAIGN + floor
+      snapshot.levelTimer = 0
+      snapshot.spawnCooldown = 999
+      snapshot.remainingToSpawn = 0
+      snapshot.levelTargetKills = 99
+      snapshot.enemies = []
+      snapshot.projectiles = []
+      snapshot.enemyProjectiles = []
+      snapshot.pickups = []
+      snapshot.player.attackCooldown = 999
+
+      const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+
+      expect(getRouteObjectiveLimit(next.level)).toBe(expectedLimit)
+      expect(next.battlefield.routeObjectives.length).toBeLessThanOrEqual(expectedLimit)
+      expect(next.battlefield.routeObjectives.length).toBeGreaterThan(0)
+      expect(next.battlefield.routeObjectives.every((objective) => distance(objective.position, next.player.position) >= 260)).toBe(true)
+      expect(new Set(next.battlefield.routeObjectives.map((objective) => objective.kind)).size).toBe(next.battlefield.routeObjectives.length)
+    })
+  })
+
+  it('keeps route objective rewards and extra threats under their documented caps', () => {
+    const level = (8 - 1) * FLOORS_PER_CAMPAIGN + 16
+    const snapshot = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), 8))
+    snapshot.level = level
+    snapshot.levelTimer = 0
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 1
+    snapshot.levelTargetKills = 99
+    snapshot.player.position = { x: 100, y: 100 }
+    snapshot.player.attackCooldown = 999
+    snapshot.enemies = []
+    snapshot.projectiles = []
+    snapshot.enemyProjectiles = []
+    snapshot.pickups = []
+    snapshot.battlefield.routeObjectives = [{
+      id: 'test-crystal-rift',
+      kind: 'crystal-rift',
+      position: { x: 100, y: 100 },
+      radius: 44,
+      ttl: 12,
+      rewardBudget: getRouteObjectiveRewardCap(level),
+      extraThreatBudget: getRouteObjectiveExtraThreatCap(level),
+    }]
+
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+    const extraHighThreats = next.enemies.filter((enemy) => enemy.role === 'high-threat')
+
+    expect(next.battlefield.debug.routeObjectiveRewardBudget).toBeLessThanOrEqual(getRouteObjectiveRewardCap(level))
+    expect(next.battlefield.debug.routeObjectiveExtraThreatCount).toBeLessThanOrEqual(getRouteObjectiveExtraThreatCap(level))
+    expect(extraHighThreats.length).toBeLessThanOrEqual(getRouteObjectiveExtraThreatCap(level))
+    expect(next.enemies.every((enemy) => enemy.speed <= getEnemyBaseSpeedSoftCap(enemy))).toBe(true)
+    expect(next.pickups.some((pickup) => pickup.kind === 'soul-crystal')).toBe(true)
+    expect(next.pickups.every((pickup) => pickup.kind !== 'equipment')).toBe(true)
+  })
+
+  it('expires route objectives without punishing the player', () => {
+    const snapshot = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), 4))
+    snapshot.level = (4 - 1) * FLOORS_PER_CAMPAIGN + 8
+    snapshot.levelTimer = 0
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 1
+    snapshot.levelTargetKills = 99
+    snapshot.player.hp = 72
+    snapshot.battlefield.routeObjectives = [{
+      id: 'expiring-route-objective',
+      kind: 'relic-crate',
+      position: { x: snapshot.player.position.x + 360, y: snapshot.player.position.y },
+      radius: 44,
+      ttl: 0.01,
+      rewardBudget: 4,
+      extraThreatBudget: 1,
+    }]
+
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+
+    expect(next.player.hp).toBe(72)
+    expect(next.equipmentMaterials.ironScraps).toBe(snapshot.equipmentMaterials.ironScraps)
+    expect(next.battlefield.routeObjectives.some((objective) => objective.id === 'expiring-route-objective')).toBe(false)
+  })
+
+  it('grants a bounded contract brand boost and consumes it on the next active skill', () => {
+    let snapshot = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), 6))
+    snapshot.level = (6 - 1) * FLOORS_PER_CAMPAIGN + 9
+    snapshot.levelTimer = 0
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 1
+    snapshot.levelTargetKills = 99
+    snapshot.player.position = { x: 300, y: 300 }
+    snapshot.aimPoint = { x: 520, y: 300 }
+    snapshot.player.attackCooldown = 999
+    snapshot.activeSkills = [{ skillId: 'arrow-rain', level: 1, cooldownRemaining: 0 }]
+    snapshot.enemies = []
+    snapshot.projectiles = []
+    snapshot.enemyProjectiles = []
+    snapshot.battlefield.routeObjectives = [{
+      id: 'contract-brand-test',
+      kind: 'contract-brand',
+      position: { x: 300, y: 300 },
+      radius: 54,
+      ttl: 16,
+      rewardBudget: 3,
+      extraThreatBudget: 1,
+      chargeProgress: 0,
+    }]
+
+    for (let frame = 0; frame < 52; frame += 1) {
+      snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+
+    expect(snapshot.battlefield.routeObjectiveSkillBoost?.multiplier).toBeLessThanOrEqual(1.15)
+    expect(snapshot.battlefield.routeObjectiveSkillBoost?.remainingCasts).toBe(1)
+
+    const cast = triggerActiveSkillSnapshot(snapshot, 0)
+    expect(cast.battlefield.routeObjectiveSkillBoost?.remainingCasts).toBe(0)
+    expect(cast.skillFields[0].damage).toBeGreaterThan(ARCHER_ACTIVE_SKILL_MAP['arrow-rain'].levels[0].tickDamage)
+  })
+
+  it('lets relic crates pay small materials without producing orange or bright-orange equipment', () => {
+    const snapshot = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), 7))
+    snapshot.level = (7 - 1) * FLOORS_PER_CAMPAIGN + 18
+    snapshot.levelTimer = 0
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 1
+    snapshot.levelTargetKills = 99
+    snapshot.player.position = { x: 100, y: 100 }
+    snapshot.player.attackCooldown = 999
+    snapshot.enemies = []
+    snapshot.enemyProjectiles = []
+    snapshot.battlefield.routeObjectives = [{
+      id: 'relic-crate-test',
+      kind: 'relic-crate',
+      position: { x: 440, y: 220 },
+      radius: 44,
+      ttl: 18,
+      rewardBudget: getRouteObjectiveRewardCap(snapshot.level),
+      extraThreatBudget: 1,
+    }]
+    snapshot.projectiles = [makeProjectile({
+      id: 'crate-breaker',
+      position: { x: 440, y: 220 },
+      origin: { x: 100, y: 100 },
+      velocity: { x: 0, y: 0 },
+      ttl: 1,
+      sourceSkillId: 'pierce-arrow',
+    })]
+
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+
+    expect(next.equipmentMaterials.ironScraps).toBeGreaterThan(snapshot.equipmentMaterials.ironScraps)
+    expect(next.equipmentMaterials.crystalDust).toBeGreaterThan(snapshot.equipmentMaterials.crystalDust)
+    expect(next.pickups.every((pickup) => !pickup.equipment || !['legacy', 'legendary'].includes(pickup.equipment.rarity))).toBe(true)
   })
 
   it('keeps every campaign opening enemy within its constant move speed cap', () => {
@@ -769,7 +983,7 @@ describe('game engine', () => {
     snapshot.pendingSkillReward = null
     snapshot.levelTimer = 0.01
 
-    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.1)
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
 
     expect(snapshot.mapObstacles.length).toBeGreaterThan(0)
     expect(next.mapObstacles.length).toBeGreaterThan(0)
@@ -962,6 +1176,30 @@ describe('game engine', () => {
     expect(next.lastAutoDismantleSummary?.count).toBe(1)
   })
 
+  it('auto dismantles temporary dungeon equipment when a boss contract returns to village', () => {
+    const snapshot = createInitialSnapshot('level-clear')
+    const temporaryRare = makeEquipment({ id: 'boss-clear-rare', slot: 'weapon', rarity: 'rare', score: 96, bonus: { attackDamage: 10 }, source: 'dungeon' })
+    const permanentEpic = makeEquipment({ id: 'boss-clear-epic', slot: 'ring1', rarity: 'epic', score: 150, bonus: { skillDamageMultiplier: 0.16 }, source: 'dungeon' })
+    snapshot.level = FLOORS_PER_CAMPAIGN
+    snapshot.levelTimer = 0.01
+    snapshot.pendingSkillReward = null
+    snapshot.pendingBossLoot = []
+    snapshot.kills = 42
+    snapshot.equipmentInventory = [temporaryRare, permanentEpic]
+    snapshot.equippedItems = { weapon: temporaryRare, ring1: permanentEpic }
+
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+
+    expect(next.phase).toBe('game-over')
+    expect(next.message).toContain('契约完成')
+    expect(next.message).toContain('自动分解 1 件紫色以下地下城装备')
+    expect(next.message).toContain('获得')
+    expect(next.equipmentInventory.map((item) => item.id)).toEqual(['boss-clear-epic'])
+    expect(next.equippedItems.weapon).toBeUndefined()
+    expect(next.equippedItems.ring1?.id).toBe('boss-clear-epic')
+    expect(next.lastAutoDismantleSummary?.count).toBe(1)
+  })
+
   it('toggles equipment locks before allowing single item dismantle', () => {
     const snapshot = createInitialSnapshot('running')
     const item = makeEquipment({ id: 'fine-boots', slot: 'boots', rarity: 'fine', locked: true, score: 30, bonus: { speed: 5 } })
@@ -1134,11 +1372,13 @@ describe('game engine', () => {
 
     let next = triggerActiveSkillSnapshot(snapshot, 0)
     expect(next.projectiles[0].velocity.x).toBeGreaterThan(0)
-    for (let frame = 0; frame < 13; frame += 1) {
+    for (let frame = 0; frame < 14; frame += 1) {
       next = advanceGame(next, { up: false, down: false, left: false, right: false }, 0.1)
     }
 
-    expect(next.projectiles[0].velocity.x).toBeLessThan(0)
+    const returningArrow = next.projectiles.find((projectile) => projectile.sourceSkillId === 'curve-return')
+    expect(returningArrow).toBeTruthy()
+    expect(returningArrow!.velocity.x).toBeLessThan(0)
   })
 
   it('shows armor pin marks after hit instead of consuming the new mark immediately', () => {
@@ -1184,9 +1424,10 @@ describe('game engine', () => {
     snapshot.remainingToSpawn = 0
     snapshot.mapObstacles = []
     snapshot.fixedPassiveLevel = 5
-    snapshot.player.position = { x: 180, y: 200 }
+    const playerPosition = { ...snapshot.player.position }
+    snapshot.player.position = playerPosition
     snapshot.player.attackCooldown = 0
-    snapshot.enemies = [makeEnemy({ id: 'target', position: { x: 240, y: 200 }, hp: 80 })]
+    snapshot.enemies = [makeEnemy({ id: 'target', position: { x: playerPosition.x + 90, y: playerPosition.y }, hp: 80 })]
 
     const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
 
@@ -1542,13 +1783,16 @@ describe('game engine', () => {
   it('keeps blocked melee enemies steering consistently instead of wobbling in place', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.remainingToSpawn = 1
-    snapshot.player.position = { x: 320, y: 200 }
+    snapshot.spawnCooldown = 999
+    const playerPosition = { ...snapshot.player.position }
+    const enemyStart = { x: playerPosition.x - 170, y: playerPosition.y }
+    snapshot.player.position = playerPosition
     snapshot.player.attackCooldown = 99
     snapshot.mapObstacles = [
       {
         id: 'pillar-1',
         kind: 'pillar',
-        position: { x: 235, y: 200 },
+        position: { x: playerPosition.x - 85, y: playerPosition.y },
         width: 42,
         height: 92,
       },
@@ -1556,7 +1800,7 @@ describe('game engine', () => {
     snapshot.enemies = [makeEnemy({
       id: 'melee-2',
       kind: 'melee',
-      position: { x: 150, y: 200 },
+      position: enemyStart,
       speed: 110,
       steeringSide: 1,
       steeringTimer: 0,
@@ -1567,20 +1811,22 @@ describe('game engine', () => {
       next = advanceGame(next, { up: false, down: false, left: false, right: false }, 0.05)
     }
 
-    expect(next.enemies[0].position.x).toBeGreaterThan(160)
-    expect(next.enemies[0].position.y).toBeGreaterThan(204)
+    expect(next.enemies[0].position.x).toBeGreaterThan(enemyStart.x + 10)
+    expect(next.enemies[0].position.y).toBeGreaterThan(enemyStart.y + 4)
     expect(next.enemies[0].steeringSide).toBe(1)
   })
 
   it('can drop a health pack when an enemy is defeated', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.remainingToSpawn = 1
+    snapshot.spawnCooldown = 999
+    const enemyPosition = { x: snapshot.player.position.x + 180, y: snapshot.player.position.y }
     snapshot.enemies = [
       {
         id: 'melee-1',
         kind: 'melee',
         grantsEliteReward: false,
-        position: { x: 140, y: 100 },
+        position: enemyPosition,
         hp: 1,
         maxHp: 46,
         speed: 0,
@@ -1592,7 +1838,7 @@ describe('game engine', () => {
         behaviorTimer: 0,
         behaviorDirection: { x: 0, y: 0 },
         stuckTimer: 0,
-        lastPosition: { x: 140, y: 100 },
+        lastPosition: enemyPosition,
         burnTtl: 0,
         burnDamagePerSecond: 0,
         slowTtl: 0,
@@ -1604,7 +1850,7 @@ describe('game engine', () => {
       {
         id: 'player-shot',
         owner: 'player',
-        position: { x: 140, y: 100 },
+        position: enemyPosition,
         velocity: { x: 0, y: 0 },
         damage: 2,
         ttl: 1,
@@ -1630,6 +1876,8 @@ describe('game engine', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.levelTimer = 0
     snapshot.remainingToSpawn = 1
+    snapshot.spawnCooldown = 999
+    const enemyPosition = { x: snapshot.player.position.x + 180, y: snapshot.player.position.y }
     snapshot.enemies = [makeEnemy({
       id: 'fodder-slime',
       archetypeId: CORROSIVE_SLIME_ARCHETYPE.id,
@@ -1638,9 +1886,9 @@ describe('game engine', () => {
       isFodder: true,
       hp: 1,
       maxHp: 8,
-      position: { x: 220, y: 200 },
+      position: enemyPosition,
     })]
-    snapshot.projectiles = [makeProjectile({ position: { x: 220, y: 200 }, damage: 99 })]
+    snapshot.projectiles = [makeProjectile({ position: enemyPosition, damage: 99 })]
     snapshot.mapObstacles = []
 
     vi.spyOn(Math, 'random').mockReturnValue(0.5)
@@ -1854,8 +2102,9 @@ describe('game engine', () => {
 
   it('prefers ranged targets when the priority is switched to ranged', () => {
     const snapshot = createInitialSnapshot('running')
-    snapshot.player.position = { x: 100, y: 100 }
-    snapshot.aimPoint = { x: 100, y: 220 }
+    const playerPosition = { ...snapshot.player.position }
+    snapshot.player.position = playerPosition
+    snapshot.aimPoint = { x: playerPosition.x + 160, y: playerPosition.y }
     snapshot.player.attackCooldown = 0
     snapshot.targetPriority = 'ranged'
     snapshot.remainingToSpawn = 0
@@ -1864,7 +2113,7 @@ describe('game engine', () => {
         id: 'melee-1',
         kind: 'melee',
         grantsEliteReward: false,
-        position: { x: 135, y: 100 },
+        position: { x: playerPosition.x + 42, y: playerPosition.y },
         hp: 2,
         maxHp: 46,
         speed: 0,
@@ -1876,7 +2125,7 @@ describe('game engine', () => {
         behaviorTimer: 0,
         behaviorDirection: { x: 0, y: 0 },
         stuckTimer: 0,
-        lastPosition: { x: 135, y: 100 },
+        lastPosition: { x: playerPosition.x + 42, y: playerPosition.y },
         burnTtl: 0,
         burnDamagePerSecond: 0,
         slowTtl: 0,
@@ -1887,7 +2136,7 @@ describe('game engine', () => {
         id: 'ranged-1',
         kind: 'ranged',
         grantsEliteReward: false,
-        position: { x: 100, y: 220 },
+        position: { x: playerPosition.x, y: playerPosition.y + 86 },
         hp: 2,
         maxHp: 37,
         speed: 0,
@@ -1899,7 +2148,7 @@ describe('game engine', () => {
         behaviorTimer: 0,
         behaviorDirection: { x: 0, y: 0 },
         stuckTimer: 0,
-        lastPosition: { x: 100, y: 220 },
+        lastPosition: { x: playerPosition.x, y: playerPosition.y + 86 },
         burnTtl: 0,
         burnDamagePerSecond: 0,
         slowTtl: 0,
@@ -1908,7 +2157,7 @@ describe('game engine', () => {
       },
     ]
 
-    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.1)
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
 
     expect(next.projectiles.length).toBeGreaterThan(0)
     expect(Math.abs(next.projectiles[0].velocity.x)).toBeLessThan(Math.abs(next.projectiles[0].velocity.y))
@@ -1917,8 +2166,9 @@ describe('game engine', () => {
 
   it('keeps basic attacks locked on enemies instead of following the mouse aim', () => {
     const snapshot = createInitialSnapshot('running')
-    snapshot.player.position = { x: 100, y: 100 }
-    snapshot.aimPoint = { x: 100, y: 220 }
+    const playerPosition = { ...snapshot.player.position }
+    snapshot.player.position = playerPosition
+    snapshot.aimPoint = { x: playerPosition.x, y: playerPosition.y + 120 }
     snapshot.player.attackCooldown = 0
     snapshot.targetPriority = 'melee'
     snapshot.remainingToSpawn = 0
@@ -1927,7 +2177,7 @@ describe('game engine', () => {
         id: 'melee-1',
         kind: 'melee',
         grantsEliteReward: false,
-        position: { x: 180, y: 100 },
+        position: { x: playerPosition.x + 80, y: playerPosition.y },
         hp: 2,
         maxHp: 46,
         speed: 0,
@@ -1939,7 +2189,7 @@ describe('game engine', () => {
         behaviorTimer: 0,
         behaviorDirection: { x: 0, y: 0 },
         stuckTimer: 0,
-        lastPosition: { x: 180, y: 100 },
+        lastPosition: { x: playerPosition.x + 80, y: playerPosition.y },
         burnTtl: 0,
         burnDamagePerSecond: 0,
         slowTtl: 0,
@@ -1948,7 +2198,7 @@ describe('game engine', () => {
       },
     ]
 
-    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.1)
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
 
     expect(next.projectiles.length).toBeGreaterThan(0)
     expect(next.projectiles[0].velocity.x).toBeGreaterThan(0)
@@ -1959,15 +2209,16 @@ describe('game engine', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.remainingToSpawn = 0
     snapshot.mapObstacles = []
-    snapshot.player.position = { x: 100, y: 100 }
+    const playerPosition = { ...snapshot.player.position }
+    snapshot.player.position = playerPosition
     snapshot.player.attackCooldown = 0
     snapshot.targetPriority = 'melee'
     snapshot.enemies = [
-      makeEnemy({ id: 'near-melee', kind: 'melee', position: { x: 140, y: 145 }, hp: 120, maxHp: 120 }),
-      makeEnemy({ id: 'boss-target', kind: 'boss', position: { x: 250, y: 100 }, hp: 600, maxHp: 600, size: 32 }),
+      makeEnemy({ id: 'near-melee', kind: 'melee', position: { x: playerPosition.x + 60, y: playerPosition.y + 45 }, hp: 120, maxHp: 120 }),
+      makeEnemy({ id: 'boss-target', kind: 'boss', position: { x: playerPosition.x + 170, y: playerPosition.y }, hp: 600, maxHp: 600, size: 32 }),
     ]
 
-    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.1)
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
 
     expect(next.projectiles.length).toBeGreaterThan(0)
     expect(next.projectiles[0].velocity.x).toBeGreaterThan(0)
@@ -2130,8 +2381,11 @@ describe('game engine', () => {
 
   it('lets skeleton knights block frontal damage on cooldown', () => {
     const frontHit = createInitialSnapshot('running')
-    frontHit.player.position = { x: 100, y: 200 }
+    const playerPosition = { ...frontHit.player.position }
+    const enemyPosition = { x: playerPosition.x + 150, y: playerPosition.y }
+    frontHit.player.position = playerPosition
     frontHit.remainingToSpawn = 1
+    frontHit.spawnCooldown = 999
     frontHit.mapObstacles = []
     frontHit.enemies = [{
       id: 'boss-1',
@@ -2140,7 +2394,7 @@ describe('game engine', () => {
       archetypeId: 'dungeon-skeleton-knight',
       displayName: '骷髅骑士',
       campaignIndex: 1,
-      position: { x: 220, y: 200 },
+      position: enemyPosition,
       hp: 200,
       maxHp: 200,
       speed: 0,
@@ -2153,7 +2407,7 @@ describe('game engine', () => {
       behaviorDirection: { x: -1, y: 0 },
       facingDirection: { x: -1, y: 0 },
       stuckTimer: 0,
-      lastPosition: { x: 220, y: 200 },
+      lastPosition: enemyPosition,
       burnTtl: 0,
       burnDamagePerSecond: 0,
       slowTtl: 0,
@@ -2167,7 +2421,7 @@ describe('game engine', () => {
     frontHit.projectiles = [{
       id: 'front-shot',
       owner: 'player',
-      position: { x: 220, y: 200 },
+      position: { x: enemyPosition.x - 2, y: enemyPosition.y },
       velocity: { x: 1, y: 0 },
       damage: 100,
       ttl: 1,
@@ -2190,8 +2444,9 @@ describe('game engine', () => {
     expect(blockFlash?.position.y).toBeLessThan(frontHit.enemies[0].position.y)
 
     const backHit = createInitialSnapshot('running')
-    backHit.player.position = { x: 100, y: 200 }
+    backHit.player.position = playerPosition
     backHit.remainingToSpawn = 1
+    backHit.spawnCooldown = 999
     backHit.mapObstacles = []
     backHit.enemies = [{
       ...frontHit.enemies[0],
@@ -2779,6 +3034,90 @@ describe('game engine', () => {
     })
   })
 
+  it('caps core big-affix projectile growth even when multiple sources stack', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.player.attackCooldown = 999
+    snapshot.aimPoint = { x: 520, y: 200 }
+    snapshot.activeSkills = [{ skillId: 'arrow-screen', level: 1, cooldownRemaining: 0 }]
+    snapshot.equippedItems = {
+      weapon: makeEquipment({
+        id: 'stacked-spread-core',
+        rarity: 'legendary',
+        buildTag: 'spread',
+        bonus: { spreadProjectileBonus: 9 },
+        modifiers: [
+          { type: 'projectile-count', skillIds: ['arrow-screen'], amount: 2 },
+          { type: 'projectile-count', skillIds: ['arrow-screen'], amount: 2 },
+          { type: 'projectile-count', skillIds: ['arrow-screen'], amount: 2 },
+        ],
+      }),
+    }
+
+    const cast = triggerActiveSkillSnapshot(snapshot, 0)
+    const baseCount = ARCHER_ACTIVE_SKILL_MAP['arrow-screen'].levels[0].projectileCount
+
+    expect(cast.projectiles.filter((projectile) => projectile.sourceSkillId === 'arrow-screen')).toHaveLength(baseCount + 3)
+  })
+
+  it('caps area radius, duration, and cooldown compression from core affixes', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.player.attackCooldown = 999
+    snapshot.aimPoint = { x: 520, y: 200 }
+    snapshot.activeSkills = [{ skillId: 'arrow-rain', level: 1, cooldownRemaining: 0 }]
+    snapshot.equippedItems = {
+      weapon: makeEquipment({
+        id: 'stacked-control-core',
+        rarity: 'legendary',
+        buildTag: 'control',
+        bonus: { fieldRadiusMultiplier: 0.85, skillCooldownMultiplier: 0.9 },
+        modifiers: [
+          { type: 'field-duration', skillIds: ['arrow-rain'], multiplier: 1.5 },
+          { type: 'field-duration', skillIds: ['arrow-rain'], multiplier: 1.4 },
+        ],
+      }),
+    }
+
+    const cast = triggerActiveSkillSnapshot(snapshot, 0)
+    const field = cast.skillFields.find((item) => item.sourceSkillId === 'arrow-rain')
+    const config = ARCHER_ACTIVE_SKILL_MAP['arrow-rain'].levels[0]
+
+    expect(field).toBeTruthy()
+    expect(field!.radius).toBeLessThanOrEqual(config.fieldRadius * 1.18)
+    expect(field!.ttl).toBeLessThanOrEqual(config.fieldTtl * 1.22)
+    expect(cast.activeSkills[0].cooldownRemaining).toBeGreaterThanOrEqual(config.cooldown * 0.75)
+  })
+
+  it('caps temporary beast summons from equipment big affixes', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.player.attackCooldown = 999
+    snapshot.aimPoint = { x: 520, y: 200 }
+    snapshot.activeSkills = [
+      { skillId: 'pierce-arrow', level: 1, cooldownRemaining: 99 },
+      { skillId: 'arrow-screen', level: 1, cooldownRemaining: 99 },
+      { skillId: 'god-hunt', level: 5, cooldownRemaining: 0 },
+    ]
+    snapshot.equippedItems = {
+      weapon: makeEquipment({
+        id: 'stacked-beast-core-a',
+        rarity: 'legendary',
+        buildTag: 'beast',
+        modifiers: Array.from({ length: 4 }, () => ({ type: 'beast-extra-summon' as const, skillIds: ['god-hunt'], triggerSlot: 2, duration: 6 })),
+      }),
+      ring1: makeEquipment({
+        id: 'stacked-beast-core-b',
+        slot: 'ring1',
+        rarity: 'legacy',
+        buildTag: 'beast',
+        modifiers: Array.from({ length: 4 }, () => ({ type: 'beast-extra-summon' as const, skillIds: ['god-hunt'], triggerSlot: 2, duration: 6 })),
+      }),
+    }
+
+    const cast = triggerActiveSkillSnapshot(snapshot, 2)
+    const equipmentBeasts = cast.beastCompanions.filter((beast) => beast.skillId.startsWith('equipment-'))
+
+    expect(equipmentBeasts.length).toBeLessThanOrEqual(3)
+  })
+
   it('adds real level five behavior to previously uncovered spread skills', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.activeSkills = [{ skillId: 'gale-barrage', level: 5, cooldownRemaining: 0 }]
@@ -3024,6 +3363,233 @@ describe('game engine', () => {
 
     expect(next.pickups.filter((pickup) => pickup.kind === 'soul-crystal' && pickup.expValue === 26)).toHaveLength(1)
     expect(next.floatingTexts.some((text) => text.value === '蓝晶契约')).toBe(true)
+  })
+
+  it('lets ordinary combat layers move beyond the old room bounds without clamping the player', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.mapObstacles = []
+    snapshot.player.position = { x: WORLD_WIDTH - 20, y: 320 }
+    snapshot.player.attackCooldown = 99
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 1
+
+    let next = snapshot
+    for (let frame = 0; frame < 30; frame += 1) {
+      next = advanceGame(next, { up: false, down: false, left: true, right: false }, 0.05)
+    }
+    const movedLeft = next.player.position.x
+    for (let frame = 0; frame < 70; frame += 1) {
+      next = advanceGame(next, { up: false, down: false, left: false, right: true }, 0.05)
+    }
+
+    expect(movedLeft).toBeLessThan(WORLD_WIDTH - 100)
+    expect(next.player.position.x).toBeGreaterThan(WORLD_WIDTH + 150)
+    expect(Number.isFinite(next.player.position.x)).toBe(true)
+  })
+
+  it('moves beyond old room bounds with real infinite chunks and obstacles enabled', () => {
+    const snapshot = startRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), 5))
+    snapshot.levelTimer = 0
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 1
+    snapshot.player.position = { x: WORLD_WIDTH - 80, y: WORLD_WIDTH / 3 }
+    snapshot.player.attackCooldown = 99
+    const initialCameraX = snapshot.player.position.x - WORLD_WIDTH / 2
+
+    let next = snapshot
+    for (let frame = 0; frame < 120; frame += 1) {
+      next = advanceGame(next, { up: false, down: false, left: false, right: true }, 0.05)
+    }
+
+    expect(next.battlefield.mode).toBe('infinite')
+    expect(next.mapObstacles.some((obstacle) => obstacle.id.startsWith('chunk-'))).toBe(true)
+    expect(next.player.position.x).toBeGreaterThan(WORLD_WIDTH + 120)
+    expect(next.player.position.x - WORLD_WIDTH / 2).toBeGreaterThan(initialCameraX + 200)
+  })
+
+  it('keeps active infinite chunks capped and recycles chunks as the player travels', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 0
+    const initialChunkIds = new Set(snapshot.battlefield.activeChunks.map((chunk) => chunk.id))
+    snapshot.player.position = {
+      x: snapshot.player.position.x + 2800,
+      y: snapshot.player.position.y + 640,
+    }
+
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+
+    expect(next.battlefield.activeChunks.length).toBeLessThanOrEqual(INFINITE_ACTIVE_CHUNK_LIMIT)
+    expect(next.battlefield.activeChunks.some((chunk) => initialChunkIds.has(chunk.id))).toBe(false)
+    expect(next.battlefield.debug.recycledChunkCount).toBeGreaterThan(0)
+  })
+
+  it('regenerates the same chunk obstacles from stable seed data when revisiting a chunk', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 1
+    snapshot.enemies = []
+    const originPosition = { ...snapshot.player.position }
+    const chunkSize = snapshot.battlefield.chunkSize
+    const originChunkId = `${snapshot.level}:${Math.floor(originPosition.x / chunkSize)}:${Math.floor(originPosition.y / chunkSize)}`
+    const originChunk = snapshot.battlefield.activeChunks.find((chunk) => chunk.id === originChunkId)!
+    const signature = (chunk: typeof originChunk) => chunk.obstacles.map((obstacle) => ({
+      id: obstacle.id,
+      x: Math.round(obstacle.position.x),
+      y: Math.round(obstacle.position.y),
+      width: obstacle.width,
+      height: obstacle.height,
+      kind: obstacle.kind,
+    }))
+    const originSignature = signature(originChunk)
+
+    snapshot.player.position = {
+      x: originPosition.x + chunkSize * 8,
+      y: originPosition.y + chunkSize * 8,
+    }
+    let next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    expect(next.battlefield.activeChunks.some((chunk) => chunk.id === originChunkId)).toBe(false)
+
+    next.player.position = originPosition
+    next = advanceGame(next, { up: false, down: false, left: false, right: false }, 0.05)
+    const revisitedChunk = next.battlefield.activeChunks.find((chunk) => chunk.id === originChunkId)!
+
+    expect(signature(revisitedChunk)).toEqual(originSignature)
+  })
+
+  it('keeps infinite map obstacles synchronized from active chunks after an empty obstacle frame', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 1
+    snapshot.enemies = []
+    snapshot.mapObstacles = []
+
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+
+    expect(next.mapObstacles.some((obstacle) => obstacle.id.startsWith('chunk-'))).toBe(true)
+    expect(next.battlefield.debug.obstacleCount).toBe(next.mapObstacles.length)
+  })
+
+  it('generates infinite obstacles outside the player safety radius with at least one open escape lane', () => {
+    const snapshot = createInitialSnapshot('running')
+    const player = snapshot.player.position
+    const obstacles = snapshot.mapObstacles
+
+    expect(obstacles.length).toBeGreaterThan(0)
+    expect(obstacles.every((obstacle) => distance(obstacle.position, player) >= INFINITE_OBSTACLE_SAFE_RADIUS)).toBe(true)
+
+    const escapeSamples = [
+      { x: player.x + 180, y: player.y },
+      { x: player.x - 180, y: player.y },
+      { x: player.x, y: player.y + 180 },
+      { x: player.x, y: player.y - 180 },
+    ]
+    const openSamples = escapeSamples.filter((sample) => {
+      return !obstacles.some((obstacle) => (
+        Math.abs(sample.x - obstacle.position.x) <= obstacle.width / 2 + 18 &&
+        Math.abs(sample.y - obstacle.position.y) <= obstacle.height / 2 + 18
+      ))
+    })
+    expect(openSamples.length).toBeGreaterThan(0)
+  })
+
+  it('spawns ordinary enemies from the offscreen ring instead of on top of the player', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.spawnCooldown = 0
+    snapshot.remainingToSpawn = 8
+    snapshot.levelTargetKills = 8
+    snapshot.enemies = []
+
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: true }, 0.05)
+
+    expect(next.enemies.length).toBeGreaterThan(0)
+    next.enemies.forEach((enemy) => {
+      const gap = distance(enemy.position, next.player.position)
+      expect(gap).toBeGreaterThanOrEqual(INFINITE_SPAWN_MIN_DISTANCE - 12)
+      expect(gap).toBeLessThanOrEqual(INFINITE_SPAWN_MAX_DISTANCE + 12)
+    })
+  })
+
+  it('recycles distant ordinary enemies but preserves distant elite and boss entities', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 0
+    const farX = snapshot.player.position.x + INFINITE_ENEMY_RECYCLE_DISTANCE + 400
+    snapshot.enemies = [
+      makeEnemy({ id: 'distant-normal', kind: 'melee', role: 'theme', position: { x: farX, y: snapshot.player.position.y } }),
+      makeEnemy({ id: 'distant-elite', kind: 'elite', role: 'elite', position: { x: farX + 80, y: snapshot.player.position.y + 40 } }),
+      makeEnemy({ id: 'distant-boss', kind: 'boss', role: 'boss', position: { x: farX + 160, y: snapshot.player.position.y + 80 } }),
+    ]
+
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    const normal = next.enemies.find((enemy) => enemy.id === 'distant-normal')
+    const elite = next.enemies.find((enemy) => enemy.id === 'distant-elite')
+    const boss = next.enemies.find((enemy) => enemy.id === 'distant-boss')
+
+    expect(normal).toBeTruthy()
+    expect(distance(normal!.position, next.player.position)).toBeLessThan(INFINITE_ENEMY_RECYCLE_DISTANCE)
+    expect(elite?.position.x).toBe(farX + 80)
+    expect(boss?.position.x).toBe(farX + 160)
+    expect(next.battlefield.debug.recycledEnemyCount).toBeGreaterThan(0)
+  })
+
+  it('opens a contract rift after the kill target and settles the floor through it', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 0
+    snapshot.levelKills = snapshot.levelTargetKills
+    snapshot.enemies = [makeEnemy({ id: 'leftover-normal', position: { x: snapshot.player.position.x + 300, y: snapshot.player.position.y } })]
+
+    let next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    expect(next.battlefield.rift).toBeTruthy()
+    expect(next.enemies.some((enemy) => enemy.id === 'leftover-normal')).toBe(false)
+
+    next.player.position = { ...next.battlefield.rift!.position }
+    next = advanceGame(next, { up: false, down: false, left: false, right: false }, 0.05)
+
+    expect(next.phase).toBe('level-clear')
+    expect(next.message).toContain('契约裂隙')
+  })
+
+  it('keeps campaign ten high-floor horde simulation bounded under a 200 plus entity smoke test', () => {
+    const selected = selectCampaignSnapshot(createInitialSnapshot('idle'), 10)
+    const snapshot = startRunSnapshot(selected)
+    snapshot.level = (10 - 1) * FLOORS_PER_CAMPAIGN + 21
+    snapshot.selectedCampaign = 10
+    snapshot.levelTimer = 0
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 0
+    snapshot.enemies = Array.from({ length: 230 }, (_, index) => makeEnemy({
+      id: `stress-${index}`,
+      kind: index % 17 === 0 ? 'ranged' : 'melee',
+      role: index % 17 === 0 ? 'high-threat' : 'fodder',
+      position: {
+        x: snapshot.player.position.x + ((index % 23) - 11) * 24,
+        y: snapshot.player.position.y + (Math.floor(index / 23) - 5) * 24,
+      },
+      hp: 30,
+      maxHp: 30,
+      speed: 42,
+    }))
+
+    let next = snapshot
+    for (let frame = 0; frame < 30; frame += 1) {
+      next = advanceGame(next, { up: false, down: false, left: false, right: frame % 2 === 0 }, 0.05)
+    }
+
+    expect(next.enemies.length).toBeLessThanOrEqual(getMaxEnemiesOnField(next.level))
+    expect(next.battlefield.activeChunks.length).toBeLessThanOrEqual(INFINITE_ACTIVE_CHUNK_LIMIT)
+    expect(next.battlefield.debug.obstacleCount).toBeLessThanOrEqual(INFINITE_ACTIVE_CHUNK_LIMIT * 4)
+    expect(next.projectiles.length + next.enemyProjectiles.length).toBeLessThan(260)
+    expect(next.pickups.length).toBeLessThanOrEqual(120)
+    expect(next.battlefield.debug.recycledEnemyCount).toBeGreaterThanOrEqual(0)
   })
 
   it('queues boss loot independently instead of relying on floor pickup filtering', () => {

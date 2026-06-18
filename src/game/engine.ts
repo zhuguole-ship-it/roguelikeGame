@@ -2,10 +2,21 @@ import {
   AGILITY_SPEED_BONUS,
   ACTIVE_SKILL_DAMAGE_MULTIPLIER,
   FLOORS_PER_CAMPAIGN,
+  BOSS_ARENA_RADIUS,
+  BOSS_ARENA_SOFT_MARGIN,
+  CONTRACT_RIFT_AUTO_SETTLE_TIME,
+  CONTRACT_RIFT_RADIUS,
   ENEMY_PROJECTILE_SIZE,
   ENEMY_PROJECTILE_SPEED,
   ENEMY_PROJECTILE_TTL,
   HASTE_INTERVAL_REDUCTION,
+  INFINITE_ACTIVE_CHUNK_LIMIT,
+  INFINITE_ACTIVE_CHUNK_RADIUS,
+  INFINITE_CHUNK_SIZE,
+  INFINITE_ENEMY_RECYCLE_DISTANCE,
+  INFINITE_OBSTACLE_SAFE_RADIUS,
+  INFINITE_SPAWN_MAX_DISTANCE,
+  INFINITE_SPAWN_MIN_DISTANCE,
   LEVEL_CLEAR_DELAY,
   PALETTE,
   PLAYER_ACTIVE_SKILL_SLOTS,
@@ -47,7 +58,7 @@ import {
   isEliteLevel,
 } from './config'
 import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, ARCHER_FIXED_PASSIVE_LEVELS, LV5_QUALITATIVE_TEXT, SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from './archerSkills'
-import { CORROSIVE_SLIME_ARCHETYPE, getCampaignEnemyArchetype, getCampaignEnemyKind, getCampaignFloorEnemyPool, getCampaignGuardEnemyKind, getCampaignMonsterTheme, getCampaignOpeningEnemyKind, type CampaignEnemyArchetype } from './campaignMonsters'
+import { CORROSIVE_SLIME_ARCHETYPE, getCampaignEnemyArchetype, getCampaignEnemyKind, getCampaignFloorEnemyPool, getCampaignGuardEnemyKind, getCampaignLootProfile, getCampaignMonsterTheme, getCampaignOpeningEnemyKind, type CampaignEnemyArchetype } from './campaignMonsters'
 import {
   canAffordEquipmentMaterials,
   canDismantleEquipmentItem,
@@ -77,6 +88,9 @@ import { WEAPON_DEFINITION_MAP, WEAPON_PROGRESS_BASE_LEVELS } from './weapons'
 import type {
   ActiveSkillDefinition,
   ActiveSkillInstance,
+  BattlefieldChunk,
+  BattlefieldMode,
+  BattlefieldState,
   BeastCompanion,
   BeastKind,
   Enemy,
@@ -96,6 +110,8 @@ import type {
   PendingSkillReward,
   Projectile,
   RewardChoiceMode,
+  RouteObjective,
+  RouteObjectiveKind,
   SkillAllocations,
   SkillBuildTag,
   SkillEffectTag,
@@ -115,6 +131,11 @@ const createId = () => Math.random().toString(16).slice(2)
 const PLAYER_DASH_DURATION = 0.16
 const PLAYER_DASH_COOLDOWN = 1.1
 const PLAYER_DASH_SPEED = 480
+const CORE_PROJECTILE_BONUS_CAP = 3
+const CORE_FIELD_RADIUS_MULTIPLIER_CAP = 1.18
+const CORE_FIELD_DURATION_MULTIPLIER_CAP = 1.22
+const CORE_COOLDOWN_MULTIPLIER_FLOOR = 0.75
+const BEAST_TEMPORARY_EQUIPMENT_SUMMON_CAP = 3
 const HEALTH_PACK_DROP_CHANCE = 0.22
 const HEALTH_PACK_HEAL = 25
 const HEALTH_PACK_MIN_TTL = 8
@@ -272,6 +293,277 @@ const obstacleTemplates: Array<Pick<MapObstacle, 'kind' | 'width' | 'height'>> =
   { kind: 'ruin', width: 52, height: 36 },
 ]
 
+const hashNumber = (...values: number[]) => {
+  let hash = 2166136261
+  values.forEach((value) => {
+    hash ^= Math.floor(value * 1009)
+    hash = Math.imul(hash, 16777619)
+  })
+  return hash >>> 0
+}
+
+const seededUnit = (...values: number[]) => {
+  const hash = hashNumber(...values)
+  return ((hash ^ (hash >>> 16)) >>> 0) / 0xffffffff
+}
+
+const seededRange = (min: number, max: number, ...values: number[]) => min + (max - min) * seededUnit(...values)
+
+const createBattlefieldDebug = () => ({
+  activeChunkCount: 0,
+  obstacleCount: 0,
+  recycledChunkCount: 0,
+  recycledEnemyCount: 0,
+  lastSpawnDistance: 0,
+  routeObjectiveCount: 0,
+  routeObjectiveRewardBudget: 0,
+  routeObjectiveExtraThreatCount: 0,
+})
+
+export const getRouteObjectiveLimit = (level: number) => {
+  const floor = getCampaignFloor(level)
+  if (floor <= 5) return 1
+  if (floor <= 14) return 2
+  return 3
+}
+
+export const getRouteObjectiveBaseReward = (level: number) => Math.max(12, getLevelGoal(level) * 2)
+
+export const getRouteObjectiveRewardCap = (level: number) => Math.ceil(getRouteObjectiveBaseReward(level) * 0.22)
+
+export const getRouteObjectiveExtraThreatCap = (level: number) => Math.max(1, Math.floor(getMaxEnemiesOnField(level) * 0.06))
+
+const getBattlefieldMode = (phase: GamePhase, level: number): BattlefieldMode => {
+  if (phase === 'idle' || phase === 'game-over') {
+    return 'village'
+  }
+
+  return isBossLevel(level) ? 'boss-arena' : 'infinite'
+}
+
+const createBattlefieldState = (
+  mode: BattlefieldMode,
+  level: number,
+  playerPosition: Vector2,
+  seed = Math.floor(Math.random() * 1_000_000_000),
+): BattlefieldState => {
+  const battlefield: BattlefieldState = {
+    mode,
+    seed,
+    chunkSize: INFINITE_CHUNK_SIZE,
+    activeChunks: [],
+    recycledChunkCount: 0,
+    recycledEnemyCount: 0,
+    noKillTimer: 0,
+    escapePressure: 0,
+    routeObjectives: [],
+    routeObjectiveSkillBoost: undefined,
+    rift: undefined,
+    bossArenaRadius: mode === 'boss-arena' ? BOSS_ARENA_RADIUS : undefined,
+    bossArenaWarningTimer: 0,
+    debug: createBattlefieldDebug(),
+  }
+
+  if (mode === 'infinite') {
+    refreshBattlefieldChunks(battlefield, level, playerPosition, { x: 1, y: 0 })
+  }
+
+  battlefield.debug.activeChunkCount = battlefield.activeChunks.length
+  battlefield.debug.obstacleCount = battlefield.activeChunks.reduce((sum, chunk) => sum + chunk.obstacles.length, 0)
+  return battlefield
+}
+
+const cloneBattlefieldState = (battlefield: BattlefieldState): BattlefieldState => ({
+  ...battlefield,
+  activeChunks: battlefield.activeChunks.map((chunk) => ({
+    ...chunk,
+    obstacles: chunk.obstacles.map((obstacle) => ({
+      ...obstacle,
+      position: { ...obstacle.position },
+    })),
+    spawnPoints: chunk.spawnPoints.map((point) => ({ ...point })),
+    hazardPoints: chunk.hazardPoints.map((point) => ({ ...point })),
+  })),
+  rift: battlefield.rift
+    ? {
+        ...battlefield.rift,
+        position: { ...battlefield.rift.position },
+      }
+    : undefined,
+  routeObjectives: battlefield.routeObjectives.map((objective) => ({
+    ...objective,
+    position: { ...objective.position },
+  })),
+  routeObjectiveSkillBoost: battlefield.routeObjectiveSkillBoost
+    ? { ...battlefield.routeObjectiveSkillBoost }
+    : undefined,
+  debug: { ...battlefield.debug },
+})
+
+const getFlattenedChunkObstacles = (battlefield: BattlefieldState) => battlefield.activeChunks.flatMap((chunk) => chunk.obstacles)
+
+const getBattlefieldObstacles = (battlefield: BattlefieldState, level: number) => (
+  battlefield.mode === 'village'
+    ? createVillageObstacles()
+    : battlefield.mode === 'infinite'
+      ? getFlattenedChunkObstacles(battlefield)
+      : createLevelObstacles(level)
+)
+
+const getChunkCoordinate = (value: number, chunkSize: number) => Math.floor(value / chunkSize)
+
+const getObstacleDensityForLevel = (level: number) => {
+  const floor = getCampaignFloor(level)
+  if (floor <= 2) return 1
+  if (floor <= 8) return 2
+  if (floor <= 15) return 3
+  if (floor <= 21) return 4
+  return 2
+}
+
+const isInsideForwardCorridor = (point: Vector2, playerPosition: Vector2, forward: Vector2) => {
+  const normalizedForward = normalize(forward)
+  if (normalizedForward.x === 0 && normalizedForward.y === 0) {
+    return false
+  }
+
+  const toPoint = { x: point.x - playerPosition.x, y: point.y - playerPosition.y }
+  const ahead = toPoint.x * normalizedForward.x + toPoint.y * normalizedForward.y
+  if (ahead <= 0 || ahead > 560) {
+    return false
+  }
+
+  const side = Math.abs(toPoint.x * -normalizedForward.y + toPoint.y * normalizedForward.x)
+  return side < 92
+}
+
+const getChunkObstacleTemplate = (level: number, index: number) => {
+  const campaign = getCampaignIndex(level)
+  return obstacleTemplates[(campaign + index) % obstacleTemplates.length]
+}
+
+const createBattlefieldChunk = (
+  level: number,
+  seed: number,
+  cx: number,
+  cy: number,
+  playerPosition: Vector2,
+  forward: Vector2,
+  existingObstacles: MapObstacle[],
+): BattlefieldChunk => {
+  const chunkSize = INFINITE_CHUNK_SIZE
+  const baseX = cx * chunkSize
+  const baseY = cy * chunkSize
+  const obstacleTarget = getObstacleDensityForLevel(level)
+  const floorVariant = Math.floor(seededRange(0, 8, seed, level, cx, cy, 13))
+  const detailSeed = hashNumber(seed, level, cx, cy, 97)
+  const obstacles: MapObstacle[] = []
+  const spawnPoints: Vector2[] = []
+  const hazardPoints: Vector2[] = []
+  let attempts = 0
+
+  for (let index = 0; index < 8; index += 1) {
+    spawnPoints.push({
+      x: baseX + seededRange(80, chunkSize - 80, seed, level, cx, cy, index, 21),
+      y: baseY + seededRange(80, chunkSize - 80, seed, level, cx, cy, index, 22),
+    })
+  }
+
+  for (let index = 0; index < 3; index += 1) {
+    hazardPoints.push({
+      x: baseX + seededRange(96, chunkSize - 96, seed, level, cx, cy, index, 31),
+      y: baseY + seededRange(96, chunkSize - 96, seed, level, cx, cy, index, 32),
+    })
+  }
+
+  while (obstacles.length < obstacleTarget && attempts < obstacleTarget * 24) {
+    attempts += 1
+    const template = getChunkObstacleTemplate(level, attempts)
+    const obstacle: MapObstacle = {
+      id: `chunk-${level}-${cx}-${cy}-${attempts}-${template.kind}`,
+      kind: template.kind,
+      width: template.width + (attempts % 3 === 0 ? 18 : 0),
+      height: template.height + (attempts % 4 === 0 ? 12 : 0),
+      position: {
+        x: baseX + seededRange(76, chunkSize - 76, seed, level, cx, cy, attempts, 1),
+        y: baseY + seededRange(76, chunkSize - 76, seed, level, cx, cy, attempts, 2),
+      },
+    }
+
+    const tooCloseToPlayer = distance(obstacle.position, playerPosition) < INFINITE_OBSTACLE_SAFE_RADIUS
+    const blocksForwardCorridor = isInsideForwardCorridor(obstacle.position, playerPosition, forward)
+    const overlapsExisting = [...existingObstacles, ...obstacles].some((current) => {
+      return Math.abs(current.position.x - obstacle.position.x) < (current.width + obstacle.width) * 0.85 + 54 &&
+        Math.abs(current.position.y - obstacle.position.y) < (current.height + obstacle.height) * 0.85 + 54
+    })
+
+    if (tooCloseToPlayer || blocksForwardCorridor || overlapsExisting) {
+      continue
+    }
+
+    obstacles.push(obstacle)
+  }
+
+  return {
+    id: `${level}:${cx}:${cy}`,
+    cx,
+    cy,
+    floorVariant,
+    detailSeed,
+    obstacles,
+    spawnPoints,
+    hazardPoints,
+  }
+}
+
+function refreshBattlefieldChunks(
+  battlefield: BattlefieldState,
+  level: number,
+  playerPosition: Vector2,
+  forward: Vector2,
+) {
+  if (battlefield.mode !== 'infinite') {
+    battlefield.activeChunks = []
+    battlefield.debug.activeChunkCount = 0
+    battlefield.debug.obstacleCount = 0
+    return
+  }
+
+  const chunkSize = battlefield.chunkSize
+  const centerX = getChunkCoordinate(playerPosition.x, chunkSize)
+  const centerY = getChunkCoordinate(playerPosition.y, chunkSize)
+  const existing = new Map(battlefield.activeChunks.map((chunk) => [chunk.id, chunk]))
+  const nextChunks: BattlefieldChunk[] = []
+
+  for (let cy = centerY - INFINITE_ACTIVE_CHUNK_RADIUS; cy <= centerY + INFINITE_ACTIVE_CHUNK_RADIUS; cy += 1) {
+    for (let cx = centerX - INFINITE_ACTIVE_CHUNK_RADIUS; cx <= centerX + INFINITE_ACTIVE_CHUNK_RADIUS; cx += 1) {
+      const id = `${level}:${cx}:${cy}`
+      const existingChunk = existing.get(id)
+      if (existingChunk) {
+        nextChunks.push(existingChunk)
+        continue
+      }
+
+      nextChunks.push(createBattlefieldChunk(
+        level,
+        battlefield.seed,
+        cx,
+        cy,
+        playerPosition,
+        forward,
+        nextChunks.flatMap((chunk) => chunk.obstacles),
+      ))
+    }
+  }
+
+  const previousCount = battlefield.activeChunks.length
+  battlefield.activeChunks = nextChunks.slice(0, INFINITE_ACTIVE_CHUNK_LIMIT)
+  battlefield.recycledChunkCount += Math.max(0, previousCount - battlefield.activeChunks.filter((chunk) => existing.has(chunk.id)).length)
+  battlefield.debug.activeChunkCount = battlefield.activeChunks.length
+  battlefield.debug.obstacleCount = battlefield.activeChunks.reduce((sum, chunk) => sum + chunk.obstacles.length, 0)
+  battlefield.debug.recycledChunkCount = battlefield.recycledChunkCount
+}
+
 const intersectsObstacle = (position: Vector2, radius: number, obstacle: MapObstacle) => {
   const halfW = obstacle.width / 2
   const halfH = obstacle.height / 2
@@ -284,10 +576,16 @@ const isBlockedByObstacle = (position: Vector2, radius: number, obstacles: MapOb
   return obstacles.some((obstacle) => intersectsObstacle(position, radius, obstacle))
 }
 
-const moveWithObstacleCollision = (position: Vector2, radius: number, movement: Vector2, obstacles: MapObstacle[]) => {
+const moveWithObstacleCollision = (
+  position: Vector2,
+  radius: number,
+  movement: Vector2,
+  obstacles: MapObstacle[],
+  bounded = true,
+) => {
   const next = { ...position }
   const nextX = {
-    x: clamp(position.x + movement.x, ROOM_PADDING + radius, WORLD_WIDTH - ROOM_PADDING - radius),
+    x: bounded ? clamp(position.x + movement.x, ROOM_PADDING + radius, WORLD_WIDTH - ROOM_PADDING - radius) : position.x + movement.x,
     y: next.y,
   }
   if (!isBlockedByObstacle(nextX, radius, obstacles)) {
@@ -296,7 +594,7 @@ const moveWithObstacleCollision = (position: Vector2, radius: number, movement: 
 
   const nextY = {
     x: next.x,
-    y: clamp(position.y + movement.y, ROOM_PADDING + radius, WORLD_HEIGHT - ROOM_PADDING - radius),
+    y: bounded ? clamp(position.y + movement.y, ROOM_PADDING + radius, WORLD_HEIGHT - ROOM_PADDING - radius) : position.y + movement.y,
   }
   if (!isBlockedByObstacle(nextY, radius, obstacles)) {
     next.y = nextY.y
@@ -312,8 +610,9 @@ const moveEnemyWithSteering = (
   target: Vector2,
   obstacles: MapObstacle[],
   preferredSide = 0,
+  bounded = true,
 ) => {
-  const direct = moveWithObstacleCollision(position, radius, movement, obstacles)
+  const direct = moveWithObstacleCollision(position, radius, movement, obstacles, bounded)
   const directProgress = distance(position, target) - distance(direct, target)
 
   if (directProgress > 0.2 || (Math.abs(movement.x) < 0.01 && Math.abs(movement.y) < 0.01)) {
@@ -334,6 +633,7 @@ const moveEnemyWithSteering = (
         radius,
         { x: steered.x * movementLength, y: steered.y * movementLength },
         obstacles,
+        bounded,
       )
 
       return {
@@ -349,8 +649,8 @@ const moveEnemyWithSteering = (
   return candidates[0]?.next ?? direct
 }
 
-const movePlayerWithObstacleSlide = (position: Vector2, radius: number, movement: Vector2, obstacles: MapObstacle[]) => {
-  const direct = moveWithObstacleCollision(position, radius, movement, obstacles)
+const movePlayerWithObstacleSlide = (position: Vector2, radius: number, movement: Vector2, obstacles: MapObstacle[], bounded = true) => {
+  const direct = moveWithObstacleCollision(position, radius, movement, obstacles, bounded)
   const movementLength = Math.hypot(movement.x, movement.y)
 
   if (movementLength < 0.01) {
@@ -372,6 +672,7 @@ const movePlayerWithObstacleSlide = (position: Vector2, radius: number, movement
         radius,
         { x: steered.x * movementLength, y: steered.y * movementLength },
         obstacles,
+        bounded,
       )
       const moved = distance(position, next)
       const progress = (next.x - position.x) * direction.x + (next.y - position.y) * direction.y
@@ -696,6 +997,8 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
   const skillAllocations = createEmptySkillAllocations()
   const fixedPassiveLevel = 1
   const isVillagePhase = phase === 'idle' || phase === 'game-over'
+  const playerPosition = isVillagePhase ? VILLAGE_POINTS.campfire : { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }
+  const battlefield = createBattlefieldState(getBattlefieldMode(phase, level), level, playerPosition)
 
   return {
     phase,
@@ -739,8 +1042,9 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
     activeSkills: [],
     pendingSkillReward: null,
     aimPoint: { x: WORLD_WIDTH * 0.68, y: WORLD_HEIGHT / 2 },
-    player: createPlayer(skillAllocations, fixedPassiveLevel, null, {}, undefined, isVillagePhase ? VILLAGE_POINTS.campfire : { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }),
-    mapObstacles: isVillagePhase ? createVillageObstacles() : createLevelObstacles(level),
+    player: createPlayer(skillAllocations, fixedPassiveLevel, null, {}, undefined, playerPosition),
+    battlefield,
+    mapObstacles: isVillagePhase ? createVillageObstacles() : battlefield.mode === 'infinite' ? getFlattenedChunkObstacles(battlefield) : createLevelObstacles(level),
     pickups: [],
     enemies: [],
     projectiles: [],
@@ -1054,7 +1358,7 @@ const getBeastLevel = (snapshot: GameSnapshot, skillId: string) => {
 
 const createBeastSpawnPoint = (snapshot: GameSnapshot, index: number, total: number) => {
   const angle = total <= 1 ? Math.atan2(snapshot.aimPoint.y - snapshot.player.position.y, snapshot.aimPoint.x - snapshot.player.position.x) : (Math.PI * 2 * index) / total
-  return keepInsideRoom({
+  return keepInsideCombatArea(snapshot, {
     x: snapshot.player.position.x + Math.cos(angle) * 34,
     y: snapshot.player.position.y + Math.sin(angle) * 34,
   }, 18)
@@ -1145,7 +1449,7 @@ const commandBeastSpecial = (snapshot: GameSnapshot, beast: BeastCompanion, conf
 
   if (beast.kind === 'hawk') {
     damageEnemiesInLine(snapshot, beast.position, commandDirection, Math.max(220, config.range), 18, specialDamage * 1.25, '#fbbf24')
-    beast.position = keepInsideRoom({
+    beast.position = keepInsideCombatArea(snapshot, {
       x: beast.position.x + commandDirection.x * 92,
       y: beast.position.y + commandDirection.y * 92,
     }, beast.size * 0.5)
@@ -1154,7 +1458,7 @@ const commandBeastSpecial = (snapshot: GameSnapshot, beast: BeastCompanion, conf
   }
 
   if (beast.kind === 'wolf') {
-    beast.position = keepInsideRoom({ ...beast.commandPoint }, beast.size * 0.5)
+    beast.position = keepInsideCombatArea(snapshot, { ...beast.commandPoint }, beast.size * 0.5)
     snapshot.enemies.forEach((enemy) => {
       if (distance(enemy.position, beast.position) <= 76) {
       damageEnemy(snapshot, enemy, specialDamage, '#93c5fd', getIncomingDirection(beast.position, enemy.position))
@@ -1174,7 +1478,7 @@ const commandBeastSpecial = (snapshot: GameSnapshot, beast: BeastCompanion, conf
         enemy.markStacks = Math.min(5, enemy.markStacks + 2)
       }
     })
-    beast.position = keepInsideRoom({
+    beast.position = keepInsideCombatArea(snapshot, {
       x: beast.position.x + commandDirection.x * 120,
       y: beast.position.y + commandDirection.y * 120,
     }, beast.size * 0.5)
@@ -1183,7 +1487,7 @@ const commandBeastSpecial = (snapshot: GameSnapshot, beast: BeastCompanion, conf
   }
 
   if (beast.kind === 'bear') {
-    beast.position = keepInsideRoom({
+    beast.position = keepInsideCombatArea(snapshot, {
       x: snapshot.player.position.x + commandDirection.x * 42,
       y: snapshot.player.position.y + commandDirection.y * 42,
     }, beast.size * 0.5)
@@ -1204,7 +1508,7 @@ const commandBeastSpecial = (snapshot: GameSnapshot, beast: BeastCompanion, conf
   }
 
   if (beast.kind === 'snake') {
-    beast.position = keepInsideRoom({ ...beast.commandPoint }, beast.size * 0.5)
+    beast.position = keepInsideCombatArea(snapshot, { ...beast.commandPoint }, beast.size * 0.5)
     snapshot.enemies.forEach((enemy) => {
       if (distance(enemy.position, beast.position) <= 82) {
         damageEnemy(snapshot, enemy, specialDamage * 0.75, '#84cc16', getIncomingDirection(beast.position, enemy.position))
@@ -1237,7 +1541,7 @@ const summonOrCommandBeast = (
   index: number,
   total: number,
 ): boolean => {
-  const commandPoint = keepInsideRoom({ ...snapshot.aimPoint }, BEAST_STATS[kind].size * 0.5)
+  const commandPoint = keepInsideCombatArea(snapshot, { ...snapshot.aimPoint }, BEAST_STATS[kind].size * 0.5)
   const beastModifiers = getBeastEquipmentModifiers(snapshot, skillId)
   let beast = snapshot.beastCompanions.find((companion) => companion.kind === kind && companion.skillId === skillId)
 
@@ -1474,7 +1778,7 @@ const summonBeastKingSetReinforcement = (snapshot: GameSnapshot, skillLevel: num
     `set-beast-king-${skillId}`,
     skillLevel,
     createBeastSpawnPoint(snapshot, snapshot.beastCompanions.length, Math.max(1, snapshot.beastCompanions.length + 1)),
-    keepInsideRoom({ ...snapshot.aimPoint }, BEAST_STATS[extraKind].size * 0.5),
+    keepInsideCombatArea(snapshot, { ...snapshot.aimPoint }, BEAST_STATS[extraKind].size * 0.5),
     getBuildDamageBonus(snapshot, 'beast'),
   )
   extra.isAlpha = true
@@ -1494,7 +1798,8 @@ const createEquipmentDropsForEnemy = (snapshot: GameSnapshot, enemy: Enemy) => {
     }
   }
   const equipmentBonus = getSnapshotEquipmentBonus(snapshot)
-  const preferredBuildTag = getPreferredBuildTag(snapshot) ?? undefined
+  const campaignProfile = getCampaignLootProfile(snapshot.level, true)
+  const preferredBuildTag = getPreferredBuildTag(snapshot) ?? campaignProfile.dropFocus[0]
   const unlockedSlots = getEffectiveUnlockedEquipmentSlots(snapshot.level, snapshot.unsealedEquipmentSlots)
 
   if (enemy.kind === 'boss') {
@@ -1530,6 +1835,45 @@ const keepInsideRoom = (position: Vector2, radius: number): Vector2 => ({
   y: clamp(position.y, ROOM_PADDING + radius, WORLD_HEIGHT - ROOM_PADDING - radius),
 })
 
+const getBossArenaCenter = () => ({ x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 })
+
+const keepInsideCombatArea = (snapshot: GameSnapshot, position: Vector2, radius: number): Vector2 => {
+  if (snapshot.battlefield.mode === 'infinite') {
+    return position
+  }
+
+  if (snapshot.battlefield.mode === 'boss-arena') {
+    const center = getBossArenaCenter()
+    const arenaRadius = Math.max(160, (snapshot.battlefield.bossArenaRadius ?? BOSS_ARENA_RADIUS) - radius)
+    const offset = { x: position.x - center.x, y: position.y - center.y }
+    const gap = Math.hypot(offset.x, offset.y)
+    if (gap <= arenaRadius) {
+      return position
+    }
+
+    const direction = normalize(offset)
+    return {
+      x: center.x + direction.x * arenaRadius,
+      y: center.y + direction.y * arenaRadius,
+    }
+  }
+
+  return keepInsideRoom(position, radius)
+}
+
+const syncBattlefieldObstacles = (snapshot: GameSnapshot, forward: Vector2 = snapshot.player.dashDirection) => {
+  const manualObstacles = snapshot.mapObstacles.filter((obstacle) => !obstacle.id.startsWith('chunk-'))
+  if (snapshot.battlefield.mode === 'infinite') {
+    refreshBattlefieldChunks(snapshot.battlefield, snapshot.level, snapshot.player.position, forward)
+  }
+  const generatedObstacles = getBattlefieldObstacles(snapshot.battlefield, snapshot.level)
+  snapshot.mapObstacles = snapshot.battlefield.mode === 'infinite'
+    ? [...generatedObstacles, ...manualObstacles]
+    : generatedObstacles
+  snapshot.battlefield.debug.activeChunkCount = snapshot.battlefield.activeChunks.length
+  snapshot.battlefield.debug.obstacleCount = snapshot.mapObstacles.length
+}
+
 const getSpawnPosition = (obstacles: MapObstacle[] = []): Vector2 => {
   const edge = sample(['top', 'right', 'bottom', 'left'])
   let position: Vector2
@@ -1552,6 +1896,84 @@ const getSpawnPosition = (obstacles: MapObstacle[] = []): Vector2 => {
   }
 
   return position
+}
+
+const getSpawnForward = (snapshot: GameSnapshot): Vector2 => {
+  const dashDirection = snapshot.player.dashDirection
+  if (dashDirection.x !== 0 || dashDirection.y !== 0) {
+    return normalize(dashDirection)
+  }
+
+  if (snapshot.player.facing === 'up') return { x: 0, y: -1 }
+  if (snapshot.player.facing === 'down') return { x: 0, y: 1 }
+  if (snapshot.player.facing === 'left') return { x: -1, y: 0 }
+  return { x: 1, y: 0 }
+}
+
+const isProtectedWorldPoint = (snapshot: GameSnapshot, position: Vector2, radius = 32) => {
+  if (snapshot.battlefield.rift && distance(position, snapshot.battlefield.rift.position) < radius + snapshot.battlefield.rift.radius) {
+    return true
+  }
+
+  if (snapshot.pickups.some((pickup) => pickup.kind === 'equipment' && pickup.equipment && ['epic', 'legacy', 'legendary'].includes(pickup.equipment.rarity) && distance(position, pickup.position) < radius + 52)) {
+    return true
+  }
+
+  return snapshot.enemies.some((enemy) => (enemy.kind === 'boss' || enemy.kind === 'elite') && distance(position, enemy.position) < radius + enemy.size)
+}
+
+const getSpawnPositionForSnapshot = (snapshot: GameSnapshot, role: Enemy['role'] = 'theme'): Vector2 => {
+  if (snapshot.battlefield.mode === 'boss-arena') {
+    const center = getBossArenaCenter()
+    const angle = randomBetween(0, Math.PI * 2)
+    const radius = randomBetween(190, Math.max(210, (snapshot.battlefield.bossArenaRadius ?? BOSS_ARENA_RADIUS) - 90))
+    return {
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y + Math.sin(angle) * radius,
+    }
+  }
+
+  if (snapshot.battlefield.mode !== 'infinite') {
+    return getSpawnPosition(snapshot.mapObstacles)
+  }
+
+  const forward = getSpawnForward(snapshot)
+  const pressure = clamp(snapshot.battlefield.escapePressure, 0, 1)
+  const angleBase = Math.atan2(forward.y, forward.x)
+  let candidate = { ...snapshot.player.position }
+  const minDistance = INFINITE_SPAWN_MIN_DISTANCE
+  const maxDistance = INFINITE_SPAWN_MAX_DISTANCE
+
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    const roll = Math.random()
+    const sideSign = Math.random() < 0.5 ? -1 : 1
+    const angleOffset = roll < 0.58 + pressure * 0.22
+      ? randomBetween(-0.95, 0.95)
+      : roll < 0.88
+        ? sideSign * randomBetween(1.05, 1.95)
+        : randomBetween(Math.PI - 0.58, Math.PI + 0.58)
+    const spawnDistance = randomBetween(minDistance, maxDistance)
+    candidate = {
+      x: snapshot.player.position.x + Math.cos(angleBase + angleOffset) * spawnDistance,
+      y: snapshot.player.position.y + Math.sin(angleBase + angleOffset) * spawnDistance,
+    }
+
+    const tooClose = distance(candidate, snapshot.player.position) < minDistance - 24
+    const blocked = isBlockedByObstacle(candidate, role === 'fodder' ? 10 : 18, snapshot.mapObstacles)
+    const protectedPoint = isProtectedWorldPoint(snapshot, candidate, 42)
+    if (!tooClose && !blocked && !protectedPoint) {
+      snapshot.battlefield.debug.lastSpawnDistance = distance(candidate, snapshot.player.position)
+      return candidate
+    }
+  }
+
+  const fallbackDistance = minDistance + 160
+  candidate = {
+    x: snapshot.player.position.x + forward.x * fallbackDistance,
+    y: snapshot.player.position.y + forward.y * fallbackDistance,
+  }
+  snapshot.battlefield.debug.lastSpawnDistance = fallbackDistance
+  return candidate
 }
 
 const isHighThreatArchetype = (archetype: CampaignEnemyArchetype) => {
@@ -1692,6 +2114,218 @@ const createEnemy = (
   return enemy
 }
 
+const getRouteObjectiveKindsForLevel = (level: number): RouteObjectiveKind[] => {
+  const floor = getCampaignFloor(level)
+  if (floor <= 5) return ['crystal-rift']
+  if (floor <= 14) return ['crystal-rift', 'contract-brand']
+  return ['crystal-rift', 'contract-brand', 'relic-crate']
+}
+
+const getRouteObjectiveTtl = (kind: RouteObjectiveKind) => {
+  if (kind === 'crystal-rift') return randomBetween(12, 16)
+  if (kind === 'contract-brand') return randomBetween(14, 18)
+  return randomBetween(16, 20)
+}
+
+const isValidRouteObjectivePosition = (snapshot: GameSnapshot, position: Vector2) => {
+  if (distance(position, snapshot.player.position) < 260) {
+    return false
+  }
+
+  if (snapshot.battlefield.rift && distance(position, snapshot.battlefield.rift.position) < snapshot.battlefield.rift.radius + 140) {
+    return false
+  }
+
+  if (snapshot.enemies.some((enemy) => (enemy.kind === 'boss' || enemy.kind === 'elite') && distance(position, enemy.position) < enemy.size + 140)) {
+    return false
+  }
+
+  if (snapshot.pickups.some((pickup) => pickup.kind === 'equipment' && ['epic', 'legacy', 'legendary'].includes(pickup.equipment?.rarity ?? 'common') && distance(position, pickup.position) < pickup.radius + 140)) {
+    return false
+  }
+
+  return !isBlockedByObstacle(position, 36, snapshot.mapObstacles)
+}
+
+const createRouteObjective = (snapshot: GameSnapshot, kind: RouteObjectiveKind, position: Vector2): RouteObjective => {
+  const rewardCap = getRouteObjectiveRewardCap(snapshot.level)
+  const threatCap = getRouteObjectiveExtraThreatCap(snapshot.level)
+  const rewardBudget = kind === 'crystal-rift'
+    ? Math.max(3, Math.floor(rewardCap * 0.7))
+    : kind === 'contract-brand'
+      ? Math.max(2, Math.floor(rewardCap * 0.45))
+      : Math.max(2, Math.floor(rewardCap * 0.35))
+
+  return {
+    id: `route-${snapshot.level}-${kind}-${createId()}`,
+    kind,
+    position: { ...position },
+    radius: kind === 'contract-brand' ? 54 : 44,
+    ttl: getRouteObjectiveTtl(kind),
+    rewardBudget: Math.min(rewardCap, rewardBudget),
+    extraThreatBudget: kind === 'crystal-rift' ? 1 : Math.min(threatCap, 1),
+    chargeProgress: kind === 'contract-brand' ? 0 : undefined,
+  }
+}
+
+const getRouteObjectiveCandidatePositions = (snapshot: GameSnapshot) => {
+  const candidates = snapshot.battlefield.activeChunks.flatMap((chunk) => [...chunk.hazardPoints, ...chunk.spawnPoints.slice(0, 2)])
+  if (candidates.length > 0) {
+    return candidates
+  }
+
+  return [
+    { x: snapshot.player.position.x + 420, y: snapshot.player.position.y + 140 },
+    { x: snapshot.player.position.x - 360, y: snapshot.player.position.y + 260 },
+    { x: snapshot.player.position.x + 160, y: snapshot.player.position.y - 430 },
+  ]
+}
+
+const syncRouteObjectives = (snapshot: GameSnapshot) => {
+  if (snapshot.battlefield.mode !== 'infinite' || snapshot.phase !== 'running' || snapshot.battlefield.rift) {
+    snapshot.battlefield.routeObjectives = []
+    snapshot.battlefield.debug.routeObjectiveCount = 0
+    snapshot.battlefield.debug.routeObjectiveRewardBudget = 0
+    snapshot.battlefield.debug.routeObjectiveExtraThreatCount = 0
+    return
+  }
+
+  const limit = getRouteObjectiveLimit(snapshot.level)
+  if (snapshot.battlefield.routeObjectives.length >= limit) {
+    return
+  }
+
+  const existingKinds = new Set(snapshot.battlefield.routeObjectives.map((objective) => objective.kind))
+  const candidates = getRouteObjectiveCandidatePositions(snapshot)
+  getRouteObjectiveKindsForLevel(snapshot.level).forEach((kind) => {
+    if (snapshot.battlefield.routeObjectives.length >= limit || existingKinds.has(kind)) {
+      return
+    }
+
+    const position = candidates.find((candidate) => isValidRouteObjectivePosition(snapshot, candidate))
+    if (!position) {
+      return
+    }
+
+    snapshot.battlefield.routeObjectives.push(createRouteObjective(snapshot, kind, position))
+    existingKinds.add(kind)
+  })
+}
+
+const spawnRouteObjectiveThreat = (snapshot: GameSnapshot, objective: RouteObjective) => {
+  const maxEnemies = getMaxEnemiesOnField(snapshot.level)
+  const currentHighThreat = snapshot.enemies.filter((enemy) => enemy.role === 'high-threat').length
+  const highThreatCap = getRouteObjectiveExtraThreatCap(snapshot.level)
+  const theme = getCampaignMonsterTheme(getCampaignIndex(snapshot.level))
+  const highThreatArchetype = theme.normalPool.find(isHighThreatArchetype)
+  let spawnedHighThreat = 0
+
+  if (highThreatArchetype && objective.extraThreatBudget > 0 && currentHighThreat < highThreatCap && snapshot.enemies.length < maxEnemies) {
+    const enemy = createEnemy(snapshot.level, highThreatArchetype.kind, getSpawnPositionForSnapshot(snapshot, 'high-threat'), highThreatArchetype, 'high-threat')
+    enemy.speed = Math.min(enemy.speed, getEnemyBaseSpeedSoftCap(enemy))
+    snapshot.enemies.push(enemy)
+    spawnedHighThreat += 1
+  }
+
+  const fodderCount = Math.min(3, Math.max(1, Math.floor(maxEnemies * 0.018)))
+  for (let index = 0; index < fodderCount && snapshot.enemies.length < maxEnemies; index += 1) {
+    const fodder = createEnemy(snapshot.level, 'melee', getSpawnPositionForSnapshot(snapshot, 'fodder'), CORROSIVE_SLIME_ARCHETYPE, 'fodder')
+    fodder.speed = Math.min(fodder.speed, getEnemyBaseSpeedSoftCap(fodder))
+    snapshot.enemies.push(fodder)
+  }
+
+  snapshot.battlefield.debug.routeObjectiveExtraThreatCount += spawnedHighThreat
+}
+
+const grantRouteObjectiveReward = (snapshot: GameSnapshot, objective: RouteObjective) => {
+  snapshot.battlefield.debug.routeObjectiveRewardBudget += objective.rewardBudget
+
+  if (objective.kind === 'crystal-rift') {
+    const crystalCount = Math.max(2, Math.min(5, Math.ceil(objective.rewardBudget / 4)))
+    const expEach = Math.max(2, Math.floor(objective.rewardBudget / crystalCount))
+    for (let index = 0; index < crystalCount; index += 1) {
+      const angle = (Math.PI * 2 * index) / crystalCount
+      snapshot.pickups.push(createSoulCrystalPickup({
+        x: objective.position.x + Math.cos(angle) * 24,
+        y: objective.position.y + Math.sin(angle) * 24,
+      }, expEach))
+    }
+    snapshot.message = '蓝晶富集裂点被激活，额外蓝晶喷涌'
+  }
+
+  if (objective.kind === 'contract-brand') {
+    snapshot.battlefield.routeObjectiveSkillBoost = {
+      multiplier: 1.12,
+      remainingCasts: 1,
+      ttl: 18,
+    }
+    snapshot.message = '契约火印充能完成，下一次主动技能强化'
+  }
+
+  if (objective.kind === 'relic-crate') {
+    snapshot.equipmentMaterials.ironScraps += Math.max(1, Math.floor(objective.rewardBudget / 5))
+    snapshot.equipmentMaterials.crystalDust += 1
+    snapshot.message = '遗物碎箱破裂，回收少量锻造材料'
+  }
+
+  snapshot.floatingTexts.push(createFloatingText(objective.position, objective.kind === 'crystal-rift' ? '蓝晶裂点' : objective.kind === 'contract-brand' ? '契约火印' : '遗物碎箱', '#fbbf24'))
+  snapshot.bursts.push(createBurst(objective.position, 'rgba(251, 191, 36, ALPHA)', objective.radius))
+  spawnRouteObjectiveThreat(snapshot, objective)
+}
+
+const updateRouteObjectives = (snapshot: GameSnapshot, delta: number) => {
+  if (snapshot.battlefield.mode !== 'infinite' || snapshot.phase !== 'running') {
+    return
+  }
+
+  const boost = snapshot.battlefield.routeObjectiveSkillBoost
+  if (boost) {
+    boost.ttl = Math.max(0, boost.ttl - delta)
+    if (boost.ttl <= 0 || boost.remainingCasts <= 0) {
+      snapshot.battlefield.routeObjectiveSkillBoost = undefined
+    }
+  }
+
+  const activated = new Set<string>()
+  snapshot.battlefield.routeObjectives.forEach((objective) => {
+    objective.ttl = Math.max(0, objective.ttl - delta)
+    if (objective.ttl <= 0) {
+      return
+    }
+
+    const playerGap = distance(snapshot.player.position, objective.position)
+    const projectileHit = objective.kind === 'relic-crate' && snapshot.projectiles.some((projectile) => {
+      return projectile.owner === 'player' && projectile.ttl > 0 && distance(projectile.position, objective.position) <= objective.radius + projectile.size
+    })
+
+    if (objective.kind === 'crystal-rift' && playerGap <= objective.radius + snapshot.player.size) {
+      grantRouteObjectiveReward(snapshot, objective)
+      activated.add(objective.id)
+      return
+    }
+
+    if (objective.kind === 'contract-brand') {
+      objective.chargeProgress = playerGap <= objective.radius + snapshot.player.size
+        ? Math.min(3, (objective.chargeProgress ?? 0) + delta)
+        : Math.max(0, (objective.chargeProgress ?? 0) - delta * 0.75)
+      if ((objective.chargeProgress ?? 0) >= 2.5) {
+        grantRouteObjectiveReward(snapshot, objective)
+        activated.add(objective.id)
+      }
+      return
+    }
+
+    if (projectileHit || (objective.kind === 'relic-crate' && playerGap <= objective.radius + snapshot.player.size * 0.6)) {
+      grantRouteObjectiveReward(snapshot, objective)
+      activated.add(objective.id)
+    }
+  })
+
+  snapshot.battlefield.routeObjectives = snapshot.battlefield.routeObjectives.filter((objective) => objective.ttl > 0 && !activated.has(objective.id))
+  syncRouteObjectives(snapshot)
+  snapshot.battlefield.debug.routeObjectiveCount = snapshot.battlefield.routeObjectives.length
+}
+
 type EliteRank = NonNullable<Enemy['eliteRank']>
 
 const ELITE_AFFIX_LABELS: Record<EliteAffix, string> = {
@@ -1766,11 +2400,11 @@ const getEliteRankMultiplier = (rank: EliteRank) => {
   return { hp: 1, speed: 1, size: 1 }
 }
 
-const spawnEliteEnemy = (level: number, obstacles: MapObstacle[], rank: EliteRank = 'normal', grantsReward = false): Enemy => {
+const spawnEliteEnemy = (level: number, obstacles: MapObstacle[], rank: EliteRank = 'normal', grantsReward = false, positionOverride?: Vector2): Enemy => {
   const archetype = getCampaignEnemyArchetype(level, 'elite')
   const stats = getEnemyStats(level, 'elite')
   const multiplier = getEliteRankMultiplier(rank)
-  const position = getSpawnPosition(obstacles)
+  const position = positionOverride ?? getSpawnPosition(obstacles)
   const id = `elite-${createId()}`
   const hp = Math.max(18, Math.round(stats.hp * archetype.hpMultiplier * multiplier.hp))
   const canRevive = archetype.id.includes('skeleton') || archetype.id.includes('chain-captain') || archetype.skillTrait === 'skeleton-revive'
@@ -1869,6 +2503,7 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
     position: { ...snapshot.player.position },
     dashDirection: { ...snapshot.player.dashDirection },
   },
+  battlefield: cloneBattlefieldState(snapshot.battlefield),
   enemies: snapshot.enemies.map((enemy) => ({
     ...enemy,
     position: { ...enemy.position },
@@ -2109,7 +2744,7 @@ const applyCampaignArchetypeSkill = (snapshot: GameSnapshot, enemy: Enemy, direc
     snapshot.skillFields.push({
       id: `swamp-hex-${enemy.id}-${createId()}`,
       kind: 'storm',
-      position: keepInsideRoom({ ...snapshot.player.position }, 24),
+      position: keepInsideCombatArea(snapshot, { ...snapshot.player.position }, 24),
       ttl: enemy.kind === 'elite' ? 3 : 2.4,
       radius: enemy.kind === 'elite' ? 70 : 54,
       damage: enemy.kind === 'elite' ? 4.2 : 2.8,
@@ -2146,7 +2781,7 @@ const applyCampaignArchetypeSkill = (snapshot: GameSnapshot, enemy: Enemy, direc
   }
 
   if (campaign === 6 && (archetypeId.includes('starlight') || archetypeId.includes('treant') || archetypeId.includes('archpriest')) && gap <= 280) {
-    const target = keepInsideRoom({ ...snapshot.player.position }, 24)
+    const target = keepInsideCombatArea(snapshot, { ...snapshot.player.position }, 24)
     snapshot.skillFields.push({
       id: `sacred-root-${enemy.id}-${createId()}`,
       kind: 'trap',
@@ -2177,7 +2812,7 @@ const applyCampaignArchetypeSkill = (snapshot: GameSnapshot, enemy: Enemy, direc
   }
 
   if (campaign === 7 && (archetypeId.includes('goblin') || archetypeId.includes('blast')) && gap <= 300) {
-    const mine = keepInsideRoom({
+    const mine = keepInsideCombatArea(snapshot, {
       x: snapshot.player.position.x + randomBetween(-36, 36),
       y: snapshot.player.position.y + randomBetween(-36, 36),
     }, 24)
@@ -2193,7 +2828,7 @@ const applyCampaignArchetypeSkill = (snapshot: GameSnapshot, enemy: Enemy, direc
 
   if (campaign === 8 && (archetypeId.includes('tide') || archetypeId.includes('eel')) && gap <= 290) {
     const push = normalize({ x: snapshot.player.position.x - enemy.position.x, y: snapshot.player.position.y - enemy.position.y })
-    snapshot.player.position = keepInsideRoom({
+    snapshot.player.position = keepInsideCombatArea(snapshot, {
       x: snapshot.player.position.x + push.x * (archetypeId.includes('eel') ? 16 : 24),
       y: snapshot.player.position.y + push.y * (archetypeId.includes('eel') ? 16 : 24),
     }, snapshot.player.size * 0.55)
@@ -2262,7 +2897,7 @@ const updateEnemyTraitSkill = (snapshot: GameSnapshot, enemy: Enemy, direction: 
   }
 
   if (enemy.skillTrait === 'minefield' && gap <= ENEMY_TRAIT_SKILL_RANGE + 40) {
-    const minePosition = keepInsideRoom({
+    const minePosition = keepInsideCombatArea(snapshot, {
       x: snapshot.player.position.x + randomBetween(-22, 22),
       y: snapshot.player.position.y + randomBetween(-22, 22),
     }, 18)
@@ -2313,10 +2948,10 @@ const createField = (
 ): SkillField => {
   const equipmentBonus = getSnapshotEquipmentBonus(snapshot)
   const modifiers = getSkillModifiers(snapshot, skillId, buildTag)
-  const radiusMultiplier = buildTag === 'control' ? 1 + equipmentBonus.fieldRadiusMultiplier : 1
-  const projectileBonus = buildTag === 'spread' ? equipmentBonus.spreadProjectileBonus : 0
+  const radiusMultiplier = buildTag === 'control' ? Math.min(CORE_FIELD_RADIUS_MULTIPLIER_CAP, 1 + equipmentBonus.fieldRadiusMultiplier) : 1
+  const projectileBonus = buildTag === 'spread' ? Math.min(CORE_PROJECTILE_BONUS_CAP, equipmentBonus.spreadProjectileBonus) : 0
   const durationMultiplier = modifiers.reduce((multiplier, modifier) => {
-    return modifier.type === 'field-duration' ? Math.max(multiplier, modifier.multiplier) : multiplier
+    return modifier.type === 'field-duration' ? Math.min(CORE_FIELD_DURATION_MULTIPLIER_CAP, Math.max(multiplier, modifier.multiplier)) : multiplier
   }, 1)
   const modifierProjectileBonus = getModifierProjectileBonus(modifiers)
 
@@ -2671,7 +3306,7 @@ const getSkillModifiers = (snapshot: GameSnapshot, skillId: string, buildTag: Sk
 }
 
 const getModifierProjectileBonus = (modifiers: EquipmentSkillModifier[]) => {
-  return modifiers.reduce((sum, modifier) => modifier.type === 'projectile-count' ? sum + modifier.amount : sum, 0)
+  return Math.min(CORE_PROJECTILE_BONUS_CAP, modifiers.reduce((sum, modifier) => modifier.type === 'projectile-count' ? sum + modifier.amount : sum, 0))
 }
 
 const getSkillCooldownModifier = (modifiers: EquipmentSkillModifier[]) => {
@@ -2739,11 +3374,22 @@ const getSkillCooldownMultiplier = (snapshot: GameSnapshot, buildTag: SkillBuild
   const equipmentBonus = getSnapshotEquipmentBonus(snapshot)
   const contractBonus = snapshot.contractBoons[buildTag] ?? 0
   const generalBonus = snapshot.contractBoons.general ?? 0
-  return Math.max(0.65, 1 - equipmentBonus.skillCooldownMultiplier - contractBonus * 0.025 - generalBonus * 0.012)
+  return Math.max(CORE_COOLDOWN_MULTIPLIER_FLOOR, 1 - equipmentBonus.skillCooldownMultiplier - contractBonus * 0.025 - generalBonus * 0.012)
 }
 
 const scaleSkillDamage = (snapshot: GameSnapshot, damage: number, buildTag: SkillBuildTag) => {
-  return scaleActiveSkillDamage(damage) * (1 + getBuildDamageBonus(snapshot, buildTag))
+  const routeBoost = snapshot.battlefield.routeObjectiveSkillBoost?.remainingCasts
+    ? snapshot.battlefield.routeObjectiveSkillBoost.multiplier
+    : 1
+  return scaleActiveSkillDamage(damage) * (1 + getBuildDamageBonus(snapshot, buildTag)) * routeBoost
+}
+
+const consumeRouteObjectiveSkillBoost = (snapshot: GameSnapshot) => {
+  if (!snapshot.battlefield.routeObjectiveSkillBoost?.remainingCasts) {
+    return
+  }
+
+  snapshot.battlefield.routeObjectiveSkillBoost.remainingCasts -= 1
 }
 
 const applyDerivedPlayerStats = (snapshot: GameSnapshot, healDifference = true) => {
@@ -2916,6 +3562,10 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     getDerivedPlayerStats(previous.skillAllocations, previous.fixedPassiveLevel, previous.equippedWeaponId, previous.equippedItems).maxHp,
     previous.player.hp + HEALTH_PACK_HEAL,
   )
+  const startPosition = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }
+  const battlefield = createBattlefieldState(getBattlefieldMode('running', nextLevel), nextLevel, startPosition, previous.battlefield.seed)
+  const levelObstacles = getBattlefieldObstacles(battlefield, nextLevel)
+  const previousForBounds = { ...previous, level: nextLevel, battlefield, mapObstacles: levelObstacles }
 
   return {
     ...createBaseSnapshot('running'),
@@ -2954,22 +3604,23 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     fixedPassiveLevel: previous.fixedPassiveLevel,
     activeSkills: previous.activeSkills.map((skill) => ({ ...skill, cooldownRemaining: Math.min(skill.cooldownRemaining, 1) })),
     pendingSkillReward: null,
-    aimPoint: { ...previous.aimPoint },
-    mapObstacles: createLevelObstacles(nextLevel),
+    aimPoint: { x: startPosition.x + WORLD_WIDTH * 0.18, y: startPosition.y },
+    battlefield,
+    mapObstacles: levelObstacles,
     beastCompanions: previous.beastCompanions.map((beast, index) => ({
       ...beast,
-      position: keepInsideRoom({
-        x: WORLD_WIDTH / 2 + Math.cos((Math.PI * 2 * index) / Math.max(1, previous.beastCompanions.length)) * 34,
-        y: WORLD_HEIGHT / 2 + Math.sin((Math.PI * 2 * index) / Math.max(1, previous.beastCompanions.length)) * 34,
+      position: keepInsideCombatArea(previousForBounds, {
+        x: startPosition.x + Math.cos((Math.PI * 2 * index) / Math.max(1, previous.beastCompanions.length)) * 34,
+        y: startPosition.y + Math.sin((Math.PI * 2 * index) / Math.max(1, previous.beastCompanions.length)) * 34,
       }, beast.size * 0.5),
       hp: beast.reviveTimer > 0 ? Math.max(1, beast.maxHp * 0.5) : beast.hp,
       reviveTimer: 0,
       commandTtl: 0,
-      commandPoint: { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 },
+      commandPoint: { ...startPosition },
     })),
     message: `${getLevelIntroMessage(nextLevel, targetKills)}，准备时间 ${DUNGEON_ENTRY_GRACE.toFixed(1)} 秒`,
     player: {
-      ...createPlayer(previous.skillAllocations, previous.fixedPassiveLevel, previous.equippedWeaponId, previous.equippedItems, healedHp),
+      ...createPlayer(previous.skillAllocations, previous.fixedPassiveLevel, previous.equippedWeaponId, previous.equippedItems, healedHp, startPosition),
       hurtCooldown: DUNGEON_ENTRY_GRACE,
     },
   }
@@ -2980,6 +3631,8 @@ const updatePlayerMovement = (snapshot: GameSnapshot, input: InputState, delta: 
     return
   }
 
+  const boundedByRoom = snapshot.battlefield.mode === 'village'
+
   if (snapshot.player.dashTimer > 0) {
     const moved = movePlayerWithObstacleSlide(
       snapshot.player.position,
@@ -2989,8 +3642,9 @@ const updatePlayerMovement = (snapshot: GameSnapshot, input: InputState, delta: 
         y: snapshot.player.dashDirection.y * PLAYER_DASH_SPEED * delta,
       },
       snapshot.mapObstacles,
+      boundedByRoom,
     )
-    snapshot.player.position = moved
+    snapshot.player.position = keepInsideCombatArea(snapshot, moved, snapshot.player.size * 0.55)
     return
   }
 
@@ -3012,12 +3666,15 @@ const updatePlayerMovement = (snapshot: GameSnapshot, input: InputState, delta: 
       y: movement.y * snapshot.player.speed * delta,
     },
     snapshot.mapObstacles,
+    boundedByRoom,
   )
+  snapshot.player.position = keepInsideCombatArea(snapshot, snapshot.player.position, snapshot.player.size * 0.55)
 }
 
 const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
   snapshot.enemies.forEach((enemy) => {
     const previousPosition = { ...enemy.position }
+    const boundedByRoom = snapshot.battlefield.mode === 'village'
     if (enemy.burnTtl > 0) {
       enemy.hp -= enemy.burnDamagePerSecond * delta
       enemy.burnTtl = Math.max(0, enemy.burnTtl - delta)
@@ -3087,9 +3744,10 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     if (!isStunned && enemy.kind === 'elite' && (enemy.affixCooldown ?? 0) <= 0) {
       if (enemy.eliteAffixes?.includes('summoner') && snapshot.enemies.length < getMaxEnemiesOnField(snapshot.level) + 2) {
         const minion = createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), {
-          x: clamp(enemy.position.x + randomBetween(-36, 36), ROOM_PADDING + 20, WORLD_WIDTH - ROOM_PADDING - 20),
-          y: clamp(enemy.position.y + randomBetween(-36, 36), ROOM_PADDING + 20, WORLD_HEIGHT - ROOM_PADDING - 20),
+          x: enemy.position.x + randomBetween(-36, 36),
+          y: enemy.position.y + randomBetween(-36, 36),
         })
+        minion.position = keepInsideCombatArea(snapshot, minion.position, minion.size * 0.55)
         minion.hp = Math.max(8, Math.round(minion.hp * 0.55))
         minion.maxHp = minion.hp
         snapshot.enemies.push(minion)
@@ -3202,6 +3860,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       targetPosition,
       snapshot.mapObstacles,
       enemy.steeringSide ?? 0,
+      boundedByRoom,
     )
     const movedDistance = distance(previousPosition, nextPosition)
 
@@ -3228,6 +3887,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
           targetPosition,
           snapshot.mapObstacles,
           side,
+          boundedByRoom,
         )
         enemy.stuckTimer = Math.max(0, enemy.stuckTimer - delta)
       }
@@ -3236,7 +3896,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
         enemy.steeringSide = -(enemy.steeringSide ?? 1)
         enemy.steeringTimer = 1.2
         const pressureDirection = rotate(direction, enemy.id.charCodeAt(1) % 2 === 0 ? 0.9 : -0.9)
-        const pressurePosition = keepInsideRoom({
+        const pressurePosition = keepInsideCombatArea(snapshot, {
           x: targetPosition.x - pressureDirection.x * randomBetween(150, 220),
           y: targetPosition.y - pressureDirection.y * randomBetween(110, 180),
         }, enemy.size * 0.55)
@@ -3249,7 +3909,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       }
     }
 
-    enemy.position = keepInsideRoom(nextPosition, enemy.size * 0.55)
+    enemy.position = keepInsideCombatArea(snapshot, nextPosition, enemy.size * 0.55)
     if (enemy.kind === 'elite') {
       const walkDistance = distance(previousPosition, enemy.position)
       if (walkDistance > 0.08) {
@@ -3331,7 +3991,7 @@ const resolveSkillCast = (snapshot: GameSnapshot, skillInstance: ActiveSkillInst
           `revolving-feather-vanguard-${index}`,
           skillInstance.level,
           createBeastSpawnPoint(snapshot, snapshot.beastCompanions.length + index, snapshot.beastCompanions.length + 3),
-          keepInsideRoom({ ...snapshot.aimPoint }, BEAST_STATS.boar.size * 0.5),
+          keepInsideCombatArea(snapshot, { ...snapshot.aimPoint }, BEAST_STATS.boar.size * 0.5),
           getBuildDamageBonus(snapshot, 'beast'),
         )
         extra.isAlpha = true
@@ -3345,6 +4005,10 @@ const resolveSkillCast = (snapshot: GameSnapshot, skillInstance: ActiveSkillInst
       if (modifier.type !== 'beast-extra-summon' || modifier.triggerSlot !== slotIndex) {
         return
       }
+      const equipmentSummonCount = snapshot.beastCompanions.filter((beast) => beast.skillId.startsWith('equipment-')).length
+      if (equipmentSummonCount >= BEAST_TEMPORARY_EQUIPMENT_SUMMON_CAP) {
+        return
+      }
 
       const extraKind = sample(['hawk', 'wolf', 'boar', 'bear', 'snake', 'deer'] as BeastKind[])
       const extra = createBeastCompanion(
@@ -3352,7 +4016,7 @@ const resolveSkillCast = (snapshot: GameSnapshot, skillInstance: ActiveSkillInst
         `equipment-${definition.id}`,
         skillInstance.level,
         createBeastSpawnPoint(snapshot, snapshot.beastCompanions.length, Math.max(1, snapshot.beastCompanions.length + 1)),
-        keepInsideRoom({ ...snapshot.aimPoint }, BEAST_STATS[extraKind].size * 0.5),
+        keepInsideCombatArea(snapshot, { ...snapshot.aimPoint }, BEAST_STATS[extraKind].size * 0.5),
         getBuildDamageBonus(snapshot, 'beast'),
       )
       extra.commandTtl = Math.max(extra.commandTtl, modifier.duration)
@@ -3368,7 +4032,7 @@ const resolveSkillCast = (snapshot: GameSnapshot, skillInstance: ActiveSkillInst
         `god-hunt-alpha-${definition.id}`,
         skillInstance.level,
         createBeastSpawnPoint(snapshot, snapshot.beastCompanions.length, Math.max(1, snapshot.beastCompanions.length + 1)),
-        keepInsideRoom({ ...snapshot.aimPoint }, BEAST_STATS[extraKind].size * 0.5),
+        keepInsideCombatArea(snapshot, { ...snapshot.aimPoint }, BEAST_STATS[extraKind].size * 0.5),
         getBuildDamageBonus(snapshot, 'beast'),
       )
       extra.isAlpha = true
@@ -3379,6 +4043,7 @@ const resolveSkillCast = (snapshot: GameSnapshot, skillInstance: ActiveSkillInst
     summonBeastKingSetReinforcement(snapshot, skillInstance.level, definition.id, slotIndex)
     snapshot.bursts.push(createBurst({ ...snapshot.player.position }, 'rgba(157, 213, 172, ALPHA)', beastKind === 'pack' ? 34 : 22))
     skillInstance.cooldownRemaining = config.cooldown * getSkillCooldownMultiplier(snapshot, definition.buildTag)
+    consumeRouteObjectiveSkillBoost(snapshot)
     return
   }
 
@@ -3386,7 +4051,7 @@ const resolveSkillCast = (snapshot: GameSnapshot, skillInstance: ActiveSkillInst
     const equipmentBonus = getSnapshotEquipmentBonus(snapshot)
     const spreadSpeedMultiplier = modifiers.reduce((multiplier, modifier) => modifier.type === 'spread-speed' ? Math.max(multiplier, modifier.multiplier) : multiplier, 1)
     const spreadAngleMultiplier = modifiers.reduce((multiplier, modifier) => modifier.type === 'spread-angle' ? Math.max(multiplier, modifier.multiplier) : multiplier, 1)
-    const bonusProjectileCount = (definition.buildTag === 'spread' ? equipmentBonus.spreadProjectileBonus : 0) + getModifierProjectileBonus(modifiers)
+    const bonusProjectileCount = Math.min(CORE_PROJECTILE_BONUS_CAP, (definition.buildTag === 'spread' ? equipmentBonus.spreadProjectileBonus : 0) + getModifierProjectileBonus(modifiers))
     const doublesThisCast = definition.buildTag === 'spread' && modifiers.some((modifier) => {
       return modifier.type === 'spread-double-next' && (skillInstance.castCount ?? 0) % modifier.everyCasts === 0
     })
@@ -3425,6 +4090,7 @@ const resolveSkillCast = (snapshot: GameSnapshot, skillInstance: ActiveSkillInst
   snapshot.bursts.push(createBurst({ ...snapshot.player.position }, 'rgba(251, 191, 36, ALPHA)', 10))
   summonBeastKingSetReinforcement(snapshot, skillInstance.level, definition.id, slotIndex)
   skillInstance.cooldownRemaining = config.cooldown * getSkillCooldownMultiplier(snapshot, definition.buildTag) * getSkillCooldownModifier(modifiers)
+  consumeRouteObjectiveSkillBoost(snapshot)
 }
 
 const updateActiveSkills = (snapshot: GameSnapshot, delta: number) => {
@@ -3495,8 +4161,10 @@ const updateBeastCompanions = (snapshot: GameSnapshot, delta: number) => {
         { x: toDesired.x * beast.speed * delta, y: toDesired.y * beast.speed * delta },
         desiredPoint,
         snapshot.mapObstacles,
+        0,
+        snapshot.battlefield.mode === 'village',
       )
-      beast.position = keepInsideRoom(beast.position, beast.size * 0.5)
+      beast.position = keepInsideCombatArea(snapshot, beast.position, beast.size * 0.5)
     }
 
     if (target && beast.attackCooldown <= 0 && distance(beast.position, target.position) <= beast.attackRange + target.size * 0.5) {
@@ -3668,7 +4336,7 @@ const triggerBossSecondarySkill = (snapshot: GameSnapshot, enemy: Enemy, campaig
     })))
     snapshot.message = '断牙战酋投掷巨斧，弹道比普通远程更重'
   } else if (campaign === 6) {
-    const mirror = createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), getSpawnPosition(snapshot.mapObstacles))
+    const mirror = createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), getSpawnPositionForSnapshot(snapshot, 'guard'))
     mirror.displayName = '圣林镜像'
     mirror.hp = Math.max(12, Math.round(mirror.hp * 0.5))
     mirror.maxHp = mirror.hp
@@ -3679,7 +4347,7 @@ const triggerBossSecondarySkill = (snapshot: GameSnapshot, enemy: Enemy, campaig
     snapshot.message = '失落林冠女王召出镜像分身并获得圣林护盾'
   } else if (campaign === 7) {
     for (let index = 0; index < 4; index += 1) {
-      const mine = keepInsideRoom({
+      const mine = keepInsideCombatArea(snapshot, {
         x: targetPoint.x + Math.cos(index * Math.PI * 0.5) * 58,
         y: targetPoint.y + Math.sin(index * Math.PI * 0.5) * 42,
       }, 24)
@@ -3715,7 +4383,7 @@ const triggerBossSecondarySkill = (snapshot: GameSnapshot, enemy: Enemy, campaig
     snapshot.message = '迷宫牛头王三线冲锋，墙体方向出现撞击预警'
   } else {
     for (let index = 0; index < 3; index += 1) {
-      const impact = keepInsideRoom({
+      const impact = keepInsideCombatArea(snapshot, {
         x: targetPoint.x + randomBetween(-82, 82),
         y: targetPoint.y + randomBetween(-62, 62),
       }, 28)
@@ -3751,7 +4419,7 @@ const triggerBossPhaseSkill = (snapshot: GameSnapshot, enemy: Enemy, campaign: n
   snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(251, 191, 36, ALPHA)', enemy.size * 1.8))
 
   if (campaign === 2 || campaign === 3 || campaign === 7 || campaign === 10) {
-    const guard = createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), getSpawnPosition(snapshot.mapObstacles))
+    const guard = createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), getSpawnPositionForSnapshot(snapshot, 'guard'))
     guard.hp = Math.max(10, Math.round(guard.hp * 0.7))
     guard.maxHp = guard.hp
     if (snapshot.enemies.length < getMaxEnemiesOnField(snapshot.level) + 3) {
@@ -3769,7 +4437,7 @@ const triggerBossSpecialAttack = (snapshot: GameSnapshot, enemy: Enemy) => {
     y: snapshot.player.position.y - enemy.position.y,
   })
   const campaign = enemy.campaignIndex ?? getCampaignIndex(snapshot.level)
-  const targetPoint = keepInsideRoom({ ...snapshot.player.position }, 24)
+  const targetPoint = keepInsideCombatArea(snapshot, { ...snapshot.player.position }, 24)
   const skillIndex = enemy.bossSkillIndex ?? 0
   const enraged = enemy.hp / Math.max(1, enemy.maxHp) <= 0.45
   enemy.bossSkillIndex = (skillIndex + 1) % 3
@@ -3805,17 +4473,17 @@ const triggerBossSpecialAttack = (snapshot: GameSnapshot, enemy: Enemy) => {
       range: 112,
     })
     if (snapshot.enemies.length < getMaxEnemiesOnField(snapshot.level) + 3) {
-      snapshot.enemies.push(createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), getSpawnPosition(snapshot.mapObstacles)))
+      snapshot.enemies.push(createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), getSpawnPositionForSnapshot(snapshot, 'guard')))
     }
     snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(251, 113, 133, ALPHA)', 28))
   } else if (campaign === 2) {
-    enemy.position = keepInsideRoom({
+    enemy.position = keepInsideCombatArea(snapshot, {
       x: snapshot.player.position.x + randomBetween(-96, 96),
       y: snapshot.player.position.y + randomBetween(-72, 72),
     }, enemy.size * 0.5)
     enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.maxHp * 0.06)
     if (snapshot.enemies.length < getMaxEnemiesOnField(snapshot.level) + 3) {
-      snapshot.enemies.push(createEnemy(snapshot.level, 'splitter', getSpawnPosition(snapshot.mapObstacles)))
+      snapshot.enemies.push(createEnemy(snapshot.level, 'splitter', getSpawnPositionForSnapshot(snapshot, 'guard')))
     }
     snapshot.message = '血宴伯爵化蝠闪现，血池吸血并唤来蝠群'
     snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(239, 68, 68, ALPHA)', 52))
@@ -3893,7 +4561,7 @@ const triggerBossSpecialAttack = (snapshot: GameSnapshot, enemy: Enemy) => {
     enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.maxHp * 0.045)
     snapshot.message = '失落林冠女王召出根须缠绕和治疗林地'
   } else if (campaign === 7) {
-    const mine = keepInsideRoom({
+    const mine = keepInsideCombatArea(snapshot, {
       x: snapshot.player.position.x + randomBetween(-48, 48),
       y: snapshot.player.position.y + randomBetween(-48, 48),
     }, 24)
@@ -3906,7 +4574,7 @@ const triggerBossSpecialAttack = (snapshot: GameSnapshot, enemy: Enemy) => {
     snapshot.message = '地精巨械布设炸弹，巨魔结构开始再生'
   } else if (campaign === 8) {
     const push = normalize({ x: snapshot.player.position.x - enemy.position.x, y: snapshot.player.position.y - enemy.position.y })
-    snapshot.player.position = keepInsideRoom({
+    snapshot.player.position = keepInsideCombatArea(snapshot, {
       x: snapshot.player.position.x + push.x * 42,
       y: snapshot.player.position.y + push.y * 42,
     }, snapshot.player.size * 0.5)
@@ -4240,7 +4908,7 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
         range: enemy.size * 1.7,
       })
       offsets.forEach((offset) => {
-        const childPosition = keepInsideRoom({
+        const childPosition = keepInsideCombatArea(snapshot, {
           x: enemy.position.x + offset.x,
           y: enemy.position.y + offset.y,
         }, childStats.size * 0.45)
@@ -4260,7 +4928,7 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
     if (enemy.kind === 'elite' && enemy.eliteAffixes?.includes('split')) {
       const childStats = getEnemyStats(Math.max(1, snapshot.level - 2), getCampaignGuardEnemyKind(snapshot.level))
       ;[-1, 1].forEach((sign) => {
-        const childPosition = keepInsideRoom({
+        const childPosition = keepInsideCombatArea(snapshot, {
           x: enemy.position.x + sign * 18,
           y: enemy.position.y + 12,
         }, childStats.size * 0.45)
@@ -4687,13 +5355,29 @@ const resolvePickups = (snapshot: GameSnapshot, delta: number) => {
     const directPickupRange = snapshot.player.size * 0.7 + pickup.radius
     const magnetRange = CRYSTAL_PICKUP_BASE_RANGE + equipmentBonus.pickupRange + pickup.radius
     const gap = distance(snapshot.player.position, pickup.position)
+    const shouldLongRangeCrystalMagnet = pickup.kind === 'soul-crystal' && (
+      Boolean(snapshot.battlefield.rift) || gap > INFINITE_SPAWN_MIN_DISTANCE * 1.4
+    )
+    const isKeyEquipment = pickup.kind === 'equipment' &&
+      pickup.equipment &&
+      ['epic', 'legacy', 'legendary'].includes(pickup.equipment.rarity)
+    if (isKeyEquipment && gap > INFINITE_SPAWN_MAX_DISTANCE * 0.72 && pickup.equipment) {
+      addEquipmentToInventory(snapshot, pickup.equipment, { autoEquip: false })
+      snapshot.pendingBossLoot = [
+        ...snapshot.pendingBossLoot.filter((item) => item.id !== pickup.equipment?.id).map(cloneEquipmentItem),
+        cloneEquipmentItem(pickup.equipment),
+      ]
+      snapshot.message = `${pickup.equipment.name} 已转入待处理战利品，避免在无限战场中遗失`
+      pickedEquipment = true
+      return false
+    }
 
-    if (pickup.kind !== 'health-pack' && gap <= magnetRange && gap > directPickupRange) {
+    if (pickup.kind !== 'health-pack' && (gap <= magnetRange || shouldLongRangeCrystalMagnet) && gap > directPickupRange) {
       const direction = normalize({
         x: snapshot.player.position.x - pickup.position.x,
         y: snapshot.player.position.y - pickup.position.y,
       })
-      const pullSpeed = pickup.kind === 'equipment' ? 280 : 360
+      const pullSpeed = pickup.kind === 'equipment' ? 280 : shouldLongRangeCrystalMagnet ? 720 : 360
       pickup.position = {
         x: pickup.position.x + direction.x * pullSpeed * delta,
         y: pickup.position.y + direction.y * pullSpeed * delta,
@@ -4789,6 +5473,150 @@ const collectLevelSettlement = (snapshot: GameSnapshot) => {
   return snapshot.lastLevelSettlement
 }
 
+const enterLevelClear = (snapshot: GameSnapshot) => {
+  const settlement = collectLevelSettlement(snapshot)
+  snapshot.phase = 'level-clear'
+  snapshot.phaseBeforePause = 'level-clear'
+  snapshot.levelTimer = LEVEL_CLEAR_DELAY
+  snapshot.pendingSkillReward = isBossPreludeLevel(snapshot.level) && !snapshot.pendingSkillReward ? {
+    ...buildPendingReward(snapshot),
+    source: 'level-clear',
+  } : snapshot.pendingSkillReward
+  const absorbedText = settlement.absorbedCrystals > 0 ? `，自动吸附 ${settlement.absorbedCrystals} 个蓝晶（+${Math.round(settlement.absorbedExp)} 经验）` : ''
+  if (settlement.rewardKind === 'light') {
+    snapshot.message = `契约裂隙已稳定，第 ${snapshot.level} 层轻结算${absorbedText}，紫色以下装备离开战斗将自动分解 ${settlement.autoDismantlePreviewCount} 件`
+  } else if (settlement.rewardKind === 'prelude') {
+    snapshot.message = `Boss 前置层肃清${absorbedText}，请选择 1 项短期补给或构筑强化`
+  } else if (settlement.rewardKind === 'boss') {
+    snapshot.message = `Boss 已击败${absorbedText}，处理战利品后返回村庄结算`
+  } else {
+    snapshot.message = `精英层肃清${absorbedText}，构筑奖励已进入处理流程`
+  }
+}
+
+const findSafeRiftPosition = (snapshot: GameSnapshot) => {
+  const forward = getSpawnForward(snapshot)
+  const candidates = [
+    { x: snapshot.player.position.x + forward.x * 118, y: snapshot.player.position.y + forward.y * 118 },
+    { x: snapshot.player.position.x - forward.y * 104, y: snapshot.player.position.y + forward.x * 104 },
+    { x: snapshot.player.position.x + forward.y * 104, y: snapshot.player.position.y - forward.x * 104 },
+    { x: snapshot.player.position.x - forward.x * 92, y: snapshot.player.position.y - forward.y * 92 },
+    { ...snapshot.player.position },
+  ]
+
+  return candidates.find((candidate) => (
+    !isBlockedByObstacle(candidate, CONTRACT_RIFT_RADIUS * 0.65, snapshot.mapObstacles) &&
+    !isProtectedWorldPoint(snapshot, candidate, CONTRACT_RIFT_RADIUS)
+  )) ?? { ...snapshot.player.position }
+}
+
+const ensureContractRift = (snapshot: GameSnapshot) => {
+  if (
+    snapshot.battlefield.mode !== 'infinite' ||
+    snapshot.battlefield.rift ||
+    snapshot.levelKills < snapshot.levelTargetKills ||
+    isBossLevel(snapshot.level)
+  ) {
+    return
+  }
+
+  snapshot.remainingToSpawn = 0
+  snapshot.spawnCooldown = 999
+  snapshot.battlefield.rift = {
+    id: `rift-${snapshot.level}-${createId()}`,
+    position: findSafeRiftPosition(snapshot),
+    radius: CONTRACT_RIFT_RADIUS,
+    timer: CONTRACT_RIFT_AUTO_SETTLE_TIME,
+  }
+  snapshot.enemies = snapshot.enemies.filter((enemy) => {
+    if (enemy.kind === 'elite' || enemy.kind === 'boss' || enemy.role === 'elite' || enemy.role === 'boss') {
+      enemy.slowTtl = Math.max(enemy.slowTtl, 2)
+      enemy.slowFactor = Math.max(enemy.slowFactor, 0.45)
+      return true
+    }
+    snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(96, 165, 250, ALPHA)', 16))
+    return false
+  })
+  snapshot.enemyProjectiles = []
+  snapshot.pickups = snapshot.pickups.map((pickup) => pickup.kind === 'soul-crystal' ? { ...pickup, magnetized: true } : pickup)
+  snapshot.message = '目标完成，契约裂隙在附近开启'
+  snapshot.floatingTexts.push(createFloatingText(snapshot.battlefield.rift.position, '契约裂隙', '#60a5fa'))
+  snapshot.bursts.push(createBurst(snapshot.battlefield.rift.position, 'rgba(96, 165, 250, ALPHA)', CONTRACT_RIFT_RADIUS))
+}
+
+const updateContractRift = (snapshot: GameSnapshot, delta: number) => {
+  ensureContractRift(snapshot)
+  const rift = snapshot.battlefield.rift
+  if (!rift || snapshot.phase !== 'running') {
+    return
+  }
+
+  rift.timer = Math.max(0, rift.timer - delta)
+  const gap = distance(snapshot.player.position, rift.position)
+  if (gap <= rift.radius + snapshot.player.size || rift.timer <= 0) {
+    snapshot.battlefield.rift = undefined
+    enterLevelClear(snapshot)
+  }
+}
+
+const recycleDistantOrdinaryEnemies = (snapshot: GameSnapshot) => {
+  if (snapshot.battlefield.mode !== 'infinite' || snapshot.battlefield.rift) {
+    return
+  }
+
+  snapshot.enemies.forEach((enemy) => {
+    if (enemy.kind === 'elite' || enemy.kind === 'boss' || enemy.role === 'elite' || enemy.role === 'boss') {
+      return
+    }
+    if (distance(enemy.position, snapshot.player.position) <= INFINITE_ENEMY_RECYCLE_DISTANCE) {
+      return
+    }
+
+    enemy.position = getSpawnPositionForSnapshot(snapshot, enemy.role ?? 'theme')
+    enemy.lastPosition = { ...enemy.position }
+    enemy.stuckTimer = 0
+    enemy.behaviorTimer = 0
+    snapshot.battlefield.recycledEnemyCount += 1
+    snapshot.battlefield.debug.recycledEnemyCount = snapshot.battlefield.recycledEnemyCount
+  })
+}
+
+const updateInfiniteBattlePressure = (snapshot: GameSnapshot, delta: number, killedThisFrame: boolean) => {
+  if (snapshot.battlefield.mode !== 'infinite' || snapshot.phase !== 'running' || snapshot.battlefield.rift) {
+    return
+  }
+
+  snapshot.battlefield.noKillTimer = killedThisFrame ? 0 : snapshot.battlefield.noKillTimer + delta
+  const pressure = snapshot.battlefield.noKillTimer > 10 ? 1 : snapshot.battlefield.noKillTimer > 6 ? 0.55 : 0
+  snapshot.battlefield.escapePressure = Math.max(pressure, Math.max(0, snapshot.battlefield.escapePressure - delta * 0.08))
+  if (snapshot.battlefield.escapePressure > 0.5 && snapshot.spawnCooldown > 0.2 && snapshot.remainingToSpawn > 0) {
+    snapshot.spawnCooldown = Math.min(snapshot.spawnCooldown, 0.2)
+    snapshot.message = '契约裂隙正在收紧，侧翼追猎者开始围堵'
+  }
+}
+
+const updateBossArenaBoundary = (snapshot: GameSnapshot, delta: number) => {
+  if (snapshot.battlefield.mode !== 'boss-arena' || snapshot.phase !== 'running') {
+    return
+  }
+
+  const center = getBossArenaCenter()
+  const arenaRadius = snapshot.battlefield.bossArenaRadius ?? BOSS_ARENA_RADIUS
+  const gap = distance(snapshot.player.position, center)
+  snapshot.battlefield.bossArenaWarningTimer = Math.max(0, (snapshot.battlefield.bossArenaWarningTimer ?? 0) - delta)
+  if (gap >= arenaRadius - BOSS_ARENA_SOFT_MARGIN && (snapshot.battlefield.bossArenaWarningTimer ?? 0) <= 0) {
+    snapshot.battlefield.bossArenaWarningTimer = 1.6
+    snapshot.message = '契约封锁领域边缘正在排斥你，靠近 Boss 才能维持战斗'
+  }
+  if (gap > arenaRadius - snapshot.player.size * 0.5) {
+    snapshot.player.position = keepInsideCombatArea(snapshot, snapshot.player.position, snapshot.player.size * 0.55)
+    if (snapshot.player.hurtCooldown <= 0 && snapshot.player.dashTimer <= 0) {
+      snapshot.player.hp -= 2
+      snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, 0.35)
+    }
+  }
+}
+
 const updateBursts = (snapshot: GameSnapshot, delta: number) => {
   snapshot.bursts = snapshot.bursts
     .map((burst) => ({ ...burst, ttl: burst.ttl - delta }))
@@ -4833,7 +5661,7 @@ const CAMPAIGN_ENVIRONMENT_LABELS: Record<number, string> = {
 
 const createCampaignEnvironmentField = (snapshot: GameSnapshot): SkillField => {
   const campaign = getCampaignIndex(snapshot.level)
-  const target = keepInsideRoom({
+  const target = keepInsideCombatArea(snapshot, {
     x: snapshot.player.position.x + randomBetween(-70, 70),
     y: snapshot.player.position.y + randomBetween(-54, 54),
   }, 48)
@@ -4924,7 +5752,7 @@ const applyCampaignEnvironmentMechanic = (snapshot: GameSnapshot) => {
     })
   } else if (campaign === 8) {
     const push = normalize({ x: snapshot.player.position.x - field.position.x, y: snapshot.player.position.y - field.position.y })
-    snapshot.player.position = keepInsideRoom({
+    snapshot.player.position = keepInsideCombatArea(snapshot, {
       x: snapshot.player.position.x + push.x * 18,
       y: snapshot.player.position.y + push.y * 18,
     }, snapshot.player.size * 0.55)
@@ -4986,7 +5814,11 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
   let spawnCount = 0
 
   if (isBossLevel(snapshot.level) && !snapshot.eliteSpawnedThisLevel) {
-    const boss = createEnemy(snapshot.level, 'boss', { x: WORLD_WIDTH / 2, y: ROOM_PADDING + 88 })
+    const arenaCenter = getBossArenaCenter()
+    const boss = createEnemy(snapshot.level, 'boss', {
+      x: arenaCenter.x,
+      y: arenaCenter.y - Math.min(220, (snapshot.battlefield.bossArenaRadius ?? BOSS_ARENA_RADIUS) * 0.34),
+    })
     boss.id = `boss-${createId()}`
     boss.grantsEliteReward = true
     boss.attackCooldown = 1.1
@@ -4998,7 +5830,7 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
     const capacity = Math.max(1, getMaxEnemiesOnField(snapshot.level) - snapshot.enemies.length)
     const ranks = getEliteSpawnRanks(snapshot.level).slice(0, Math.min(capacity, snapshot.remainingToSpawn))
     ranks.forEach((rank, index) => {
-      snapshot.enemies.push(spawnEliteEnemy(snapshot.level, snapshot.mapObstacles, rank, index === 0))
+      snapshot.enemies.push(spawnEliteEnemy(snapshot.level, snapshot.mapObstacles, rank, index === 0, getSpawnPositionForSnapshot(snapshot, 'elite')))
     })
     snapshot.eliteSpawnedThisLevel = true
     spawnCount = ranks.length
@@ -5013,13 +5845,13 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
     const rank: EliteRank = getCampaignFloor(snapshot.level) >= 20 ? 'normal' : 'minor'
     const preludeCount = Math.min(capacity, snapshot.remainingToSpawn, getCampaignFloor(snapshot.level) >= 20 ? 2 : 1)
     for (let index = 0; index < preludeCount; index += 1) {
-      snapshot.enemies.push(spawnEliteEnemy(snapshot.level, snapshot.mapObstacles, rank, false))
+      snapshot.enemies.push(spawnEliteEnemy(snapshot.level, snapshot.mapObstacles, rank, false, getSpawnPositionForSnapshot(snapshot, 'elite')))
     }
     snapshot.eliteSpawnedThisLevel = true
     spawnCount = preludeCount
     snapshot.message = `Boss 前置压力：${preludeCount} 名小精英混入怪潮，补强构筑后再进首领房`
   } else if (featuredKind && featuredKind !== 'elite' && featuredKind !== 'boss') {
-    snapshot.enemies.push(createEnemy(snapshot.level, featuredKind, getSpawnPosition(snapshot.mapObstacles)))
+    snapshot.enemies.push(createEnemy(snapshot.level, featuredKind, getSpawnPositionForSnapshot(snapshot, 'theme')))
     spawnCount = 1
     const newest = snapshot.enemies[snapshot.enemies.length - 1]
     snapshot.message = `${newest.displayName ?? getEnemyKindLabel(featuredKind)}登场：观察它的行为变化`
@@ -5033,8 +5865,8 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
     for (let index = 0; index < batchSize; index += 1) {
       const nextKind = index === 0 ? guardKind ?? openingKind : guardKind
       snapshot.enemies.push(nextKind
-        ? createEnemy(snapshot.level, nextKind, getSpawnPosition(snapshot.mapObstacles), undefined, guardKind ? 'guard' : undefined)
-        : createHordeEnemy(snapshot.level, spawnedCount + index, getSpawnPosition(snapshot.mapObstacles)))
+        ? createEnemy(snapshot.level, nextKind, getSpawnPositionForSnapshot(snapshot, guardKind ? 'guard' : 'theme'), undefined, guardKind ? 'guard' : undefined)
+        : createHordeEnemy(snapshot.level, spawnedCount + index, getSpawnPositionForSnapshot(snapshot, 'fodder')))
     }
     spawnCount = batchSize
     if (openingKind) {
@@ -5051,10 +5883,8 @@ const filterProjectiles = (projectiles: Projectile[]) => {
   return projectiles.filter((projectile) => {
     return (
       projectile.ttl > 0 &&
-      projectile.position.x > ROOM_PADDING - 16 &&
-      projectile.position.x < WORLD_WIDTH - ROOM_PADDING + 16 &&
-      projectile.position.y > ROOM_PADDING - 16 &&
-      projectile.position.y < WORLD_HEIGHT - ROOM_PADDING + 16
+      Number.isFinite(projectile.position.x) &&
+      Number.isFinite(projectile.position.y)
     )
   })
 }
@@ -5101,9 +5931,10 @@ const applySelectedCampaignStart = (snapshot: GameSnapshot, campaign: number) =>
   snapshot.remainingToSpawn = targetKills
   snapshot.eliteSpawnedThisLevel = false
   snapshot.spawnCooldown = 0.15
-  snapshot.mapObstacles = createLevelObstacles(level)
   snapshot.player.position = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }
   snapshot.aimPoint = { x: WORLD_WIDTH * 0.68, y: WORLD_HEIGHT / 2 }
+  snapshot.battlefield = createBattlefieldState(getBattlefieldMode('running', level), level, snapshot.player.position, snapshot.battlefield.seed)
+  snapshot.mapObstacles = getBattlefieldObstacles(snapshot.battlefield, level)
   snapshot.message = `${theme.name} · ${getLevelIntroMessage(level, targetKills)}，准备时间 ${DUNGEON_ENTRY_GRACE.toFixed(1)} 秒`
 }
 
@@ -5137,6 +5968,7 @@ const finishRunToVillage = (snapshot: GameSnapshot, options: { earnedGold: numbe
   snapshot.bestLevel = Math.max(snapshot.bestLevel, snapshot.level)
   recordRunResult(snapshot, options.earnedGold)
   snapshot.player = createPlayer(snapshot.skillAllocations, snapshot.fixedPassiveLevel, snapshot.equippedWeaponId, snapshot.equippedItems, undefined, VILLAGE_POINTS.campfire)
+  snapshot.battlefield = createBattlefieldState('village', snapshot.level, snapshot.player.position, snapshot.battlefield.seed)
   snapshot.mapObstacles = createVillageObstacles()
   snapshot.enemies = []
   snapshot.projectiles = []
@@ -5743,7 +6575,7 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
     return snapshot
   }
 
-  if (snapshot.phase === 'level-clear') {
+  if ((snapshot as GameSnapshot).phase === 'level-clear') {
     if (snapshot.pendingSkillReward) {
       snapshot.message = '请先完成五选一技能奖励，或放弃本次奖励'
       return snapshot
@@ -5788,6 +6620,8 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
   }
 
   updatePlayerMovement(snapshot, input, delta)
+  syncBattlefieldObstacles(snapshot, liveMovement)
+  updateBossArenaBoundary(snapshot, delta)
   updateActiveSkills(snapshot, delta)
 
   if (snapshot.levelTimer > 0) {
@@ -5803,16 +6637,20 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
   applyCampaignEnvironmentMechanic(snapshot)
   spawnWaveEnemies(snapshot)
   updateEnemies(snapshot, delta)
+  recycleDistantOrdinaryEnemies(snapshot)
   updateBeastCompanions(snapshot, delta)
   triggerEnemyAttacks(snapshot)
   triggerAutoAttack(snapshot)
   updateProjectileList(snapshot.projectiles, delta, snapshot)
   updateProjectileList(snapshot.enemyProjectiles, delta)
+  updateRouteObjectives(snapshot, delta)
   resolveProjectileObstacleHits(snapshot)
   updateSkillFields(snapshot, delta)
   resolvePlayerProjectiles(snapshot)
   resolvePickups(snapshot, delta)
   resolvePlayerDamage(snapshot)
+  updateContractRift(snapshot, delta)
+  updateInfiniteBattlePressure(snapshot, delta, snapshot.kills > current.kills)
 
   snapshot.projectiles = filterProjectiles(snapshot.projectiles)
   snapshot.enemyProjectiles = filterProjectiles(snapshot.enemyProjectiles)
@@ -5833,25 +6671,12 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
     return snapshot
   }
 
+  if (snapshot.phase === 'level-clear') {
+    return snapshot
+  }
+
   if (snapshot.remainingToSpawn === 0 && snapshot.enemies.length === 0 && snapshot.enemyProjectiles.length === 0) {
-    const settlement = collectLevelSettlement(snapshot)
-    snapshot.phase = 'level-clear'
-    snapshot.phaseBeforePause = 'level-clear'
-    snapshot.levelTimer = LEVEL_CLEAR_DELAY
-    snapshot.pendingSkillReward = isBossPreludeLevel(snapshot.level) && !snapshot.pendingSkillReward ? {
-      ...buildPendingReward(snapshot),
-      source: 'level-clear',
-    } : snapshot.pendingSkillReward
-    const absorbedText = settlement.absorbedCrystals > 0 ? `，自动吸附 ${settlement.absorbedCrystals} 个蓝晶（+${Math.round(settlement.absorbedExp)} 经验）` : ''
-    if (settlement.rewardKind === 'light') {
-      snapshot.message = `第 ${snapshot.level} 层轻结算${absorbedText}，紫色以下装备离开战斗将自动分解 ${settlement.autoDismantlePreviewCount} 件`
-    } else if (settlement.rewardKind === 'prelude') {
-      snapshot.message = `Boss 前置层肃清${absorbedText}，请选择 1 项短期补给或构筑强化`
-    } else if (settlement.rewardKind === 'boss') {
-      snapshot.message = `Boss 已击败${absorbedText}，处理战利品后返回村庄结算`
-    } else {
-      snapshot.message = `精英层肃清${absorbedText}，构筑奖励已进入处理流程`
-    }
+    enterLevelClear(snapshot)
     return snapshot
   }
 

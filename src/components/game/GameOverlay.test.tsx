@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { CAMPAIGN_MONSTER_THEMES } from '../../game/campaignMonsters'
+import { CAMPAIGN_MONSTER_THEMES, getCampaignLootProfile } from '../../game/campaignMonsters'
 import { createInitialSnapshot } from '../../game/engine'
 import { MONSTER_SPRITE_ATLASES, getMonsterSpriteAtlasForEnemy } from '../../game/sprites'
 import { useGameStore } from '../../store/useGameStore'
@@ -42,6 +42,9 @@ describe('GameOverlay', () => {
     expect(screen.getAllByText('移动').length).toBeGreaterThan(0)
     expect(screen.getByText('技能2')).toBeTruthy()
     expect(screen.getByText('转阶段')).toBeTruthy()
+    expect(screen.getByTestId('campaign-guide-1').textContent).toContain(getCampaignLootProfile(1).primaryLootReason)
+    expect(screen.getByTestId('campaign-guide-1').textContent).toContain(getCampaignLootProfile(1).recommendedState)
+    expect(screen.getByTestId('campaign-guide-1').textContent).toContain(getCampaignLootProfile(1).themeThreat)
     expect(screen.getByTestId('campaign-floor-row-1-22').textContent).toContain('地牢典狱长')
     expect(screen.getByText(/弓箭手技能池/)).toBeTruthy()
     expect(screen.getByText('穿刺箭')).toBeTruthy()
@@ -70,6 +73,21 @@ describe('GameOverlay', () => {
       expect(screen.getByText(theme.name)).toBeTruthy()
       expect(container.querySelectorAll(`[data-testid^="campaign-floor-row-${theme.campaign}-"]`)).toHaveLength(22)
     })
+  })
+
+  it('shows campaign farming reasons in the portal selector before starting a run', () => {
+    useGameStore.setState({ ...createInitialSnapshot('idle') })
+
+    render(<GameOverlay />)
+
+    fireEvent.click(screen.getByRole('button', { name: '传送门' }))
+    fireEvent.click(screen.getByRole('button', { name: /狼人黑森林/ }))
+    const profile = getCampaignLootProfile(3)
+
+    expect(screen.getByText(profile.portalHint)).toBeTruthy()
+    expect(screen.getByText(profile.primaryLootReason)).toBeTruthy()
+    expect(screen.getByText(profile.recommendedState)).toBeTruthy()
+    expect(screen.getByText(profile.themeThreat)).toBeTruthy()
   })
 
   it('uses the campaign floor pool for early floors instead of a stale static monster list', () => {

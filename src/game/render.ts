@@ -1,4 +1,6 @@
 import {
+  BOSS_ARENA_RADIUS,
+  CONTRACT_RIFT_RADIUS,
   ROOM_PADDING,
   TILE_SIZE,
   TORCHES,
@@ -9,7 +11,7 @@ import {
 import { getCampaignThemeForLevel } from './campaignThemes'
 import { drawBeastCompanionSprite, drawEnemySprite, drawFloorTile, drawObstacleSprite, drawPickupSprite, drawPlayerSprite, drawProjectileSprite, drawTorch } from './sprites'
 import { drawReferenceArt } from './referenceArt'
-import type { BeastCompanion, Enemy, GameSnapshot, Player } from './types'
+import type { BeastCompanion, Enemy, GameSnapshot, Player, Vector2 } from './types'
 import { drawVillageMenuBackground } from './villageMenuBackground'
 
 const pixel = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, color: string) => {
@@ -94,12 +96,160 @@ const drawFloor = (ctx: CanvasRenderingContext2D, level: number) => {
   }
 }
 
+const stableTileHash = (...values: number[]) => {
+  let hash = 2166136261
+  values.forEach((value) => {
+    hash ^= Math.imul(Math.trunc(value), 374761393)
+    hash = Math.imul(hash ^ (hash >>> 13), 1274126177)
+  })
+  return hash >>> 0
+}
+
+export const getInfiniteFloorTileIndex = (
+  tileX: number,
+  tileY: number,
+  level: number,
+  seed: number,
+) => stableTileHash(tileX, tileY, level, seed)
+
+export const getInfiniteFloorTileIndexForWorldPosition = (
+  x: number,
+  y: number,
+  level: number,
+  seed: number,
+) => getInfiniteFloorTileIndex(Math.floor(x / TILE_SIZE), Math.floor(y / TILE_SIZE), level, seed)
+
+export const getCameraOffset = (state: GameSnapshot): Vector2 => {
+  if (state.phase === 'idle' || state.phase === 'game-over' || state.battlefield.mode === 'village') {
+    return { x: 0, y: 0 }
+  }
+
+  return {
+    x: Math.round(state.player.position.x - WORLD_WIDTH / 2),
+    y: Math.round(state.player.position.y - WORLD_HEIGHT / 2),
+  }
+}
+
+export const shouldDrawFixedRoomBoundary = (state: GameSnapshot) => (
+  state.phase === 'idle' || state.phase === 'game-over' || state.battlefield.mode === 'village'
+)
+
+const drawInfiniteFloor = (ctx: CanvasRenderingContext2D, state: GameSnapshot, camera: Vector2) => {
+  const theme = getCampaignThemeForLevel(state.level)
+  ctx.fillStyle = theme.floorDark
+  ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
+
+  ctx.save()
+  ctx.translate(-camera.x, -camera.y)
+  const startTileX = Math.floor(camera.x / TILE_SIZE) - 1
+  const endTileX = Math.ceil((camera.x + WORLD_WIDTH) / TILE_SIZE) + 1
+  const startTileY = Math.floor(camera.y / TILE_SIZE) - 1
+  const endTileY = Math.ceil((camera.y + WORLD_HEIGHT) / TILE_SIZE) + 1
+  const seed = state.battlefield.seed
+  for (let tileY = startTileY; tileY <= endTileY; tileY += 1) {
+    for (let tileX = startTileX; tileX <= endTileX; tileX += 1) {
+      drawFloorTile(
+        ctx,
+        tileX * TILE_SIZE,
+        tileY * TILE_SIZE,
+        getInfiniteFloorTileIndex(tileX, tileY, state.level, seed),
+        state.level,
+      )
+    }
+  }
+
+  if (state.battlefield.mode === 'boss-arena') {
+    const radius = state.battlefield.bossArenaRadius ?? BOSS_ARENA_RADIUS
+    ctx.strokeStyle = `${theme.warning}99`
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    ctx.arc(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, radius, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.strokeStyle = `${theme.accent}44`
+    ctx.lineWidth = 10
+    ctx.beginPath()
+    ctx.arc(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, radius + 8, 0, Math.PI * 2)
+    ctx.stroke()
+  }
+
+  ctx.restore()
+}
+
 const drawBursts = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
   state.bursts.forEach((burst) => {
     const alpha = Math.max(0, burst.ttl / 0.35)
     ctx.fillStyle = burst.color.replace('ALPHA', alpha.toFixed(2))
     ctx.fillRect(burst.position.x - burst.radius, burst.position.y - 1, burst.radius * 2, 2)
     ctx.fillRect(burst.position.x - 1, burst.position.y - burst.radius, 2, burst.radius * 2)
+  })
+}
+
+const drawContractRift = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
+  const rift = state.battlefield.rift
+  if (!rift) {
+    return
+  }
+
+  const pulse = 0.55 + Math.sin(state.elapsedTime * 7) * 0.18
+  const radius = rift.radius || CONTRACT_RIFT_RADIUS
+  ctx.save()
+  ctx.globalAlpha = 0.9
+  ctx.strokeStyle = `rgba(96, 165, 250, ${pulse})`
+  ctx.lineWidth = 4
+  ctx.beginPath()
+  ctx.arc(rift.position.x, rift.position.y, radius, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.fillStyle = `rgba(37, 99, 235, ${0.16 + pulse * 0.08})`
+  ctx.beginPath()
+  ctx.arc(rift.position.x, rift.position.y, radius * 0.72, 0, Math.PI * 2)
+  ctx.fill()
+  for (let index = 0; index < 10; index += 1) {
+    const angle = state.elapsedTime * 2 + index * 0.63
+    pixel(ctx, rift.position.x + Math.cos(angle) * radius * 0.82 - 2, rift.position.y + Math.sin(angle) * radius * 0.82 - 2, 4, 4, index % 2 === 0 ? '#bfdbfe' : '#60a5fa')
+  }
+  ctx.restore()
+}
+
+const routeObjectiveLabels = {
+  'crystal-rift': '蓝晶裂点',
+  'contract-brand': '契约火印',
+  'relic-crate': '遗物碎箱',
+} as const
+
+const routeObjectiveColors = {
+  'crystal-rift': '#60a5fa',
+  'contract-brand': '#f97316',
+  'relic-crate': '#fbbf24',
+} as const
+
+const drawRouteObjectives = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
+  state.battlefield.routeObjectives.forEach((objective) => {
+    const color = routeObjectiveColors[objective.kind]
+    const pulse = 0.55 + Math.sin(state.elapsedTime * 5 + objective.position.x * 0.01) * 0.16
+    ctx.save()
+    ctx.globalAlpha = 0.92
+    ctx.strokeStyle = color
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    ctx.arc(objective.position.x, objective.position.y, objective.radius, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.fillStyle = `${color}${Math.round(38 + pulse * 30).toString(16).padStart(2, '0')}`
+    ctx.beginPath()
+    ctx.arc(objective.position.x, objective.position.y, objective.radius * 0.62, 0, Math.PI * 2)
+    ctx.fill()
+    if (objective.kind === 'contract-brand') {
+      const progress = Math.max(0, Math.min(1, (objective.chargeProgress ?? 0) / 2.5))
+      ctx.strokeStyle = '#fef3c7'
+      ctx.lineWidth = 4
+      ctx.beginPath()
+      ctx.arc(objective.position.x, objective.position.y, objective.radius + 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress)
+      ctx.stroke()
+    }
+    ctx.font = '10px monospace'
+    ctx.textAlign = 'center'
+    ctx.fillStyle = '#f4f0d7'
+    ctx.fillText(routeObjectiveLabels[objective.kind], objective.position.x, objective.position.y - objective.radius - 10)
+    ctx.restore()
   })
 }
 
@@ -1044,14 +1194,30 @@ const drawVillage = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
 export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
   ctx.imageSmoothingEnabled = false
   ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
+  const camera = getCameraOffset(state)
 
   if (state.phase === 'idle' || state.phase === 'game-over') {
     drawVillage(ctx, state)
+    if (state.phase !== 'idle') {
+      const isMoving = false
+      drawPlayerGrowthEffects(ctx, state)
+      drawPlayerSprite(ctx, state.player, state.elapsedTime, isMoving)
+      drawPlayerHealthBar(ctx, state.player)
+    }
+    drawBursts(ctx, state)
+    drawFloatingTexts(ctx, state)
   } else {
-    drawFrame(ctx, state.level)
-    drawFloor(ctx, state.level)
-    TORCHES.forEach((torch) => drawTorch(ctx, torch.x, torch.y, state.elapsedTime))
+    drawInfiniteFloor(ctx, state, camera)
+    ctx.save()
+    ctx.translate(-camera.x, -camera.y)
+    if (state.battlefield.mode === 'village') {
+      drawFrame(ctx, state.level)
+      drawFloor(ctx, state.level)
+      TORCHES.forEach((torch) => drawTorch(ctx, torch.x, torch.y, state.elapsedTime))
+    }
     drawObstacles(ctx, state)
+    drawContractRift(ctx, state)
+    drawRouteObjectives(ctx, state)
     drawPickups(ctx, state)
     drawSkillFields(ctx, state)
     drawEnemySkillEffects(ctx, state)
@@ -1067,21 +1233,20 @@ export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot) =
       drawEnemyHealthBar(ctx, enemy)
       drawEnemyStatusIndicators(ctx, enemy, state.elapsedTime)
     })
-  }
 
-  if (state.phase !== 'idle') {
     const isMoving = state.phase === 'running' && state.player.attackCooldown < Math.max(0.2, state.player.attackInterval + 0.02)
     drawPlayerGrowthEffects(ctx, state)
     drawPlayerSprite(ctx, state.player, state.elapsedTime, isMoving)
     drawPlayerHealthBar(ctx, state.player)
-  }
-  drawBursts(ctx, state)
-  drawFloatingTexts(ctx, state)
-  if (state.phase !== 'idle' && state.phase !== 'game-over') {
     drawAimCursor(ctx, state)
+    drawBursts(ctx, state)
+    drawFloatingTexts(ctx, state)
+    ctx.restore()
   }
 
   const theme = getCampaignThemeForLevel(state.level)
   ctx.strokeStyle = state.phase === 'idle' ? 'rgba(157, 213, 172, 0.25)' : `${theme.accent}40`
-  ctx.strokeRect(ROOM_PADDING - 2, ROOM_PADDING - 2, WORLD_WIDTH - (ROOM_PADDING - 2) * 2, WORLD_HEIGHT - (ROOM_PADDING - 2) * 2)
+  if (shouldDrawFixedRoomBoundary(state)) {
+    ctx.strokeRect(ROOM_PADDING - 2, ROOM_PADDING - 2, WORLD_WIDTH - (ROOM_PADDING - 2) * 2, WORLD_HEIGHT - (ROOM_PADDING - 2) * 2)
+  }
 }

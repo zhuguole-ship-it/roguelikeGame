@@ -518,6 +518,71 @@ export type MapObstacle = {
   height: number
 }
 
+export type BattlefieldMode = 'village' | 'infinite' | 'boss-arena'
+
+export type BattlefieldChunk = {
+  id: string
+  cx: number
+  cy: number
+  floorVariant: number
+  detailSeed: number
+  obstacles: MapObstacle[]
+  spawnPoints: Vector2[]
+  hazardPoints: Vector2[]
+}
+
+export type ContractRift = {
+  id: string
+  position: Vector2
+  radius: number
+  timer: number
+}
+
+export type RouteObjectiveKind = 'crystal-rift' | 'contract-brand' | 'relic-crate'
+
+export type RouteObjective = {
+  id: string
+  kind: RouteObjectiveKind
+  position: Vector2
+  radius: number
+  ttl: number
+  rewardBudget: number
+  extraThreatBudget: number
+  chargeProgress?: number
+}
+
+export type BattlefieldDebug = {
+  activeChunkCount: number
+  obstacleCount: number
+  recycledChunkCount: number
+  recycledEnemyCount: number
+  lastSpawnDistance: number
+  routeObjectiveCount: number
+  routeObjectiveRewardBudget: number
+  routeObjectiveExtraThreatCount: number
+}
+
+export type BattlefieldState = {
+  mode: BattlefieldMode
+  seed: number
+  chunkSize: number
+  activeChunks: BattlefieldChunk[]
+  recycledChunkCount: number
+  recycledEnemyCount: number
+  noKillTimer: number
+  escapePressure: number
+  routeObjectives: RouteObjective[]
+  routeObjectiveSkillBoost?: {
+    multiplier: number
+    remainingCasts: number
+    ttl: number
+  }
+  rift?: ContractRift
+  bossArenaRadius?: number
+  bossArenaWarningTimer?: number
+  debug: BattlefieldDebug
+}
+
 export type Pickup = {
   id: string
   kind: PickupKind
@@ -614,6 +679,7 @@ export type GameSnapshot = {
   pendingSkillReward: PendingSkillReward | null
   aimPoint: Vector2
   player: Player
+  battlefield: BattlefieldState
   mapObstacles: MapObstacle[]
   pickups: Pickup[]
   enemies: Enemy[]

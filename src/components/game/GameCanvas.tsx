@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 
 import { CANVAS_HEIGHT, CANVAS_SCALE, CANVAS_WIDTH, WORLD_HEIGHT, WORLD_WIDTH } from '../../game/config'
-import { renderGame } from '../../game/render'
+import { getCameraOffset, renderGame } from '../../game/render'
 import { useGameLoop } from '../../hooks/useGameLoop'
 import { useKeyboard } from '../../hooks/useKeyboard'
 import { useGameStore } from '../../store/useGameStore'
@@ -72,9 +72,10 @@ export function GameCanvas() {
 
         const scaleX = WORLD_WIDTH / rect.width
         const scaleY = WORLD_HEIGHT / rect.height
+        const camera = getCameraOffset(latestState.current)
         updateAimPoint({
-          x: (event.clientX - rect.left) * scaleX,
-          y: (event.clientY - rect.top) * scaleY,
+          x: (event.clientX - rect.left) * scaleX + camera.x,
+          y: (event.clientY - rect.top) * scaleY + camera.y,
         })
       }}
       onKeyDownCapture={(event) => {

@@ -1,5 +1,5 @@
 import { getCampaignIndex, getCampaignFloor, isBossLevel, isEliteLevel } from './config'
-import type { EnemyKind, EnemyMovementTrait, EnemySkillTrait } from './types'
+import type { EnemyKind, EnemyMovementTrait, EnemySkillTrait, SkillBuildTag } from './types'
 
 export type CampaignEnemyArchetype = {
   id: string
@@ -20,6 +20,17 @@ export type CampaignMonsterTheme = {
   normalPool: CampaignEnemyArchetype[]
   elitePool: CampaignEnemyArchetype[]
   boss: CampaignEnemyArchetype
+}
+
+export type CampaignLootProfile = {
+  campaign: number
+  themePositioning: string
+  dropFocus: SkillBuildTag[]
+  primaryLootReason: string
+  recommendedState: string
+  themeThreat: string
+  bossName: string
+  portalHint: string
 }
 
 const enemy = (
@@ -218,6 +229,114 @@ export const CAMPAIGN_MONSTER_THEMES: CampaignMonsterTheme[] = [
     boss: enemy('contract-dragon', '契约巨龙', 'boss', 'caster', 'fire-breath', 1, '#f97316', 1.25, 0.88),
   },
 ]
+
+export const CAMPAIGN_LOOT_PROFILES: CampaignLootProfile[] = [
+  {
+    campaign: 1,
+    themePositioning: '新手入门、死契处刑',
+    dropFocus: ['pierce'],
+    primaryLootReason: '死契处刑者、穿透直线、基础武器/胸甲/鞋子/戒指',
+    recommendedState: 'Lv1-Lv2 主动技能，灰白绿装即可尝试',
+    themeThreat: '史莱姆潮、骷髅队列、地狱犬火焰、骷髅骑士冲锋',
+    bossName: '地牢典狱长',
+    portalHint: '适合刷穿透基础件与死契处刑者套装。',
+  },
+  {
+    campaign: 2,
+    themePositioning: '暴击、流血、生命汲取反制',
+    dropFocus: ['spread'],
+    primaryLootReason: '血羽游侠、暴击散射、吸血抗性、处决收益',
+    recommendedState: '至少 2 个主动技能 Lv2，绿色/蓝色混装',
+    themeThreat: '蝙蝠群、血池、吸血恢复、远程血矢',
+    bossName: '血宴伯爵',
+    portalHint: '适合刷血羽游侠、散射暴击与流血联动。',
+  },
+  {
+    campaign: 3,
+    themePositioning: '野兽流、机动和流血',
+    dropFocus: ['beast'],
+    primaryLootReason: '兽王赦令、野兽伤害、流血抗性、移速/闪避',
+    recommendedState: '核心技能 Lv2-Lv3，有一件蓝装更稳',
+    themeThreat: '狼群包抄、跳扑、撕裂流血、月怒加速',
+    bossName: '黑月狼王',
+    portalHint: '适合刷兽王赦令与野兽伙伴装备。',
+  },
+  {
+    campaign: 4,
+    themePositioning: '区域控制、毒雾和减速',
+    dropFocus: ['control', 'spread'],
+    primaryLootReason: '区域范围、持续时间、毒/减速抗性、控制联动',
+    recommendedState: '至少一组区域或散射技能成型',
+    themeThreat: '毒沼、诅咒、减速、女巫召唤物',
+    bossName: '三相女巫',
+    portalHint: '适合刷区域控制、持续时间和毒/减速联动。',
+  },
+  {
+    campaign: 5,
+    themePositioning: '护甲、击退、正面压制',
+    dropFocus: ['spread', 'pierce'],
+    primaryLootReason: '散射压制、护甲穿透、格挡/击退、战鼓反制',
+    recommendedState: 'Lv3-Lv4 技能，蓝装为主',
+    themeThreat: '盾兵推进、战鼓强化、投矛、冲锋兵',
+    bossName: '断牙战酋',
+    portalHint: '适合刷散射压制与破甲穿透装备。',
+  },
+  {
+    campaign: 6,
+    themePositioning: '精准远程、冷却和束缚',
+    dropFocus: ['pierce', 'spread'],
+    primaryLootReason: '穿透/散射精准词缀、冷却、暴击、解控',
+    recommendedState: '至少 1 个 Lv4 技能，紫装开始有价值',
+    themeThreat: '游侠风筝、藤蔓束缚、治疗结界、幻影',
+    bossName: '失落林冠女王',
+    portalHint: '适合刷精准穿透、冷却和暴击词缀。',
+  },
+  {
+    campaign: 7,
+    themePositioning: '材料、爆炸、陷阱和厚血目标',
+    dropFocus: ['control', 'pierce'],
+    primaryLootReason: '蓝晶契约、锻造材料、爆炸区域、破甲',
+    recommendedState: '1 个 Lv5 或多个 Lv4，紫装为主',
+    themeThreat: '地雷、炸桶、巨魔再生、地精工程',
+    bossName: '地精巨械驾驶员',
+    portalHint: '适合刷蓝晶契约、材料和爆炸区域词缀。',
+  },
+  {
+    campaign: 8,
+    themePositioning: '控场、拾取范围、潮汐位移',
+    dropFocus: ['control'],
+    primaryLootReason: '区域控制、拾取范围、减速抗性、水/雷联动',
+    recommendedState: 'Lv5 技能开始成为主力，有稳定紫装',
+    themeThreat: '水潮推拉、鱼人群涌、潮汐祭司、链雷',
+    bossName: '沉潮祭司',
+    portalHint: '适合刷区域控制、拾取范围和水雷联动。',
+  },
+  {
+    campaign: 9,
+    themePositioning: '高压近战、眩晕和 Boss 准备',
+    dropFocus: ['pierce', 'beast'],
+    primaryLootReason: '防御、眩晕抗性、重矢/穿透、精英处决',
+    recommendedState: 'Lv5 核心技能，橙装或强紫装联动',
+    themeThreat: '冲锋、迷宫障碍、重击眩晕、护卫墙',
+    bossName: '迷宫牛头王',
+    portalHint: '适合刷防御、重矢穿透和精英处决装备。',
+  },
+  {
+    campaign: 10,
+    themePositioning: '终局构筑、传承/传奇追求',
+    dropFocus: ['pierce', 'spread', 'control', 'beast'],
+    primaryLootReason: '橙色传承、亮橙传奇、跨流派终局词缀',
+    recommendedState: '至少 1-2 个 Lv5 核心技能，橙装构筑成型',
+    themeThreat: '岩浆、龙裔、火山喷发、Boss 多阶段',
+    bossName: '契约巨龙',
+    portalHint: '适合刷终局传承、传奇和跨流派大词缀。',
+  },
+]
+
+export const getCampaignLootProfile = (campaignOrLevel: number, fromLevel = false) => {
+  const campaign = fromLevel ? getCampaignIndex(campaignOrLevel) : campaignOrLevel
+  return CAMPAIGN_LOOT_PROFILES.find((profile) => profile.campaign === campaign) ?? CAMPAIGN_LOOT_PROFILES[0]
+}
 
 export const CORROSIVE_SLIME_ARCHETYPE: CampaignEnemyArchetype = enemy(
   'corrosive-slime',
