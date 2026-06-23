@@ -48,6 +48,7 @@ import {
   getCorrosiveSlimeRatio,
   getLevelGoal,
   getHighThreatRatio,
+  getHordeMultiplier,
   getHordeNormalTarget,
   getMaxEnemiesOnField,
   getRangedEnemyAttackInterval,
@@ -64,6 +65,8 @@ import {
   canDismantleEquipmentItem,
   createEmptyEquipmentMaterials,
   createEquipmentDrop,
+  createStarterWeaponEquipment,
+  createWeaponEquipmentFromDefinition,
   EQUIPMENT_RARITY_COLORS,
   EQUIPMENT_RARITY_LABELS,
   EQUIPMENT_SLOT_LABELS,
@@ -83,8 +86,9 @@ import {
   spendEquipmentMaterials,
   toggleEquipmentModifierLock,
   upgradeEquipmentItem,
+  getEquipmentUpgradeGoldCost,
 } from './equipment'
-import { WEAPON_DEFINITION_MAP, WEAPON_PROGRESS_BASE_LEVELS } from './weapons'
+import { WEAPON_DEFINITION_MAP } from './weapons'
 import type {
   ActiveSkillDefinition,
   ActiveSkillInstance,
@@ -118,7 +122,6 @@ import type {
   SkillField,
   SkillRewardChoice,
   SkillStat,
-  TargetPriority,
   Vector2,
   WeaponBonus,
   WeaponId,
@@ -136,7 +139,8 @@ const CORE_FIELD_RADIUS_MULTIPLIER_CAP = 1.18
 const CORE_FIELD_DURATION_MULTIPLIER_CAP = 1.22
 const CORE_COOLDOWN_MULTIPLIER_FLOOR = 0.75
 const BEAST_TEMPORARY_EQUIPMENT_SUMMON_CAP = 3
-const HEALTH_PACK_DROP_CHANCE = 0.22
+export const HEALTH_PACK_DROP_CHANCE = 0.22
+export const HEALTH_PACK_FINAL_DROP_MULTIPLIER = 0.5
 const HEALTH_PACK_HEAL = 25
 const HEALTH_PACK_MIN_TTL = 8
 const HEALTH_PACK_MAX_TTL = 12
@@ -165,6 +169,9 @@ const SKELETON_WARRIOR_WHIRLWIND_COOLDOWN = 3.1
 const SKELETON_WARRIOR_WHIRLWIND_DURATION = 0.82
 const SKELETON_WARRIOR_WHIRLWIND_RADIUS = 64
 const SKELETON_WARRIOR_WHIRLWIND_DAMAGE = 20
+const SKELETON_WARRIOR_WHIRLWIND_ENABLED = false
+const SKELETON_WARRIOR_MELEE_WINDUP = 0.32
+const SKELETON_WARRIOR_MELEE_RANGE_PADDING = 10
 const SKELETON_KNIGHT_CHARGE_STUN = 1.5
 const RUN_RECORD_LIMIT = 5
 const MILESTONE_LEVELS = [10, 20, 50, 100, 200]
@@ -327,7 +334,12 @@ export const getRouteObjectiveLimit = (level: number) => {
   return 3
 }
 
-export const getRouteObjectiveBaseReward = (level: number) => Math.max(12, getLevelGoal(level) * 2)
+export const getRouteObjectiveBaseReward = (level: number) => {
+  const preHordeGoal = isBossLevel(level)
+    ? getLevelGoal(level)
+    : Math.round(getLevelGoal(level) / Math.max(1, getHordeMultiplier(level)))
+  return Math.max(12, preHordeGoal * 2)
+}
 
 export const getRouteObjectiveRewardCap = (level: number) => Math.ceil(getRouteObjectiveBaseReward(level) * 0.22)
 
@@ -827,10 +839,6 @@ const createVillageObstacles = (): MapObstacle[] => [
   },
 ]
 
-const getPriorityLabel = (priority: TargetPriority) => {
-  return priority === 'melee' ? '近战优先' : '远程优先'
-}
-
 const getEnemyKindLabel = (kind: Enemy['kind']) => {
   if (kind === 'charger') {
     return '冲锋怪'
@@ -887,10 +895,6 @@ const getGoldReward = (level: number, kills: number) => {
   const levelReward = Math.max(0, level - 1) * 28
   const killReward = Math.floor(kills * 0.35)
   return levelReward + killReward
-}
-
-const getWeaponUnlockProgress = (bestLevel: number) => {
-  return Math.min(1, bestLevel / WEAPON_PROGRESS_BASE_LEVELS)
 }
 
 const getLevelIntroMessage = (level: number, targetKills: number) => {
@@ -988,6 +992,7 @@ const createPlayer = (
     dashTimer: 0,
     dashDirection: { x: 0, y: 0 },
     facing: 'down',
+    animationState: 'idle',
   } as const
 }
 
@@ -999,6 +1004,9 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
   const isVillagePhase = phase === 'idle' || phase === 'game-over'
   const playerPosition = isVillagePhase ? VILLAGE_POINTS.campfire : { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }
   const battlefield = createBattlefieldState(getBattlefieldMode(phase, level), level, playerPosition)
+  const starterWeapon = createStarterWeaponEquipment()
+  const initialEquippedItems: Partial<Record<EquipmentSlot, EquipmentItem>> = starterWeapon ? { weapon: starterWeapon } : {}
+  const initialEquipmentInventory = starterWeapon ? [starterWeapon] : []
 
   return {
     phase,
@@ -1011,15 +1019,15 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
     achievedMilestones: [],
     unlockedWeapons: [],
     equippedWeaponId: null,
-    equipmentInventory: [],
-    equippedItems: {},
+    equipmentInventory: initialEquipmentInventory,
+    equippedItems: initialEquippedItems,
     equipmentMaterials: createEmptyEquipmentMaterials(),
     pendingBossLoot: [],
     lastAutoDismantleSummary: undefined,
     lastLevelSettlement: undefined,
     equipmentSetCounters: {},
     selectedCampaign: 1,
-    unsealedEquipmentSlots: [],
+    unsealedEquipmentSlots: ['weapon'],
     audioSettings: { masterVolume: 80, effectsVolume: 75, muted: false },
     level,
     contractLevel: 1,
@@ -1038,11 +1046,16 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
     skillAllocations,
     contractBoons: createEmptyContractBoons(),
     targetPriority: 'melee',
+    debugControls: {
+      infiniteHealth: false,
+      disableAttacks: false,
+    },
     fixedPassiveLevel,
     activeSkills: [],
     pendingSkillReward: null,
+    levelClearConfirmed: false,
     aimPoint: { x: WORLD_WIDTH * 0.68, y: WORLD_HEIGHT / 2 },
-    player: createPlayer(skillAllocations, fixedPassiveLevel, null, {}, undefined, playerPosition),
+    player: createPlayer(skillAllocations, fixedPassiveLevel, null, initialEquippedItems, undefined, playerPosition),
     battlefield,
     mapObstacles: isVillagePhase ? createVillageObstacles() : battlefield.mode === 'infinite' ? getFlattenedChunkObstacles(battlefield) : createLevelObstacles(level),
     pickups: [],
@@ -1599,15 +1612,20 @@ const createHealthPickup = (position: Vector2) => ({
   healAmount: HEALTH_PACK_HEAL,
 })
 
+export const getHealthPackDropChanceForHealthRatio = (healthRatio: number, sourceMultiplier = 1) => {
+  let chance = HEALTH_PACK_DROP_CHANCE
+  if (healthRatio <= 0.2) {
+    chance = 0.58
+  } else if (healthRatio <= 0.35) {
+    chance = 0.42
+  }
+
+  return Math.min(0.95, chance * sourceMultiplier) * HEALTH_PACK_FINAL_DROP_MULTIPLIER
+}
+
 const getHealthPackDropChance = (snapshot: GameSnapshot) => {
   const healthRatio = snapshot.player.hp / Math.max(1, snapshot.player.maxHp)
-  if (healthRatio <= 0.2) {
-    return 0.58
-  }
-  if (healthRatio <= 0.35) {
-    return 0.42
-  }
-  return HEALTH_PACK_DROP_CHANCE
+  return getHealthPackDropChanceForHealthRatio(healthRatio)
 }
 
 const createSoulCrystalPickup = (position: Vector2, expValue: number) => ({
@@ -1669,6 +1687,61 @@ const clearEquipmentNewFlags = (items: EquipmentItem[]) => items.map((item) => (
 const clearEquippedNewFlags = (equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>) => Object.fromEntries(
   Object.entries(equippedItems).map(([slot, item]) => [slot, item ? { ...cloneEquipmentItem(item), isNew: false } : item]),
 ) as Partial<Record<EquipmentSlot, EquipmentItem>>
+
+export const migrateLegacyWeaponsToEquipment = (snapshot: GameSnapshot): GameSnapshot => {
+  const next = cloneSnapshot(snapshot)
+  const byId = new Map<string, EquipmentItem>()
+  next.equipmentInventory.forEach((item) => {
+    byId.set(item.id, cloneEquipmentItem(item))
+  })
+
+  const equippedLegacyWeapon = next.equippedWeaponId
+    ? createWeaponEquipmentFromDefinition(next.equippedWeaponId, {
+      source: 'blacksmith',
+      locked: true,
+      idPrefix: 'migrated-equipped-weapon',
+    })
+    : null
+
+  if (equippedLegacyWeapon) {
+    if (!next.equippedItems.weapon) {
+      next.equippedItems.weapon = cloneEquipmentItem(equippedLegacyWeapon)
+    }
+    byId.set(equippedLegacyWeapon.id, cloneEquipmentItem(equippedLegacyWeapon))
+  }
+
+  next.unlockedWeapons.forEach((weaponId) => {
+    if (weaponId === next.equippedWeaponId) {
+      return
+    }
+    const item = createWeaponEquipmentFromDefinition(weaponId, {
+      source: 'blacksmith',
+      locked: true,
+      idPrefix: 'migrated-owned-weapon',
+    })
+    if (item) {
+      byId.set(item.id, cloneEquipmentItem(item))
+    }
+  })
+
+  if (!next.equippedItems.weapon) {
+    const starterWeapon = createStarterWeaponEquipment()
+    if (starterWeapon) {
+      next.equippedItems.weapon = cloneEquipmentItem(starterWeapon)
+      byId.set(starterWeapon.id, cloneEquipmentItem(starterWeapon))
+    }
+  }
+
+  if (!next.unsealedEquipmentSlots.includes('weapon')) {
+    next.unsealedEquipmentSlots = ['weapon', ...next.unsealedEquipmentSlots]
+  }
+
+  next.equipmentInventory = Array.from(byId.values()).sort((a, b) => b.score - a.score)
+  next.unlockedWeapons = []
+  next.equippedWeaponId = null
+  applyDerivedPlayerStats(next)
+  return next
+}
 
 const getEquipmentItemLabel = (item: EquipmentItem) => {
   return `${EQUIPMENT_RARITY_LABELS[item.rarity]}${EQUIPMENT_SLOT_LABELS[item.slot]}`
@@ -1980,9 +2053,29 @@ const isHighThreatArchetype = (archetype: CampaignEnemyArchetype) => {
   return archetype.kind === 'charger' || archetype.kind === 'bomber' || archetype.kind === 'ranged' || archetype.skillTrait !== 'none' || archetype.movementTrait === 'caster'
 }
 
+const isFodderEnemy = (enemy: Pick<Enemy, 'isFodder' | 'archetypeId' | 'role'>) => (
+  enemy.isFodder || enemy.archetypeId === CORROSIVE_SLIME_ARCHETYPE.id || enemy.role === 'fodder'
+)
+
+const isHeavyEnemy = (enemy: Pick<Enemy, 'kind' | 'movementTrait' | 'skillTrait'>) => (
+  enemy.movementTrait === 'heavy' ||
+  enemy.movementTrait === 'caster' ||
+  enemy.skillTrait === 'shielded' ||
+  enemy.skillTrait === 'healing' ||
+  enemy.kind === 'bomber'
+)
+
+const isFastEnemy = (enemy: Pick<Enemy, 'kind' | 'movementTrait' | 'skillTrait'>) => (
+  enemy.kind === 'charger' ||
+  enemy.movementTrait === 'flanker' ||
+  enemy.movementTrait === 'charger' ||
+  enemy.skillTrait === 'pack-haste' ||
+  enemy.skillTrait === 'wall-charge'
+)
+
 export const getEnemyBaseSpeedSoftCap = (enemy: Enemy) => {
-  if (enemy.isFodder || enemy.archetypeId === CORROSIVE_SLIME_ARCHETYPE.id || enemy.role === 'fodder') {
-    return 54
+  if (isFodderEnemy(enemy)) {
+    return 62
   }
 
   if (enemy.kind === 'boss' || enemy.role === 'boss') {
@@ -1990,23 +2083,31 @@ export const getEnemyBaseSpeedSoftCap = (enemy: Enemy) => {
   }
 
   if (enemy.kind === 'elite' || enemy.role === 'elite') {
-    return 98
+    return isFastEnemy(enemy) ? 118 : isHeavyEnemy(enemy) ? 84 : 104
   }
 
-  if (enemy.kind === 'charger' || enemy.skillTrait === 'wall-charge') {
+  if (isFastEnemy(enemy)) {
+    return 112
+  }
+
+  if (enemy.kind === 'ranged') {
+    return 72
+  }
+
+  if (isHeavyEnemy(enemy)) {
+    return 68
+  }
+
+  if (enemy.role === 'high-threat') {
     return 90
   }
 
-  if (enemy.role === 'high-threat' || enemy.kind === 'bomber' || enemy.kind === 'ranged') {
-    return 88
-  }
-
-  return 82
+  return 88
 }
 
 export const getEnemyEffectiveSpeedSoftCap = (enemy: Enemy) => {
-  if (enemy.isFodder || enemy.archetypeId === CORROSIVE_SLIME_ARCHETYPE.id || enemy.role === 'fodder') {
-    return 54
+  if (isFodderEnemy(enemy)) {
+    return 66
   }
 
   if (enemy.kind === 'boss' || enemy.role === 'boss') {
@@ -2014,18 +2115,26 @@ export const getEnemyEffectiveSpeedSoftCap = (enemy: Enemy) => {
   }
 
   if (enemy.kind === 'elite' || enemy.role === 'elite') {
-    return 104
+    return isFastEnemy(enemy) ? 122 : isHeavyEnemy(enemy) ? 88 : 112
   }
 
-  if (enemy.kind === 'charger' || enemy.skillTrait === 'wall-charge') {
-    return 95
+  if (isFastEnemy(enemy)) {
+    return 122
   }
 
-  if (enemy.role === 'high-threat' || enemy.kind === 'bomber' || enemy.kind === 'ranged') {
+  if (enemy.kind === 'ranged') {
+    return 76
+  }
+
+  if (isHeavyEnemy(enemy)) {
+    return 70
+  }
+
+  if (enemy.role === 'high-threat') {
     return 92
   }
 
-  return 86
+  return 92
 }
 
 export const getEnemyEffectiveMoveSpeed = (enemy: Enemy, traitMultiplier = 1, slowMultiplier = 1) => {
@@ -2049,6 +2158,30 @@ export const applyEnemySpeedMultiplier = (enemy: Enemy, multiplier: number) => {
   return enemy.speed
 }
 
+const getEnemySpawnSpeedBoost = (enemy: Enemy) => {
+  if (isFodderEnemy(enemy)) {
+    return 1.14
+  }
+
+  if (enemy.kind === 'elite' || enemy.role === 'elite') {
+    return 1.1
+  }
+
+  if (enemy.kind === 'ranged') {
+    return 1.08
+  }
+
+  if (isHeavyEnemy(enemy)) {
+    return 1.06
+  }
+
+  if (isFastEnemy(enemy)) {
+    return 1.08
+  }
+
+  return 1.12
+}
+
 const createEnemy = (
   level: number,
   kind: EnemyKind = getCampaignEnemyKind(level),
@@ -2061,7 +2194,7 @@ const createEnemy = (
   const stats = getEnemyStats(level, kind)
   const id = createId()
   const hp = Math.max(8, Math.round(stats.hp * archetype.hpMultiplier))
-  const speed = Math.max(18, Math.round(Math.min(stats.speed * archetype.speedMultiplier, archetype.id === CORROSIVE_SLIME_ARCHETYPE.id ? 54 : 82)))
+  const speed = Math.max(18, Math.round(stats.speed * archetype.speedMultiplier))
   const attackDamage = Math.max(1, Math.round((stats.attack ?? ENEMY_CONTACT_DAMAGE) * archetype.damageMultiplier))
   const campaignIndex = getCampaignIndex(level)
   const canRevive = resolvedKind === 'elite' && (archetype.id.includes('skeleton') || archetype.id.includes('chain-captain') || archetype.skillTrait === 'skeleton-revive')
@@ -2107,10 +2240,12 @@ const createEnemy = (
     breathTimer: 0,
     breathDirection: { x: 1, y: 0 },
     breathTickCooldown: 0,
+    meleeAttackWindup: 0,
+    meleeAttackReady: false,
     walkTimer: 0,
     bossSkillIndex: resolvedKind === 'boss' ? 0 : undefined,
   }
-  enemy.speed = Math.min(enemy.speed, getEnemyBaseSpeedSoftCap(enemy))
+  enemy.speed = Math.min(Math.round(enemy.speed * getEnemySpawnSpeedBoost(enemy)), getEnemyBaseSpeedSoftCap(enemy))
   return enemy
 }
 
@@ -2454,6 +2589,8 @@ const spawnEliteEnemy = (level: number, obstacles: MapObstacle[], rank: EliteRan
     breathTimer: 0,
     breathDirection: { x: 1, y: 0 },
     breathTickCooldown: 0,
+    meleeAttackWindup: 0,
+    meleeAttackReady: false,
     walkTimer: 0,
     affixCooldown: 1.2,
     bossSkillIndex: undefined,
@@ -2490,6 +2627,7 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
   achievedMilestones: [...snapshot.achievedMilestones],
   skillAllocations: { ...snapshot.skillAllocations },
   contractBoons: { ...snapshot.contractBoons },
+  debugControls: { ...snapshot.debugControls },
   activeSkills: snapshot.activeSkills.map((skill) => ({ ...skill })),
   pendingSkillReward: snapshot.pendingSkillReward
     ? {
@@ -2596,6 +2734,7 @@ const createProjectile = (args: {
   lastPierceDamageMultiplier?: number
   singleTargetDamageMultiplier?: number
   eliteBossDamageMultiplier?: number
+  eliteSweepMultiplier?: number
   lightDamageMultiplier?: number
   lowHpThreshold?: number
   lowHpDamageMultiplier?: number
@@ -2633,6 +2772,7 @@ const createProjectile = (args: {
   lastPierceDamageMultiplier: args.lastPierceDamageMultiplier,
   singleTargetDamageMultiplier: args.singleTargetDamageMultiplier,
   eliteBossDamageMultiplier: args.eliteBossDamageMultiplier,
+  eliteSweepMultiplier: args.eliteSweepMultiplier,
   lightDamageMultiplier: args.lightDamageMultiplier,
   lowHpThreshold: args.lowHpThreshold,
   lowHpDamageMultiplier: args.lowHpDamageMultiplier,
@@ -2702,6 +2842,63 @@ const createEnemyProjectiles = (origin: Vector2, target: Vector2, damage = 12) =
       sourceSkillId: 'enemy-ranged-shot',
     })
   })
+}
+
+const RANGED_ENEMY_ATTACK_WINDUP = 0.42
+
+const isSkeletonArcherEnemy = (enemy: Enemy) => {
+  if (enemy.kind !== 'ranged') {
+    return false
+  }
+
+  const identity = `${enemy.archetypeId ?? ''} ${enemy.displayName ?? ''}`.toLowerCase()
+  return identity.includes('dungeon-skeleton-archer') || identity.includes('skeleton-archer') || identity.includes('骷髅弓手')
+}
+
+const fireRangedEnemyShot = (snapshot: GameSnapshot, enemy: Enemy, target: Vector2) => {
+  snapshot.enemyProjectiles.push(...createEnemyProjectiles(enemy.position, target, Math.max(4, enemy.attackDamage ?? 12)))
+  enemy.attackCooldown = getRangedEnemyAttackInterval(snapshot.level)
+  snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(125, 211, 252, ALPHA)', 12))
+}
+
+const beginRangedEnemyAttackWindup = (enemy: Enemy, target: Vector2) => {
+  const direction = normalize({
+    x: target.x - enemy.position.x,
+    y: target.y - enemy.position.y,
+  })
+  if (direction.x !== 0 || direction.y !== 0) {
+    enemy.facingDirection = direction
+  }
+  enemy.rangedAttackTarget = { ...target }
+  enemy.rangedAttackWindup = RANGED_ENEMY_ATTACK_WINDUP
+  enemy.behaviorTimer = Math.max(enemy.behaviorTimer, RANGED_ENEMY_ATTACK_WINDUP)
+  enemy.attackCooldown = Number.EPSILON
+}
+
+const updateRangedEnemyAttackWindup = (snapshot: GameSnapshot, enemy: Enemy, delta: number) => {
+  if (!isSkeletonArcherEnemy(enemy) || (enemy.rangedAttackWindup ?? 0) <= 0) {
+    return false
+  }
+
+  const previousWindup = enemy.rangedAttackWindup ?? 0
+  const target = enemy.rangedAttackTarget ?? snapshot.player.position
+  const direction = normalize({
+    x: target.x - enemy.position.x,
+    y: target.y - enemy.position.y,
+  })
+  if (direction.x !== 0 || direction.y !== 0) {
+    enemy.facingDirection = direction
+  }
+
+  enemy.rangedAttackWindup = Math.max(0, previousWindup - delta)
+  enemy.behaviorTimer = Math.max(enemy.behaviorTimer, enemy.rangedAttackWindup)
+  enemy.attackCooldown = Math.max(enemy.attackCooldown, Number.EPSILON)
+  if (previousWindup > 0 && enemy.rangedAttackWindup <= 0) {
+    fireRangedEnemyShot(snapshot, enemy, target)
+    enemy.rangedAttackTarget = undefined
+  }
+
+  return true
 }
 
 const applyCampaignArchetypeSkill = (snapshot: GameSnapshot, enemy: Enemy, direction: Vector2, gap: number) => {
@@ -3033,6 +3230,13 @@ const getProjectileDamageForEnemy = (projectile: Projectile, enemy: Enemy, consu
     damage *= projectile.eliteBossDamageMultiplier
   }
 
+  if (projectile.eliteSweepMultiplier && enemy.kind === 'elite') {
+    const sweepableElite = enemy.eliteRank === 'minor' || enemy.eliteRank === 'normal' || !enemy.eliteRank
+    if (sweepableElite) {
+      damage *= projectile.eliteSweepMultiplier
+    }
+  }
+
   if (projectile.lowHpThreshold && projectile.lowHpDamageMultiplier && enemy.hp / enemy.maxHp <= projectile.lowHpThreshold) {
     damage *= projectile.lowHpDamageMultiplier
   }
@@ -3224,6 +3428,7 @@ const createSkillProjectile = (
     lastPierceDamageMultiplier: isLevelFive && skillId === 'pierce-arrow' ? 1.35 : undefined,
     singleTargetDamageMultiplier: isLevelFive && skillId === 'heavy-snipe' && potentialLineTargets <= 1 ? 1.25 : undefined,
     eliteBossDamageMultiplier: isLevelFive && skillId === 'sun-piercer' ? 1.3 : undefined,
+    eliteSweepMultiplier: getEliteSweepMultiplier(skillLevel, modifiers),
     lightDamageMultiplier: isLevelFive && skillId === 'dawn-bolt' ? 0.3 : undefined,
     lowHpThreshold: isLevelFive && (skillId === 'weakness-trace' || skillId === 'final-hunt') ? (skillId === 'final-hunt' ? 0.25 : 0.2) : undefined,
     lowHpDamageMultiplier: isLevelFive && skillId === 'weakness-trace' ? 1.5 : isLevelFive && skillId === 'final-hunt' ? 1.45 : undefined,
@@ -3307,6 +3512,26 @@ const getSkillModifiers = (snapshot: GameSnapshot, skillId: string, buildTag: Sk
 
 const getModifierProjectileBonus = (modifiers: EquipmentSkillModifier[]) => {
   return Math.min(CORE_PROJECTILE_BONUS_CAP, modifiers.reduce((sum, modifier) => modifier.type === 'projectile-count' ? sum + modifier.amount : sum, 0))
+}
+
+const isCoreSkillShapeModifier = (modifier: EquipmentSkillModifier) => {
+  return modifier.type === 'projectile-count' ||
+    modifier.type === 'pierce-echo' ||
+    modifier.type === 'elite-parallel-line' ||
+    modifier.type === 'double-line' ||
+    modifier.type === 'ricochet-bounces' ||
+    modifier.type === 'spread-double-next' ||
+    modifier.type === 'field-duration' ||
+    modifier.type === 'field-end-burst' ||
+    modifier.type === 'beast-dual-bond'
+}
+
+const getEliteSweepMultiplier = (skillLevel: number, modifiers: EquipmentSkillModifier[]) => {
+  if (skillLevel < 5 || !modifiers.some(isCoreSkillShapeModifier)) {
+    return undefined
+  }
+
+  return 8.2
 }
 
 const getSkillCooldownModifier = (modifiers: EquipmentSkillModifier[]) => {
@@ -3604,6 +3829,7 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     fixedPassiveLevel: previous.fixedPassiveLevel,
     activeSkills: previous.activeSkills.map((skill) => ({ ...skill, cooldownRemaining: Math.min(skill.cooldownRemaining, 1) })),
     pendingSkillReward: null,
+    levelClearConfirmed: false,
     aimPoint: { x: startPosition.x + WORLD_WIDTH * 0.18, y: startPosition.y },
     battlefield,
     mapObstacles: levelObstacles,
@@ -3627,6 +3853,8 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
 }
 
 const updatePlayerMovement = (snapshot: GameSnapshot, input: InputState, delta: number) => {
+  snapshot.player.animationState = 'idle'
+
   if ((snapshot.player.stunTimer ?? 0) > 0) {
     return
   }
@@ -3645,6 +3873,7 @@ const updatePlayerMovement = (snapshot: GameSnapshot, input: InputState, delta: 
       boundedByRoom,
     )
     snapshot.player.position = keepInsideCombatArea(snapshot, moved, snapshot.player.size * 0.55)
+    snapshot.player.animationState = 'move'
     return
   }
 
@@ -3657,6 +3886,7 @@ const updatePlayerMovement = (snapshot: GameSnapshot, input: InputState, delta: 
     return
   }
 
+  snapshot.player.animationState = 'move'
   snapshot.player.facing = dominantFacing(movement)
   snapshot.player.position = movePlayerWithObstacleSlide(
     snapshot.player.position,
@@ -3721,6 +3951,11 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     enemy.steeringTimer = Math.max(0, (enemy.steeringTimer ?? 0) - delta)
     enemy.stunTimer = Math.max(0, (enemy.stunTimer ?? 0) - delta)
     enemy.affixCooldown = Math.max(0, (enemy.affixCooldown ?? 0) - delta)
+    const previousMeleeWindup = enemy.meleeAttackWindup ?? 0
+    enemy.meleeAttackWindup = Math.max(0, previousMeleeWindup - delta)
+    if (canUseSkeletonWarriorSkill(enemy) && previousMeleeWindup > 0 && (enemy.meleeAttackWindup ?? 0) <= 0) {
+      enemy.meleeAttackReady = true
+    }
     if (!enemy.steeringSide) {
       enemy.steeringSide = enemy.id.charCodeAt(enemy.id.length - 1) % 2 === 0 ? 1 : -1
     }
@@ -3729,15 +3964,20 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     }
 
     const isStunned = (enemy.stunTimer ?? 0) > 0
+    let rangedAttackLocked = !isStunned && updateRangedEnemyAttackWindup(snapshot, enemy, delta)
+    if (!isStunned && !rangedAttackLocked && isSkeletonArcherEnemy(enemy) && enemy.attackCooldown <= 0 && gap <= 430) {
+      beginRangedEnemyAttackWindup(enemy, snapshot.player.position)
+      rangedAttackLocked = true
+    }
     const breathLocked = !isStunned && enemy.kind !== 'boss' && canUseFireBreath(enemy) && updateHellhoundBreath(snapshot, enemy, delta, direction, gap)
 
-    if (isStunned || breathLocked) {
+    if (isStunned || breathLocked || rangedAttackLocked) {
       movement = { x: 0, y: 0 }
     } else if (enemy.kind === 'charger' || enemy.skillTrait === 'fire-breath') {
       enemy.attackCooldown = Math.max(0, enemy.attackCooldown - delta)
     }
 
-    if (!isStunned && !breathLocked && enemy.kind !== 'boss') {
+    if (!isStunned && !breathLocked && !rangedAttackLocked && enemy.kind !== 'boss') {
       updateEnemyTraitSkill(snapshot, enemy, direction, gap)
     }
 
@@ -3764,7 +4004,33 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       enemy.affixCooldown = 2.8
     }
 
-    if (!isStunned && canUseSkeletonWarriorSkill(enemy) && enemy.attackCooldown <= 0 && gap <= SKELETON_WARRIOR_WHIRLWIND_RADIUS) {
+    const skeletonMeleeRange = enemy.size * 0.55 + snapshot.player.size * 0.55 + SKELETON_WARRIOR_MELEE_RANGE_PADDING
+    if (canUseSkeletonWarriorSkill(enemy) && enemy.meleeAttackReady && gap > skeletonMeleeRange + 24) {
+      enemy.meleeAttackReady = false
+      enemy.attackCooldown = Math.max(enemy.attackCooldown, 0.24)
+    }
+    if (
+      !isStunned &&
+      canUseSkeletonWarriorSkill(enemy) &&
+      enemy.attackCooldown <= 0 &&
+      (enemy.meleeAttackWindup ?? 0) <= 0 &&
+      !enemy.meleeAttackReady &&
+      gap <= skeletonMeleeRange
+    ) {
+      enemy.meleeAttackWindup = SKELETON_WARRIOR_MELEE_WINDUP
+      enemy.meleeAttackReady = false
+      enemy.facingDirection = direction
+      enemy.behaviorDirection = direction
+      snapshot.message = '骷髅战士举剑准备近身劈砍'
+    }
+
+    if (
+      SKELETON_WARRIOR_WHIRLWIND_ENABLED &&
+      !isStunned &&
+      canUseSkeletonWarriorSkill(enemy) &&
+      enemy.attackCooldown <= 0 &&
+      gap <= SKELETON_WARRIOR_WHIRLWIND_RADIUS
+    ) {
       enemy.behaviorTimer = Math.max(enemy.behaviorTimer, SKELETON_WARRIOR_WHIRLWIND_DURATION)
       enemy.attackCooldown = SKELETON_WARRIOR_WHIRLWIND_COOLDOWN
       if (snapshot.player.dashTimer <= 0 && snapshot.player.hurtCooldown <= 0) {
@@ -3788,7 +4054,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     const hasActiveBreathVisual = canUseFireBreath(enemy) && snapshot.enemySkillEffects.some((effect) => {
       return effect.kind === 'hellhound-breath' && effect.id.startsWith(`hellhound-breath-${enemy.id}-`)
     })
-    if (isStunned || (enemy.breathTimer ?? 0) > 0 || hasActiveBreathVisual) {
+    if (isStunned || rangedAttackLocked || (enemy.breathTimer ?? 0) > 0 || hasActiveBreathVisual || (enemy.meleeAttackWindup ?? 0) > 0 || enemy.meleeAttackReady) {
       movement = { x: 0, y: 0 }
     } else if (enemy.kind === 'charger' || canUseSkeletonKnightSkill(enemy) || enemy.skillTrait === 'wall-charge') {
       if (enemy.behaviorTimer > 0) {
@@ -3910,13 +4176,11 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     }
 
     enemy.position = keepInsideCombatArea(snapshot, nextPosition, enemy.size * 0.55)
-    if (enemy.kind === 'elite') {
-      const walkDistance = distance(previousPosition, enemy.position)
-      if (walkDistance > 0.08) {
-        enemy.walkTimer = (enemy.walkTimer ?? 0) + Math.min(0.42, walkDistance / Math.max(1, enemy.size)) * 10
-      } else {
-        enemy.walkTimer = Math.max(0, (enemy.walkTimer ?? 0) - delta * 8)
-      }
+    const walkDistance = distance(previousPosition, enemy.position)
+    if (walkDistance > 0.08) {
+      enemy.walkTimer = (enemy.walkTimer ?? 0) + Math.min(0.42, walkDistance / Math.max(1, enemy.size)) * 10
+    } else {
+      enemy.walkTimer = Math.max(0, (enemy.walkTimer ?? 0) - delta * 8)
     }
     enemy.lastPosition = { ...enemy.position }
 
@@ -3933,7 +4197,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
 }
 
 const triggerAutoAttack = (snapshot: GameSnapshot) => {
-  if (snapshot.player.attackCooldown > 0 || snapshot.enemies.length === 0) {
+  if (snapshot.debugControls.disableAttacks || snapshot.player.attackCooldown > 0 || snapshot.enemies.length === 0) {
     return
   }
 
@@ -3941,7 +4205,6 @@ const triggerAutoAttack = (snapshot: GameSnapshot) => {
     .filter((enemy) => enemy.kind === 'boss')
     .sort((a, b) => distance(a.position, snapshot.player.position) - distance(b.position, snapshot.player.position))[0]
   const target = bossTarget ?? snapshot.enemies
-    .filter((enemy) => enemy.kind === snapshot.targetPriority || snapshot.enemies.every((candidate) => candidate.kind !== snapshot.targetPriority))
     .sort((a, b) => distance(a.position, snapshot.player.position) - distance(b.position, snapshot.player.position))[0]
 
   if (!target || distance(target.position, snapshot.player.position) > snapshot.player.attackRange) {
@@ -4627,7 +4890,7 @@ const triggerBossSpecialAttack = (snapshot: GameSnapshot, enemy: Enemy) => {
 
 const triggerEnemyAttacks = (snapshot: GameSnapshot) => {
   snapshot.enemies.forEach((enemy) => {
-    if ((enemy.kind !== 'ranged' && enemy.kind !== 'boss') || enemy.attackCooldown > 0) {
+    if ((enemy.kind !== 'ranged' && enemy.kind !== 'boss') || enemy.attackCooldown > 0 || (enemy.rangedAttackWindup ?? 0) > 0) {
       return
     }
 
@@ -4640,9 +4903,20 @@ const triggerEnemyAttacks = (snapshot: GameSnapshot) => {
       return
     }
 
-    snapshot.enemyProjectiles.push(...createEnemyProjectiles(enemy.position, snapshot.player.position, Math.max(4, enemy.attackDamage ?? 12)))
-    enemy.attackCooldown = getRangedEnemyAttackInterval(snapshot.level)
-    snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(125, 211, 252, ALPHA)', 12))
+    if (isSkeletonArcherEnemy(enemy)) {
+      beginRangedEnemyAttackWindup(enemy, snapshot.player.position)
+      return
+    }
+
+    const direction = normalize({
+      x: snapshot.player.position.x - enemy.position.x,
+      y: snapshot.player.position.y - enemy.position.y,
+    })
+    if (direction.x !== 0 || direction.y !== 0) {
+      enemy.facingDirection = direction
+    }
+    enemy.behaviorTimer = Math.max(enemy.behaviorTimer, RANGED_ENEMY_ATTACK_WINDUP)
+    fireRangedEnemyShot(snapshot, enemy, snapshot.player.position)
   })
 }
 
@@ -4651,6 +4925,7 @@ const updateProjectileList = (projectiles: Projectile[], delta: number, snapshot
     projectile.age = (projectile.age ?? 0) + delta
     if (projectile.owner === 'player' && projectile.sourceSkillId === 'curve-return' && projectile.returnAfter && projectile.age >= projectile.returnAfter) {
       const origin = projectile.origin ?? projectile.position
+      const firstReturnFrame = !projectile.hasReturned
       let returnDirection = normalize({
         x: origin.x - projectile.position.x,
         y: origin.y - projectile.position.y,
@@ -4671,6 +4946,11 @@ const updateProjectileList = (projectiles: Projectile[], delta: number, snapshot
         }
       }
       const speed = Math.max(PROJECTILE_SPEED * 0.82, Math.hypot(projectile.velocity.x, projectile.velocity.y))
+      if (firstReturnFrame) {
+        const returnTravelTime = distance(projectile.position, origin) / Math.max(speed, 1)
+        projectile.ttl = Math.max(projectile.ttl, returnTravelTime + 0.35)
+        projectile.hasReturned = true
+      }
       if (returnDirection.x !== 0 || returnDirection.y !== 0) {
         projectile.velocity = {
           x: returnDirection.x * speed,
@@ -5266,7 +5546,13 @@ const resolvePlayerDamage = (snapshot: GameSnapshot) => {
   }
 
   const collidingEnemy = snapshot.enemies.find((enemy) => {
-    return enemy.kind !== 'ranged' && distance(enemy.position, snapshot.player.position) < enemy.size * 0.55 + snapshot.player.size * 0.55
+    if (enemy.kind === 'ranged') {
+      return false
+    }
+    if (canUseSkeletonWarriorSkill(enemy) && !enemy.meleeAttackReady) {
+      return false
+    }
+    return distance(enemy.position, snapshot.player.position) < enemy.size * 0.55 + snapshot.player.size * 0.55
   })
 
   const hitByProjectile = snapshot.enemyProjectiles.find((projectile) => {
@@ -5321,6 +5607,9 @@ const resolvePlayerDamage = (snapshot: GameSnapshot) => {
         ttl: 0.26,
         range: collidingEnemy.size * 1.4,
       })
+      collidingEnemy.meleeAttackReady = false
+      collidingEnemy.meleeAttackWindup = 0
+      collidingEnemy.attackCooldown = Math.max(collidingEnemy.attackCooldown, 0.92)
     }
     if (collidingEnemy?.skillTrait === 'life-steal' || collidingEnemy?.eliteAffixes?.includes('vampiric')) {
       collidingEnemy.hp = Math.min(collidingEnemy.maxHp, collidingEnemy.hp + ENEMY_CONTACT_DAMAGE * 0.45)
@@ -5478,10 +5767,17 @@ const enterLevelClear = (snapshot: GameSnapshot) => {
   snapshot.phase = 'level-clear'
   snapshot.phaseBeforePause = 'level-clear'
   snapshot.levelTimer = LEVEL_CLEAR_DELAY
-  snapshot.pendingSkillReward = isBossPreludeLevel(snapshot.level) && !snapshot.pendingSkillReward ? {
-    ...buildPendingReward(snapshot),
-    source: 'level-clear',
-  } : snapshot.pendingSkillReward
+  snapshot.levelClearConfirmed = false
+  const shouldOfferNodeReward = settlement.rewardKind === 'elite' || settlement.rewardKind === 'prelude'
+  if (shouldOfferNodeReward && !snapshot.pendingSkillReward) {
+    const reward = buildPendingReward(snapshot)
+    if (reward.choices.length > 0) {
+      snapshot.pendingSkillReward = {
+        ...reward,
+        source: 'level-clear',
+      }
+    }
+  }
   const absorbedText = settlement.absorbedCrystals > 0 ? `，自动吸附 ${settlement.absorbedCrystals} 个蓝晶（+${Math.round(settlement.absorbedExp)} 经验）` : ''
   if (settlement.rewardKind === 'light') {
     snapshot.message = `契约裂隙已稳定，第 ${snapshot.level} 层轻结算${absorbedText}，紫色以下装备离开战斗将自动分解 ${settlement.autoDismantlePreviewCount} 件`
@@ -5857,9 +6153,10 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
     snapshot.message = `${newest.displayName ?? getEnemyKindLabel(featuredKind)}登场：观察它的行为变化`
   } else {
     const capacity = Math.max(1, getMaxEnemiesOnField(snapshot.level) - snapshot.enemies.length)
+    const batchMultiplier = isBossLevel(snapshot.level) ? 1 : 2
     const batchSize = isBossLevel(snapshot.level)
       ? 1
-      : Math.min(capacity, snapshot.remainingToSpawn, Math.max(1, Math.ceil(getHordeNormalTarget(snapshot.level) * 0.08)))
+      : Math.min(capacity, snapshot.remainingToSpawn, Math.max(1, Math.ceil(getHordeNormalTarget(snapshot.level) * 0.08 * batchMultiplier)))
     const guardKind = isBossLevel(snapshot.level) ? getCampaignGuardEnemyKind(snapshot.level) : undefined
     const openingKind = getCampaignOpeningEnemyKind(snapshot.level, spawnedCount)
     for (let index = 0; index < batchSize; index += 1) {
@@ -5896,19 +6193,22 @@ export const createInitialSnapshot = (phase: GamePhase = 'idle') => {
 }
 
 const preserveMetaProgress = (baseSnapshot: GameSnapshot, previous: GameSnapshot) => {
-  baseSnapshot.currency = previous.currency
+  const migrated = previous.unlockedWeapons.length > 0 || previous.equippedWeaponId
+    ? migrateLegacyWeaponsToEquipment(previous)
+    : previous
+  baseSnapshot.currency = migrated.currency
   baseSnapshot.earnedGold = 0
-  baseSnapshot.bestLevel = previous.bestLevel
-  baseSnapshot.runHistory = previous.runHistory.map((record) => ({ ...record }))
-  baseSnapshot.achievedMilestones = [...previous.achievedMilestones]
-  baseSnapshot.unlockedWeapons = [...previous.unlockedWeapons]
-  baseSnapshot.equippedWeaponId = previous.equippedWeaponId
-  baseSnapshot.selectedCampaign = previous.selectedCampaign ?? 1
-  baseSnapshot.unsealedEquipmentSlots = [...(previous.unsealedEquipmentSlots ?? [])]
-  baseSnapshot.audioSettings = { ...previous.audioSettings }
-  baseSnapshot.equipmentInventory = clearEquipmentNewFlags(previous.equipmentInventory)
-  baseSnapshot.equippedItems = clearEquippedNewFlags(previous.equippedItems)
-  baseSnapshot.equipmentMaterials = { ...previous.equipmentMaterials }
+  baseSnapshot.bestLevel = migrated.bestLevel
+  baseSnapshot.runHistory = migrated.runHistory.map((record) => ({ ...record }))
+  baseSnapshot.achievedMilestones = [...migrated.achievedMilestones]
+  baseSnapshot.unlockedWeapons = []
+  baseSnapshot.equippedWeaponId = null
+  baseSnapshot.selectedCampaign = migrated.selectedCampaign ?? 1
+  baseSnapshot.unsealedEquipmentSlots = [...(migrated.unsealedEquipmentSlots ?? [])]
+  baseSnapshot.audioSettings = { ...migrated.audioSettings }
+  baseSnapshot.equipmentInventory = clearEquipmentNewFlags(migrated.equipmentInventory)
+  baseSnapshot.equippedItems = clearEquippedNewFlags(migrated.equippedItems)
+  baseSnapshot.equipmentMaterials = { ...migrated.equipmentMaterials }
   baseSnapshot.player = createPlayer(
     baseSnapshot.skillAllocations,
     baseSnapshot.fixedPassiveLevel,
@@ -6030,46 +6330,15 @@ export const selectCampaignSnapshot = (current: GameSnapshot, campaign: number):
 
 export const purchaseWeaponSnapshot = (current: GameSnapshot, weaponId: WeaponId): GameSnapshot => {
   const snapshot = cloneSnapshot(current)
-  const weapon = WEAPON_DEFINITION_MAP[weaponId]
-
-  if (!weapon) {
-    return snapshot
-  }
-
-  const progress = getWeaponUnlockProgress(snapshot.bestLevel)
-  if (progress < weapon.unlockProgress) {
-    snapshot.message = `${weapon.name} 尚未解锁，需要更高通关进度`
-    return snapshot
-  }
-
-  if (snapshot.unlockedWeapons.includes(weaponId)) {
-    snapshot.message = `${weapon.name} 已拥有`
-    return snapshot
-  }
-
-  if (snapshot.currency < weapon.price) {
-    snapshot.message = `金币不足，无法购买 ${weapon.name}`
-    return snapshot
-  }
-
-  snapshot.currency -= weapon.price
-  snapshot.unlockedWeapons.push(weaponId)
-  snapshot.equippedWeaponId = weaponId
-  snapshot.player = createPlayer(snapshot.skillAllocations, snapshot.fixedPassiveLevel, snapshot.equippedWeaponId, snapshot.equippedItems, snapshot.player.hp)
-  snapshot.message = `已购买并装备 ${weapon.name}`
+  const weaponName = WEAPON_DEFINITION_MAP[weaponId]?.name ?? '旧版武器'
+  snapshot.message = `${weaponName} 已并入装备掉落系统，铁匠铺不再出售武器`
   return snapshot
 }
 
 export const equipWeaponSnapshot = (current: GameSnapshot, weaponId: WeaponId): GameSnapshot => {
   const snapshot = cloneSnapshot(current)
-
-  if (!snapshot.unlockedWeapons.includes(weaponId)) {
-    return snapshot
-  }
-
-  snapshot.equippedWeaponId = weaponId
-  snapshot.player = createPlayer(snapshot.skillAllocations, snapshot.fixedPassiveLevel, snapshot.equippedWeaponId, snapshot.equippedItems, snapshot.player.hp)
-  snapshot.message = `已装备 ${WEAPON_DEFINITION_MAP[weaponId].name}`
+  const weaponName = WEAPON_DEFINITION_MAP[weaponId]?.name ?? '旧版武器'
+  snapshot.message = `${weaponName} 请在物品仓库的武器槽作为装备穿戴`
   return snapshot
 }
 
@@ -6084,6 +6353,24 @@ export const equipEquipmentSnapshot = (current: GameSnapshot, itemId: string): G
   equipEquipmentItem(snapshot, item)
   const relevance = getEquipmentRelevance(item, getEquipmentRelevanceContext(snapshot))
   snapshot.message = `已装备 ${item.name}（${getEquipmentItemLabel(item)}）${relevance.isBuildRelevant ? '，契合当前构筑' : ''}`
+  return snapshot
+}
+
+export const unequipEquipmentSnapshot = (current: GameSnapshot, slot: EquipmentSlot): GameSnapshot => {
+  const snapshot = cloneSnapshot(current)
+  const item = snapshot.equippedItems[slot]
+
+  if (!item) {
+    snapshot.message = `${EQUIPMENT_SLOT_LABELS[slot]} 当前为空`
+    return snapshot
+  }
+
+  snapshot.equippedItems = {
+    ...snapshot.equippedItems,
+    [slot]: undefined,
+  }
+  applyDerivedPlayerStats(snapshot)
+  snapshot.message = `已卸下 ${item.name}`
   return snapshot
 }
 
@@ -6117,6 +6404,10 @@ export const dismissBossLootSnapshot = (current: GameSnapshot, itemId?: string):
   snapshot.pendingBossLoot = itemId
     ? snapshot.pendingBossLoot.filter((item) => item.id !== itemId).map(cloneEquipmentItem)
     : []
+  if (snapshot.phase === 'level-clear' && snapshot.pendingBossLoot.length === 0 && !snapshot.pendingSkillReward) {
+    snapshot.levelClearConfirmed = true
+    snapshot.levelTimer = 0
+  }
   snapshot.message = itemId ? 'Boss 战利品已移入仓库，稍后处理' : 'Boss 战利品已全部移入仓库'
   return snapshot
 }
@@ -6237,19 +6528,25 @@ export const upgradeEquippedEquipmentSnapshot = (current: GameSnapshot, slot: Eq
   }
 
   const cost = getEquipmentUpgradeCost(item)
+  const goldCost = getEquipmentUpgradeGoldCost(item)
   if (!canAffordEquipmentMaterials(snapshot.equipmentMaterials, cost)) {
     snapshot.message = `材料不足，强化需要 ${formatEquipmentMaterials(cost)}`
     return snapshot
   }
+  if (snapshot.currency < goldCost) {
+    snapshot.message = `金币不足，强化手续费需要 ${goldCost}G`
+    return snapshot
+  }
 
   const upgraded = upgradeEquipmentItem(item)
+  snapshot.currency -= goldCost
   snapshot.equipmentMaterials = spendEquipmentMaterials(snapshot.equipmentMaterials, cost)
   snapshot.equippedItems[slot] = upgraded
   snapshot.equipmentInventory = snapshot.equipmentInventory.map((candidate) => (
     candidate.id === item.id ? cloneEquipmentItem(upgraded) : candidate
   )).sort((a, b) => b.score - a.score)
   applyDerivedPlayerStats(snapshot)
-  snapshot.message = `强化 ${upgraded.name} 至 +${upgraded.upgradeLevel ?? 0}，消耗 ${formatEquipmentMaterials(cost)}`
+  snapshot.message = `强化 ${upgraded.name} 至 +${upgraded.upgradeLevel ?? 0}，消耗 ${formatEquipmentMaterials(cost)}，手续费 ${goldCost}G`
   return snapshot
 }
 
@@ -6347,12 +6644,9 @@ export const unlockEquipmentSlotSnapshot = (current: GameSnapshot, slot: Equipme
 
 export const togglePrioritySnapshot = (current: GameSnapshot): GameSnapshot => {
   const snapshot = cloneSnapshot(current)
-  if (snapshot.phase === 'game-over' || snapshot.phase === 'idle' || snapshot.phase === 'paused') {
-    return snapshot
-  }
-
-  snapshot.targetPriority = snapshot.targetPriority === 'melee' ? 'ranged' : 'melee'
-  snapshot.message = `自动攻击切换为${getPriorityLabel(snapshot.targetPriority)}`
+  snapshot.message = snapshot.phase === 'running'
+    ? '已固定为准星方向释放技能，Tab 不再切换目标'
+    : snapshot.message
   return snapshot
 }
 
@@ -6391,6 +6685,11 @@ export const triggerActiveSkillSnapshot = (current: GameSnapshot, slotIndex: num
   const snapshot = cloneSnapshot(current)
 
   if (snapshot.phase !== 'running') {
+    return snapshot
+  }
+
+  if (snapshot.debugControls.disableAttacks) {
+    snapshot.message = '测试模式：玩家攻击已关闭'
     return snapshot
   }
 
@@ -6485,6 +6784,9 @@ export const acceptSkillRewardSnapshot = (current: GameSnapshot, choiceId: strin
     snapshot.activeSkills = snapshot.activeSkills.filter((skill) => skill.skillId !== choice.skillId)
     snapshot.activeSkills.push({ skillId: replacementSkillId, level: 1, cooldownRemaining: 0.4 })
     snapshot.pendingSkillReward = null
+    if (rewardSource === 'level-clear') {
+      snapshot.levelClearConfirmed = true
+    }
     snapshot.message = `已替换技能为 ${ARCHER_ACTIVE_SKILL_MAP[replacementSkillId].name}`
     if (rewardSource === 'elite' && snapshot.phase === 'paused') {
       snapshot.phase = 'running'
@@ -6499,6 +6801,9 @@ export const acceptSkillRewardSnapshot = (current: GameSnapshot, choiceId: strin
     snapshot.player.attackRange = derived.attackRange
     snapshot.player.attackPierce = derived.attackPierce
     snapshot.pendingSkillReward = null
+    if (rewardSource === 'level-clear') {
+      snapshot.levelClearConfirmed = true
+    }
     snapshot.message = `固定被动升级到 Lv.${snapshot.fixedPassiveLevel}`
     if (rewardSource === 'elite' && snapshot.phase === 'paused') {
       snapshot.phase = 'running'
@@ -6518,6 +6823,9 @@ export const acceptSkillRewardSnapshot = (current: GameSnapshot, choiceId: strin
       }
     })
     snapshot.pendingSkillReward = null
+    if (rewardSource === 'level-clear') {
+      snapshot.levelClearConfirmed = true
+    }
     snapshot.message = `${ARCHER_ACTIVE_SKILL_MAP[choice.skillId].name} 已升级`
     if (rewardSource === 'elite' && snapshot.phase === 'paused') {
       snapshot.phase = 'running'
@@ -6529,6 +6837,9 @@ export const acceptSkillRewardSnapshot = (current: GameSnapshot, choiceId: strin
   addNewSkill(snapshot, choice.skillId)
   if (!snapshot.pendingSkillReward?.replacementSkillId) {
     snapshot.pendingSkillReward = null
+    if (rewardSource === 'level-clear') {
+      snapshot.levelClearConfirmed = true
+    }
     snapshot.message = `已获得技能 ${ARCHER_ACTIVE_SKILL_MAP[choice.skillId].name}`
     if (rewardSource === 'elite' && snapshot.phase === 'paused') {
       snapshot.phase = 'running'
@@ -6549,11 +6860,26 @@ export const declineSkillRewardSnapshot = (current: GameSnapshot): GameSnapshot 
 
   const rewardSource = snapshot.pendingSkillReward?.source ?? 'level-clear'
   snapshot.pendingSkillReward = null
+  if (rewardSource === 'level-clear') {
+    snapshot.levelClearConfirmed = true
+  }
   snapshot.message = '已放弃本次职业技能奖励'
   if (rewardSource === 'elite' && snapshot.phase === 'paused') {
     snapshot.phase = 'running'
     snapshot.phaseBeforePause = 'running'
   }
+  return snapshot
+}
+
+export const confirmLevelClearSnapshot = (current: GameSnapshot): GameSnapshot => {
+  const snapshot = cloneSnapshot(current)
+  if (snapshot.phase !== 'level-clear' || snapshot.pendingSkillReward || snapshot.pendingBossLoot.length > 0) {
+    return snapshot
+  }
+
+  snapshot.levelClearConfirmed = true
+  snapshot.levelTimer = 0
+  snapshot.message = isBossLevel(snapshot.level) ? '战利品已确认，返回村庄结算' : '奖励已确认，准备进入下一层'
   return snapshot
 }
 
@@ -6584,6 +6910,12 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
     if (snapshot.pendingBossLoot.length > 0) {
       snapshot.levelTimer = Math.max(snapshot.levelTimer, 0.2)
       snapshot.message = '请先处理 Boss 战利品：立即装备、锁定或稍后处理'
+      return snapshot
+    }
+
+    if (!snapshot.levelClearConfirmed) {
+      snapshot.levelTimer = Math.max(snapshot.levelTimer, 0.2)
+      snapshot.message = '奖励页已暂停，请确认技能奖励或点击继续'
       return snapshot
     }
 
@@ -6652,6 +6984,10 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
   updateContractRift(snapshot, delta)
   updateInfiniteBattlePressure(snapshot, delta, snapshot.kills > current.kills)
 
+  if (snapshot.debugControls.infiniteHealth) {
+    snapshot.player.hp = snapshot.player.maxHp
+  }
+
   snapshot.projectiles = filterProjectiles(snapshot.projectiles)
   snapshot.enemyProjectiles = filterProjectiles(snapshot.enemyProjectiles)
   updateBursts(snapshot, delta)
@@ -6685,8 +7021,8 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
   const rangedTip = rangedCount > 0 ? `，场上远程怪 ${rangedCount}` : ''
   if (snapshot.message === messageBeforeFrame) {
     snapshot.message = remaining > 0
-      ? `第 ${snapshot.level} 层，剩余目标 ${remaining}，${getPriorityLabel(snapshot.targetPriority)}${rangedTip}`
-      : `肃清战场，等待下一层，${getPriorityLabel(snapshot.targetPriority)}`
+      ? `第 ${snapshot.level} 层，剩余目标 ${remaining}，技能跟随准星方向${rangedTip}`
+      : '肃清战场，等待下一层'
   }
 
   return snapshot

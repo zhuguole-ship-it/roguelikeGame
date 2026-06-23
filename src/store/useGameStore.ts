@@ -6,14 +6,15 @@ import {
   acceptSkillRewardSnapshot,
   advanceGame,
   batchDismantleEquipmentSnapshot,
+  buildPendingReward,
+  confirmLevelClearSnapshot,
   createInitialSnapshot,
   declineSkillRewardSnapshot,
   dismissBossLootSnapshot,
   dismantleEquipmentSnapshot,
   equipEquipmentSnapshot,
-  equipWeaponSnapshot,
   forfeitRunSnapshot,
-  purchaseWeaponSnapshot,
+  migrateLegacyWeaponsToEquipment,
   reforgeEquipmentSnapshot,
   restartRunSnapshot,
   selectCampaignSnapshot,
@@ -25,11 +26,13 @@ import {
   toggleEquipmentLockSnapshot,
   togglePauseSnapshot,
   togglePrioritySnapshot,
+  unequipEquipmentSnapshot,
   unlockEquipmentSlotSnapshot,
   upgradeEquippedEquipmentSnapshot,
   updateAimPointSnapshot,
 } from '../game/engine'
-import type { AudioSettings, EquipmentDismantleCategory, EquipmentReforgeMode, EquipmentSlot, GameSnapshot, InputState, SkillBuildTag, Vector2, WeaponId } from '../game/types'
+import { createEmptyEquipmentMaterials } from '../game/equipment'
+import type { AudioSettings, DebugControlState, EquipmentDismantleCategory, EquipmentItem, EquipmentReforgeMode, EquipmentSlot, GameSnapshot, InputState, SkillBuildTag, Vector2, WeaponId } from '../game/types'
 
 type GameStore = GameSnapshot & {
   startGame: () => void
@@ -43,10 +46,10 @@ type GameStore = GameSnapshot & {
   updateAimPoint: (aimPoint: Vector2) => void
   acceptSkillReward: (choiceId: string) => void
   declineSkillReward: () => void
+  confirmLevelClear: () => void
   dismissBossLoot: (itemId?: string) => void
-  purchaseWeapon: (weaponId: WeaponId) => void
-  equipWeapon: (weaponId: WeaponId) => void
   equipEquipment: (itemId: string) => void
+  unequipEquipment: (slot: EquipmentSlot) => void
   toggleEquipmentLock: (itemId: string) => void
   dismantleEquipment: (itemId: string, confirmHighRarity?: boolean) => void
   batchDismantleEquipment: (category: EquipmentDismantleCategory) => void
@@ -55,6 +58,7 @@ type GameStore = GameSnapshot & {
   toggleEquipmentModifierLock: (itemId: string, modifierIndex: number) => void
   unlockEquipmentSlot: (slot: EquipmentSlot) => void
   updateAudioSettings: (settings: Partial<AudioSettings>) => void
+  updateDebugControls: (settings: Partial<DebugControlState>) => void
   triggerActiveSkill: (slotIndex: number) => void
   triggerDash: () => void
 }
@@ -69,8 +73,6 @@ type PersistedGameState = Pick<
   | 'bestLevel'
   | 'runHistory'
   | 'achievedMilestones'
-  | 'unlockedWeapons'
-  | 'equippedWeaponId'
   | 'equipmentInventory'
   | 'equippedItems'
   | 'equipmentMaterials'
@@ -81,7 +83,10 @@ type PersistedGameState = Pick<
   | 'contractLevel'
   | 'exp'
   | 'expToNext'
->
+> & {
+  unlockedWeapons?: WeaponId[]
+  equippedWeaponId?: WeaponId | null
+}
 
 const clonePersistedValue = <T>(value: T): T => {
   if (typeof structuredClone === 'function') {
@@ -101,8 +106,6 @@ export const extractPersistedGameState = (state: GameSnapshot): PersistedGameSta
   bestLevel: state.bestLevel,
   runHistory: clonePersistedValue(state.runHistory),
   achievedMilestones: clonePersistedValue(state.achievedMilestones),
-  unlockedWeapons: clonePersistedValue(state.unlockedWeapons),
-  equippedWeaponId: state.equippedWeaponId,
   equipmentInventory: clonePersistedValue(state.equipmentInventory),
   equippedItems: clonePersistedValue(state.equippedItems),
   equipmentMaterials: clonePersistedValue(state.equipmentMaterials),
@@ -135,8 +138,8 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
     achievedMilestones: Array.isArray(persisted.achievedMilestones) ? clonePersistedValue(persisted.achievedMilestones) : fallback.achievedMilestones,
     unlockedWeapons: Array.isArray(persisted.unlockedWeapons) && persisted.unlockedWeapons.length > 0
       ? clonePersistedValue(persisted.unlockedWeapons)
-      : fallback.unlockedWeapons,
-    equippedWeaponId: persisted.equippedWeaponId ?? fallback.equippedWeaponId,
+      : [],
+    equippedWeaponId: persisted.equippedWeaponId ?? null,
     equipmentInventory: Array.isArray(persisted.equipmentInventory) ? clonePersistedValue(persisted.equipmentInventory) : fallback.equipmentInventory,
     equippedItems: isRecord(persisted.equippedItems) ? clonePersistedValue(persisted.equippedItems) : fallback.equippedItems,
     equipmentMaterials: isRecord(persisted.equipmentMaterials)
@@ -162,13 +165,42 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
     message: '村庄篝火旁苏醒，长期成长已恢复',
   }
 
-  return restored
+  return migrateLegacyWeaponsToEquipment(restored)
 }
 
 const initialState = createInitialSnapshot()
 
 const playSnapshotSound = (state: GameSnapshot, id: Parameters<typeof playGameSound>[0]) => {
   playGameSound(id, state.audioSettings)
+}
+
+const countEquipmentPickups = (state: GameSnapshot) => state.pickups.filter((pickup) => pickup.kind === 'equipment').length
+
+const enemyHpTotal = (state: GameSnapshot) => state.enemies.reduce((sum, enemy) => sum + Math.max(0, enemy.hp), 0)
+
+const playSimulationSounds = (previous: GameSnapshot, next: GameSnapshot) => {
+  if (next.exp !== previous.exp || next.contractLevel !== previous.contractLevel) {
+    playSnapshotSound(previous, 'crystal-pickup')
+  }
+  if (countEquipmentPickups(next) > countEquipmentPickups(previous)) {
+    playSnapshotSound(previous, 'equipment-drop')
+  }
+  if (next.equipmentInventory.length > previous.equipmentInventory.length) {
+    playSnapshotSound(previous, 'equipment-pickup')
+  }
+  if (next.kills > previous.kills) {
+    playSnapshotSound(previous, 'enemy-death')
+  }
+  if (!previous.enemies.some((enemy) => enemy.kind === 'boss') && next.enemies.some((enemy) => enemy.kind === 'boss')) {
+    playSnapshotSound(previous, 'boss-entry')
+  }
+  if (enemyHpTotal(next) < enemyHpTotal(previous)) {
+    const hasSkillProjectile = previous.projectiles.some((projectile) => projectile.sourceSkillId)
+    playSnapshotSound(previous, hasSkillProjectile ? 'skill-hit' : 'basic-hit')
+  }
+  if (previous.phase === 'running' && next.phase === 'level-clear') {
+    playSnapshotSound(previous, 'level-settle')
+  }
 }
 
 export const useGameStore = create<GameStore>()(
@@ -199,25 +231,12 @@ export const useGameStore = create<GameStore>()(
       tick: (delta, input) => {
         set((state) => {
           const next = advanceGame(state, input, delta)
-          if (next.exp !== state.exp || next.contractLevel !== state.contractLevel) {
-            playSnapshotSound(state, 'crystal-pickup')
-          }
-          if (next.equipmentInventory.length > state.equipmentInventory.length) {
-            playSnapshotSound(state, 'equipment-pickup')
-          }
-          if (next.kills > state.kills) {
-            playSnapshotSound(state, 'enemy-death')
-          }
-          if (!state.enemies.some((enemy) => enemy.kind === 'boss') && next.enemies.some((enemy) => enemy.kind === 'boss')) {
-            playSnapshotSound(state, 'boss-entry')
-          }
-          if (next.projectiles.length < state.projectiles.length && state.projectiles.length > 0) {
-            playSnapshotSound(state, 'skill-hit')
-          }
+          playSimulationSounds(state, next)
           return next
         })
       },
       toggleTargetPriority: () => {
+        // Legacy no-op: skills now follow the mouse/crosshair direction instead of Tab target modes.
         set((state) => togglePrioritySnapshot(state))
       },
       togglePause: () => {
@@ -230,24 +249,39 @@ export const useGameStore = create<GameStore>()(
         set((state) => updateAimPointSnapshot(state, aimPoint))
       },
       acceptSkillReward: (choiceId) => {
-        set((state) => acceptSkillRewardSnapshot(state, choiceId))
-      },
-      declineSkillReward: () => {
-        set((state) => declineSkillRewardSnapshot(state))
-      },
-      dismissBossLoot: (itemId) => {
-        set((state) => dismissBossLootSnapshot(state, itemId))
-      },
-      purchaseWeapon: (weaponId) => {
         set((state) => {
-          playSnapshotSound(state, 'button')
-          return purchaseWeaponSnapshot(state, weaponId)
+          const next = acceptSkillRewardSnapshot(state, choiceId)
+          if (next !== state && next.pendingSkillReward !== state.pendingSkillReward) {
+            playSnapshotSound(state, 'reward-confirm')
+          }
+          return next
         })
       },
-      equipWeapon: (weaponId) => {
+      declineSkillReward: () => {
         set((state) => {
-          playSnapshotSound(state, 'button')
-          return equipWeaponSnapshot(state, weaponId)
+          const next = declineSkillRewardSnapshot(state)
+          if (next.pendingSkillReward !== state.pendingSkillReward) {
+            playSnapshotSound(state, 'reward-confirm')
+          }
+          return next
+        })
+      },
+      confirmLevelClear: () => {
+        set((state) => {
+          const next = confirmLevelClearSnapshot(state)
+          if (next.levelClearConfirmed && !state.levelClearConfirmed) {
+            playSnapshotSound(state, 'reward-confirm')
+          }
+          return next
+        })
+      },
+      dismissBossLoot: (itemId) => {
+        set((state) => {
+          const next = dismissBossLootSnapshot(state, itemId)
+          if (next.pendingBossLoot.length < state.pendingBossLoot.length) {
+            playSnapshotSound(state, 'reward-confirm')
+          }
+          return next
         })
       },
       equipEquipment: (itemId) => {
@@ -256,26 +290,53 @@ export const useGameStore = create<GameStore>()(
           return equipEquipmentSnapshot(state, itemId)
         })
       },
+      unequipEquipment: (slot) => {
+        set((state) => {
+          playSnapshotSound(state, 'button')
+          return unequipEquipmentSnapshot(state, slot)
+        })
+      },
       toggleEquipmentLock: (itemId) => {
-        set((state) => toggleEquipmentLockSnapshot(state, itemId))
+        set((state) => {
+          playSnapshotSound(state, 'button')
+          return toggleEquipmentLockSnapshot(state, itemId)
+        })
       },
       dismantleEquipment: (itemId, confirmHighRarity = false) => {
-        set((state) => dismantleEquipmentSnapshot(state, itemId, { confirmHighRarity }))
+        set((state) => {
+          playSnapshotSound(state, 'button')
+          return dismantleEquipmentSnapshot(state, itemId, { confirmHighRarity })
+        })
       },
       batchDismantleEquipment: (category) => {
-        set((state) => batchDismantleEquipmentSnapshot(state, category))
+        set((state) => {
+          playSnapshotSound(state, 'button')
+          return batchDismantleEquipmentSnapshot(state, category)
+        })
       },
       upgradeEquippedEquipment: (slot) => {
-        set((state) => upgradeEquippedEquipmentSnapshot(state, slot))
+        set((state) => {
+          playSnapshotSound(state, 'button')
+          return upgradeEquippedEquipmentSnapshot(state, slot)
+        })
       },
       reforgeEquipment: (itemId, mode = 'secondary', preferredBuildTag) => {
-        set((state) => reforgeEquipmentSnapshot(state, itemId, mode, preferredBuildTag))
+        set((state) => {
+          playSnapshotSound(state, 'button')
+          return reforgeEquipmentSnapshot(state, itemId, mode, preferredBuildTag)
+        })
       },
       toggleEquipmentModifierLock: (itemId, modifierIndex) => {
-        set((state) => toggleEquipmentModifierLockSnapshot(state, itemId, modifierIndex))
+        set((state) => {
+          playSnapshotSound(state, 'button')
+          return toggleEquipmentModifierLockSnapshot(state, itemId, modifierIndex)
+        })
       },
       unlockEquipmentSlot: (slot) => {
-        set((state) => unlockEquipmentSlotSnapshot(state, slot))
+        set((state) => {
+          playSnapshotSound(state, 'button')
+          return unlockEquipmentSlotSnapshot(state, slot)
+        })
       },
       updateAudioSettings: (settings) => {
         set((state) => ({
@@ -286,6 +347,16 @@ export const useGameStore = create<GameStore>()(
             masterVolume: Math.max(0, Math.min(100, settings.masterVolume ?? state.audioSettings.masterVolume)),
             effectsVolume: Math.max(0, Math.min(100, settings.effectsVolume ?? state.audioSettings.effectsVolume)),
           },
+        }))
+      },
+      updateDebugControls: (settings) => {
+        set((state) => ({
+          ...state,
+          debugControls: {
+            ...state.debugControls,
+            ...settings,
+          },
+          message: `测试模式：${settings.infiniteHealth !== undefined ? `生命无限${settings.infiniteHealth ? '开启' : '关闭'}` : settings.disableAttacks !== undefined ? `不攻击${settings.disableAttacks ? '开启' : '关闭'}` : '已更新'}`,
         }))
       },
       triggerActiveSkill: (slotIndex) => {
@@ -314,3 +385,124 @@ export const useGameStore = create<GameStore>()(
     },
   ),
 )
+
+type RoguelikeE2ESummary = {
+  phase: GameSnapshot['phase']
+  level: number
+  rewardKind?: NonNullable<GameSnapshot['lastLevelSettlement']>['rewardKind']
+  pendingSkillReward: boolean
+  pendingBossLoot: number
+  levelClearConfirmed: boolean
+}
+
+declare global {
+  interface Window {
+    __ROGUELIKE_E2E__?: {
+      forceRewardScreen: (kind: 'light' | 'elite' | 'prelude' | 'boss') => RoguelikeE2ESummary
+      acceptFirstReward: () => RoguelikeE2ESummary
+      confirmLevelClear: () => RoguelikeE2ESummary
+      dismissBossLoot: () => RoguelikeE2ESummary
+      summary: () => RoguelikeE2ESummary
+    }
+  }
+}
+
+const createE2ESummary = () => {
+  const state = useGameStore.getState()
+  return {
+    phase: state.phase,
+    level: state.level,
+    rewardKind: state.lastLevelSettlement?.rewardKind,
+    pendingSkillReward: Boolean(state.pendingSkillReward),
+    pendingBossLoot: state.pendingBossLoot.length,
+    levelClearConfirmed: state.levelClearConfirmed,
+  }
+}
+
+const createRewardHarnessSnapshot = (kind: 'light' | 'elite' | 'prelude' | 'boss') => {
+  const level = kind === 'light' ? 1 : kind === 'elite' ? 3 : kind === 'prelude' ? 19 : 22
+  const snapshot = createInitialSnapshot('level-clear')
+  snapshot.level = level
+  snapshot.selectedCampaign = Math.min(10, Math.max(1, Math.ceil(level / 22)))
+  snapshot.phase = 'level-clear'
+  snapshot.phaseBeforePause = 'level-clear'
+  snapshot.levelClearConfirmed = false
+  snapshot.levelTimer = 0
+  snapshot.remainingToSpawn = 0
+  snapshot.enemies = []
+  snapshot.enemyProjectiles = []
+  snapshot.projectiles = []
+  snapshot.pendingSkillReward = null
+  snapshot.pendingBossLoot = []
+  snapshot.lastLevelSettlement = {
+    absorbedCrystals: kind === 'light' ? 3 : 0,
+    absorbedExp: kind === 'light' ? 18 : 0,
+    autoDismantlePreviewCount: kind === 'light' ? 2 : 0,
+    autoDismantlePreviewMaterials: createEmptyEquipmentMaterials(),
+    rewardKind: kind,
+  }
+
+  if (kind === 'elite' || kind === 'prelude') {
+    snapshot.pendingSkillReward = {
+      ...buildPendingReward(snapshot),
+      source: 'level-clear',
+    }
+  }
+
+  if (kind === 'boss') {
+    const bossLoot: EquipmentItem = {
+      id: 'e2e-boss-loot',
+      slot: 'weapon',
+      rarity: 'legacy',
+      name: 'E2E Boss 传承弓',
+      affix: '死契处刑',
+      buildTag: 'pierce',
+      setId: 'death-contract-executioner',
+      level,
+      score: 320,
+      bonus: { attackDamage: 18, attackRange: 30, attackPierce: 1 },
+      modifiers: [{ type: 'projectile-count', skillIds: ['pierce-arrow'], amount: 1 }],
+      locked: true,
+      lockedModifierIndexes: [],
+      acquiredLevel: level,
+      isNew: true,
+      upgradeLevel: 0,
+      source: 'dungeon',
+    }
+    snapshot.equipmentInventory = [bossLoot, ...snapshot.equipmentInventory]
+    snapshot.pendingBossLoot = [bossLoot]
+  }
+
+  snapshot.message = kind === 'light'
+    ? 'E2E：普通层轻结算'
+    : kind === 'boss'
+      ? 'E2E：Boss 战利品处理'
+      : 'E2E：奖励选择阻塞'
+  return snapshot
+}
+
+if (typeof window !== 'undefined' && (import.meta.env.DEV || import.meta.env.MODE === 'test')) {
+  window.__ROGUELIKE_E2E__ = {
+    forceRewardScreen: (kind) => {
+      useGameStore.setState(createRewardHarnessSnapshot(kind))
+      return createE2ESummary()
+    },
+    acceptFirstReward: () => {
+      const state = useGameStore.getState()
+      const choiceId = state.pendingSkillReward?.choices[0]?.choiceId
+      if (choiceId) {
+        useGameStore.getState().acceptSkillReward(choiceId)
+      }
+      return createE2ESummary()
+    },
+    confirmLevelClear: () => {
+      useGameStore.getState().confirmLevelClear()
+      return createE2ESummary()
+    },
+    dismissBossLoot: () => {
+      useGameStore.getState().dismissBossLoot()
+      return createE2ESummary()
+    },
+    summary: createE2ESummary,
+  }
+}

@@ -14,6 +14,92 @@ const hash = (a: number, b: number, c = 0) => {
   return value - Math.floor(value)
 }
 
+export type PlayerArcherSpriteAction = 'attack' | 'idle' | 'move'
+
+export const PLAYER_ARCHER_SPRITE_FRAME_COUNT = 4
+
+const PLAYER_ARCHER_SPRITE_BASE = `${import.meta.env.BASE_URL}assets/player/elf-archer`
+
+export const getPlayerArcherSpriteFrameSrc = (action: PlayerArcherSpriteAction, frameIndex: number) => {
+  const frame = ((Math.floor(frameIndex) % PLAYER_ARCHER_SPRITE_FRAME_COUNT) + PLAYER_ARCHER_SPRITE_FRAME_COUNT) % PLAYER_ARCHER_SPRITE_FRAME_COUNT
+  return `${PLAYER_ARCHER_SPRITE_BASE}/${action}/elf_archer_${action}_${String(frame + 1).padStart(2, '0')}.png`
+}
+
+const createPlayerArcherFrames = () => {
+  if (typeof Image === 'undefined') {
+    return null
+  }
+
+  return {
+    attack: Array.from({ length: PLAYER_ARCHER_SPRITE_FRAME_COUNT }, (_, index) => {
+      const image = new Image()
+      image.src = getPlayerArcherSpriteFrameSrc('attack', index)
+      return image
+    }),
+    idle: Array.from({ length: PLAYER_ARCHER_SPRITE_FRAME_COUNT }, (_, index) => {
+      const image = new Image()
+      image.src = getPlayerArcherSpriteFrameSrc('idle', index)
+      return image
+    }),
+    move: Array.from({ length: PLAYER_ARCHER_SPRITE_FRAME_COUNT }, (_, index) => {
+      const image = new Image()
+      image.src = getPlayerArcherSpriteFrameSrc('move', index)
+      return image
+    }),
+  } satisfies Record<PlayerArcherSpriteAction, HTMLImageElement[]>
+}
+
+const playerArcherFrames = createPlayerArcherFrames()
+
+export const getPlayerArcherSpriteAction = (player: Player, isMoving: boolean): PlayerArcherSpriteAction => {
+  if (player.hurtCooldown > 0) {
+    return 'idle'
+  }
+
+  const attackWindow = player.attackCooldown > Math.max(0, player.attackInterval - 0.18)
+  if (attackWindow) {
+    return 'attack'
+  }
+
+  return isMoving ? 'move' : 'idle'
+}
+
+const drawPlayerArcherSpriteFrame = (
+  ctx: CanvasRenderingContext2D,
+  player: Player,
+  time: number,
+  action: PlayerArcherSpriteAction,
+  bounce: number,
+) => {
+  const frames = playerArcherFrames?.[action]
+  if (!frames?.length) {
+    return false
+  }
+
+  const frameRate = action === 'attack' ? 12 : action === 'move' ? 10 : 6
+  const image = frames[Math.floor(Math.max(0, time) * frameRate) % frames.length]
+  if (!image.complete || image.naturalWidth <= 0) {
+    return false
+  }
+
+  const drawSize = action === 'attack' ? 54 : 50
+  const x = Math.round(player.position.x)
+  const y = Math.round(player.position.y + bounce)
+  const drawX = Math.round(-drawSize / 2)
+  const drawY = Math.round(-drawSize * 0.77)
+  const flip = player.facing === 'left'
+
+  ctx.save()
+  ctx.translate(x, y)
+  if (flip) {
+    ctx.scale(-1, 1)
+  }
+  ctx.drawImage(image, drawX, drawY, drawSize, drawSize)
+  ctx.restore()
+
+  return true
+}
+
 const drawArcherBowPose = (ctx: CanvasRenderingContext2D, player: Player, time: number, bounce: number) => {
   const attackWindow = player.attackCooldown > Math.max(0, player.attackInterval - 0.18)
   const readyPulse = Math.sin(time * 12) * 0.5
@@ -568,6 +654,22 @@ export const drawPlayerSprite = (
   const x = player.position.x
   const y = player.position.y
   const bounce = isMoving ? Math.sin(time * 13) * 1.2 : 0
+  const archerSpriteAction = getPlayerArcherSpriteAction(player, isMoving)
+
+  if (drawPlayerArcherSpriteFrame(ctx, player, time, archerSpriteAction, bounce)) {
+    pixel(ctx, x - 10, y + 8, 20, 4, 'rgba(0, 0, 0, 0.25)')
+
+    if (player.hurtCooldown > 0 && Math.floor(time * 18) % 2 === 0) {
+      pixel(ctx, x - 15, y - 28 + bounce, 30, 33, 'rgba(244, 63, 94, 0.24)')
+    }
+
+    if (player.dashTimer > 0) {
+      pixel(ctx, x - 16, y - 19 + bounce, 32, 20, 'rgba(125, 211, 252, 0.18)')
+    }
+
+    return
+  }
+
   const spriteKey = isMoving ? 'archerRun' : player.attackCooldown < 0.12 ? 'archerAttack' : 'archerIdle'
   const drewSprite = drawReferenceArt(ctx, spriteKey, x - 18, y - 35 + bounce, 36, 44, { flipX: player.facing === 'left' })
 
@@ -754,6 +856,19 @@ const isExplicitSkeletonWarrior = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | '
   }
 
   return identity.includes('dungeon-skeleton-warrior') || identity.includes('skeleton-warrior') || identity.includes('骷髅战士')
+}
+
+const isExplicitSkeletonArcher = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displayName'>) => {
+  if (enemy.kind !== 'ranged') {
+    return false
+  }
+
+  const identity = getEnemyIdentity(enemy)
+  if (!enemy.archetypeId && !enemy.displayName) {
+    return false
+  }
+
+  return identity.includes('dungeon-skeleton-archer') || identity.includes('skeleton-archer') || identity.includes('骷髅弓手')
 }
 
 export const isExplicitSkeletonKnight = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displayName'>) => {
@@ -1023,7 +1138,7 @@ export const drawEnemySprite = (
   }
 
   if (enemy.kind === 'ranged') {
-    if (!drawRangedAtlasEnemy(ctx, enemy, x, y, time)) {
+    if (!drawSkeletonArcherAtlasEnemy(ctx, enemy, x, y, time) && !drawRangedAtlasEnemy(ctx, enemy, x, y, time)) {
       drawCampaignFallbackEnemy(ctx, enemy, x, y, time)
     }
     drawOverlay()
@@ -1142,7 +1257,10 @@ type MonsterAtlasAction = {
 export type MonsterSpriteAtlas = {
   src: string
   previewSrc: string
+  guidePreviewSrc?: string
+  guidePreviewAction?: MonsterFrameAction
   frameSize: 32 | 64 | 96
+  columns?: number
   anchor: 'bottom-center'
   actions: Partial<Record<MonsterFrameAction, MonsterAtlasAction>>
 }
@@ -1271,6 +1389,36 @@ export const MONSTER_SPRITE_ATLASES: Partial<Record<EnemyKind, MonsterSpriteAtla
   },
 }
 
+export const SKELETON_ARCHER_SPRITE_ATLAS: MonsterSpriteAtlas = {
+  src: publicAsset('assets/monsters/skeleton-archer-image2/skeleton_archer_sheet_4x3.png'),
+  previewSrc: publicAsset('assets/monsters/skeleton-archer-image2/skeleton_archer_sheet_4x3_preview_4x.png'),
+  guidePreviewSrc: publicAsset('assets/monsters/skeleton-archer-image2/attack_01.png'),
+  guidePreviewAction: 'attack',
+  frameSize: 64,
+  columns: 4,
+  anchor: 'bottom-center',
+  actions: {
+    idle: { start: 0, count: 4 },
+    move: { start: 4, count: 4 },
+    attack: { start: 8, count: 4 },
+  },
+}
+
+export const SKELETON_WARRIOR_SPRITE_ATLAS: MonsterSpriteAtlas = {
+  src: publicAsset('assets/monsters/skeleton-warrior-image2/skeleton_warrior_sheet_4x3.png'),
+  previewSrc: publicAsset('assets/monsters/skeleton-warrior-image2/skeleton_warrior_sheet_4x3_preview_4x.png'),
+  guidePreviewSrc: publicAsset('assets/monsters/skeleton-warrior-image2/move_01.png'),
+  guidePreviewAction: 'move',
+  frameSize: 64,
+  columns: 4,
+  anchor: 'bottom-center',
+  actions: {
+    idle: { start: 0, count: 4 },
+    move: { start: 4, count: 4 },
+    attack: { start: 8, count: 4 },
+  },
+}
+
 const monsterAtlasImages = new Map<string, HTMLImageElement>()
 
 const getRuntimeAtlasImage = (src: string) => {
@@ -1310,21 +1458,45 @@ const drawAtlasFrame = (
   x: number,
   y: number,
   size: number,
+  flipX = false,
 ) => {
   const previousSmoothing = ctx.imageSmoothingEnabled
   ctx.imageSmoothingEnabled = false
   const sourceFrame = getAtlasSourceFrame(atlas, action, frameIndex)
-  ctx.drawImage(
-    image,
-    sourceFrame * atlas.frameSize,
-    0,
-    atlas.frameSize,
-    atlas.frameSize,
-    Math.round(x),
-    Math.round(y),
-    Math.round(size),
-    Math.round(size),
-  )
+  const sourceX = atlas.columns ? (sourceFrame % atlas.columns) * atlas.frameSize : sourceFrame * atlas.frameSize
+  const sourceY = atlas.columns ? Math.floor(sourceFrame / atlas.columns) * atlas.frameSize : 0
+  const drawX = Math.round(x)
+  const drawY = Math.round(y)
+  const drawSize = Math.round(size)
+  if (flipX) {
+    ctx.save()
+    ctx.translate(drawX + drawSize, drawY)
+    ctx.scale(-1, 1)
+    ctx.drawImage(
+      image,
+      sourceX,
+      sourceY,
+      atlas.frameSize,
+      atlas.frameSize,
+      0,
+      0,
+      drawSize,
+      drawSize,
+    )
+    ctx.restore()
+  } else {
+    ctx.drawImage(
+      image,
+      sourceX,
+      sourceY,
+      atlas.frameSize,
+      atlas.frameSize,
+      drawX,
+      drawY,
+      drawSize,
+      drawSize,
+    )
+  }
   ctx.imageSmoothingEnabled = previousSmoothing
 }
 
@@ -1449,6 +1621,61 @@ const drawRangedAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: nu
   return true
 }
 
+const SKELETON_ARCHER_ATTACK_WINDUP = 0.42
+export const SKELETON_ARCHER_MOVE_FPS = 7
+export const SKELETON_WARRIOR_MOVE_FPS = 6
+const SKELETON_MOVE_HOLD_THRESHOLD = 0.08
+const SKELETON_WARRIOR_MELEE_WINDUP = 0.32
+
+const getFixedRateLoopFrame = (time: number, frameCount: number, frameRate: number) => {
+  return Math.floor(Math.max(0, time) * frameRate) % frameCount
+}
+
+export const getSkeletonArcherAtlasAction = (enemy: Enemy): MonsterFrameAction => {
+  if (enemy.hitFlash > 0) {
+    return 'idle'
+  }
+  if ((enemy.rangedAttackWindup ?? 0) > 0) {
+    return 'attack'
+  }
+  if ((enemy.walkTimer ?? 0) > SKELETON_MOVE_HOLD_THRESHOLD) {
+    return 'move'
+  }
+  return 'idle'
+}
+
+export const getSkeletonArcherAtlasFrame = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
+  const frameCount = SKELETON_ARCHER_SPRITE_ATLAS.actions[action]?.count ?? 1
+  if (action === 'move') {
+    return getFixedRateLoopFrame(time, frameCount, SKELETON_ARCHER_MOVE_FPS)
+  }
+  if (action === 'attack') {
+    return Math.floor(Math.max(0, SKELETON_ARCHER_ATTACK_WINDUP - (enemy.rangedAttackWindup ?? 0)) * frameCount * 3) % frameCount
+  }
+  return Math.floor(time * 3) % frameCount
+}
+
+const drawSkeletonArcherAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: number, y: number, time: number) => {
+  if (!isExplicitSkeletonArcher(enemy)) {
+    return false
+  }
+
+  const atlas = SKELETON_ARCHER_SPRITE_ATLAS
+  const image = getRuntimeAtlasImage(atlas.src)
+  if (!isAtlasImageReady(image)) {
+    return false
+  }
+
+  const action = getSkeletonArcherAtlasAction(enemy)
+  const frameIndex = getSkeletonArcherAtlasFrame(enemy, action, time)
+  const drawSize = Math.max(48, Math.round(enemy.size * 2.7))
+  const flipX = (enemy.facingDirection?.x ?? 0) < -0.05
+  drawEnemyShadow(ctx, x, y, enemy.size * 1.1)
+  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX)
+  drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.25, enemy.size)
+  return true
+}
+
 const isExplicitHellhound = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displayName'>) => {
   if (enemy.kind !== 'charger') {
     return false
@@ -1460,10 +1687,13 @@ const isExplicitHellhound = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displa
 
 export const getMonsterSpriteAtlasForEnemy = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displayName'>) => {
   if (isExplicitSkeletonWarrior(enemy)) {
-    return MONSTER_SPRITE_ATLASES.elite
+    return SKELETON_WARRIOR_SPRITE_ATLAS
   }
   if (isExplicitCorruptGreenSlime(enemy)) {
     return MONSTER_SPRITE_ATLASES.melee
+  }
+  if (isExplicitSkeletonArcher(enemy)) {
+    return SKELETON_ARCHER_SPRITE_ATLAS
   }
   if (isExplicitFrostRangedSlime(enemy)) {
     return MONSTER_SPRITE_ATLASES.ranged
@@ -1543,33 +1773,34 @@ const drawHellhoundAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x:
   return true
 }
 
-const getSkeletonWarriorAtlasAction = (enemy: Enemy): MonsterFrameAction => {
+export const getSkeletonWarriorAtlasAction = (enemy: Enemy): MonsterFrameAction => {
   if (enemy.hitFlash > 0) {
-    return 'hit'
+    return 'idle'
+  }
+  if ((enemy.meleeAttackWindup ?? 0) > 0 || enemy.meleeAttackReady) {
+    return 'attack'
   }
   if (enemy.behaviorTimer > 0) {
-    return 'skill'
+    return 'attack'
   }
-  if ((enemy.walkTimer ?? 0) > 0.15) {
+  if ((enemy.walkTimer ?? 0) > SKELETON_MOVE_HOLD_THRESHOLD) {
     return 'move'
   }
   return 'idle'
 }
 
-const getSkeletonWarriorAtlasFrame = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
-  const atlas = MONSTER_SPRITE_ATLASES.elite
-  if (!atlas) {
-    return 0
-  }
+export const getSkeletonWarriorAtlasFrame = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
+  const atlas = SKELETON_WARRIOR_SPRITE_ATLAS
   const frameCount = atlas.actions[action]?.count ?? 1
-  if (action === 'hit') {
-    return Math.min(frameCount - 1, Math.max(0, Math.floor((0.5 - enemy.hitFlash) * frameCount * 2)))
-  }
   if (action === 'move') {
-    return Math.floor((enemy.walkTimer ?? 0) * 0.9) % frameCount
+    return getFixedRateLoopFrame(time, frameCount, SKELETON_WARRIOR_MOVE_FPS)
   }
-  if (action === 'attack' || action === 'skill') {
-    const duration = action === 'skill' ? 0.82 : 0.42
+  if (action === 'attack') {
+    if ((enemy.meleeAttackWindup ?? 0) > 0 || enemy.meleeAttackReady) {
+      const elapsed = enemy.meleeAttackReady ? SKELETON_WARRIOR_MELEE_WINDUP : SKELETON_WARRIOR_MELEE_WINDUP - (enemy.meleeAttackWindup ?? 0)
+      return Math.min(frameCount - 1, Math.max(0, Math.floor((elapsed / SKELETON_WARRIOR_MELEE_WINDUP) * frameCount)))
+    }
+    const duration = 0.82
     return Math.floor(Math.max(0, duration - enemy.behaviorTimer) * frameCount * 3) % frameCount
   }
   return Math.floor(time * 3) % frameCount
@@ -1580,10 +1811,7 @@ const drawSkeletonWarriorAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Ene
     return false
   }
 
-  const atlas = MONSTER_SPRITE_ATLASES.elite
-  if (!atlas) {
-    return false
-  }
+  const atlas = SKELETON_WARRIOR_SPRITE_ATLAS
   const image = getRuntimeAtlasImage(atlas.src)
   if (!isAtlasImageReady(image)) {
     return false
@@ -1592,8 +1820,9 @@ const drawSkeletonWarriorAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Ene
   const action = getSkeletonWarriorAtlasAction(enemy)
   const frameIndex = getSkeletonWarriorAtlasFrame(enemy, action, time)
   const drawSize = Math.max(64, Math.round(enemy.size * 2.2))
+  const flipX = (enemy.facingDirection?.x ?? 0) < -0.05
   drawEnemyShadow(ctx, x, y, enemy.size * 1.25)
-  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize)
+  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX)
   drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.35, enemy.size * 1.2)
   return true
 }

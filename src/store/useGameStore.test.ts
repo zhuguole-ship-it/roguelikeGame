@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { setGameSoundTestPlayer } from '../game/audio'
+import { resetGameSoundRuntimeForTests, setGameSoundNowProviderForTests, setGameSoundTestPlayer } from '../game/audio'
 import { createInitialSnapshot } from '../game/engine'
 import type { Enemy, EquipmentItem, Pickup, Projectile } from '../game/types'
 import { GAME_SAVE_STORAGE_KEY, extractPersistedGameState, restorePersistedGameState, useGameStore } from './useGameStore'
@@ -22,7 +22,7 @@ const makeEquipment = (): EquipmentItem => ({
 
 describe('game store persistence', () => {
   afterEach(() => {
-    setGameSoundTestPlayer(null)
+    resetGameSoundRuntimeForTests()
     localStorage.removeItem(GAME_SAVE_STORAGE_KEY)
     useGameStore.setState({ ...createInitialSnapshot('idle') })
   })
@@ -102,9 +102,9 @@ describe('game store persistence', () => {
     expect(restored.currency).toBe(321)
     expect(restored.bestLevel).toBe(77)
     expect(restored.selectedCampaign).toBe(8)
-    expect(restored.unlockedWeapons).toContain('embercore-composite')
-    expect(restored.equippedWeaponId).toBe('embercore-composite')
-    expect(restored.equipmentInventory[0].id).toBe(equipment.id)
+    expect(restored.unlockedWeapons).toHaveLength(0)
+    expect(restored.equippedWeaponId).toBeNull()
+    expect(restored.equipmentInventory.some((item) => item.id === equipment.id)).toBe(true)
     expect(restored.equippedItems.weapon?.id).toBe(equipment.id)
     expect(restored.equipmentMaterials.ironScraps).toBe(34)
     expect(restored.equipmentMaterials.legacyEmber).toBe(2)
@@ -144,8 +144,10 @@ describe('game store persistence', () => {
     expect(state.currency).toBe(128)
     expect(state.bestLevel).toBe(31)
     expect(state.selectedCampaign).toBe(4)
-    expect(state.unlockedWeapons).toContain('frostline-warbow')
-    expect(state.equipmentInventory[0].id).toBe(equipment.id)
+    expect(state.unlockedWeapons).toHaveLength(0)
+    expect(state.equippedWeaponId).toBeNull()
+    expect(state.equipmentInventory.some((item) => item.id === equipment.id)).toBe(true)
+    expect(state.equipmentInventory.some((item) => item.name === '霜纹战弓' && item.locked)).toBe(true)
     expect(state.equipmentMaterials.ironScraps).toBe(9)
     expect(state.equipmentMaterials.crystalDust).toBe(7)
     expect(state.enemies).toHaveLength(0)
@@ -199,13 +201,18 @@ describe('game store audio events', () => {
   })
 
   afterEach(() => {
-    setGameSoundTestPlayer(null)
+    resetGameSoundRuntimeForTests()
     localStorage.removeItem(GAME_SAVE_STORAGE_KEY)
     useGameStore.setState({ ...createInitialSnapshot('idle') })
   })
 
   it('plays button and skill cast sounds through store actions and respects mute', () => {
     const player = vi.fn()
+    let now = 0
+    setGameSoundNowProviderForTests(() => {
+      now += 250
+      return now
+    })
     setGameSoundTestPlayer(player)
     useGameStore.setState({ ...createInitialSnapshot('idle'), audioSettings: { masterVolume: 50, effectsVolume: 40, muted: false } })
 
@@ -228,6 +235,11 @@ describe('game store audio events', () => {
 
   it('plays pickup, hit, death, and boss entry sounds from simulation ticks', () => {
     const player = vi.fn()
+    let now = 0
+    setGameSoundNowProviderForTests(() => {
+      now += 250
+      return now
+    })
     setGameSoundTestPlayer(player)
     const base = createInitialSnapshot('running')
     const crystal: Pickup = {
@@ -254,6 +266,7 @@ describe('game store audio events', () => {
       projectiles: [makeProjectile({ position: { x: 260, y: 200 }, damage: 20 })],
       remainingToSpawn: 0,
       spawnCooldown: 999,
+      levelTimer: 0,
       mapObstacles: [],
       audioSettings: { masterVolume: 60, effectsVolume: 50, muted: false },
     })
@@ -279,5 +292,85 @@ describe('game store audio events', () => {
 
     useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })
     expect(player).toHaveBeenCalledWith('boss-entry', 0.3)
+  })
+
+  it('plays equipment drop sounds when combat creates a new equipment pickup', () => {
+    const player = vi.fn()
+    let now = 0
+    setGameSoundNowProviderForTests(() => {
+      now += 250
+      return now
+    })
+    setGameSoundTestPlayer(player)
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+
+    const base = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...base,
+      enemies: [makeEnemy({ id: 'drop-enemy', hp: 1, position: { x: 260, y: 200 } })],
+      projectiles: [makeProjectile({ position: { x: 260, y: 200 }, damage: 20 })],
+      levelTargetKills: 99,
+      remainingToSpawn: 1,
+      spawnCooldown: 999,
+      mapObstacles: [],
+      audioSettings: { masterVolume: 60, effectsVolume: 50, muted: false },
+    })
+
+    useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })
+    vi.restoreAllMocks()
+
+    expect(useGameStore.getState().pickups.some((pickup) => pickup.kind === 'equipment')).toBe(true)
+    expect(player).toHaveBeenCalledWith('equipment-drop', 0.3)
+  })
+
+  it('exposes a dev-only reward harness for browser reward-flow validation', () => {
+    const harness = window.__ROGUELIKE_E2E__
+    expect(harness).toBeTruthy()
+
+    const light = harness!.forceRewardScreen('light')
+    expect(light.phase).toBe('level-clear')
+    expect(light.rewardKind).toBe('light')
+    expect(light.pendingSkillReward).toBe(false)
+    expect(light.levelClearConfirmed).toBe(false)
+
+    const confirmedLight = harness!.confirmLevelClear()
+    expect(confirmedLight.levelClearConfirmed).toBe(true)
+
+    const elite = harness!.forceRewardScreen('elite')
+    expect(elite.rewardKind).toBe('elite')
+    expect(elite.pendingSkillReward).toBe(true)
+    expect(elite.levelClearConfirmed).toBe(false)
+
+    const accepted = harness!.acceptFirstReward()
+    expect(accepted.pendingSkillReward).toBe(false)
+    expect(accepted.levelClearConfirmed).toBe(true)
+
+    const boss = harness!.forceRewardScreen('boss')
+    expect(boss.rewardKind).toBe('boss')
+    expect(boss.pendingBossLoot).toBe(1)
+    expect(boss.levelClearConfirmed).toBe(false)
+
+    const dismissed = harness!.dismissBossLoot()
+    expect(dismissed.pendingBossLoot).toBe(0)
+    expect(dismissed.levelClearConfirmed).toBe(true)
+  })
+
+  it('plays reward confirmation sounds from reward harness actions', () => {
+    const player = vi.fn()
+    let now = 0
+    setGameSoundNowProviderForTests(() => {
+      now += 250
+      return now
+    })
+    setGameSoundTestPlayer(player)
+
+    window.__ROGUELIKE_E2E__!.forceRewardScreen('elite')
+    window.__ROGUELIKE_E2E__!.acceptFirstReward()
+    window.__ROGUELIKE_E2E__!.forceRewardScreen('light')
+    window.__ROGUELIKE_E2E__!.confirmLevelClear()
+    window.__ROGUELIKE_E2E__!.forceRewardScreen('boss')
+    window.__ROGUELIKE_E2E__!.dismissBossLoot()
+
+    expect(player.mock.calls.filter(([id]) => id === 'reward-confirm')).toHaveLength(3)
   })
 })

@@ -328,6 +328,7 @@ export type Player = {
   dashTimer: number
   dashDirection: Vector2
   facing: Facing
+  animationState?: 'idle' | 'move'
 }
 
 export type Enemy = {
@@ -380,6 +381,10 @@ export type Enemy = {
   breathTimer?: number
   breathDirection?: Vector2
   breathTickCooldown?: number
+  rangedAttackWindup?: number
+  rangedAttackTarget?: Vector2
+  meleeAttackWindup?: number
+  meleeAttackReady?: boolean
   walkTimer?: number
   affixCooldown?: number
   bossSkillIndex?: number
@@ -414,6 +419,7 @@ export type Projectile = {
   ricochetRemaining?: number
   hitEnemyIds?: string[]
   returnAfter?: number
+  hasReturned?: boolean
   modifiers?: EquipmentSkillModifier[]
   skillLevel?: number
   criticalChance?: number
@@ -422,6 +428,7 @@ export type Projectile = {
   lastPierceDamageMultiplier?: number
   singleTargetDamageMultiplier?: number
   eliteBossDamageMultiplier?: number
+  eliteSweepMultiplier?: number
   lightDamageMultiplier?: number
   lowHpThreshold?: number
   lowHpDamageMultiplier?: number
@@ -627,6 +634,11 @@ export type InputState = {
   right: boolean
 }
 
+export type DebugControlState = {
+  infiniteHealth: boolean
+  disableAttacks: boolean
+}
+
 export type GameSnapshot = {
   phase: GamePhase
   phaseBeforePause: Exclude<GamePhase, 'paused'>
@@ -673,10 +685,13 @@ export type GameSnapshot = {
   skillPoints: number
   skillAllocations: SkillAllocations
   contractBoons: Record<ContractBoonTag, number>
+  /** @deprecated Legacy save compatibility only. Runtime combat now follows aimPoint/crosshair direction. */
   targetPriority: TargetPriority
+  debugControls: DebugControlState
   fixedPassiveLevel: number
   activeSkills: ActiveSkillInstance[]
   pendingSkillReward: PendingSkillReward | null
+  levelClearConfirmed: boolean
   aimPoint: Vector2
   player: Player
   battlefield: BattlefieldState
