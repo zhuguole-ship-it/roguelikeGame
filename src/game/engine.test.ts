@@ -1230,6 +1230,44 @@ describe('game engine', () => {
     expect(summoned.enemies.filter((enemy) => enemy.role === 'guard').length).toBeLessThanOrEqual(getBossCombatTable(1).phases[1].guardCap)
   })
 
+  it('applies documented difficulty guard pressure to boss summon caps without changing the phase table', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = FLOORS_PER_CAMPAIGN
+    snapshot.selectedCampaignDifficulty = 'nightmare'
+    snapshot.selectedDifficulty = 'nightmare'
+    snapshot.remainingToSpawn = 0
+    snapshot.mapObstacles = []
+    snapshot.enemyProjectiles = []
+    snapshot.projectiles = []
+    snapshot.skillFields = []
+    snapshot.enemySkillEffects = []
+    snapshot.player.position = { x: 520, y: 200 }
+    snapshot.enemies = [
+      makeEnemy({
+        id: 'jailer',
+        kind: 'boss',
+        role: 'boss',
+        archetypeId: 'dungeon-jailer-boss',
+        displayName: '地牢典狱长',
+        campaignIndex: 1,
+        position: { x: 300, y: 200 },
+        attackCooldown: 0,
+        maxHp: 500,
+        hp: 500,
+        bossPhase: 1,
+        bossSkillIndex: 1,
+      }),
+      makeEnemy({ id: 'guard-a', kind: 'melee', role: 'guard', position: { x: 360, y: 210 } }),
+      makeEnemy({ id: 'guard-b', kind: 'melee', role: 'guard', position: { x: 370, y: 220 } }),
+    ]
+
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+
+    expect(getBossCombatTable(1).phases[1].guardCap).toBe(2)
+    expect(next.enemies.find((enemy) => enemy.kind === 'boss')?.bossLastSkillId).toBe('bone-guard')
+    expect(next.enemies.filter((enemy) => enemy.role === 'guard')).toHaveLength(3)
+  })
+
   it('gives a short safe entry before the first wave spawns', () => {
     const snapshot = createInitialSnapshot('idle')
     const started = restartRunSnapshot(snapshot)

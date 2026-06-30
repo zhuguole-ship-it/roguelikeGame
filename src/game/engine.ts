@@ -4855,8 +4855,13 @@ const getBossGuardCount = (snapshot: GameSnapshot) => {
   return snapshot.enemies.filter((enemy) => enemy.role === 'guard').length
 }
 
+const getBossGuardCapForSnapshot = (snapshot: GameSnapshot, phase: BossPhase) => {
+  const baseCap = getBossGuardCap(phase)
+  return Math.max(baseCap, Math.ceil(baseCap * getCampaignDifficultyConfig(getSnapshotDifficulty(snapshot)).guardMultiplier))
+}
+
 const trySummonBossGuard = (snapshot: GameSnapshot, boss: Enemy, phase: BossPhase) => {
-  const cap = getBossGuardCap(phase)
+  const cap = getBossGuardCapForSnapshot(snapshot, phase)
   if (getBossGuardCount(snapshot) >= cap) {
     return false
   }
@@ -4917,6 +4922,7 @@ const pushBossConeWarning = (snapshot: GameSnapshot, enemy: Enemy, skill: BossCo
 
 const pushBossAreaField = (
   snapshot: GameSnapshot,
+  enemy: Enemy,
   skill: BossCombatSkill,
   position: Vector2,
   options: {
@@ -4937,7 +4943,7 @@ const pushBossAreaField = (
     position,
     ttl: options.ttl ?? skill.duration ?? (skill.kind === 'finisher' ? 3 : 2.4),
     radius: options.radius ?? skill.radius ?? (skill.kind === 'finisher' ? 94 : 72),
-    damage: Math.max(1, multiplier * 4.2),
+    damage: Math.max(1, (enemy.attackDamage ?? 1) * multiplier),
     tickInterval: 0.48,
     tickCooldown: 0,
     color: options.color,
@@ -4956,6 +4962,7 @@ const pushBossAreaField = (
 
 const pushBossMultiAreas = (
   snapshot: GameSnapshot,
+  enemy: Enemy,
   skill: BossCombatSkill,
   center: Vector2,
   count: number,
@@ -4970,7 +4977,7 @@ const pushBossMultiAreas = (
       x: center.x + Math.cos(angle) * spreadX,
       y: center.y + Math.sin(angle) * spreadY,
     }, radius)
-    pushBossAreaField(snapshot, skill, position, { color, radius, effect: color.includes('fb923c') ? 'burn' : 'none' })
+    pushBossAreaField(snapshot, enemy, skill, position, { color, radius, effect: color.includes('fb923c') ? 'burn' : 'none' })
   }
 }
 
@@ -4981,7 +4988,7 @@ const summonBossGuardForSkill = (snapshot: GameSnapshot, enemy: Enemy, phase: Bo
       summoned += 1
     }
   }
-  const cap = getBossGuardCap(phase)
+  const cap = getBossGuardCapForSnapshot(snapshot, phase)
   snapshot.message = summoned > 0
     ? `${enemy.displayName ?? 'Boss'}施放${skill.label}，护卫 ${getBossGuardCount(snapshot)}/${cap}`
     : `${enemy.displayName ?? 'Boss'}施放${skill.label}，护卫已达第 ${phase} 阶段上限`
@@ -5022,7 +5029,7 @@ const applyBossCombatSkill = (
     case 'cage-root':
     case 'hex-slow':
     case 'vine-bind':
-      pushBossAreaField(snapshot, skill, targetPoint, { kind: 'trap', color: '#bef264', effect: 'slow', effectStrength: 0.42, radius: skill.radius ?? 68 })
+      pushBossAreaField(snapshot, enemy, skill, targetPoint, { kind: 'trap', color: '#bef264', effect: 'slow', effectStrength: 0.42, radius: skill.radius ?? 68 })
       if (distance(targetPoint, snapshot.player.position) <= (skill.radius ?? 68)) {
         snapshot.player.stunTimer = Math.max(snapshot.player.stunTimer ?? 0, Math.min(0.8, skill.duration ?? 0.5))
       }
@@ -5054,7 +5061,7 @@ const applyBossCombatSkill = (
     case 'electric-water':
     case 'tide-pull':
     case 'deep-sacrifice':
-      pushBossAreaField(snapshot, skill, targetPoint, { color: '#22d3ee', effect: 'slow', effectStrength: 0.28, radius: skill.radius ?? 90 })
+      pushBossAreaField(snapshot, enemy, skill, targetPoint, { color: '#22d3ee', effect: 'slow', effectStrength: 0.28, radius: skill.radius ?? 90 })
       setMessage('区域压力')
       break
     case 'life-drain':
@@ -5063,7 +5070,7 @@ const applyBossCombatSkill = (
       setMessage('射线吸取')
       break
     case 'blood-feast':
-      pushBossMultiAreas(snapshot, skill, targetPoint, 3, '#ef4444', 72)
+      pushBossMultiAreas(snapshot, enemy, skill, targetPoint, 3, '#ef4444', 72)
       setMessage(skill.safetyWindow ?? '离开血池')
       break
     case 'triple-pounce':
@@ -5090,7 +5097,7 @@ const applyBossCombatSkill = (
       setMessage(skill.safetyWindow ?? '阶段压力提升')
       break
     case 'poison-fog':
-      pushBossAreaField(snapshot, skill, targetPoint, { color: '#84cc16', effect: 'slow', effectStrength: 0.24, radius: skill.radius ?? 95, ttl: skill.duration ?? 5, damageMultiplier: 0.35 })
+      pushBossAreaField(snapshot, enemy, skill, targetPoint, { color: '#84cc16', effect: 'slow', effectStrength: 0.24, radius: skill.radius ?? 95, ttl: skill.duration ?? 5, damageMultiplier: 0.35 })
       setMessage('毒雾区域')
       break
     case 'crow-lines':
@@ -5098,7 +5105,7 @@ const applyBossCombatSkill = (
       setMessage('乌鸦飞掠线')
       break
     case 'swamp-root':
-      pushBossMultiAreas(snapshot, skill, targetPoint, 3, '#84cc16', 76)
+      pushBossMultiAreas(snapshot, enemy, skill, targetPoint, 3, '#84cc16', 76)
       setMessage(skill.safetyWindow ?? '三圈连锁')
       break
     case 'giant-axe':
@@ -5113,13 +5120,13 @@ const applyBossCombatSkill = (
       break
     case 'war-stomp':
     case 'saw-arm':
-      pushBossAreaField(snapshot, skill, { ...enemy.position }, { color: '#f59e0b', radius: skill.radius ?? 120, damageMultiplier: skill.damageMultiplier })
+      pushBossAreaField(snapshot, enemy, skill, { ...enemy.position }, { color: '#f59e0b', radius: skill.radius ?? 120, damageMultiplier: skill.damageMultiplier })
       setMessage('近身范围预警')
       break
     case 'star-rain':
     case 'lava-rain':
     case 'final-judgement':
-      pushBossMultiAreas(snapshot, skill, targetPoint, skill.id === 'final-judgement' ? 7 : 5, '#fb923c', skill.radius ?? 48, 120, 86)
+      pushBossMultiAreas(snapshot, enemy, skill, targetPoint, skill.id === 'final-judgement' ? 7 : 5, '#fb923c', skill.radius ?? 48, 120, 86)
       setMessage(skill.safetyWindow ?? '落点预警')
       break
     case 'starlight-shield':
@@ -5130,11 +5137,11 @@ const applyBossCombatSkill = (
       setMessage('护盾窗口')
       break
     case 'minefield':
-      pushBossMultiAreas(snapshot, skill, targetPoint, 5, '#fb923c', 34, 70, 52)
+      pushBossMultiAreas(snapshot, enemy, skill, targetPoint, 5, '#fb923c', 34, 70, 52)
       setMessage('地雷阵预警')
       break
     case 'maze-wall':
-      pushBossAreaField(snapshot, skill, targetPoint, { kind: 'trap', color: '#b45309', radius: 86, ttl: skill.duration ?? 4, effect: 'slow', effectStrength: 0.2 })
+      pushBossAreaField(snapshot, enemy, skill, targetPoint, { kind: 'trap', color: '#b45309', radius: 86, ttl: skill.duration ?? 4, effect: 'slow', effectStrength: 0.2 })
       setMessage('墙体区域，保留出口')
       break
     case 'tide-push':
@@ -5153,7 +5160,7 @@ const applyBossCombatSkill = (
       if (skill.width || skill.range) {
         pushBossLineWarning(snapshot, enemy, skill, direction, '#f97316')
       } else {
-        pushBossAreaField(snapshot, skill, targetPoint, { color: '#f97316', radius: skill.radius ?? 72 })
+        pushBossAreaField(snapshot, enemy, skill, targetPoint, { color: '#f97316', radius: skill.radius ?? 72 })
       }
       setMessage('表驱动技能')
       break

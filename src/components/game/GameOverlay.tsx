@@ -185,6 +185,13 @@ const talentPointSourceLabels: Record<TalentPointRecord['source'], string> = {
   'campaign-clear': '通关',
 }
 
+const reforgeBlockingItems = [
+  '消耗数值待确认',
+  '结果范围待确认',
+  '锁词确认待确认',
+  '二次确认待确认',
+]
+
 const formatEquipmentModifier = (modifier: EquipmentSkillModifier) => {
   switch (modifier.type) {
     case 'projectile-count':
@@ -682,7 +689,6 @@ export function GameOverlay() {
   const dismantleEquipment = useGameStore((state) => state.dismantleEquipment)
   const batchDismantleEquipment = useGameStore((state) => state.batchDismantleEquipment)
   const upgradeEquippedEquipment = useGameStore((state) => state.upgradeEquippedEquipment)
-  const reforgeEquipment = useGameStore((state) => state.reforgeEquipment)
   const toggleEquipmentModifierLock = useGameStore((state) => state.toggleEquipmentModifierLock)
   const unlockEquipmentSlot = useGameStore((state) => state.unlockEquipmentSlot)
   const updateAudioSettings = useGameStore((state) => state.updateAudioSettings)
@@ -1125,12 +1131,12 @@ export function GameOverlay() {
                             <button className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => toggleEquipmentLock(item.id)}>
                               {item.locked ? '解锁' : '锁定'}
                             </button>
-                            <button className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => reforgeEquipment(item.id, 'secondary')}>
-                              重铸
+                            <button className="pixel-button px-4 py-3 font-pixel text-[10px] opacity-55" disabled title="重铸消耗、结果范围与确认口径待文档确认">
+                              重铸待确认
                             </button>
                             {item.rarity === 'legacy' || item.rarity === 'legendary' ? (
-                              <button className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => reforgeEquipment(item.id, 'boss-legacy')}>
-                                传承重铸
+                              <button className="pixel-button px-4 py-3 font-pixel text-[10px] opacity-55" disabled title="Boss 传承重铸消耗、结果范围与确认口径待文档确认">
+                                传承重铸待确认
                               </button>
                             ) : null}
                             {!equipped ? (
@@ -1277,7 +1283,7 @@ export function GameOverlay() {
                       强化
                     </div>
                     <div className="border-2 border-[#08100b] bg-[#070d0a] p-3 font-pixel text-[8px] text-[#506859]">
-                      重铸 · 后续
+                      重铸 · 待确认
                     </div>
                   </div>
                   <div className="border-2 border-[#08100b] bg-[#101913] p-4">
@@ -1315,6 +1321,25 @@ export function GameOverlay() {
                       </div>
                     )
                   })}
+                </div>
+              </SectionPanel>
+              <SectionPanel eyebrow="" title="重铸">
+                <div className="grid gap-3">
+                  <div className="border-2 border-[#08100b] bg-[#101913] p-4">
+                    <p className="font-pixel text-[9px] text-amber-300">副属性 / Boss 传承重铸</p>
+                    <p className="mt-3 text-lg leading-tight text-[#dfe7d5]">状态：待文档确认</p>
+                    <div className="mt-3 flex flex-wrap gap-2" data-testid="blacksmith-reforge-blockers">
+                      {reforgeBlockingItems.map((item) => (
+                        <span key={item} className="border border-[rgba(157,213,172,0.35)] px-2 py-1 font-pixel text-[7px] text-[#9dd5ac]">
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="border-2 border-[#08100b] bg-[#101913] p-4">
+                    <p className="font-pixel text-[8px] text-[#9dd5ac]">材料方向</p>
+                    <p className="mt-3 text-lg leading-tight text-[#dfe7d5]">蓝晶粉尘 / 流派符文 / 本关印记 / 传承余烬 / 金币</p>
+                  </div>
                 </div>
               </SectionPanel>
             </div>
