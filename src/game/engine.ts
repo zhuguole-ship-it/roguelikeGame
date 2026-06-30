@@ -87,8 +87,32 @@ import {
   toggleEquipmentModifierLock,
   upgradeEquipmentItem,
   getEquipmentUpgradeGoldCost,
+  getEquipmentDropChanceForTier,
 } from './equipment'
 import { WEAPON_DEFINITION_MAP } from './weapons'
+import {
+  CAMPAIGN_DIFFICULTY_LABELS,
+  completeCampaignDifficulty,
+  createDefaultCampaignDifficultyCompletions,
+  createDefaultCampaignDifficultyUnlocks,
+  getCampaignDifficultyConfig,
+  isCampaignDifficultyCompleted,
+  isCampaignDifficultyUnlocked,
+  normalizeCampaignDifficulty,
+  normalizeCampaignDifficultyCompletions,
+  normalizeCampaignDifficultyUnlocks,
+} from './difficulty'
+import {
+  BOSS_PHASE_THRESHOLDS,
+  BOSS_PHASE_TRANSITION_DURATION,
+  getBossCombatTable,
+  getBossGuardCap,
+  getBossPhase,
+  getBossSkillCooldownMultiplier,
+  type BossCombatSkill,
+  type BossPhase,
+} from './bossStages'
+import { getMonsterDropProfile } from './monsterDataCards'
 import type {
   ActiveSkillDefinition,
   ActiveSkillInstance,
@@ -97,6 +121,7 @@ import type {
   BattlefieldState,
   BeastCompanion,
   BeastKind,
+  CampaignDifficulty,
   Enemy,
   EnemyKind,
   EquipmentItem,
@@ -121,7 +146,6 @@ import type {
   SkillEffectTag,
   SkillField,
   SkillRewardChoice,
-  SkillStat,
   Vector2,
   WeaponBonus,
   WeaponId,
@@ -170,8 +194,15 @@ const SKELETON_WARRIOR_WHIRLWIND_DURATION = 0.82
 const SKELETON_WARRIOR_WHIRLWIND_RADIUS = 64
 const SKELETON_WARRIOR_WHIRLWIND_DAMAGE = 20
 const SKELETON_WARRIOR_WHIRLWIND_ENABLED = false
-const SKELETON_WARRIOR_MELEE_WINDUP = 0.32
-const SKELETON_WARRIOR_MELEE_RANGE_PADDING = 10
+const SKELETON_WARRIOR_MELEE_WINDUP = 0.42
+const SKELETON_WARRIOR_MELEE_IMPACT_DELAY = 0.12
+const SKELETON_WARRIOR_MELEE_RANGE_PADDING = 32
+const SKELETON_WARRIOR_MELEE_STANDOFF = 46
+const SKELETON_WARRIOR_MELEE_STRIKE_PADDING = 18
+const BASIC_MELEE_ATTACK_RANGE_MULTIPLIER = 2
+const BASIC_MELEE_ATTACK_WINDUP = 0.36
+const BASIC_MELEE_ATTACK_IMPACT_DELAY = 0.08
+const BASIC_MELEE_ATTACK_COOLDOWN = 0.9
 const SKELETON_KNIGHT_CHARGE_STUN = 1.5
 const RUN_RECORD_LIMIT = 5
 const MILESTONE_LEVELS = [10, 20, 50, 100, 200]
@@ -863,22 +894,6 @@ const getEnemyKindLabel = (kind: Enemy['kind']) => {
   return kind === 'ranged' ? '远程怪' : '近战怪'
 }
 
-const getSkillLabel = (skill: SkillStat) => {
-  if (skill === 'vitality') {
-    return '生命'
-  }
-
-  if (skill === 'power') {
-    return '攻击力'
-  }
-
-  if (skill === 'haste') {
-    return '攻击速度'
-  }
-
-  return '移动速度'
-}
-
 const getFixedPassive = (level: number) => {
   return ARCHER_FIXED_PASSIVE_LEVELS[Math.max(0, Math.min(level - 1, ARCHER_FIXED_PASSIVE_LEVELS.length - 1))]
 }
@@ -1017,8 +1032,19 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
     bestLevel: 1,
     runHistory: [],
     achievedMilestones: [],
+    completedCampaigns: [],
+    completedCampaignDifficulties: createDefaultCampaignDifficultyCompletions(),
+    talentPoints: 0,
+    talentPointRecords: [],
+    lastTalentPointRecord: null,
+    unlockedCampaignDifficulties: createDefaultCampaignDifficultyUnlocks(),
+    selectedCampaignDifficulty: 'normal',
+    selectedDifficulty: 'normal',
+    unlockedTalentIds: [],
+    talentUnlockRecords: [],
     unlockedWeapons: [],
     equippedWeaponId: null,
+    discoveredHighRarityEquipmentIds: [],
     equipmentInventory: initialEquipmentInventory,
     equippedItems: initialEquippedItems,
     equipmentMaterials: createEmptyEquipmentMaterials(),
@@ -1033,6 +1059,11 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
     contractLevel: 1,
     exp: 0,
     expToNext: getExperienceTarget(1),
+    runExpGained: 0,
+    runHighestContractLevel: 1,
+    runEliteKills: 0,
+    runBossKills: 0,
+    runSettlementClaimed: false,
     kills: 0,
     levelKills: 0,
     levelTargetKills: targetKills,
@@ -1045,6 +1076,12 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
     skillPoints: 0,
     skillAllocations,
     contractBoons: createEmptyContractBoons(),
+    inRunTalentIds: [],
+    inRunRewardRerolls: 1,
+    inRunRewardHistory: {
+      noMainBuildStreak: 0,
+      lastOfferedChoiceIds: [],
+    },
     targetPriority: 'melee',
     debugControls: {
       infiniteHealth: false,
@@ -1199,8 +1236,67 @@ const damageEnemy = (snapshot: GameSnapshot, enemy: Enemy, damage: number, color
   }
 
   enemy.hp -= appliedDamage
+  applyBossPhaseDamageLock(snapshot, enemy)
   enemy.hitFlash = Math.max(enemy.hitFlash, 0.12)
   snapshot.floatingTexts.push(createFloatingText(enemy.position, formatDamage(appliedDamage), color))
+}
+
+const beginBossPhaseTransition = (snapshot: GameSnapshot, enemy: Enemy, nextPhase: 2 | 3) => {
+  const floorRatio = BOSS_PHASE_THRESHOLDS[nextPhase]
+  const hpFloor = Math.max(1, Math.round(enemy.maxHp * floorRatio))
+  enemy.bossPendingPhase = nextPhase
+  enemy.bossTransitionTimer = BOSS_PHASE_TRANSITION_DURATION
+  enemy.bossPhaseHpFloor = hpFloor
+  enemy.hp = Math.max(enemy.hp, hpFloor)
+  enemy.behaviorTimer = 0
+  enemy.attackCooldown = Math.max(enemy.attackCooldown, BOSS_PHASE_TRANSITION_DURATION)
+  const table = getBossCombatTable(enemy.campaignIndex ?? getCampaignIndex(snapshot.level))
+  snapshot.message = `${table.name}进入第 ${nextPhase} 阶段，转阶段 ${BOSS_PHASE_TRANSITION_DURATION.toFixed(1)} 秒`
+}
+
+const applyBossPhaseDamageLock = (snapshot: GameSnapshot, enemy: Enemy) => {
+  if (enemy.kind !== 'boss' || enemy.hp <= 0) {
+    return
+  }
+
+  if ((enemy.bossTransitionTimer ?? 0) > 0 && enemy.bossPhaseHpFloor) {
+    enemy.hp = Math.max(enemy.hp, enemy.bossPhaseHpFloor)
+    return
+  }
+
+  const phase = getBossPhase(enemy)
+  if (phase === 1 && enemy.hp <= enemy.maxHp * BOSS_PHASE_THRESHOLDS[2]) {
+    beginBossPhaseTransition(snapshot, enemy, 2)
+    return
+  }
+
+  if (phase === 2 && enemy.hp <= enemy.maxHp * BOSS_PHASE_THRESHOLDS[3]) {
+    beginBossPhaseTransition(snapshot, enemy, 3)
+  }
+}
+
+const updateBossPhaseTransition = (snapshot: GameSnapshot, enemy: Enemy, delta: number) => {
+  if (enemy.kind !== 'boss' || (enemy.bossTransitionTimer ?? 0) <= 0) {
+    return false
+  }
+
+  enemy.bossTransitionTimer = Math.max(0, (enemy.bossTransitionTimer ?? 0) - delta)
+  if (enemy.bossPhaseHpFloor) {
+    enemy.hp = Math.max(enemy.hp, enemy.bossPhaseHpFloor)
+  }
+  enemy.behaviorTimer = 0
+  enemy.behaviorCooldown = Math.max(enemy.behaviorCooldown, 0.2)
+
+  if (enemy.bossTransitionTimer <= 0 && enemy.bossPendingPhase) {
+    enemy.bossPhase = enemy.bossPendingPhase
+    enemy.bossPendingPhase = undefined
+    enemy.bossPhaseHpFloor = undefined
+    enemy.bossSkillIndex = 0
+    const table = getBossCombatTable(enemy.campaignIndex ?? getCampaignIndex(snapshot.level))
+    snapshot.message = `${table.name}第 ${enemy.bossPhase} 阶段开始`
+  }
+
+  return true
 }
 
 const getIncomingDirection = (from: Vector2, to: Vector2) => normalize({ x: to.x - from.x, y: to.y - from.y })
@@ -1653,10 +1749,6 @@ const createEquipmentPickup = (position: Vector2, equipment: EquipmentItem) => (
 })
 
 const getCrystalDropValues = (enemy: Enemy) => {
-  if (enemy.isFodder || enemy.archetypeId === CORROSIVE_SLIME_ARCHETYPE.id) {
-    return Math.random() < 0.72 ? [3] : []
-  }
-
   if (enemy.kind === 'boss') {
     return Array.from({ length: 12 + Math.floor(Math.random() * 9) }, () => 26)
   }
@@ -1665,11 +1757,17 @@ const getCrystalDropValues = (enemy: Enemy) => {
     return Array.from({ length: 3 + Math.floor(Math.random() * 3) }, () => 18)
   }
 
-  if (enemy.maxHp >= 80) {
-    return Math.random() < 0.5 ? [8, 8] : [10]
+  const crystal = getMonsterDropProfile(enemy.archetypeId).crystal
+  if (crystal.type === 'none' || Math.random() >= crystal.chance) {
+    return []
   }
 
-  return [8]
+  const count = crystal.min + Math.floor(Math.random() * (crystal.max - crystal.min + 1))
+  if (count <= 0) {
+    return []
+  }
+
+  return Array.from({ length: count }, () => crystal.expValue)
 }
 
 const cloneEquipmentItem = (item: EquipmentItem): EquipmentItem => ({
@@ -1865,19 +1963,33 @@ const summonBeastKingSetReinforcement = (snapshot: GameSnapshot, skillLevel: num
 
 const createEquipmentDropsForEnemy = (snapshot: GameSnapshot, enemy: Enemy) => {
   const drops: EquipmentItem[] = []
-  if (enemy.isFodder || enemy.archetypeId === CORROSIVE_SLIME_ARCHETYPE.id) {
-    if (Math.random() >= 0.004) {
-      return drops
-    }
-  }
   const equipmentBonus = getSnapshotEquipmentBonus(snapshot)
   const campaignProfile = getCampaignLootProfile(snapshot.level, true)
-  const preferredBuildTag = getPreferredBuildTag(snapshot) ?? campaignProfile.dropFocus[0]
+  const dropProfile = getMonsterDropProfile(enemy.archetypeId)
+  const profileBuildTag = dropProfile.equipmentPools.find((pool): pool is SkillBuildTag => pool !== 'general')
+  const preferredBuildTag = getPreferredBuildTag(snapshot) ?? profileBuildTag ?? campaignProfile.dropFocus[0]
   const unlockedSlots = getEffectiveUnlockedEquipmentSlots(snapshot.level, snapshot.unsealedEquipmentSlots)
+  const difficulty = getSnapshotDifficulty(snapshot)
+  const difficultyConfig = getCampaignDifficultyConfig(difficulty)
+  const highValueDropMultiplier = difficultyConfig.highValueDropMultiplier
+  const discoveredHighRarityEquipmentIds = snapshot.discoveredHighRarityEquipmentIds
 
   if (enemy.kind === 'boss') {
-    const legacyDrop = createEquipmentDrop(snapshot.level, 'boss-legacy', createId, { preferredBuildTag, unlockedSlots })
-    const extraDrop = createEquipmentDrop(snapshot.level, 'boss', createId, { preferredBuildTag, unlockedSlots })
+    const legacyDrop = createEquipmentDrop(snapshot.level, 'boss-legacy', createId, {
+      preferredBuildTag,
+      unlockedSlots,
+      highValueDropMultiplier,
+      forceDrop: true,
+      difficulty,
+      discoveredHighRarityEquipmentIds,
+    })
+    const extraDrop = createEquipmentDrop(snapshot.level, 'boss', createId, {
+      preferredBuildTag,
+      unlockedSlots,
+      highValueDropMultiplier,
+      difficulty,
+      discoveredHighRarityEquipmentIds,
+    })
     if (legacyDrop) {
       drops.push(legacyDrop)
     }
@@ -1888,13 +2000,34 @@ const createEquipmentDropsForEnemy = (snapshot: GameSnapshot, enemy: Enemy) => {
   }
 
   const source = enemy.kind === 'elite' || enemy.grantsEliteReward ? 'elite' : 'normal'
-  const firstDrop = createEquipmentDrop(snapshot.level, source, createId, { preferredBuildTag, unlockedSlots })
+  const dropTier = enemy.kind === 'elite' || enemy.grantsEliteReward ? 'elite' : dropProfile.equipmentTier
+  if (dropTier === 'none' || Math.random() >= getEquipmentDropChanceForTier(dropTier, difficulty)) {
+    return drops
+  }
+
+  const firstDrop = createEquipmentDrop(snapshot.level, source, createId, {
+    preferredBuildTag,
+    unlockedSlots,
+    highValueDropMultiplier,
+    forceDrop: true,
+    difficulty,
+    dropTier,
+    discoveredHighRarityEquipmentIds,
+  })
   if (firstDrop) {
     drops.push(firstDrop)
   }
 
   if (Math.random() < Math.min(0.6, equipmentBonus.dropRateMultiplier)) {
-    const extraDrop = createEquipmentDrop(snapshot.level, source, createId, { preferredBuildTag, unlockedSlots })
+    const extraDrop = createEquipmentDrop(snapshot.level, source, createId, {
+      preferredBuildTag,
+      unlockedSlots,
+      highValueDropMultiplier,
+      forceDrop: true,
+      difficulty,
+      dropTier,
+      discoveredHighRarityEquipmentIds,
+    })
     if (extraDrop) {
       drops.push(extraDrop)
     }
@@ -2182,19 +2315,25 @@ const getEnemySpawnSpeedBoost = (enemy: Enemy) => {
   return 1.12
 }
 
+const getSnapshotDifficulty = (snapshot: Pick<GameSnapshot, 'selectedCampaignDifficulty' | 'selectedDifficulty'>): CampaignDifficulty => {
+  return normalizeCampaignDifficulty(snapshot.selectedCampaignDifficulty ?? snapshot.selectedDifficulty)
+}
+
 const createEnemy = (
   level: number,
   kind: EnemyKind = getCampaignEnemyKind(level),
   position = getSpawnPosition(),
   archetypeOverride?: CampaignEnemyArchetype,
   roleOverride?: Enemy['role'],
+  difficulty: CampaignDifficulty = 'normal',
 ): Enemy => {
   const archetype = archetypeOverride ?? getCampaignEnemyArchetype(level, kind)
   const resolvedKind = archetype.kind
-  const stats = getEnemyStats(level, kind)
+  const stats = getEnemyStats(level, kind, difficulty)
+  const dropProfile = getMonsterDropProfile(archetype.id)
   const id = createId()
   const hp = Math.max(8, Math.round(stats.hp * archetype.hpMultiplier))
-  const speed = Math.max(18, Math.round(stats.speed * archetype.speedMultiplier))
+  const speed = Math.max(18, Math.round(stats.speed * archetype.speedMultiplier * getCampaignDifficultyConfig(difficulty).speedMultiplier))
   const attackDamage = Math.max(1, Math.round((stats.attack ?? ENEMY_CONTACT_DAMAGE) * archetype.damageMultiplier))
   const campaignIndex = getCampaignIndex(level)
   const canRevive = resolvedKind === 'elite' && (archetype.id.includes('skeleton') || archetype.id.includes('chain-captain') || archetype.skillTrait === 'skeleton-revive')
@@ -2242,8 +2381,21 @@ const createEnemy = (
     breathTickCooldown: 0,
     meleeAttackWindup: 0,
     meleeAttackReady: false,
+    meleeAttackImpactDelay: 0,
+    dropWeight: {
+      equipment: getEquipmentDropChanceForTier(dropProfile.equipmentTier, difficulty),
+      crystal: dropProfile.crystal.chance,
+      potion: getHealthPackDropChanceForHealthRatio(1),
+    },
+    meleeAttackOrigin: undefined,
+    meleeAttackDirection: undefined,
     walkTimer: 0,
     bossSkillIndex: resolvedKind === 'boss' ? 0 : undefined,
+    bossLastSkillId: undefined,
+    bossPhase: resolvedKind === 'boss' ? 1 : undefined,
+    bossTransitionTimer: resolvedKind === 'boss' ? 0 : undefined,
+    bossPendingPhase: undefined,
+    bossPhaseHpFloor: undefined,
   }
   enemy.speed = Math.min(Math.round(enemy.speed * getEnemySpawnSpeedBoost(enemy)), getEnemyBaseSpeedSoftCap(enemy))
   return enemy
@@ -2348,7 +2500,8 @@ const syncRouteObjectives = (snapshot: GameSnapshot) => {
 }
 
 const spawnRouteObjectiveThreat = (snapshot: GameSnapshot, objective: RouteObjective) => {
-  const maxEnemies = getMaxEnemiesOnField(snapshot.level)
+  const difficulty = getSnapshotDifficulty(snapshot)
+  const maxEnemies = getMaxEnemiesOnField(snapshot.level, difficulty)
   const currentHighThreat = snapshot.enemies.filter((enemy) => enemy.role === 'high-threat').length
   const highThreatCap = getRouteObjectiveExtraThreatCap(snapshot.level)
   const theme = getCampaignMonsterTheme(getCampaignIndex(snapshot.level))
@@ -2356,7 +2509,7 @@ const spawnRouteObjectiveThreat = (snapshot: GameSnapshot, objective: RouteObjec
   let spawnedHighThreat = 0
 
   if (highThreatArchetype && objective.extraThreatBudget > 0 && currentHighThreat < highThreatCap && snapshot.enemies.length < maxEnemies) {
-    const enemy = createEnemy(snapshot.level, highThreatArchetype.kind, getSpawnPositionForSnapshot(snapshot, 'high-threat'), highThreatArchetype, 'high-threat')
+    const enemy = createEnemy(snapshot.level, highThreatArchetype.kind, getSpawnPositionForSnapshot(snapshot, 'high-threat'), highThreatArchetype, 'high-threat', difficulty)
     enemy.speed = Math.min(enemy.speed, getEnemyBaseSpeedSoftCap(enemy))
     snapshot.enemies.push(enemy)
     spawnedHighThreat += 1
@@ -2364,7 +2517,7 @@ const spawnRouteObjectiveThreat = (snapshot: GameSnapshot, objective: RouteObjec
 
   const fodderCount = Math.min(3, Math.max(1, Math.floor(maxEnemies * 0.018)))
   for (let index = 0; index < fodderCount && snapshot.enemies.length < maxEnemies; index += 1) {
-    const fodder = createEnemy(snapshot.level, 'melee', getSpawnPositionForSnapshot(snapshot, 'fodder'), CORROSIVE_SLIME_ARCHETYPE, 'fodder')
+    const fodder = createEnemy(snapshot.level, 'melee', getSpawnPositionForSnapshot(snapshot, 'fodder'), CORROSIVE_SLIME_ARCHETYPE, 'fodder', difficulty)
     fodder.speed = Math.min(fodder.speed, getEnemyBaseSpeedSoftCap(fodder))
     snapshot.enemies.push(fodder)
   }
@@ -2498,8 +2651,8 @@ const getEliteAffixes = (level: number, rank: EliteRank) => {
 
 const formatEliteAffixes = (affixes: EliteAffix[] = []) => affixes.map((affix) => ELITE_AFFIX_LABELS[affix]).join(' / ')
 
-const getEliteSpawnRanks = (level: number): EliteRank[] => {
-  const budget = getEliteBudget(level)
+const getEliteSpawnRanks = (level: number, difficulty: CampaignDifficulty = 'normal'): EliteRank[] => {
+  const budget = getEliteBudget(level, difficulty)
   const count = Math.min(5, Math.max(1, Math.ceil(budget)))
   const ranks: EliteRank[] = []
 
@@ -2535,9 +2688,16 @@ const getEliteRankMultiplier = (rank: EliteRank) => {
   return { hp: 1, speed: 1, size: 1 }
 }
 
-const spawnEliteEnemy = (level: number, obstacles: MapObstacle[], rank: EliteRank = 'normal', grantsReward = false, positionOverride?: Vector2): Enemy => {
+const spawnEliteEnemy = (
+  level: number,
+  obstacles: MapObstacle[],
+  rank: EliteRank = 'normal',
+  grantsReward = false,
+  positionOverride?: Vector2,
+  difficulty: CampaignDifficulty = 'normal',
+): Enemy => {
   const archetype = getCampaignEnemyArchetype(level, 'elite')
-  const stats = getEnemyStats(level, 'elite')
+  const stats = getEnemyStats(level, 'elite', difficulty)
   const multiplier = getEliteRankMultiplier(rank)
   const position = positionOverride ?? getSpawnPosition(obstacles)
   const id = `elite-${createId()}`
@@ -2591,6 +2751,9 @@ const spawnEliteEnemy = (level: number, obstacles: MapObstacle[], rank: EliteRan
     breathTickCooldown: 0,
     meleeAttackWindup: 0,
     meleeAttackReady: false,
+    meleeAttackImpactDelay: 0,
+    meleeAttackOrigin: undefined,
+    meleeAttackDirection: undefined,
     walkTimer: 0,
     affixCooldown: 1.2,
     bossSkillIndex: undefined,
@@ -2602,6 +2765,7 @@ const spawnEliteEnemy = (level: number, obstacles: MapObstacle[], rank: EliteRan
 const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
   ...snapshot,
   unlockedWeapons: [...snapshot.unlockedWeapons],
+  discoveredHighRarityEquipmentIds: [...snapshot.discoveredHighRarityEquipmentIds],
   unsealedEquipmentSlots: [...snapshot.unsealedEquipmentSlots],
   equipmentInventory: snapshot.equipmentInventory.map(cloneEquipmentItem),
   equippedItems: Object.fromEntries(
@@ -2625,8 +2789,24 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
   audioSettings: { ...snapshot.audioSettings },
   runHistory: snapshot.runHistory.map((record) => ({ ...record })),
   achievedMilestones: [...snapshot.achievedMilestones],
+  completedCampaigns: [...snapshot.completedCampaigns],
+  completedCampaignDifficulties: Object.fromEntries(
+    Object.entries(snapshot.completedCampaignDifficulties).map(([campaign, difficulties]) => [campaign, [...difficulties]]),
+  ),
+  unlockedCampaignDifficulties: Object.fromEntries(
+    Object.entries(snapshot.unlockedCampaignDifficulties).map(([campaign, difficulties]) => [campaign, [...difficulties]]),
+  ),
+  unlockedTalentIds: [...snapshot.unlockedTalentIds],
+  talentUnlockRecords: snapshot.talentUnlockRecords.map((record) => ({ ...record })),
+  talentPointRecords: snapshot.talentPointRecords.map((record) => ({ ...record })),
+  lastTalentPointRecord: snapshot.lastTalentPointRecord ? { ...snapshot.lastTalentPointRecord } : null,
   skillAllocations: { ...snapshot.skillAllocations },
   contractBoons: { ...snapshot.contractBoons },
+  inRunTalentIds: [...snapshot.inRunTalentIds],
+  inRunRewardHistory: {
+    noMainBuildStreak: snapshot.inRunRewardHistory.noMainBuildStreak,
+    lastOfferedChoiceIds: [...snapshot.inRunRewardHistory.lastOfferedChoiceIds],
+  },
   debugControls: { ...snapshot.debugControls },
   activeSkills: snapshot.activeSkills.map((skill) => ({ ...skill })),
   pendingSkillReward: snapshot.pendingSkillReward
@@ -2647,6 +2827,8 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
     position: { ...enemy.position },
     behaviorDirection: { ...enemy.behaviorDirection },
     facingDirection: { ...(enemy.facingDirection ?? { x: 0, y: 1 }) },
+    meleeAttackOrigin: enemy.meleeAttackOrigin ? { ...enemy.meleeAttackOrigin } : undefined,
+    meleeAttackDirection: enemy.meleeAttackDirection ? { ...enemy.meleeAttackDirection } : undefined,
     breathDirection: { ...(enemy.breathDirection ?? { x: 1, y: 0 }) },
     lastPosition: { ...enemy.lastPosition },
   })),
@@ -3575,8 +3757,102 @@ const isDungeonSkeletonEnemy = (enemy: Enemy) => {
   return Boolean(enemy.archetypeId?.includes('skeleton') || enemy.archetypeId?.includes('chain-captain') || enemy.skillTrait === 'skeleton-revive')
 }
 
+const isDungeonSkeletonWarriorEnemy = (enemy: Enemy) => {
+  const identity = `${enemy.archetypeId ?? ''} ${enemy.displayName ?? ''}`.toLowerCase()
+  return identity.includes('dungeon-skeleton-warrior') || identity.includes('skeleton-warrior') || identity.includes('骷髅战士')
+}
+
 const canUseSkeletonWarriorSkill = (enemy: Enemy) => {
   return enemy.kind === 'elite' && isDungeonSkeletonEnemy(enemy)
+}
+
+const canUseBasicMeleeAttack = (enemy: Enemy) => {
+  if (enemy.kind === 'ranged' || enemy.kind === 'charger' || enemy.kind === 'bomber') {
+    return false
+  }
+
+  if (canUseFireBreath(enemy) || isSkeletonArcherEnemy(enemy)) {
+    return false
+  }
+
+  return enemy.kind === 'melee' || enemy.kind === 'splitter' || enemy.kind === 'elite' || enemy.kind === 'boss'
+}
+
+const getBasicMeleeBaseRange = (enemy: Enemy, playerSize: number) => {
+  return enemy.size * 0.55 + playerSize * 0.55
+}
+
+const getBasicMeleeAttackRange = (enemy: Enemy, playerSize: number) => {
+  return getBasicMeleeBaseRange(enemy, playerSize) * BASIC_MELEE_ATTACK_RANGE_MULTIPLIER
+}
+
+const getBasicMeleeStrikeRange = (enemy: Enemy, playerSize: number) => {
+  return getBasicMeleeAttackRange(enemy, playerSize)
+}
+
+const getBasicMeleeStandoffRange = (enemy: Enemy, playerSize: number) => {
+  return Math.max(getBasicMeleeBaseRange(enemy, playerSize) * 1.35, enemy.size * 0.8 + playerSize * 0.45)
+}
+
+const getSkeletonWarriorMeleeRange = (enemy: Enemy, playerSize: number) => {
+  return Math.max(getBasicMeleeAttackRange(enemy, playerSize), enemy.size * 0.55 + playerSize * 0.55 + SKELETON_WARRIOR_MELEE_RANGE_PADDING)
+}
+
+const getSkeletonWarriorStrikeRange = (enemy: Enemy, playerSize: number) => {
+  return Math.max(getBasicMeleeStrikeRange(enemy, playerSize), getSkeletonWarriorMeleeRange(enemy, playerSize) + SKELETON_WARRIOR_MELEE_STRIKE_PADDING)
+}
+
+const getSkeletonWarriorAttackOrigin = (enemy: Enemy, targetPosition: Vector2, attackDirection: Vector2) => {
+  const safeDirection = attackDirection.x === 0 && attackDirection.y === 0
+    ? normalize(enemy.facingDirection ?? enemy.behaviorDirection ?? { x: -1, y: 0 })
+    : attackDirection
+  const gap = distance(enemy.position, targetPosition)
+
+  if (gap >= SKELETON_WARRIOR_MELEE_STANDOFF) {
+    return { ...enemy.position }
+  }
+
+  return {
+    x: targetPosition.x - safeDirection.x * SKELETON_WARRIOR_MELEE_STANDOFF,
+    y: targetPosition.y - safeDirection.y * SKELETON_WARRIOR_MELEE_STANDOFF,
+  }
+}
+
+const getBasicMeleeAttackOrigin = (enemy: Enemy, targetPosition: Vector2, attackDirection: Vector2, playerSize: number) => {
+  const safeDirection = attackDirection.x === 0 && attackDirection.y === 0
+    ? normalize(enemy.facingDirection ?? enemy.behaviorDirection ?? { x: -1, y: 0 })
+    : attackDirection
+  const standoff = getBasicMeleeStandoffRange(enemy, playerSize)
+  const gap = distance(enemy.position, targetPosition)
+
+  if (gap >= standoff) {
+    return { ...enemy.position }
+  }
+
+  return {
+    x: targetPosition.x - safeDirection.x * standoff,
+    y: targetPosition.y - safeDirection.y * standoff,
+  }
+}
+
+const isBasicMeleeImpactReady = (enemy: Enemy) => {
+  return Boolean(canUseBasicMeleeAttack(enemy) && enemy.meleeAttackReady && (enemy.meleeAttackImpactDelay ?? 0) <= 0)
+}
+
+const getBasicMeleeEnemyStrikeRange = (enemy: Enemy, playerSize: number) => {
+  return isDungeonSkeletonWarriorEnemy(enemy)
+    ? getSkeletonWarriorStrikeRange(enemy, playerSize)
+    : getBasicMeleeStrikeRange(enemy, playerSize)
+}
+
+const clearBasicMeleeAttackState = (enemy: Enemy, cooldown = BASIC_MELEE_ATTACK_COOLDOWN) => {
+  enemy.meleeAttackReady = false
+  enemy.meleeAttackWindup = 0
+  enemy.meleeAttackImpactDelay = 0
+  enemy.meleeAttackOrigin = undefined
+  enemy.meleeAttackDirection = undefined
+  enemy.behaviorTimer = 0
+  enemy.attackCooldown = Math.max(enemy.attackCooldown, cooldown)
 }
 
 const canUseSkeletonKnightSkill = (enemy: Enemy) => {
@@ -3635,32 +3911,27 @@ const applyDerivedPlayerStats = (snapshot: GameSnapshot, healDifference = true) 
   }
 }
 
-const getAutoGrowthStat = (contractLevel: number): SkillStat => {
-  const cycle: SkillStat[] = ['vitality', 'power', 'haste', 'agility']
-  return cycle[(contractLevel - 2 + cycle.length) % cycle.length]
-}
-
 const applyContractLevelUp = (snapshot: GameSnapshot) => {
   snapshot.contractLevel += 1
-  const stat = getAutoGrowthStat(snapshot.contractLevel)
-  snapshot.skillAllocations[stat] += 1
-  applyDerivedPlayerStats(snapshot)
+  snapshot.runHighestContractLevel = Math.max(snapshot.runHighestContractLevel, snapshot.contractLevel)
   snapshot.bursts.push(createBurst({ ...snapshot.player.position }, 'rgba(96, 165, 250, ALPHA)', 28))
   snapshot.floatingTexts.push(createFloatingText(snapshot.player.position, '契约等级提升', '#93c5fd'))
 
   if (snapshot.contractLevel % CONTRACT_BOON_INTERVAL === 0) {
     const preferredBuild = getPreferredBuildTag(snapshot) ?? 'general'
     snapshot.contractBoons[preferredBuild] = (snapshot.contractBoons[preferredBuild] ?? 0) + 1
-    snapshot.message = `契约等级 Lv.${snapshot.contractLevel}：全属性成长，并认可「${preferredBuild === 'general' ? '通用' : SKILL_BUILD_LABELS[preferredBuild]}」构筑`
+    snapshot.message = `局内等级 Lv.${snapshot.contractLevel}：认可「${preferredBuild === 'general' ? '通用' : SKILL_BUILD_LABELS[preferredBuild]}」构筑`
     return
   }
 
-  snapshot.message = `契约等级 Lv.${snapshot.contractLevel}：自动强化${getSkillLabel(stat)}`
+  snapshot.message = `局内等级 Lv.${snapshot.contractLevel}：技能构筑推进`
 }
 
 const addContractExperience = (snapshot: GameSnapshot, amount: number) => {
   const equipmentBonus = getSnapshotEquipmentBonus(snapshot)
-  snapshot.exp += Math.round(amount * (1 + equipmentBonus.crystalXpMultiplier))
+  const gained = Math.round(amount * (1 + equipmentBonus.crystalXpMultiplier))
+  snapshot.exp += gained
+  snapshot.runExpGained += gained
 
   while (snapshot.exp >= snapshot.expToNext) {
     snapshot.exp -= snapshot.expToNext
@@ -3782,7 +4053,8 @@ const createDefaultActiveSkills = (): ActiveSkillInstance[] => {
 }
 
 const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapshot => {
-  const targetKills = getLevelGoal(nextLevel)
+  const difficulty = getSnapshotDifficulty(previous)
+  const targetKills = getLevelGoal(nextLevel, difficulty)
   const healedHp = Math.min(
     getDerivedPlayerStats(previous.skillAllocations, previous.fixedPassiveLevel, previous.equippedWeaponId, previous.equippedItems).maxHp,
     previous.player.hp + HEALTH_PACK_HEAL,
@@ -3800,8 +4072,25 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     currency: previous.currency,
     earnedGold: 0,
     bestLevel: previous.bestLevel,
+    runHistory: previous.runHistory.map((record) => ({ ...record })),
+    achievedMilestones: [...previous.achievedMilestones],
+    completedCampaigns: [...previous.completedCampaigns],
+    completedCampaignDifficulties: normalizeCampaignDifficultyCompletions(previous.completedCampaignDifficulties, previous.completedCampaigns),
+    talentPoints: previous.talentPoints,
+    talentPointRecords: previous.talentPointRecords.map((record) => ({ ...record })),
+    lastTalentPointRecord: previous.lastTalentPointRecord ? { ...previous.lastTalentPointRecord } : null,
+    unlockedCampaignDifficulties: normalizeCampaignDifficultyUnlocks(
+      previous.unlockedCampaignDifficulties,
+      previous.completedCampaigns,
+      previous.completedCampaignDifficulties,
+    ),
+    selectedCampaignDifficulty: normalizeCampaignDifficulty(previous.selectedCampaignDifficulty ?? previous.selectedDifficulty),
+    selectedDifficulty: normalizeCampaignDifficulty(previous.selectedCampaignDifficulty ?? previous.selectedDifficulty),
+    unlockedTalentIds: [...previous.unlockedTalentIds],
+    talentUnlockRecords: previous.talentUnlockRecords.map((record) => ({ ...record })),
     unlockedWeapons: [...previous.unlockedWeapons],
     equippedWeaponId: previous.equippedWeaponId,
+    discoveredHighRarityEquipmentIds: [...previous.discoveredHighRarityEquipmentIds],
     equipmentInventory: clearEquipmentNewFlags(previous.equipmentInventory),
     equippedItems: clearEquippedNewFlags(previous.equippedItems),
     equipmentMaterials: { ...previous.equipmentMaterials },
@@ -3814,6 +4103,11 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     contractLevel: previous.contractLevel,
     exp: previous.exp,
     expToNext: getExperienceTarget(previous.contractLevel),
+    runExpGained: previous.runExpGained,
+    runHighestContractLevel: previous.runHighestContractLevel,
+    runEliteKills: previous.runEliteKills,
+    runBossKills: previous.runBossKills,
+    runSettlementClaimed: previous.runSettlementClaimed,
     kills: previous.kills,
     levelKills: 0,
     levelTargetKills: targetKills,
@@ -3951,15 +4245,30 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     enemy.steeringTimer = Math.max(0, (enemy.steeringTimer ?? 0) - delta)
     enemy.stunTimer = Math.max(0, (enemy.stunTimer ?? 0) - delta)
     enemy.affixCooldown = Math.max(0, (enemy.affixCooldown ?? 0) - delta)
+    enemy.meleeAttackImpactDelay = Math.max(0, (enemy.meleeAttackImpactDelay ?? 0) - delta)
+    const bossTransitionLocked = updateBossPhaseTransition(snapshot, enemy, delta)
+    if (canUseBasicMeleeAttack(enemy)) {
+      enemy.attackCooldown = Math.max(0, enemy.attackCooldown - delta)
+    }
     const previousMeleeWindup = enemy.meleeAttackWindup ?? 0
     enemy.meleeAttackWindup = Math.max(0, previousMeleeWindup - delta)
-    if (canUseSkeletonWarriorSkill(enemy) && previousMeleeWindup > 0 && (enemy.meleeAttackWindup ?? 0) <= 0) {
+    if (canUseBasicMeleeAttack(enemy) && previousMeleeWindup > 0 && (enemy.meleeAttackWindup ?? 0) <= 0) {
       enemy.meleeAttackReady = true
+      enemy.meleeAttackImpactDelay = Math.max(
+        enemy.meleeAttackImpactDelay ?? 0,
+        isDungeonSkeletonWarriorEnemy(enemy) ? SKELETON_WARRIOR_MELEE_IMPACT_DELAY : BASIC_MELEE_ATTACK_IMPACT_DELAY,
+      )
+      enemy.meleeAttackOrigin = enemy.meleeAttackOrigin ?? { ...enemy.position }
+      enemy.meleeAttackDirection = enemy.meleeAttackDirection ?? normalize(enemy.facingDirection ?? enemy.behaviorDirection ?? direction)
     }
     if (!enemy.steeringSide) {
       enemy.steeringSide = enemy.id.charCodeAt(enemy.id.length - 1) % 2 === 0 ? 1 : -1
     }
-    if (direction.x !== 0 || direction.y !== 0) {
+    let basicMeleeLocked = canUseBasicMeleeAttack(enemy) && ((enemy.meleeAttackWindup ?? 0) > 0 || enemy.meleeAttackReady)
+    if (basicMeleeLocked) {
+      enemy.facingDirection = enemy.meleeAttackDirection ?? enemy.facingDirection ?? direction
+      enemy.behaviorDirection = enemy.meleeAttackDirection ?? enemy.behaviorDirection
+    } else if (direction.x !== 0 || direction.y !== 0) {
       enemy.facingDirection = direction
     }
 
@@ -3971,22 +4280,23 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     }
     const breathLocked = !isStunned && enemy.kind !== 'boss' && canUseFireBreath(enemy) && updateHellhoundBreath(snapshot, enemy, delta, direction, gap)
 
-    if (isStunned || breathLocked || rangedAttackLocked) {
+    if (isStunned || bossTransitionLocked || breathLocked || rangedAttackLocked) {
       movement = { x: 0, y: 0 }
     } else if (enemy.kind === 'charger' || enemy.skillTrait === 'fire-breath') {
       enemy.attackCooldown = Math.max(0, enemy.attackCooldown - delta)
     }
 
-    if (!isStunned && !breathLocked && !rangedAttackLocked && enemy.kind !== 'boss') {
+    if (!isStunned && !bossTransitionLocked && !breathLocked && !rangedAttackLocked && enemy.kind !== 'boss') {
       updateEnemyTraitSkill(snapshot, enemy, direction, gap)
     }
 
     if (!isStunned && enemy.kind === 'elite' && (enemy.affixCooldown ?? 0) <= 0) {
-      if (enemy.eliteAffixes?.includes('summoner') && snapshot.enemies.length < getMaxEnemiesOnField(snapshot.level) + 2) {
+      const difficulty = getSnapshotDifficulty(snapshot)
+      if (enemy.eliteAffixes?.includes('summoner') && snapshot.enemies.length < getMaxEnemiesOnField(snapshot.level, difficulty) + 2) {
         const minion = createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), {
           x: enemy.position.x + randomBetween(-36, 36),
           y: enemy.position.y + randomBetween(-36, 36),
-        })
+        }, undefined, undefined, difficulty)
         minion.position = keepInsideCombatArea(snapshot, minion.position, minion.size * 0.55)
         minion.hp = Math.max(8, Math.round(minion.hp * 0.55))
         minion.maxHp = minion.hp
@@ -4004,24 +4314,47 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       enemy.affixCooldown = 2.8
     }
 
-    const skeletonMeleeRange = enemy.size * 0.55 + snapshot.player.size * 0.55 + SKELETON_WARRIOR_MELEE_RANGE_PADDING
-    if (canUseSkeletonWarriorSkill(enemy) && enemy.meleeAttackReady && gap > skeletonMeleeRange + 24) {
+    const basicMeleeRange = isDungeonSkeletonWarriorEnemy(enemy)
+      ? getSkeletonWarriorMeleeRange(enemy, snapshot.player.size)
+      : getBasicMeleeAttackRange(enemy, snapshot.player.size)
+    if (canUseBasicMeleeAttack(enemy) && isBasicMeleeImpactReady(enemy) && gap > basicMeleeRange + 24) {
       enemy.meleeAttackReady = false
+      enemy.meleeAttackImpactDelay = 0
+      enemy.meleeAttackOrigin = undefined
+      enemy.meleeAttackDirection = undefined
+      basicMeleeLocked = false
       enemy.attackCooldown = Math.max(enemy.attackCooldown, 0.24)
     }
     if (
       !isStunned &&
-      canUseSkeletonWarriorSkill(enemy) &&
+      canUseBasicMeleeAttack(enemy) &&
       enemy.attackCooldown <= 0 &&
+      enemy.behaviorTimer <= 0 &&
       (enemy.meleeAttackWindup ?? 0) <= 0 &&
       !enemy.meleeAttackReady &&
-      gap <= skeletonMeleeRange
+      gap <= basicMeleeRange
     ) {
-      enemy.meleeAttackWindup = SKELETON_WARRIOR_MELEE_WINDUP
+      const attackDirection = direction.x === 0 && direction.y === 0
+        ? normalize(enemy.facingDirection ?? enemy.behaviorDirection ?? { x: -1, y: 0 })
+        : direction
+      const attackOrigin = isDungeonSkeletonWarriorEnemy(enemy)
+        ? getSkeletonWarriorAttackOrigin(enemy, targetPosition, attackDirection)
+        : getBasicMeleeAttackOrigin(enemy, targetPosition, attackDirection, snapshot.player.size)
+      enemy.position = keepInsideCombatArea(snapshot, attackOrigin, enemy.size * 0.55)
+      const windupDuration = isDungeonSkeletonWarriorEnemy(enemy) ? SKELETON_WARRIOR_MELEE_WINDUP : BASIC_MELEE_ATTACK_WINDUP
+      const impactDelay = isDungeonSkeletonWarriorEnemy(enemy) ? SKELETON_WARRIOR_MELEE_IMPACT_DELAY : BASIC_MELEE_ATTACK_IMPACT_DELAY
+      enemy.meleeAttackWindup = windupDuration
       enemy.meleeAttackReady = false
-      enemy.facingDirection = direction
-      enemy.behaviorDirection = direction
-      snapshot.message = '骷髅战士举剑准备近身劈砍'
+      enemy.meleeAttackImpactDelay = 0
+      enemy.behaviorTimer = Math.max(enemy.behaviorTimer, windupDuration + impactDelay)
+      enemy.meleeAttackOrigin = { ...enemy.position }
+      enemy.meleeAttackDirection = attackDirection
+      enemy.facingDirection = attackDirection
+      enemy.behaviorDirection = attackDirection
+      enemy.stuckTimer = 0
+      enemy.steeringTimer = 0
+      basicMeleeLocked = true
+      snapshot.message = isDungeonSkeletonWarriorEnemy(enemy) ? '骷髅战士举剑准备近身劈砍' : '近战怪停步准备挥击'
     }
 
     if (
@@ -4054,7 +4387,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     const hasActiveBreathVisual = canUseFireBreath(enemy) && snapshot.enemySkillEffects.some((effect) => {
       return effect.kind === 'hellhound-breath' && effect.id.startsWith(`hellhound-breath-${enemy.id}-`)
     })
-    if (isStunned || rangedAttackLocked || (enemy.breathTimer ?? 0) > 0 || hasActiveBreathVisual || (enemy.meleeAttackWindup ?? 0) > 0 || enemy.meleeAttackReady) {
+    if (isStunned || bossTransitionLocked || rangedAttackLocked || (enemy.breathTimer ?? 0) > 0 || hasActiveBreathVisual || basicMeleeLocked) {
       movement = { x: 0, y: 0 }
     } else if (enemy.kind === 'charger' || canUseSkeletonKnightSkill(enemy) || enemy.skillTrait === 'wall-charge') {
       if (enemy.behaviorTimer > 0) {
@@ -4096,7 +4429,6 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
         x: direction.x * slowedSpeed * delta,
         y: direction.y * slowedSpeed * delta,
       }
-      enemy.attackCooldown = Math.max(0, enemy.attackCooldown - delta)
     } else {
       if (gap > 260) {
         movement = {
@@ -4130,8 +4462,8 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     )
     const movedDistance = distance(previousPosition, nextPosition)
 
-    if (isStunned || breathLocked) {
-      nextPosition = previousPosition
+    if (isStunned || breathLocked || basicMeleeLocked) {
+      nextPosition = basicMeleeLocked ? { ...(enemy.meleeAttackOrigin ?? previousPosition) } : previousPosition
       enemy.stuckTimer = 0
     } else {
       if (movedDistance < Math.max(0.25, slowedSpeed * delta * 0.12) && gap > enemy.size * 1.5) {
@@ -4519,373 +4851,338 @@ const updateBeastCompanions = (snapshot: GameSnapshot, delta: number) => {
   })
 }
 
-const triggerBossSecondarySkill = (snapshot: GameSnapshot, enemy: Enemy, campaign: number, direction: Vector2, targetPoint: Vector2) => {
-  if (campaign === 1) {
+const getBossGuardCount = (snapshot: GameSnapshot) => {
+  return snapshot.enemies.filter((enemy) => enemy.role === 'guard').length
+}
+
+const trySummonBossGuard = (snapshot: GameSnapshot, boss: Enemy, phase: BossPhase) => {
+  const cap = getBossGuardCap(phase)
+  if (getBossGuardCount(snapshot) >= cap) {
+    return false
+  }
+
+  const difficulty = getSnapshotDifficulty(snapshot)
+  const guard = createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), getSpawnPositionForSnapshot(snapshot, 'guard'), undefined, 'guard', difficulty)
+  guard.role = 'guard'
+  guard.hp = Math.max(10, Math.round(guard.hp * 0.78))
+  guard.maxHp = guard.hp
+  snapshot.enemies.push(guard)
+  snapshot.floatingTexts.push(createFloatingText(boss.position, `护卫 ${getBossGuardCount(snapshot)}/${cap}`, '#fde68a'))
+  return true
+}
+
+const getBossSkillCooldown = (snapshot: GameSnapshot, skill: BossCombatSkill) => {
+  return skill.cooldown * getBossSkillCooldownMultiplier(getSnapshotDifficulty(snapshot))
+}
+
+const pushBossLineWarning = (
+  snapshot: GameSnapshot,
+  enemy: Enemy,
+  skill: BossCombatSkill,
+  direction: Vector2,
+  color: string,
+  lanes: number[] = [0],
+) => {
+  lanes.forEach((angle) => {
+    const laneDirection = rotate(direction, angle)
     snapshot.enemySkillEffects.push({
-      id: `warden-stab-${enemy.id}-${createId()}`,
-      kind: 'skeleton-knight-stab',
-      position: getEnemySkillVisualAnchor(enemy, 'attack', direction),
-      direction,
-      color: '#f97316',
+      id: `boss-${skill.id}-${enemy.id}-${createId()}`,
+      kind: 'skeleton-knight-charge',
+      position: {
+        x: enemy.position.x + laneDirection.x * enemy.size * 0.9,
+        y: enemy.position.y + laneDirection.y * enemy.size * 0.9 - enemy.size * 0.12,
+      },
+      direction: laneDirection,
+      color,
       age: 0,
-      ttl: 0.28,
-      range: 82,
+      ttl: Math.max(0.34, skill.warning),
+      range: skill.range ?? 180,
     })
-    if (distance(enemy.position, snapshot.player.position) <= 94 && snapshot.player.hurtCooldown <= 0) {
-      snapshot.player.hp -= 18
-      snapshot.player.hurtCooldown = PLAYER_HURT_COOLDOWN
-    }
-    snapshot.message = '地牢典狱长铁链戳刺，正面区域出现处刑预警'
-  } else if (campaign === 2) {
-    snapshot.skillFields.push({
-      id: `count-blood-pool-${createId()}`,
-      kind: 'storm',
-      position: targetPoint,
-      ttl: 3.2,
-      radius: 82,
-      damage: 5.8,
-      tickInterval: 0.45,
-      tickCooldown: 0,
-      color: '#ef4444',
-      effect: 'burn',
-      effectStrength: 2,
-      projectileCount: 0,
-      spread: 0,
-      projectileSpeed: 0,
-      sourceSkillId: 'count-blood-pool',
-      skillLevel: 5,
-      reactionCooldown: 0,
-      centerStrikeCooldown: 0,
-      enteredEnemyIds: [],
-    })
-    enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.maxHp * 0.08)
-    snapshot.message = '血宴伯爵引爆血池并生命吸取'
-  } else if (campaign === 3) {
-    for (let index = -1; index <= 1; index += 1) {
-      const chargeDirection = rotate(direction, index * 0.34)
-      snapshot.enemySkillEffects.push({
-        id: `wolf-triple-${enemy.id}-${index}-${createId()}`,
-        kind: 'skeleton-knight-charge',
-        position: { x: enemy.position.x + chargeDirection.x * enemy.size, y: enemy.position.y + chargeDirection.y * enemy.size },
-        direction: chargeDirection,
-        color: '#93c5fd',
-        age: 0,
-        ttl: 0.42,
-        range: 112,
-      })
-    }
-    enemy.behaviorDirection = direction
-    enemy.behaviorTimer = Math.max(enemy.behaviorTimer, 0.54)
-    snapshot.message = '黑月狼王三段扑击，月光轨迹锁定玩家'
-  } else if (campaign === 4) {
-    snapshot.player.stunTimer = Math.max(snapshot.player.stunTimer ?? 0, 0.32)
-    snapshot.enemySkillEffects.push({
-      id: `witch-crows-${enemy.id}-${createId()}`,
-      kind: 'lightning-shock',
-      position: targetPoint,
-      color: '#c084fc',
-      age: 0,
-      ttl: 0.42,
-      range: 76,
-    })
-    snapshot.message = '三相女巫释放乌鸦阵和变形诅咒'
-  } else if (campaign === 5) {
-    snapshot.enemyProjectiles.push(...createEnemyProjectiles(enemy.position, snapshot.player.position, Math.max(4, enemy.attackDamage ?? 12)).map((projectile) => ({
-      ...projectile,
-      damage: projectile.damage + 8,
-      size: projectile.size + 2,
-      color: '#f59e0b',
-      sourceSkillId: 'orc-boss-axe',
-    })))
-    snapshot.message = '断牙战酋投掷巨斧，弹道比普通远程更重'
-  } else if (campaign === 6) {
-    const mirror = createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), getSpawnPositionForSnapshot(snapshot, 'guard'))
-    mirror.displayName = '圣林镜像'
-    mirror.hp = Math.max(12, Math.round(mirror.hp * 0.5))
-    mirror.maxHp = mirror.hp
-    if (snapshot.enemies.length < getMaxEnemiesOnField(snapshot.level) + 2) {
-      snapshot.enemies.push(mirror)
-    }
-    enemy.blockTimer = Math.max(enemy.blockTimer ?? 0, 1.1)
-    snapshot.message = '失落林冠女王召出镜像分身并获得圣林护盾'
-  } else if (campaign === 7) {
-    for (let index = 0; index < 4; index += 1) {
-      const mine = keepInsideCombatArea(snapshot, {
-        x: targetPoint.x + Math.cos(index * Math.PI * 0.5) * 58,
-        y: targetPoint.y + Math.sin(index * Math.PI * 0.5) * 42,
-      }, 24)
-      snapshot.bursts.push(createBurst(mine, 'rgba(249, 115, 22, ALPHA)', 48))
-    }
-    snapshot.message = '地精巨械驾驶员部署地雷阵和旋转锯臂'
-  } else if (campaign === 8) {
-    snapshot.enemySkillEffects.push({
-      id: `tide-bubble-${enemy.id}-${createId()}`,
-      kind: 'lightning-shock',
-      position: targetPoint,
-      color: '#22d3ee',
-      age: 0,
-      ttl: 0.5,
-      range: 92,
-    })
-    enemy.blockTimer = Math.max(enemy.blockTimer ?? 0, 1.3)
-    snapshot.message = '沉潮祭司制造闪电水域并获得水泡护盾'
-  } else if (campaign === 9) {
-    for (let index = -1; index <= 1; index += 1) {
-      const lane = rotate(direction, index * 0.24)
-      snapshot.enemySkillEffects.push({
-        id: `minotaur-lane-${enemy.id}-${index}-${createId()}`,
-        kind: 'skeleton-knight-charge',
-        position: { x: enemy.position.x + lane.x * enemy.size, y: enemy.position.y + lane.y * enemy.size },
-        direction: lane,
-        color: '#b45309',
-        age: 0,
-        ttl: 0.52,
-        range: 138,
-      })
-    }
-    snapshot.message = '迷宫牛头王三线冲锋，墙体方向出现撞击预警'
-  } else {
-    for (let index = 0; index < 3; index += 1) {
-      const impact = keepInsideCombatArea(snapshot, {
-        x: targetPoint.x + randomBetween(-82, 82),
-        y: targetPoint.y + randomBetween(-62, 62),
-      }, 28)
-      snapshot.skillFields.push({
-        id: `dragon-meteor-${index}-${createId()}`,
-        kind: 'storm',
-        position: impact,
-        ttl: 2.2,
-        radius: 54,
-        damage: 7.2,
-        tickInterval: 0.48,
-        tickCooldown: 0,
-        color: '#fb923c',
-        effect: 'burn',
-        effectStrength: 3.2,
-        projectileCount: 0,
-        spread: 0,
-        projectileSpeed: 0,
-        sourceSkillId: 'dragon-meteor-rain',
-        skillLevel: 5,
-        reactionCooldown: 0,
-        centerStrikeCooldown: 0,
-        enteredEnemyIds: [],
-      })
-    }
-    snapshot.message = '契约巨龙召唤熔岩雨，目标区域出现陨石预警'
+  })
+}
+
+const pushBossConeWarning = (snapshot: GameSnapshot, enemy: Enemy, skill: BossCombatSkill, direction: Vector2, color: string) => {
+  snapshot.enemySkillEffects.push({
+    id: `boss-${skill.id}-${enemy.id}-${createId()}`,
+    kind: 'skeleton-knight-stab',
+    position: getEnemySkillVisualAnchor(enemy, 'attack', direction),
+    direction,
+    color,
+    age: 0,
+    ttl: Math.max(0.28, skill.warning),
+    range: skill.range ?? 110,
+    halfAngle: ((skill.angle ?? 80) * Math.PI / 180) * 0.5,
+  })
+}
+
+const pushBossAreaField = (
+  snapshot: GameSnapshot,
+  skill: BossCombatSkill,
+  position: Vector2,
+  options: {
+    kind?: SkillField['kind']
+    color: string
+    effect?: SkillEffectTag
+    effectStrength?: number
+    radius?: number
+    ttl?: number
+    damageMultiplier?: number
+  },
+) => {
+  const multiplier = options.damageMultiplier ?? skill.damageMultiplier
+  snapshot.skillFields.push({
+    id: `boss-${skill.id}-${createId()}`,
+    kind: options.kind ?? (skill.kind === 'control' ? 'trap' : 'storm'),
+    owner: 'enemy',
+    position,
+    ttl: options.ttl ?? skill.duration ?? (skill.kind === 'finisher' ? 3 : 2.4),
+    radius: options.radius ?? skill.radius ?? (skill.kind === 'finisher' ? 94 : 72),
+    damage: Math.max(1, multiplier * 4.2),
+    tickInterval: 0.48,
+    tickCooldown: 0,
+    color: options.color,
+    effect: options.effect ?? 'none',
+    effectStrength: options.effectStrength ?? 0,
+    projectileCount: 0,
+    spread: 0,
+    projectileSpeed: 0,
+    sourceSkillId: skill.id,
+    skillLevel: 5,
+    reactionCooldown: 0,
+    centerStrikeCooldown: 0,
+    enteredEnemyIds: [],
+  })
+}
+
+const pushBossMultiAreas = (
+  snapshot: GameSnapshot,
+  skill: BossCombatSkill,
+  center: Vector2,
+  count: number,
+  color: string,
+  radius: number,
+  spreadX = 82,
+  spreadY = 62,
+) => {
+  for (let index = 0; index < count; index += 1) {
+    const angle = (Math.PI * 2 * index) / Math.max(1, count)
+    const position = keepInsideCombatArea(snapshot, {
+      x: center.x + Math.cos(angle) * spreadX,
+      y: center.y + Math.sin(angle) * spreadY,
+    }, radius)
+    pushBossAreaField(snapshot, skill, position, { color, radius, effect: color.includes('fb923c') ? 'burn' : 'none' })
   }
 }
 
-const triggerBossPhaseSkill = (snapshot: GameSnapshot, enemy: Enemy, campaign: number) => {
-  applyEnemySpeedMultiplier(enemy, 1.04)
-  enemy.blockTimer = Math.max(enemy.blockTimer ?? 0, 0.8)
-  snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(251, 191, 36, ALPHA)', enemy.size * 1.8))
-
-  if (campaign === 2 || campaign === 3 || campaign === 7 || campaign === 10) {
-    const guard = createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), getSpawnPositionForSnapshot(snapshot, 'guard'))
-    guard.hp = Math.max(10, Math.round(guard.hp * 0.7))
-    guard.maxHp = guard.hp
-    if (snapshot.enemies.length < getMaxEnemiesOnField(snapshot.level) + 3) {
-      snapshot.enemies.push(guard)
+const summonBossGuardForSkill = (snapshot: GameSnapshot, enemy: Enemy, phase: BossPhase, skill: BossCombatSkill, count = 1) => {
+  let summoned = 0
+  for (let index = 0; index < count; index += 1) {
+    if (trySummonBossGuard(snapshot, enemy, phase)) {
+      summoned += 1
     }
   }
+  const cap = getBossGuardCap(phase)
+  snapshot.message = summoned > 0
+    ? `${enemy.displayName ?? 'Boss'}施放${skill.label}，护卫 ${getBossGuardCount(snapshot)}/${cap}`
+    : `${enemy.displayName ?? 'Boss'}施放${skill.label}，护卫已达第 ${phase} 阶段上限`
+  return summoned
+}
 
-  const bossName = enemy.displayName ?? getCampaignMonsterTheme(snapshot.level).boss.name
-  snapshot.message = `${bossName}进入低血阶段，技能冷却缩短并强化护卫/场地机制`
+const applyBossCombatSkill = (
+  snapshot: GameSnapshot,
+  enemy: Enemy,
+  skill: BossCombatSkill,
+  tableName: string,
+  phase: BossPhase,
+  direction: Vector2,
+  targetPoint: Vector2,
+) => {
+  enemy.bossLastSkillId = skill.id
+  enemy.facingDirection = direction
+  enemy.behaviorDirection = direction
+
+  const setMessage = (extra = '') => {
+    snapshot.message = `${tableName} P${phase}：${skill.label}${extra ? `，${extra}` : ''}`
+  }
+
+  switch (skill.id) {
+    case 'chain-sweep':
+      pushBossConeWarning(snapshot, enemy, skill, direction, '#f97316')
+      setMessage('扇形铁链预警')
+      break
+    case 'bone-guard':
+    case 'bat-swarm':
+    case 'moon-howl':
+    case 'shield-wall':
+    case 'mirror-image':
+    case 'repair-goblin':
+    case 'murloc-guard':
+      summonBossGuardForSkill(snapshot, enemy, phase, skill)
+      break
+    case 'cage-root':
+    case 'hex-slow':
+    case 'vine-bind':
+      pushBossAreaField(snapshot, skill, targetPoint, { kind: 'trap', color: '#bef264', effect: 'slow', effectStrength: 0.42, radius: skill.radius ?? 68 })
+      if (distance(targetPoint, snapshot.player.position) <= (skill.radius ?? 68)) {
+        snapshot.player.stunTimer = Math.max(snapshot.player.stunTimer ?? 0, Math.min(0.8, skill.duration ?? 0.5))
+      }
+      setMessage('控制预警')
+      break
+    case 'chain-line':
+    case 'minecart-lane':
+    case 'ground-crack':
+    case 'second-crack':
+      pushBossLineWarning(snapshot, enemy, skill, direction, '#f97316')
+      setMessage('线形残留预警')
+      break
+    case 'execution-charge':
+    case 'flying-dive':
+      pushBossLineWarning(snapshot, enemy, skill, direction, '#fb923c')
+      enemy.behaviorTimer = Math.max(enemy.behaviorTimer, skill.warning)
+      setMessage(skill.safetyWindow ?? '横向躲避')
+      break
+    case 'bat-blink':
+      enemy.position = keepInsideCombatArea(snapshot, {
+        x: snapshot.player.position.x + direction.x * -72,
+        y: snapshot.player.position.y + direction.y * -52,
+      }, enemy.size * 0.5)
+      snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(239, 68, 68, ALPHA)', 46))
+      setMessage('落点预警后闪现')
+      break
+    case 'blood-pool':
+    case 'swamp-slow':
+    case 'electric-water':
+    case 'tide-pull':
+    case 'deep-sacrifice':
+      pushBossAreaField(snapshot, skill, targetPoint, { color: '#22d3ee', effect: 'slow', effectStrength: 0.28, radius: skill.radius ?? 90 })
+      setMessage('区域压力')
+      break
+    case 'life-drain':
+      pushBossLineWarning(snapshot, enemy, skill, direction, '#ef4444')
+      enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.maxHp * 0.04)
+      setMessage('射线吸取')
+      break
+    case 'blood-feast':
+      pushBossMultiAreas(snapshot, skill, targetPoint, 3, '#ef4444', 72)
+      setMessage(skill.safetyWindow ?? '离开血池')
+      break
+    case 'triple-pounce':
+    case 'triple-charge':
+    case 'minecart-crash':
+      pushBossLineWarning(snapshot, enemy, skill, direction, '#93c5fd', [-0.28, 0, 0.28])
+      enemy.behaviorTimer = Math.max(enemy.behaviorTimer, skill.warning)
+      setMessage(skill.safetyWindow ?? '三线预警')
+      break
+    case 'bleed-bite':
+      pushBossConeWarning(snapshot, enemy, skill, direction, '#f87171')
+      setMessage('近身流血窗口')
+      break
+    case 'pack-aura':
+    case 'war-drum-aura':
+      snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(251, 191, 36, ALPHA)', skill.radius ?? 90))
+      setMessage('护卫强化光环')
+      break
+    case 'fullmoon-rage':
+    case 'drum-rage':
+    case 'rage-hunt':
+      enemy.blockTimer = Math.max(enemy.blockTimer ?? 0, skill.duration ?? 2)
+      snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(251, 191, 36, ALPHA)', enemy.size * 2.2))
+      setMessage(skill.safetyWindow ?? '阶段压力提升')
+      break
+    case 'poison-fog':
+      pushBossAreaField(snapshot, skill, targetPoint, { color: '#84cc16', effect: 'slow', effectStrength: 0.24, radius: skill.radius ?? 95, ttl: skill.duration ?? 5, damageMultiplier: 0.35 })
+      setMessage('毒雾区域')
+      break
+    case 'crow-lines':
+      pushBossLineWarning(snapshot, enemy, skill, direction, '#c084fc', [-0.42, 0, 0.42])
+      setMessage('乌鸦飞掠线')
+      break
+    case 'swamp-root':
+      pushBossMultiAreas(snapshot, skill, targetPoint, 3, '#84cc16', 76)
+      setMessage(skill.safetyWindow ?? '三圈连锁')
+      break
+    case 'giant-axe':
+      snapshot.enemyProjectiles.push(...createEnemyProjectiles(enemy.position, snapshot.player.position, Math.max(4, enemy.attackDamage ?? 12)).map((projectile) => ({
+        ...projectile,
+        damage: Math.max(projectile.damage, (enemy.attackDamage ?? 12) * skill.damageMultiplier),
+        size: projectile.size + 2,
+        color: '#f59e0b',
+        sourceSkillId: skill.id,
+      })))
+      setMessage('巨斧弹道')
+      break
+    case 'war-stomp':
+    case 'saw-arm':
+      pushBossAreaField(snapshot, skill, { ...enemy.position }, { color: '#f59e0b', radius: skill.radius ?? 120, damageMultiplier: skill.damageMultiplier })
+      setMessage('近身范围预警')
+      break
+    case 'star-rain':
+    case 'lava-rain':
+    case 'final-judgement':
+      pushBossMultiAreas(snapshot, skill, targetPoint, skill.id === 'final-judgement' ? 7 : 5, '#fb923c', skill.radius ?? 48, 120, 86)
+      setMessage(skill.safetyWindow ?? '落点预警')
+      break
+    case 'starlight-shield':
+    case 'dragonblood-shield':
+    case 'sacred-shield':
+      enemy.blockTimer = Math.max(enemy.blockTimer ?? 0, skill.duration ?? 1.5)
+      snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(125, 211, 252, ALPHA)', enemy.size * 2.4))
+      setMessage('护盾窗口')
+      break
+    case 'minefield':
+      pushBossMultiAreas(snapshot, skill, targetPoint, 5, '#fb923c', 34, 70, 52)
+      setMessage('地雷阵预警')
+      break
+    case 'maze-wall':
+      pushBossAreaField(snapshot, skill, targetPoint, { kind: 'trap', color: '#b45309', radius: 86, ttl: skill.duration ?? 4, effect: 'slow', effectStrength: 0.2 })
+      setMessage('墙体区域，保留出口')
+      break
+    case 'tide-push':
+      pushBossLineWarning(snapshot, enemy, skill, direction, '#22d3ee')
+      snapshot.player.position = keepInsideCombatArea(snapshot, {
+        x: snapshot.player.position.x + direction.x * 42,
+        y: snapshot.player.position.y + direction.y * 42,
+      }, snapshot.player.size * 0.5)
+      setMessage('潮水推进')
+      break
+    case 'dragon-breath':
+      pushBossConeWarning(snapshot, enemy, skill, direction, '#fb923c')
+      setMessage('龙息扇面')
+      break
+    default:
+      if (skill.width || skill.range) {
+        pushBossLineWarning(snapshot, enemy, skill, direction, '#f97316')
+      } else {
+        pushBossAreaField(snapshot, skill, targetPoint, { color: '#f97316', radius: skill.radius ?? 72 })
+      }
+      setMessage('表驱动技能')
+      break
+  }
+
+  enemy.attackCooldown = getBossSkillCooldown(snapshot, skill)
+  return true
 }
 
 const triggerBossSpecialAttack = (snapshot: GameSnapshot, enemy: Enemy) => {
+  if ((enemy.bossTransitionTimer ?? 0) > 0) {
+    enemy.attackCooldown = Math.max(enemy.attackCooldown, enemy.bossTransitionTimer ?? 0)
+    return false
+  }
+
   const direction = normalize({
     x: snapshot.player.position.x - enemy.position.x,
     y: snapshot.player.position.y - enemy.position.y,
   })
   const campaign = enemy.campaignIndex ?? getCampaignIndex(snapshot.level)
+  const table = getBossCombatTable(campaign)
+  const phase = getBossPhase(enemy)
+  const phaseSkills = table.phases[phase].skills
   const targetPoint = keepInsideCombatArea(snapshot, { ...snapshot.player.position }, 24)
   const skillIndex = enemy.bossSkillIndex ?? 0
-  const enraged = enemy.hp / Math.max(1, enemy.maxHp) <= 0.45
-  enemy.bossSkillIndex = (skillIndex + 1) % 3
+  const skill = phaseSkills[skillIndex % Math.max(1, phaseSkills.length)]
+  enemy.bossSkillIndex = (skillIndex + 1) % Math.max(1, phaseSkills.length)
 
-  if (skillIndex === 1) {
-    triggerBossSecondarySkill(snapshot, enemy, campaign, direction, targetPoint)
-    enemy.attackCooldown = campaign >= 10 ? 1.28 : campaign >= 7 ? 1.48 : 1.62
-    return true
-  }
-
-  if (skillIndex === 2 && enraged) {
-    triggerBossPhaseSkill(snapshot, enemy, campaign)
-    enemy.attackCooldown = campaign >= 10 ? 1.18 : campaign >= 7 ? 1.36 : 1.52
-    return true
-  }
-
-  if (campaign === 1) {
-    enemy.behaviorDirection = direction
-    enemy.behaviorTimer = Math.max(enemy.behaviorTimer, 0.46)
-    enemy.behaviorCooldown = 2.8
-    snapshot.message = '地牢典狱长处刑冲锋，并召唤骷髅护卫'
-    snapshot.enemySkillEffects.push({
-      id: `skeleton-knight-charge-${enemy.id}-${createId()}`,
-      kind: 'skeleton-knight-charge',
-      position: {
-        x: enemy.position.x + direction.x * enemy.size * 0.9,
-        y: enemy.position.y + direction.y * enemy.size * 0.9 - enemy.size * 0.18,
-      },
-      direction,
-      color: '#f97316',
-      age: 0,
-      ttl: 0.46,
-      range: 112,
-    })
-    if (snapshot.enemies.length < getMaxEnemiesOnField(snapshot.level) + 3) {
-      snapshot.enemies.push(createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), getSpawnPositionForSnapshot(snapshot, 'guard')))
-    }
-    snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(251, 113, 133, ALPHA)', 28))
-  } else if (campaign === 2) {
-    enemy.position = keepInsideCombatArea(snapshot, {
-      x: snapshot.player.position.x + randomBetween(-96, 96),
-      y: snapshot.player.position.y + randomBetween(-72, 72),
-    }, enemy.size * 0.5)
-    enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.maxHp * 0.06)
-    if (snapshot.enemies.length < getMaxEnemiesOnField(snapshot.level) + 3) {
-      snapshot.enemies.push(createEnemy(snapshot.level, 'splitter', getSpawnPositionForSnapshot(snapshot, 'guard')))
-    }
-    snapshot.message = '血宴伯爵化蝠闪现，血池吸血并唤来蝠群'
-    snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(239, 68, 68, ALPHA)', 52))
-  } else if (campaign === 3) {
-    enemy.behaviorDirection = direction
-    enemy.behaviorTimer = Math.max(enemy.behaviorTimer, enemy.hp / enemy.maxHp < 0.35 ? 0.62 : 0.42)
-    applyEnemySpeedMultiplier(enemy, enemy.hp / enemy.maxHp < 0.35 ? 1.08 : 1.02)
-    snapshot.enemies.forEach((other) => {
-      if (other.id !== enemy.id && distance(other.position, enemy.position) <= 180) {
-        other.slowTtl = 0
-        applyEnemySpeedMultiplier(other, 1.02)
-      }
-    })
-    snapshot.message = '黑月狼王扑击并狼嚎加速，低血时进入狂暴'
-    snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(147, 197, 253, ALPHA)', 46))
-  } else if (campaign === 4) {
-    snapshot.skillFields.push({
-      id: `witch-poison-${createId()}`,
-      kind: 'storm',
-      position: targetPoint,
-      ttl: 3,
-      radius: 74,
-      damage: 5,
-      tickInterval: 0.45,
-      tickCooldown: 0,
-      color: '#84cc16',
-      effect: 'slow',
-      effectStrength: 0.22,
-      projectileCount: 0,
-      spread: 0,
-      projectileSpeed: 0,
-      sourceSkillId: 'witch-poison-mist',
-      skillLevel: 5,
-      reactionCooldown: 0,
-      centerStrikeCooldown: 0,
-      enteredEnemyIds: [],
-    })
-    snapshot.player.stunTimer = Math.max(snapshot.player.stunTimer ?? 0, 0.18)
-    snapshot.message = '三相女巫释放毒雾和诅咒减速'
-  } else if (campaign === 5) {
-    snapshot.enemies.forEach((other) => {
-      if (other.id !== enemy.id && distance(other.position, enemy.position) <= 190) {
-        other.slowTtl = 0
-        applyEnemySpeedMultiplier(other, 1.015)
-      }
-    })
-    if (distance(enemy.position, snapshot.player.position) <= 88 && snapshot.player.hurtCooldown <= 0) {
-      snapshot.player.hp -= 18
-      snapshot.player.hurtCooldown = PLAYER_HURT_COOLDOWN
-    }
-    snapshot.message = '断牙战酋敲响战鼓，并对近身区域顺劈'
-    snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(245, 158, 11, ALPHA)', 82))
-  } else if (campaign === 6) {
-    snapshot.skillFields.push({
-      id: `elf-root-${createId()}`,
-      kind: 'trap',
-      position: targetPoint,
-      ttl: 2.8,
-      radius: 68,
-      damage: 4,
-      tickInterval: 0.5,
-      tickCooldown: 0,
-      color: '#bef264',
-      effect: 'slow',
-      effectStrength: 0.42,
-      projectileCount: 0,
-      spread: 0,
-      projectileSpeed: 0,
-      sourceSkillId: 'elf-root-grove',
-      skillLevel: 5,
-      reactionCooldown: 0,
-      centerStrikeCooldown: 0,
-      enteredEnemyIds: [],
-    })
-    enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.maxHp * 0.045)
-    snapshot.message = '失落林冠女王召出根须缠绕和治疗林地'
-  } else if (campaign === 7) {
-    const mine = keepInsideCombatArea(snapshot, {
-      x: snapshot.player.position.x + randomBetween(-48, 48),
-      y: snapshot.player.position.y + randomBetween(-48, 48),
-    }, 24)
-    snapshot.bursts.push(createBurst(mine, 'rgba(249, 115, 22, ALPHA)', 52))
-    if (distance(mine, snapshot.player.position) <= 52 && snapshot.player.hurtCooldown <= 0) {
-      snapshot.player.hp -= 20
-      snapshot.player.hurtCooldown = PLAYER_HURT_COOLDOWN * 0.6
-    }
-    enemy.hp = Math.min(enemy.maxHp, enemy.hp + enemy.maxHp * 0.035)
-    snapshot.message = '地精巨械布设炸弹，巨魔结构开始再生'
-  } else if (campaign === 8) {
-    const push = normalize({ x: snapshot.player.position.x - enemy.position.x, y: snapshot.player.position.y - enemy.position.y })
-    snapshot.player.position = keepInsideCombatArea(snapshot, {
-      x: snapshot.player.position.x + push.x * 42,
-      y: snapshot.player.position.y + push.y * 42,
-    }, snapshot.player.size * 0.5)
-    enemy.blockTimer = Math.max(enemy.blockTimer ?? 0, 1)
-    snapshot.message = '沉潮祭司掀起潮汐推拉，并获得水泡护盾'
-    snapshot.bursts.push(createBurst({ ...snapshot.player.position }, 'rgba(34, 211, 238, ALPHA)', 58))
-  } else if (campaign === 9) {
-    enemy.behaviorDirection = direction
-    enemy.behaviorTimer = Math.max(enemy.behaviorTimer, 0.7)
-    enemy.behaviorCooldown = 2.4
-    if (distance(enemy.position, snapshot.player.position) <= 110 && snapshot.player.hurtCooldown <= 0) {
-      snapshot.player.hp -= 16
-      snapshot.player.hurtCooldown = PLAYER_HURT_COOLDOWN
-      snapshot.player.stunTimer = Math.max(snapshot.player.stunTimer ?? 0, 0.45)
-    }
-    snapshot.message = '迷宫牛头王蓄力冲撞并震地'
-    snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(180, 83, 9, ALPHA)', 72))
-  } else {
-    updateHellhoundBreath(snapshot, enemy, 0, direction, distance(enemy.position, snapshot.player.position))
-    snapshot.skillFields.push({
-      id: `dragon-lava-${createId()}`,
-      kind: 'storm',
-      position: targetPoint,
-      ttl: 3.2,
-      radius: 76,
-      damage: 6.5,
-      tickInterval: 0.42,
-      tickCooldown: 0,
-      color: '#fb923c',
-      effect: 'burn',
-      effectStrength: 3,
-      projectileCount: 0,
-      spread: 0,
-      projectileSpeed: 0,
-      sourceSkillId: 'dragon-lava-pool',
-      skillLevel: 5,
-      reactionCooldown: 0,
-      centerStrikeCooldown: 0,
-      enteredEnemyIds: [],
-    })
-    if (enemy.hp / enemy.maxHp < 0.35) {
-      applyEnemySpeedMultiplier(enemy, 1.03)
-    }
-    snapshot.message = '契约巨龙喷吐火焰并留下熔岩池'
-  }
-
-  enemy.attackCooldown = campaign >= 10 ? 1.45 : campaign >= 7 ? 1.65 : 1.85
-  return true
+  return applyBossCombatSkill(snapshot, enemy, skill, table.name, phase, direction, targetPoint)
 }
 
 const triggerEnemyAttacks = (snapshot: GameSnapshot) => {
@@ -5192,8 +5489,9 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
           x: enemy.position.x + offset.x,
           y: enemy.position.y + offset.y,
         }, childStats.size * 0.45)
+        const difficulty = getSnapshotDifficulty(snapshot)
         spawnedEnemies.push({
-          ...createEnemy(snapshot.level, 'melee', childPosition),
+          ...createEnemy(snapshot.level, 'melee', childPosition, undefined, undefined, difficulty),
           id: `split-${createId()}`,
           hp: childHp,
           maxHp: childHp,
@@ -5206,13 +5504,14 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
     }
 
     if (enemy.kind === 'elite' && enemy.eliteAffixes?.includes('split')) {
-      const childStats = getEnemyStats(Math.max(1, snapshot.level - 2), getCampaignGuardEnemyKind(snapshot.level))
+      const difficulty = getSnapshotDifficulty(snapshot)
+      const childStats = getEnemyStats(Math.max(1, snapshot.level - 2), getCampaignGuardEnemyKind(snapshot.level), difficulty)
       ;[-1, 1].forEach((sign) => {
         const childPosition = keepInsideCombatArea(snapshot, {
           x: enemy.position.x + sign * 18,
           y: enemy.position.y + 12,
         }, childStats.size * 0.45)
-        const child = createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), childPosition)
+        const child = createEnemy(snapshot.level, getCampaignGuardEnemyKind(snapshot.level), childPosition, undefined, undefined, difficulty)
         child.hp = Math.max(10, Math.round(enemy.maxHp * 0.18))
         child.maxHp = child.hp
         spawnedEnemies.push(child)
@@ -5258,6 +5557,11 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
 
     snapshot.kills += 1
     snapshot.levelKills += 1
+    if (enemy.kind === 'boss') {
+      snapshot.runBossKills += 1
+    } else if (enemy.grantsEliteReward || enemy.kind === 'elite') {
+      snapshot.runEliteKills += 1
+    }
     snapshot.bursts.push(
       createBurst({ ...enemy.position }, enemy.kind === 'ranged' ? 'rgba(125, 211, 252, ALPHA)' : 'rgba(244, 114, 182, ALPHA)', 10),
     )
@@ -5339,6 +5643,9 @@ const fieldsOverlap = (first: SkillField, second: SkillField) => {
 }
 
 const triggerFieldReaction = (snapshot: GameSnapshot, first: SkillField, second: SkillField) => {
+  if (first.owner === 'enemy' || second.owner === 'enemy') {
+    return
+  }
   if ((first.reactionCooldown ?? 0) > 0 || (second.reactionCooldown ?? 0) > 0 || !fieldsOverlap(first, second)) {
     return
   }
@@ -5399,6 +5706,28 @@ const triggerFieldReaction = (snapshot: GameSnapshot, first: SkillField, second:
   second.reactionCooldown = 1.5
 }
 
+const updateEnemyOwnedSkillField = (snapshot: GameSnapshot, field: SkillField) => {
+  if (field.tickCooldown > 0 || field.kind === 'turret') {
+    return
+  }
+
+  field.tickCooldown = field.tickInterval
+  if (snapshot.player.dashTimer > 0 || distance(snapshot.player.position, field.position) > field.radius) {
+    return
+  }
+
+  if (snapshot.player.hurtCooldown <= 0) {
+    snapshot.player.hp -= field.damage
+    snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, PLAYER_HURT_COOLDOWN * 0.55)
+    if (field.effect === 'slow') {
+      snapshot.player.stunTimer = Math.max(snapshot.player.stunTimer ?? 0, Math.min(0.45, 0.18 + field.effectStrength))
+    }
+    snapshot.message = `Boss 技能 ${field.sourceSkillId} 命中，注意离开预警区域`
+    snapshot.floatingTexts.push(createFloatingText(snapshot.player.position, `-${Math.round(field.damage)}`, '#fca5a5'))
+    snapshot.bursts.push(createBurst({ ...snapshot.player.position }, field.color.includes('#') ? 'rgba(248, 113, 113, ALPHA)' : field.color, Math.min(28, field.radius * 0.32)))
+  }
+}
+
 const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
   snapshot.skillFields.forEach((field) => {
     field.reactionCooldown = Math.max(0, (field.reactionCooldown ?? 0) - delta)
@@ -5414,6 +5743,9 @@ const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
     field.ttl -= delta
     if (field.ttl <= 0 && !field.expired) {
       field.expired = true
+      if (field.owner === 'enemy') {
+        return
+      }
       if ((field.skillLevel ?? 1) >= 5 && field.sourceSkillId === 'starfire-fall') {
         snapshot.enemies.forEach((enemy) => {
           if (enemy.hp > 0 && distance(enemy.position, field.position) <= field.radius) {
@@ -5459,6 +5791,11 @@ const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
 
     field.tickCooldown = Math.max(0, field.tickCooldown - delta)
     if (field.tickCooldown > 0) {
+      return
+    }
+
+    if (field.owner === 'enemy') {
+      updateEnemyOwnedSkillField(snapshot, field)
       return
     }
 
@@ -5545,15 +5882,25 @@ const resolvePlayerDamage = (snapshot: GameSnapshot) => {
     return
   }
 
+  const readyBasicMeleeEnemies = snapshot.enemies.filter((enemy) => isBasicMeleeImpactReady(enemy))
+  const basicMeleeEnemy = readyBasicMeleeEnemies.find((enemy) => {
+    return distance(enemy.position, snapshot.player.position) <= getBasicMeleeEnemyStrikeRange(enemy, snapshot.player.size)
+  })
+  readyBasicMeleeEnemies.forEach((enemy) => {
+    if (enemy !== basicMeleeEnemy) {
+      clearBasicMeleeAttackState(enemy, isDungeonSkeletonWarriorEnemy(enemy) ? 0.72 : BASIC_MELEE_ATTACK_COOLDOWN)
+    }
+  })
+
   const collidingEnemy = snapshot.enemies.find((enemy) => {
     if (enemy.kind === 'ranged') {
       return false
     }
-    if (canUseSkeletonWarriorSkill(enemy) && !enemy.meleeAttackReady) {
+    if (canUseBasicMeleeAttack(enemy) && !(enemy.kind === 'boss' && enemy.behaviorTimer > 0)) {
       return false
     }
     return distance(enemy.position, snapshot.player.position) < enemy.size * 0.55 + snapshot.player.size * 0.55
-  })
+  }) ?? basicMeleeEnemy
 
   const hitByProjectile = snapshot.enemyProjectiles.find((projectile) => {
     return projectile.ttl > 0 && distance(projectile.position, snapshot.player.position) < projectile.size + snapshot.player.size * 0.55
@@ -5591,8 +5938,8 @@ const resolvePlayerDamage = (snapshot: GameSnapshot) => {
         range: collidingEnemy.size * 2.1,
       })
     }
-    if (collidingEnemy && canUseSkeletonWarriorSkill(collidingEnemy)) {
-      const slashDirection = normalize({
+    if (collidingEnemy && isDungeonSkeletonWarriorEnemy(collidingEnemy)) {
+      const slashDirection = normalize(collidingEnemy.meleeAttackDirection ?? {
         x: snapshot.player.position.x - collidingEnemy.position.x,
         y: snapshot.player.position.y - collidingEnemy.position.y,
       })
@@ -5607,9 +5954,9 @@ const resolvePlayerDamage = (snapshot: GameSnapshot) => {
         ttl: 0.26,
         range: collidingEnemy.size * 1.4,
       })
-      collidingEnemy.meleeAttackReady = false
-      collidingEnemy.meleeAttackWindup = 0
-      collidingEnemy.attackCooldown = Math.max(collidingEnemy.attackCooldown, 0.92)
+      clearBasicMeleeAttackState(collidingEnemy, 0.92)
+    } else if (collidingEnemy && canUseBasicMeleeAttack(collidingEnemy)) {
+      clearBasicMeleeAttackState(collidingEnemy, BASIC_MELEE_ATTACK_COOLDOWN)
     }
     if (collidingEnemy?.skillTrait === 'life-steal' || collidingEnemy?.eliteAffixes?.includes('vampiric')) {
       collidingEnemy.hp = Math.min(collidingEnemy.maxHp, collidingEnemy.hp + ENEMY_CONTACT_DAMAGE * 0.45)
@@ -6079,21 +6426,21 @@ const getHighThreatPoolForHorde = (level: number) => {
   return highThreat.length > 0 ? highThreat : pool
 }
 
-const createHordeEnemy = (level: number, spawnedCount: number, position: Vector2) => {
+const createHordeEnemy = (level: number, spawnedCount: number, position: Vector2, difficulty: CampaignDifficulty = 'normal') => {
   const slimeRatio = getCorrosiveSlimeRatio(level)
   const highThreatRatio = getHighThreatRatio(level)
   const cycle = Math.max(1, spawnedCount % 100)
   if (cycle <= Math.round(slimeRatio * 100)) {
-    return createEnemy(level, CORROSIVE_SLIME_ARCHETYPE.kind, position, CORROSIVE_SLIME_ARCHETYPE, 'fodder')
+    return createEnemy(level, CORROSIVE_SLIME_ARCHETYPE.kind, position, CORROSIVE_SLIME_ARCHETYPE, 'fodder', difficulty)
   }
 
   if (cycle >= 100 - Math.round(highThreatRatio * 100)) {
     const archetype = pickWeightedArchetype(getHighThreatPoolForHorde(level))
-    return createEnemy(level, archetype.kind, position, archetype, 'high-threat')
+    return createEnemy(level, archetype.kind, position, archetype, 'high-threat', difficulty)
   }
 
   const archetype = pickWeightedArchetype(getThemeNormalPoolForHorde(level))
-  return createEnemy(level, archetype.kind, position, archetype, 'theme')
+  return createEnemy(level, archetype.kind, position, archetype, 'theme', difficulty)
 }
 
 const spawnWaveEnemies = (snapshot: GameSnapshot) => {
@@ -6101,7 +6448,10 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
     return
   }
 
-  if (snapshot.enemies.length >= getMaxEnemiesOnField(snapshot.level) || snapshot.spawnCooldown > 0) {
+  const difficulty = getSnapshotDifficulty(snapshot)
+  const maxEnemies = getMaxEnemiesOnField(snapshot.level, difficulty)
+
+  if (snapshot.enemies.length >= maxEnemies || snapshot.spawnCooldown > 0) {
     return
   }
 
@@ -6114,7 +6464,7 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
     const boss = createEnemy(snapshot.level, 'boss', {
       x: arenaCenter.x,
       y: arenaCenter.y - Math.min(220, (snapshot.battlefield.bossArenaRadius ?? BOSS_ARENA_RADIUS) * 0.34),
-    })
+    }, undefined, undefined, difficulty)
     boss.id = `boss-${createId()}`
     boss.grantsEliteReward = true
     boss.attackCooldown = 1.1
@@ -6123,10 +6473,10 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
     spawnCount = 1
     snapshot.message = `${boss.displayName ?? '小 Boss'}登场：会冲锋，也会释放扇形弹幕`
   } else if (isEliteLevel(snapshot.level) && !snapshot.eliteSpawnedThisLevel) {
-    const capacity = Math.max(1, getMaxEnemiesOnField(snapshot.level) - snapshot.enemies.length)
-    const ranks = getEliteSpawnRanks(snapshot.level).slice(0, Math.min(capacity, snapshot.remainingToSpawn))
+    const capacity = Math.max(1, maxEnemies - snapshot.enemies.length)
+    const ranks = getEliteSpawnRanks(snapshot.level, difficulty).slice(0, Math.min(capacity, snapshot.remainingToSpawn))
     ranks.forEach((rank, index) => {
-      snapshot.enemies.push(spawnEliteEnemy(snapshot.level, snapshot.mapObstacles, rank, index === 0, getSpawnPositionForSnapshot(snapshot, 'elite')))
+      snapshot.enemies.push(spawnEliteEnemy(snapshot.level, snapshot.mapObstacles, rank, index === 0, getSpawnPositionForSnapshot(snapshot, 'elite'), difficulty))
     })
     snapshot.eliteSpawnedThisLevel = true
     spawnCount = ranks.length
@@ -6137,22 +6487,22 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
       .join('；')
     snapshot.message = `精英战登场：${ranks.length} 名精英压场${affixText ? `（${affixText}）` : ''}，击败首领精英可获得职业奖励`
   } else if (isBossPreludeLevel(snapshot.level) && !snapshot.eliteSpawnedThisLevel) {
-    const capacity = Math.max(1, getMaxEnemiesOnField(snapshot.level) - snapshot.enemies.length)
+    const capacity = Math.max(1, maxEnemies - snapshot.enemies.length)
     const rank: EliteRank = getCampaignFloor(snapshot.level) >= 20 ? 'normal' : 'minor'
     const preludeCount = Math.min(capacity, snapshot.remainingToSpawn, getCampaignFloor(snapshot.level) >= 20 ? 2 : 1)
     for (let index = 0; index < preludeCount; index += 1) {
-      snapshot.enemies.push(spawnEliteEnemy(snapshot.level, snapshot.mapObstacles, rank, false, getSpawnPositionForSnapshot(snapshot, 'elite')))
+      snapshot.enemies.push(spawnEliteEnemy(snapshot.level, snapshot.mapObstacles, rank, false, getSpawnPositionForSnapshot(snapshot, 'elite'), difficulty))
     }
     snapshot.eliteSpawnedThisLevel = true
     spawnCount = preludeCount
     snapshot.message = `Boss 前置压力：${preludeCount} 名小精英混入怪潮，补强构筑后再进首领房`
   } else if (featuredKind && featuredKind !== 'elite' && featuredKind !== 'boss') {
-    snapshot.enemies.push(createEnemy(snapshot.level, featuredKind, getSpawnPositionForSnapshot(snapshot, 'theme')))
+    snapshot.enemies.push(createEnemy(snapshot.level, featuredKind, getSpawnPositionForSnapshot(snapshot, 'theme'), undefined, undefined, difficulty))
     spawnCount = 1
     const newest = snapshot.enemies[snapshot.enemies.length - 1]
     snapshot.message = `${newest.displayName ?? getEnemyKindLabel(featuredKind)}登场：观察它的行为变化`
   } else {
-    const capacity = Math.max(1, getMaxEnemiesOnField(snapshot.level) - snapshot.enemies.length)
+    const capacity = Math.max(1, maxEnemies - snapshot.enemies.length)
     const batchMultiplier = isBossLevel(snapshot.level) ? 1 : 2
     const batchSize = isBossLevel(snapshot.level)
       ? 1
@@ -6162,8 +6512,8 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
     for (let index = 0; index < batchSize; index += 1) {
       const nextKind = index === 0 ? guardKind ?? openingKind : guardKind
       snapshot.enemies.push(nextKind
-        ? createEnemy(snapshot.level, nextKind, getSpawnPositionForSnapshot(snapshot, guardKind ? 'guard' : 'theme'), undefined, guardKind ? 'guard' : undefined)
-        : createHordeEnemy(snapshot.level, spawnedCount + index, getSpawnPositionForSnapshot(snapshot, 'fodder')))
+        ? createEnemy(snapshot.level, nextKind, getSpawnPositionForSnapshot(snapshot, guardKind ? 'guard' : 'theme'), undefined, guardKind ? 'guard' : undefined, difficulty)
+        : createHordeEnemy(snapshot.level, spawnedCount + index, getSpawnPositionForSnapshot(snapshot, 'fodder'), difficulty))
     }
     spawnCount = batchSize
     if (openingKind) {
@@ -6201,9 +6551,30 @@ const preserveMetaProgress = (baseSnapshot: GameSnapshot, previous: GameSnapshot
   baseSnapshot.bestLevel = migrated.bestLevel
   baseSnapshot.runHistory = migrated.runHistory.map((record) => ({ ...record }))
   baseSnapshot.achievedMilestones = [...migrated.achievedMilestones]
+  baseSnapshot.completedCampaigns = [...(migrated.completedCampaigns ?? [])]
+  baseSnapshot.completedCampaignDifficulties = normalizeCampaignDifficultyCompletions(
+    migrated.completedCampaignDifficulties,
+    migrated.completedCampaigns ?? [],
+  )
+  baseSnapshot.talentPoints = migrated.talentPoints ?? 0
+  baseSnapshot.talentPointRecords = (migrated.talentPointRecords ?? []).map((record) => ({ ...record }))
+  baseSnapshot.lastTalentPointRecord = migrated.lastTalentPointRecord ? { ...migrated.lastTalentPointRecord } : null
+  baseSnapshot.unlockedCampaignDifficulties = normalizeCampaignDifficultyUnlocks(
+    migrated.unlockedCampaignDifficulties,
+    migrated.completedCampaigns ?? [],
+    baseSnapshot.completedCampaignDifficulties,
+  )
+  baseSnapshot.unlockedTalentIds = [...(migrated.unlockedTalentIds ?? [])]
+  baseSnapshot.talentUnlockRecords = (migrated.talentUnlockRecords ?? []).map((record) => ({ ...record }))
   baseSnapshot.unlockedWeapons = []
   baseSnapshot.equippedWeaponId = null
+  baseSnapshot.discoveredHighRarityEquipmentIds = [...(migrated.discoveredHighRarityEquipmentIds ?? [])]
   baseSnapshot.selectedCampaign = migrated.selectedCampaign ?? 1
+  baseSnapshot.selectedCampaignDifficulty = normalizeCampaignDifficulty(migrated.selectedCampaignDifficulty ?? migrated.selectedDifficulty)
+  if (!isCampaignDifficultyUnlocked(baseSnapshot.unlockedCampaignDifficulties, baseSnapshot.selectedCampaign, baseSnapshot.selectedCampaignDifficulty)) {
+    baseSnapshot.selectedCampaignDifficulty = 'normal'
+  }
+  baseSnapshot.selectedDifficulty = baseSnapshot.selectedCampaignDifficulty
   baseSnapshot.unsealedEquipmentSlots = [...(migrated.unsealedEquipmentSlots ?? [])]
   baseSnapshot.audioSettings = { ...migrated.audioSettings }
   baseSnapshot.equipmentInventory = clearEquipmentNewFlags(migrated.equipmentInventory)
@@ -6220,11 +6591,17 @@ const preserveMetaProgress = (baseSnapshot: GameSnapshot, previous: GameSnapshot
   return baseSnapshot
 }
 
-const applySelectedCampaignStart = (snapshot: GameSnapshot, campaign: number) => {
+const applySelectedCampaignStart = (snapshot: GameSnapshot, campaign: number, difficulty: CampaignDifficulty = snapshot.selectedCampaignDifficulty) => {
   const level = getCampaignStartLevel(campaign)
-  const targetKills = getLevelGoal(level)
   const theme = getCampaignMonsterTheme(level)
+  const selectedDifficulty = isCampaignDifficultyUnlocked(snapshot.unlockedCampaignDifficulties, campaign, normalizeCampaignDifficulty(difficulty))
+    ? normalizeCampaignDifficulty(difficulty)
+    : 'normal'
+  const targetKills = getLevelGoal(level, selectedDifficulty)
+  const difficultyConfig = getCampaignDifficultyConfig(selectedDifficulty)
   snapshot.selectedCampaign = clamp(Math.round(campaign), 1, 10)
+  snapshot.selectedCampaignDifficulty = selectedDifficulty
+  snapshot.selectedDifficulty = selectedDifficulty
   snapshot.level = level
   snapshot.levelKills = 0
   snapshot.levelTargetKills = targetKills
@@ -6235,12 +6612,12 @@ const applySelectedCampaignStart = (snapshot: GameSnapshot, campaign: number) =>
   snapshot.aimPoint = { x: WORLD_WIDTH * 0.68, y: WORLD_HEIGHT / 2 }
   snapshot.battlefield = createBattlefieldState(getBattlefieldMode('running', level), level, snapshot.player.position, snapshot.battlefield.seed)
   snapshot.mapObstacles = getBattlefieldObstacles(snapshot.battlefield, level)
-  snapshot.message = `${theme.name} · ${getLevelIntroMessage(level, targetKills)}，准备时间 ${DUNGEON_ENTRY_GRACE.toFixed(1)} 秒`
+  snapshot.message = `${theme.name} · ${difficultyConfig.label} · ${getLevelIntroMessage(level, targetKills)}，准备时间 ${DUNGEON_ENTRY_GRACE.toFixed(1)} 秒`
 }
 
 const recordRunResult = (snapshot: GameSnapshot, earnedGold: number) => {
   const activeSkillNames = snapshot.activeSkills.map((skill) => ARCHER_ACTIVE_SKILL_MAP[skill.skillId]?.name ?? skill.skillId)
-  const statSummary = `生命 ${snapshot.skillAllocations.vitality} / 力量 ${snapshot.skillAllocations.power} / 急速 ${snapshot.skillAllocations.haste} / 灵巧 ${snapshot.skillAllocations.agility}`
+  const statSummary = `局内 Lv.${snapshot.runHighestContractLevel} / 经验 ${snapshot.runExpGained} / 精英 ${snapshot.runEliteKills}`
   const runRecord = {
     id: createId(),
     level: snapshot.level,
@@ -6259,8 +6636,93 @@ const recordRunResult = (snapshot: GameSnapshot, earnedGold: number) => {
   ])).sort((a, b) => a - b)
 }
 
-const finishRunToVillage = (snapshot: GameSnapshot, options: { earnedGold: number; message: string; completedCampaign?: boolean }) => {
+const TALENT_POINT_DIFFICULTY_REWARD: Record<CampaignDifficulty, { multiplier: number; softCap: number; firstClear: number }> = {
+  normal: { multiplier: 1, softCap: 32, firstClear: 6 },
+  hard: { multiplier: 1.25, softCap: 46, firstClear: 10 },
+  hell: { multiplier: 1.55, softCap: 64, firstClear: 16 },
+  nightmare: { multiplier: 1.9, softCap: 86, firstClear: 24 },
+}
+
+const TALENT_POINT_SOURCE_MULTIPLIER: Record<'death' | 'forfeit' | 'campaign-clear', number> = {
+  death: 0.75,
+  forfeit: 0.45,
+  'campaign-clear': 1,
+}
+
+const applyTalentSoftCap = (points: number, softCap: number) => {
+  if (points <= softCap) {
+    return points
+  }
+  return softCap + Math.floor((points - softCap) * 0.35)
+}
+
+const calculateTalentPointGain = (
+  snapshot: GameSnapshot,
+  firstClear: boolean,
+  difficulty: CampaignDifficulty,
+  source: 'death' | 'forfeit' | 'campaign-clear',
+) => {
+  const floor = getCampaignFloor(snapshot.level)
+  const expScore = Math.floor(Math.sqrt(Math.max(0, snapshot.runExpGained)) / 2)
+  const levelScore = Math.max(0, snapshot.runHighestContractLevel - 1)
+  const floorScore = Math.floor(floor * 1.25)
+  const eliteScore = snapshot.runEliteKills * 3
+  const bossScore = snapshot.runBossKills * 12
+  const difficultyReward = TALENT_POINT_DIFFICULTY_REWARD[difficulty]
+  const firstClearScore = firstClear ? difficultyReward.firstClear : 0
+  const raw = expScore + levelScore + floorScore + eliteScore + bossScore + firstClearScore
+  const scaled = Math.floor(raw * difficultyReward.multiplier * TALENT_POINT_SOURCE_MULTIPLIER[source])
+  return Math.max(snapshot.runExpGained > 0 || snapshot.kills > 0 ? 1 : 0, applyTalentSoftCap(scaled, difficultyReward.softCap))
+}
+
+const finalizeTalentPointSettlement = (
+  snapshot: GameSnapshot,
+  source: 'death' | 'forfeit' | 'campaign-clear',
+) => {
+  if (snapshot.runSettlementClaimed) {
+    return snapshot.lastTalentPointRecord
+  }
+
+  const campaign = getCampaignIndex(snapshot.level)
+  const difficulty = normalizeCampaignDifficulty(snapshot.selectedCampaignDifficulty ?? snapshot.selectedDifficulty)
+  const firstClear = source === 'campaign-clear' && !isCampaignDifficultyCompleted(snapshot.completedCampaignDifficulties, campaign, difficulty)
+  const points = calculateTalentPointGain(snapshot, firstClear, difficulty, source)
+  const record = {
+    id: createId(),
+    source,
+    campaign,
+    difficulty,
+    reachedLevel: snapshot.level,
+    kills: snapshot.kills,
+    cumulativeExp: snapshot.runExpGained,
+    highestContractLevel: snapshot.runHighestContractLevel,
+    eliteKills: snapshot.runEliteKills,
+    bossKills: snapshot.runBossKills,
+    firstClear,
+    points,
+  }
+
+  snapshot.talentPoints += points
+  snapshot.talentPointRecords = [record, ...snapshot.talentPointRecords].slice(0, RUN_RECORD_LIMIT)
+  snapshot.lastTalentPointRecord = record
+  snapshot.runSettlementClaimed = true
+  if (source === 'campaign-clear') {
+    const completed = completeCampaignDifficulty({
+      unlockedCampaignDifficulties: snapshot.unlockedCampaignDifficulties,
+      completedCampaignDifficulties: snapshot.completedCampaignDifficulties,
+    }, campaign, difficulty)
+    snapshot.unlockedCampaignDifficulties = completed.unlockedCampaignDifficulties
+    snapshot.completedCampaignDifficulties = completed.completedCampaignDifficulties
+  }
+  if (difficulty === 'normal' && firstClear) {
+    snapshot.completedCampaigns = [...snapshot.completedCampaigns, campaign].sort((a, b) => a - b)
+  }
+  return record
+}
+
+const finishRunToVillage = (snapshot: GameSnapshot, options: { earnedGold: number; message: string; source: 'death' | 'forfeit' | 'campaign-clear' }) => {
   const autoDismantle = autoDismantleTemporaryEquipment(snapshot)
+  const talentRecord = finalizeTalentPointSettlement(snapshot, options.source)
   snapshot.phase = 'game-over'
   snapshot.phaseBeforePause = 'running'
   snapshot.earnedGold = options.earnedGold
@@ -6279,14 +6741,18 @@ const finishRunToVillage = (snapshot: GameSnapshot, options: { earnedGold: numbe
   snapshot.pickups = []
   snapshot.pendingSkillReward = null
   snapshot.pendingBossLoot = []
+  snapshot.inRunTalentIds = []
+  snapshot.inRunRewardRerolls = 1
+  snapshot.inRunRewardHistory = { noMainBuildStreak: 0, lastOfferedChoiceIds: [] }
   snapshot.levelTimer = 0
   const dismantleText = autoDismantle.count > 0 ? `，自动分解 ${autoDismantle.count} 件紫色以下地下城装备，获得 ${formatEquipmentMaterials(autoDismantle.materials)}` : ''
-  snapshot.message = `${options.message}${dismantleText}`
+  const talentText = talentRecord ? `，结算天赋点 +${talentRecord.points}` : ''
+  snapshot.message = `${options.message}${talentText}${dismantleText}`
 }
 
 export const restartRunSnapshot = (current: GameSnapshot): GameSnapshot => {
   const next = preserveMetaProgress(createInitialSnapshot('running'), current)
-  applySelectedCampaignStart(next, current.selectedCampaign ?? 1)
+  applySelectedCampaignStart(next, current.selectedCampaign ?? 1, current.selectedCampaignDifficulty ?? current.selectedDifficulty)
   next.levelTimer = DUNGEON_ENTRY_GRACE
   next.player.hurtCooldown = DUNGEON_ENTRY_GRACE
   return next
@@ -6294,7 +6760,7 @@ export const restartRunSnapshot = (current: GameSnapshot): GameSnapshot => {
 
 export const startRunSnapshot = (current: GameSnapshot): GameSnapshot => {
   const next = preserveMetaProgress(createInitialSnapshot('running'), current)
-  applySelectedCampaignStart(next, current.selectedCampaign ?? 1)
+  applySelectedCampaignStart(next, current.selectedCampaign ?? 1, current.selectedCampaignDifficulty ?? current.selectedDifficulty)
   next.levelTimer = DUNGEON_ENTRY_GRACE
   next.player.hurtCooldown = DUNGEON_ENTRY_GRACE
   return next
@@ -6315,6 +6781,7 @@ export const forfeitRunSnapshot = (current: GameSnapshot): GameSnapshot => {
 
   finishRunToVillage(snapshot, {
     earnedGold: Math.max(0, Math.floor(getGoldReward(snapshot.level, snapshot.kills) * 0.35)),
+    source: 'forfeit',
     message: `主动放弃本次契约，第 ${snapshot.level} 层战利品已带回村庄处理`,
   })
   return snapshot
@@ -6323,15 +6790,42 @@ export const forfeitRunSnapshot = (current: GameSnapshot): GameSnapshot => {
 export const selectCampaignSnapshot = (current: GameSnapshot, campaign: number): GameSnapshot => {
   const snapshot = cloneSnapshot(current)
   snapshot.selectedCampaign = clamp(Math.round(campaign), 1, 10)
+  const selectedDifficulty = normalizeCampaignDifficulty(snapshot.selectedCampaignDifficulty ?? snapshot.selectedDifficulty)
+  snapshot.selectedCampaignDifficulty = isCampaignDifficultyUnlocked(snapshot.unlockedCampaignDifficulties, snapshot.selectedCampaign, selectedDifficulty)
+    ? selectedDifficulty
+    : 'normal'
+  snapshot.selectedDifficulty = snapshot.selectedCampaignDifficulty
   const startLevel = getCampaignStartLevel(snapshot.selectedCampaign)
-  snapshot.message = `已选择第 ${snapshot.selectedCampaign} 关：${getLevelIntroMessage(startLevel, getLevelGoal(startLevel))}`
+  snapshot.message = `已选择第 ${snapshot.selectedCampaign} 关 · ${CAMPAIGN_DIFFICULTY_LABELS[snapshot.selectedCampaignDifficulty]}：${getLevelIntroMessage(startLevel, getLevelGoal(startLevel))}`
+  return snapshot
+}
+
+export const selectCampaignDifficultySnapshot = (
+  current: GameSnapshot,
+  campaign: number,
+  difficulty: CampaignDifficulty,
+): GameSnapshot => {
+  const snapshot = cloneSnapshot(current)
+  const selectedCampaign = clamp(Math.round(campaign), 1, 10)
+  const selectedDifficulty = normalizeCampaignDifficulty(difficulty)
+  snapshot.selectedCampaign = selectedCampaign
+  if (!isCampaignDifficultyUnlocked(snapshot.unlockedCampaignDifficulties, selectedCampaign, selectedDifficulty)) {
+    snapshot.selectedCampaignDifficulty = 'normal'
+    snapshot.selectedDifficulty = 'normal'
+    snapshot.message = `第 ${selectedCampaign} 关${CAMPAIGN_DIFFICULTY_LABELS[selectedDifficulty]}尚未开放`
+    return snapshot
+  }
+
+  snapshot.selectedCampaignDifficulty = selectedDifficulty
+  snapshot.selectedDifficulty = selectedDifficulty
+  snapshot.message = `已选择第 ${selectedCampaign} 关 · ${CAMPAIGN_DIFFICULTY_LABELS[selectedDifficulty]}`
   return snapshot
 }
 
 export const purchaseWeaponSnapshot = (current: GameSnapshot, weaponId: WeaponId): GameSnapshot => {
   const snapshot = cloneSnapshot(current)
   const weaponName = WEAPON_DEFINITION_MAP[weaponId]?.name ?? '旧版武器'
-  snapshot.message = `${weaponName} 已并入装备掉落系统，铁匠铺不再出售武器`
+  snapshot.message = `${weaponName} 已并入装备掉落系统`
   return snapshot
 }
 
@@ -6925,7 +7419,7 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
         const earnedGold = getGoldReward(snapshot.level, snapshot.kills) + 800 + getCampaignIndex(snapshot.level) * 180
         finishRunToVillage(snapshot, {
           earnedGold,
-          completedCampaign: true,
+          source: 'campaign-clear',
           message: `战役 ${getCampaignIndex(snapshot.level)} 契约完成，击败 ${snapshot.kills} 只敌人，获得 ${earnedGold} 金币`,
         })
         return snapshot
@@ -6998,6 +7492,7 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
     const earnedGold = getGoldReward(snapshot.level, snapshot.kills)
     finishRunToVillage(snapshot, {
       earnedGold,
+      source: 'death',
       message: `你在第 ${snapshot.level} 层倒下，击败 ${snapshot.kills} 只敌人，获得 ${earnedGold} 金币`,
     })
     return snapshot

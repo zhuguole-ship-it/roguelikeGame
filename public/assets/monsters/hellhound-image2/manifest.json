@@ -1,0 +1,44 @@
+{
+  "frameSize": [
+    64,
+    64
+  ],
+  "facing": "right",
+  "source": "gpt-image-2/image2 chroma-key normalized",
+  "note": "18 frames require a 6x3 spritesheet; 4x3 cannot contain all requested frames.",
+  "animations": {
+    "idle": {
+      "frames": 6,
+      "files": [
+        "idle_01.png",
+        "idle_02.png",
+        "idle_03.png",
+        "idle_04.png",
+        "idle_05.png",
+        "idle_06.png"
+      ]
+    },
+    "move": {
+      "frames": 6,
+      "files": [
+        "move_01.png",
+        "move_02.png",
+        "move_03.png",
+        "move_04.png",
+        "move_05.png",
+        "move_06.png"
+      ]
+    },
+    "attack": {
+      "frames": 6,
+      "files": [
+        "attack_01.png",
+        "attack_02.png",
+        "attack_03.png",
+        "attack_04.png",
+        "attack_05.png",
+        "attack_06.png"
+      ]
+    }
+  }
+}

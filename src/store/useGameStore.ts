@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 
 import { playGameSound } from '../game/audio'
+import type { GameSoundId } from '../game/audio'
 import {
   acceptSkillRewardSnapshot,
   advanceGame,
@@ -17,6 +18,7 @@ import {
   migrateLegacyWeaponsToEquipment,
   reforgeEquipmentSnapshot,
   restartRunSnapshot,
+  selectCampaignDifficultySnapshot,
   selectCampaignSnapshot,
   triggerActiveSkillSnapshot,
   returnToVillageSnapshot,
@@ -31,12 +33,23 @@ import {
   upgradeEquippedEquipmentSnapshot,
   updateAimPointSnapshot,
 } from '../game/engine'
+import {
+  normalizeCampaignDifficulty,
+  normalizeCampaignDifficultyCompletions,
+  normalizeCampaignDifficultyUnlocks,
+} from '../game/difficulty'
+import {
+  hasDiscoveredHighRarityEquipment,
+  normalizeDiscoveredHighRarityEquipmentIds,
+  recordDiscoveredHighRarityEquipmentId,
+} from '../game/equipmentDiscovery'
 import { createEmptyEquipmentMaterials } from '../game/equipment'
 import type { AudioSettings, DebugControlState, EquipmentDismantleCategory, EquipmentItem, EquipmentReforgeMode, EquipmentSlot, GameSnapshot, InputState, SkillBuildTag, Vector2, WeaponId } from '../game/types'
 
 type GameStore = GameSnapshot & {
   startGame: () => void
   selectCampaign: (campaign: number) => void
+  selectCampaignDifficulty: (campaign: number, difficulty: GameSnapshot['selectedCampaignDifficulty']) => void
   restart: () => void
   forfeitRun: () => void
   returnToVillage: () => void
@@ -57,6 +70,8 @@ type GameStore = GameSnapshot & {
   reforgeEquipment: (itemId: string, mode?: EquipmentReforgeMode, preferredBuildTag?: SkillBuildTag) => void
   toggleEquipmentModifierLock: (itemId: string, modifierIndex: number) => void
   unlockEquipmentSlot: (slot: EquipmentSlot) => void
+  recordHighRarityEquipmentDiscovery: (equipmentId: string) => void
+  hasDiscoveredHighRarityEquipment: (equipmentId: string) => boolean
   updateAudioSettings: (settings: Partial<AudioSettings>) => void
   updateDebugControls: (settings: Partial<DebugControlState>) => void
   triggerActiveSkill: (slotIndex: number) => void
@@ -73,16 +88,21 @@ type PersistedGameState = Pick<
   | 'bestLevel'
   | 'runHistory'
   | 'achievedMilestones'
+  | 'completedCampaigns'
+  | 'completedCampaignDifficulties'
+  | 'unlockedCampaignDifficulties'
+  | 'selectedCampaignDifficulty'
+  | 'talentPoints'
+  | 'talentPointRecords'
+  | 'unlockedTalentIds'
+  | 'talentUnlockRecords'
   | 'equipmentInventory'
   | 'equippedItems'
+  | 'discoveredHighRarityEquipmentIds'
   | 'equipmentMaterials'
   | 'unsealedEquipmentSlots'
   | 'audioSettings'
-  | 'contractBoons'
   | 'selectedCampaign'
-  | 'contractLevel'
-  | 'exp'
-  | 'expToNext'
 > & {
   unlockedWeapons?: WeaponId[]
   equippedWeaponId?: WeaponId | null
@@ -106,16 +126,21 @@ export const extractPersistedGameState = (state: GameSnapshot): PersistedGameSta
   bestLevel: state.bestLevel,
   runHistory: clonePersistedValue(state.runHistory),
   achievedMilestones: clonePersistedValue(state.achievedMilestones),
+  completedCampaigns: clonePersistedValue(state.completedCampaigns),
+  completedCampaignDifficulties: clonePersistedValue(state.completedCampaignDifficulties),
+  unlockedCampaignDifficulties: clonePersistedValue(state.unlockedCampaignDifficulties),
+  selectedCampaignDifficulty: state.selectedCampaignDifficulty,
+  talentPoints: state.talentPoints,
+  talentPointRecords: clonePersistedValue(state.talentPointRecords),
+  unlockedTalentIds: clonePersistedValue(state.unlockedTalentIds),
+  talentUnlockRecords: clonePersistedValue(state.talentUnlockRecords),
   equipmentInventory: clonePersistedValue(state.equipmentInventory),
   equippedItems: clonePersistedValue(state.equippedItems),
+  discoveredHighRarityEquipmentIds: clonePersistedValue(state.discoveredHighRarityEquipmentIds),
   equipmentMaterials: clonePersistedValue(state.equipmentMaterials),
   unsealedEquipmentSlots: clonePersistedValue(state.unsealedEquipmentSlots),
   audioSettings: clonePersistedValue(state.audioSettings),
-  contractBoons: clonePersistedValue(state.contractBoons),
   selectedCampaign: state.selectedCampaign,
-  contractLevel: state.contractLevel,
-  exp: state.exp,
-  expToNext: state.expToNext,
 })
 
 const sanitizePersistedState = (value: unknown): Partial<PersistedGameState> => {
@@ -129,6 +154,17 @@ const sanitizePersistedState = (value: unknown): Partial<PersistedGameState> => 
 export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot => {
   const persisted = sanitizePersistedState(persistedValue)
   const fallback = createInitialSnapshot('idle')
+  const completedCampaigns = Array.isArray(persisted.completedCampaigns) ? clonePersistedValue(persisted.completedCampaigns) : fallback.completedCampaigns
+  const completedCampaignDifficulties = normalizeCampaignDifficultyCompletions(persisted.completedCampaignDifficulties, completedCampaigns)
+  const unlockedCampaignDifficulties = normalizeCampaignDifficultyUnlocks(
+    persisted.unlockedCampaignDifficulties,
+    completedCampaigns,
+    completedCampaignDifficulties,
+  )
+  const selectedCampaign = typeof persisted.selectedCampaign === 'number'
+    ? Math.min(10, Math.max(1, Math.round(persisted.selectedCampaign)))
+    : fallback.selectedCampaign
+  const selectedCampaignDifficulty = normalizeCampaignDifficulty(persisted.selectedCampaignDifficulty)
   const restored: GameSnapshot = {
     ...fallback,
     currency: typeof persisted.currency === 'number' ? Math.max(0, persisted.currency) : fallback.currency,
@@ -136,10 +172,24 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
     bestLevel: typeof persisted.bestLevel === 'number' ? Math.max(1, persisted.bestLevel) : fallback.bestLevel,
     runHistory: Array.isArray(persisted.runHistory) ? clonePersistedValue(persisted.runHistory).slice(0, 10) : fallback.runHistory,
     achievedMilestones: Array.isArray(persisted.achievedMilestones) ? clonePersistedValue(persisted.achievedMilestones) : fallback.achievedMilestones,
+    completedCampaigns,
+    completedCampaignDifficulties,
+    unlockedCampaignDifficulties,
+    selectedCampaignDifficulty: unlockedCampaignDifficulties[selectedCampaign]?.includes(selectedCampaignDifficulty)
+      ? selectedCampaignDifficulty
+      : 'normal',
+    selectedDifficulty: unlockedCampaignDifficulties[selectedCampaign]?.includes(selectedCampaignDifficulty)
+      ? selectedCampaignDifficulty
+      : 'normal',
+    talentPoints: typeof persisted.talentPoints === 'number' ? Math.max(0, Math.round(persisted.talentPoints)) : fallback.talentPoints,
+    talentPointRecords: Array.isArray(persisted.talentPointRecords) ? clonePersistedValue(persisted.talentPointRecords).slice(0, 10) : fallback.talentPointRecords,
+    unlockedTalentIds: Array.isArray(persisted.unlockedTalentIds) ? clonePersistedValue(persisted.unlockedTalentIds) : fallback.unlockedTalentIds,
+    talentUnlockRecords: Array.isArray(persisted.talentUnlockRecords) ? clonePersistedValue(persisted.talentUnlockRecords).slice(0, 50) : fallback.talentUnlockRecords,
     unlockedWeapons: Array.isArray(persisted.unlockedWeapons) && persisted.unlockedWeapons.length > 0
       ? clonePersistedValue(persisted.unlockedWeapons)
       : [],
     equippedWeaponId: persisted.equippedWeaponId ?? null,
+    discoveredHighRarityEquipmentIds: normalizeDiscoveredHighRarityEquipmentIds(persisted.discoveredHighRarityEquipmentIds),
     equipmentInventory: Array.isArray(persisted.equipmentInventory) ? clonePersistedValue(persisted.equipmentInventory) : fallback.equipmentInventory,
     equippedItems: isRecord(persisted.equippedItems) ? clonePersistedValue(persisted.equippedItems) : fallback.equippedItems,
     equipmentMaterials: isRecord(persisted.equipmentMaterials)
@@ -151,15 +201,7 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
     audioSettings: isRecord(persisted.audioSettings)
       ? { ...fallback.audioSettings, ...clonePersistedValue(persisted.audioSettings) }
       : fallback.audioSettings,
-    contractBoons: isRecord(persisted.contractBoons)
-      ? { ...fallback.contractBoons, ...clonePersistedValue(persisted.contractBoons) }
-      : fallback.contractBoons,
-    selectedCampaign: typeof persisted.selectedCampaign === 'number'
-      ? Math.min(10, Math.max(1, Math.round(persisted.selectedCampaign)))
-      : fallback.selectedCampaign,
-    contractLevel: typeof persisted.contractLevel === 'number' ? Math.max(1, Math.round(persisted.contractLevel)) : fallback.contractLevel,
-    exp: typeof persisted.exp === 'number' ? Math.max(0, persisted.exp) : fallback.exp,
-    expToNext: typeof persisted.expToNext === 'number' ? Math.max(1, persisted.expToNext) : fallback.expToNext,
+    selectedCampaign,
     phase: 'idle',
     phaseBeforePause: 'idle',
     message: '村庄篝火旁苏醒，长期成长已恢复',
@@ -178,34 +220,40 @@ const countEquipmentPickups = (state: GameSnapshot) => state.pickups.filter((pic
 
 const enemyHpTotal = (state: GameSnapshot) => state.enemies.reduce((sum, enemy) => sum + Math.max(0, enemy.hp), 0)
 
-const playSimulationSounds = (previous: GameSnapshot, next: GameSnapshot) => {
+export const getSimulationSoundEvents = (previous: GameSnapshot, next: GameSnapshot): GameSoundId[] => {
+  const events: GameSoundId[] = []
   if (next.exp !== previous.exp || next.contractLevel !== previous.contractLevel) {
-    playSnapshotSound(previous, 'crystal-pickup')
+    events.push('crystal-pickup')
   }
   if (countEquipmentPickups(next) > countEquipmentPickups(previous)) {
-    playSnapshotSound(previous, 'equipment-drop')
+    events.push('equipment-drop')
   }
   if (next.equipmentInventory.length > previous.equipmentInventory.length) {
-    playSnapshotSound(previous, 'equipment-pickup')
+    events.push('equipment-pickup')
   }
   if (next.kills > previous.kills) {
-    playSnapshotSound(previous, 'enemy-death')
+    events.push('enemy-death')
   }
   if (!previous.enemies.some((enemy) => enemy.kind === 'boss') && next.enemies.some((enemy) => enemy.kind === 'boss')) {
-    playSnapshotSound(previous, 'boss-entry')
+    events.push('boss-entry')
   }
   if (enemyHpTotal(next) < enemyHpTotal(previous)) {
     const hasSkillProjectile = previous.projectiles.some((projectile) => projectile.sourceSkillId)
-    playSnapshotSound(previous, hasSkillProjectile ? 'skill-hit' : 'basic-hit')
+    events.push(hasSkillProjectile ? 'skill-hit' : 'basic-hit')
   }
   if (previous.phase === 'running' && next.phase === 'level-clear') {
-    playSnapshotSound(previous, 'level-settle')
+    events.push('level-settle')
   }
+  return events
+}
+
+const playSimulationSounds = (previous: GameSnapshot, next: GameSnapshot) => {
+  getSimulationSoundEvents(previous, next).forEach((id) => playSnapshotSound(previous, id))
 }
 
 export const useGameStore = create<GameStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       ...initialState,
       startGame: () => {
         set((state) => {
@@ -215,6 +263,9 @@ export const useGameStore = create<GameStore>()(
       },
       selectCampaign: (campaign) => {
         set((state) => selectCampaignSnapshot(state, campaign))
+      },
+      selectCampaignDifficulty: (campaign, difficulty) => {
+        set((state) => selectCampaignDifficultySnapshot(state, campaign, difficulty))
       },
       restart: () => {
         set((state) => restartRunSnapshot(state))
@@ -337,6 +388,15 @@ export const useGameStore = create<GameStore>()(
           playSnapshotSound(state, 'button')
           return unlockEquipmentSlotSnapshot(state, slot)
         })
+      },
+      recordHighRarityEquipmentDiscovery: (equipmentId) => {
+        set((state) => ({
+          ...state,
+          discoveredHighRarityEquipmentIds: recordDiscoveredHighRarityEquipmentId(state.discoveredHighRarityEquipmentIds, equipmentId),
+        }))
+      },
+      hasDiscoveredHighRarityEquipment: (equipmentId) => {
+        return hasDiscoveredHighRarityEquipment(get().discoveredHighRarityEquipmentIds, equipmentId)
       },
       updateAudioSettings: (settings) => {
         set((state) => ({

@@ -113,10 +113,37 @@ describe('GamePauseOverlay', () => {
     expect(screen.getByText('选择 1 项奖励')).toBeTruthy()
     expect(screen.getByText('箭雨坠落')).toBeTruthy()
     expect(screen.getByText('加入技能槽')).toBeTruthy()
+    expect(screen.queryByText('蓝晶回收')).toBeNull()
+    expect(screen.queryByText('本层关键战利品')).toBeNull()
     expect(screen.queryByText('局内成长')).toBeNull()
     expect(screen.queryByText('契约构筑')).toBeNull()
     expect(screen.queryByText('契约经验')).toBeNull()
     expect(screen.queryByText(/属性点|层间分配/)).toBeNull()
+  })
+
+  it('shows an explicit continue action when no skill rewards remain', () => {
+    const base = createInitialSnapshot('level-clear')
+
+    useGameStore.setState({
+      ...base,
+      phase: 'level-clear',
+      level: 2,
+      pendingSkillReward: null,
+      levelClearConfirmed: false,
+      pendingBossLoot: [],
+    })
+
+    render(<GamePauseOverlay />)
+
+    expect(screen.getByText('奖励已确认')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '即将进入下一层' })).toBeTruthy()
+    expect(screen.queryByText(/其他金币、蓝晶、材料和临时装备将自动处理/)).toBeNull()
+    expect(screen.queryByText('蓝晶回收')).toBeNull()
+    expect(screen.queryByText('离场自动分解')).toBeNull()
+    expect(screen.queryByText('节点类型')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '即将进入下一层' }))
+    expect(useGameStore.getState().levelClearConfirmed).toBe(true)
   })
 
   it('shows independent boss loot handling with equip, lock, defer, and comparison hints', () => {

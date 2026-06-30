@@ -1,0 +1,543 @@
+{
+  "version": 1,
+  "generatedAt": "2026-06-25T11:27:59.213Z",
+  "entities": [
+    {
+      "entityId": "dungeon-hellhound",
+      "actions": [
+        {
+          "entityId": "dungeon-hellhound",
+          "slot": "idle",
+          "combatAction": "idle",
+          "frameUrls": [
+            "assets/developer-assets/dungeon-hellhound/idle/frame_01.png",
+            "assets/developer-assets/dungeon-hellhound/idle/frame_02.png",
+            "assets/developer-assets/dungeon-hellhound/idle/frame_03.png",
+            "assets/developer-assets/dungeon-hellhound/idle/frame_04.png",
+            "assets/developer-assets/dungeon-hellhound/idle/frame_05.png",
+            "assets/developer-assets/dungeon-hellhound/idle/frame_06.png"
+          ],
+          "frameWidth": 64,
+          "frameHeight": 64,
+          "frameCount": 6,
+          "fps": 8,
+          "durationSeconds": 0.75,
+          "loop": true,
+          "flipX": false,
+          "guideFrame": "assets/developer-assets/dungeon-hellhound/idle/frame_01.png",
+          "assetPath": "assets/developer-assets/dungeon-hellhound/idle/frame_01.png / assets/developer-assets/dungeon-hellhound/idle/frame_02.png / assets/developer-assets/dungeon-hellhound/idle/frame_03.png / assets/developer-assets/dungeon-hellhound/idle/frame_04.png / assets/developer-assets/dungeon-hellhound/idle/frame_05.png / assets/developer-assets/dungeon-hellhound/idle/frame_06.png",
+          "anchors": {
+            "body": {
+              "x": 0.5,
+              "y": 0.68,
+              "label": "身体"
+            },
+            "mouth": {
+              "x": 0.82,
+              "y": 0.32,
+              "label": "口部"
+            },
+            "cast": {
+              "x": 0.73,
+              "y": 0.4,
+              "label": "吐息"
+            },
+            "projectileSpawn": {
+              "x": 0.83,
+              "y": 0.33,
+              "label": "火焰"
+            }
+          },
+          "combatScale": 1,
+          "hitFrameIndex": 2,
+          "assetRevision": "2026-06-25T11:25:30.664Z"
+        },
+        {
+          "entityId": "dungeon-hellhound",
+          "slot": "move",
+          "combatAction": "move",
+          "frameUrls": [
+            "assets/developer-assets/dungeon-hellhound/move/frame_01.png",
+            "assets/developer-assets/dungeon-hellhound/move/frame_02.png",
+            "assets/developer-assets/dungeon-hellhound/move/frame_03.png",
+            "assets/developer-assets/dungeon-hellhound/move/frame_04.png",
+            "assets/developer-assets/dungeon-hellhound/move/frame_05.png",
+            "assets/developer-assets/dungeon-hellhound/move/frame_06.png"
+          ],
+          "frameWidth": 64,
+          "frameHeight": 64,
+          "frameCount": 6,
+          "fps": 8,
+          "durationSeconds": 0.75,
+          "loop": true,
+          "flipX": false,
+          "guideFrame": "assets/developer-assets/dungeon-hellhound/move/frame_01.png",
+          "assetPath": "assets/developer-assets/dungeon-hellhound/move/frame_01.png / assets/developer-assets/dungeon-hellhound/move/frame_02.png / assets/developer-assets/dungeon-hellhound/move/frame_03.png / assets/developer-assets/dungeon-hellhound/move/frame_04.png / assets/developer-assets/dungeon-hellhound/move/frame_05.png / assets/developer-assets/dungeon-hellhound/move/frame_06.png",
+          "anchors": {
+            "body": {
+              "x": 0.5,
+              "y": 0.68,
+              "label": "身体"
+            },
+            "mouth": {
+              "x": 0.82,
+              "y": 0.32,
+              "label": "口部"
+            },
+            "cast": {
+              "x": 0.73,
+              "y": 0.4,
+              "label": "吐息"
+            },
+            "projectileSpawn": {
+              "x": 0.83,
+              "y": 0.33,
+              "label": "火焰"
+            }
+          },
+          "combatScale": 1,
+          "hitFrameIndex": 2,
+          "assetRevision": "2026-06-25T11:25:30.664Z"
+        },
+        {
+          "entityId": "dungeon-hellhound",
+          "slot": "attack",
+          "combatAction": "attack",
+          "frameUrls": [
+            "assets/developer-assets/dungeon-hellhound/attack/frame_01.png",
+            "assets/developer-assets/dungeon-hellhound/attack/frame_02.png",
+            "assets/developer-assets/dungeon-hellhound/attack/frame_03.png",
+            "assets/developer-assets/dungeon-hellhound/attack/frame_04.png",
+            "assets/developer-assets/dungeon-hellhound/attack/frame_05.png",
+            "assets/developer-assets/dungeon-hellhound/attack/frame_06.png"
+          ],
+          "frameWidth": 64,
+          "frameHeight": 64,
+          "frameCount": 6,
+          "fps": 8,
+          "loop": false,
+          "flipX": true,
+          "guideFrame": "assets/developer-assets/dungeon-hellhound/attack/frame_01.png",
+          "assetPath": "assets/developer-assets/dungeon-hellhound/attack/frame_01.png / assets/developer-assets/dungeon-hellhound/attack/frame_02.png / assets/developer-assets/dungeon-hellhound/attack/frame_03.png / assets/developer-assets/dungeon-hellhound/attack/frame_04.png / assets/developer-assets/dungeon-hellhound/attack/frame_05.png / assets/developer-assets/dungeon-hellhound/attack/frame_06.png",
+          "anchors": {
+            "body": {
+              "x": 0.5,
+              "y": 0.68,
+              "label": "身体"
+            },
+            "mouth": {
+              "x": 0.82,
+              "y": 0.32,
+              "label": "口部"
+            },
+            "cast": {
+              "x": 0.73,
+              "y": 0.4,
+              "label": "吐息"
+            },
+            "projectileSpawn": {
+              "x": 0.83,
+              "y": 0.33,
+              "label": "火焰"
+            }
+          },
+          "combatScale": 1,
+          "hitFrameIndex": 2,
+          "assetRevision": "2026-06-25T11:25:30.664Z"
+        },
+        {
+          "entityId": "dungeon-hellhound",
+          "slot": "skill_1",
+        "combatAction": "skill",
+        "frameUrls": [
+          "assets/developer-assets/dungeon-hellhound/skill_1/frame_01.png",
+          "assets/developer-assets/dungeon-hellhound/skill_1/frame_02.png"
+        ],
+        "frameWidth": 64,
+        "frameHeight": 64,
+        "frameCount": 6,
+        "fps": 7,
+        "durationSeconds": 0.86,
+          "loop": false,
+          "flipX": true,
+          "guideFrame": "assets/developer-assets/dungeon-hellhound/skill_1/frame_01.png",
+        "assetPath": "assets/developer-assets/dungeon-hellhound/skill_1/frame_01.png / assets/developer-assets/dungeon-hellhound/skill_1/frame_02.png",
+          "anchors": {
+            "body": {
+              "x": 0.5,
+              "y": 0.68,
+              "label": "身体"
+            },
+            "mouth": {
+              "x": 0.82,
+              "y": 0.32,
+              "label": "口部"
+            },
+            "cast": {
+              "x": 0.73,
+              "y": 0.4,
+              "label": "吐息"
+            },
+            "projectileSpawn": {
+              "x": 0.83,
+              "y": 0.33,
+              "label": "火焰"
+            }
+          },
+          "combatScale": 1,
+          "assetRevision": "2026-06-25T11:25:30.664Z"
+        },
+        {
+          "entityId": "dungeon-hellhound",
+          "slot": "hit",
+          "combatAction": "hit",
+          "frameUrls": [
+            "assets/developer-assets/dungeon-hellhound/hit/frame_01.png",
+            "assets/developer-assets/dungeon-hellhound/hit/frame_02.png",
+            "assets/developer-assets/dungeon-hellhound/hit/frame_03.png",
+            "assets/developer-assets/dungeon-hellhound/hit/frame_04.png",
+            "assets/developer-assets/dungeon-hellhound/hit/frame_05.png",
+            "assets/developer-assets/dungeon-hellhound/hit/frame_06.png"
+          ],
+          "frameWidth": 64,
+          "frameHeight": 64,
+          "frameCount": 6,
+          "fps": 6,
+          "durationSeconds": 1,
+          "loop": false,
+          "flipX": false,
+          "guideFrame": "assets/developer-assets/dungeon-hellhound/hit/frame_01.png",
+          "assetPath": "assets/developer-assets/dungeon-hellhound/hit/frame_01.png / assets/developer-assets/dungeon-hellhound/hit/frame_02.png / assets/developer-assets/dungeon-hellhound/hit/frame_03.png / assets/developer-assets/dungeon-hellhound/hit/frame_04.png / assets/developer-assets/dungeon-hellhound/hit/frame_05.png / assets/developer-assets/dungeon-hellhound/hit/frame_06.png",
+          "anchors": {
+            "body": {
+              "x": 0.5,
+              "y": 0.68,
+              "label": "身体"
+            },
+            "mouth": {
+              "x": 0.82,
+              "y": 0.32,
+              "label": "口部"
+            },
+            "cast": {
+              "x": 0.73,
+              "y": 0.4,
+              "label": "吐息"
+            },
+            "projectileSpawn": {
+              "x": 0.83,
+              "y": 0.33,
+              "label": "火焰"
+            }
+          },
+          "combatScale": 1,
+          "assetRevision": "2026-06-25T11:25:30.664Z"
+        },
+        {
+          "entityId": "dungeon-hellhound",
+          "slot": "death",
+          "combatAction": "death",
+          "frameUrls": [
+            "assets/developer-assets/dungeon-hellhound/death/frame_01.png"
+          ],
+          "frameWidth": 64,
+          "frameHeight": 64,
+          "frameCount": 1,
+          "fps": 5,
+          "durationSeconds": 0.2,
+          "loop": false,
+          "flipX": true,
+          "guideFrame": "assets/developer-assets/dungeon-hellhound/death/frame_01.png",
+          "assetPath": "assets/developer-assets/dungeon-hellhound/death/frame_01.png",
+          "anchors": {
+            "body": {
+              "x": 0.5,
+              "y": 0.68,
+              "label": "身体"
+            },
+            "mouth": {
+              "x": 0.82,
+              "y": 0.32,
+              "label": "口部"
+            },
+            "cast": {
+              "x": 0.73,
+              "y": 0.4,
+              "label": "吐息"
+            },
+            "projectileSpawn": {
+              "x": 0.83,
+              "y": 0.33,
+              "label": "火焰"
+            }
+          },
+          "combatScale": 1,
+          "assetRevision": "2026-06-25T11:25:30.664Z"
+        }
+      ]
+    },
+    {
+      "entityId": "dungeon-skeleton-warrior",
+      "actions": [
+        {
+          "entityId": "dungeon-skeleton-warrior",
+          "slot": "idle",
+          "combatAction": "hit",
+          "frameUrls": [
+            "assets/monsters/skeleton-warrior-image2/idle_01.png"
+          ],
+          "frameWidth": 64,
+          "frameHeight": 64,
+          "frameCount": 4,
+          "fps": 4,
+          "durationSeconds": 1,
+          "loop": true,
+          "flipX": true,
+          "guideFrame": "assets/monsters/skeleton-warrior-image2/idle_01.png",
+          "assetPath": "assets/monsters/skeleton-warrior-image2/idle_01.png",
+          "anchors": {
+            "body": {
+              "x": 0.5,
+              "y": 0.72,
+              "label": "身体"
+            },
+            "weapon": {
+              "x": 0.78,
+              "y": 0.43,
+              "label": "武器"
+            },
+            "cast": {
+              "x": 0.68,
+              "y": 0.48,
+              "label": "前摇"
+            },
+            "projectileSpawn": {
+              "x": 0.78,
+              "y": 0.43,
+              "label": "弹体"
+            }
+          },
+          "combatScale": 1
+        },
+        {
+          "entityId": "dungeon-skeleton-warrior",
+          "slot": "hit",
+          "combatAction": "hit",
+          "frameUrls": [
+            "assets/monsters/skeleton-warrior-image2/idle_01.png"
+          ],
+          "frameWidth": 64,
+          "frameHeight": 64,
+          "frameCount": 4,
+          "fps": 4,
+          "durationSeconds": 1,
+          "loop": false,
+          "flipX": true,
+          "guideFrame": "assets/monsters/skeleton-warrior-image2/idle_01.png",
+          "assetPath": "assets/monsters/skeleton-warrior-image2/idle_01.png",
+          "anchors": {
+            "body": {
+              "x": 0.5,
+              "y": 0.72,
+              "label": "身体"
+            },
+            "weapon": {
+              "x": 0.78,
+              "y": 0.43,
+              "label": "武器"
+            },
+            "cast": {
+              "x": 0.68,
+              "y": 0.48,
+              "label": "前摇"
+            },
+            "projectileSpawn": {
+              "x": 0.78,
+              "y": 0.43,
+              "label": "弹体"
+            }
+          },
+          "combatScale": 1
+        },
+        {
+          "entityId": "dungeon-skeleton-warrior",
+          "slot": "move",
+          "combatAction": "move",
+          "frameUrls": [
+            "assets/monsters/skeleton-warrior-image2/move_01.png"
+          ],
+          "frameWidth": 64,
+          "frameHeight": 64,
+          "frameCount": 4,
+          "fps": 6,
+          "durationSeconds": 0.65,
+          "loop": true,
+          "flipX": true,
+          "guideFrame": "assets/monsters/skeleton-warrior-image2/move_01.png",
+          "assetPath": "assets/monsters/skeleton-warrior-image2/move_01.png",
+          "anchors": {
+            "body": {
+              "x": 0.5,
+              "y": 0.72,
+              "label": "身体"
+            },
+            "weapon": {
+              "x": 0.78,
+              "y": 0.43,
+              "label": "武器"
+            },
+            "cast": {
+              "x": 0.68,
+              "y": 0.48,
+              "label": "前摇"
+            },
+            "projectileSpawn": {
+              "x": 0.78,
+              "y": 0.43,
+              "label": "弹体"
+            }
+          },
+          "combatScale": 1
+        },
+        {
+          "entityId": "dungeon-skeleton-warrior",
+          "slot": "attack",
+          "combatAction": "attack",
+          "frameUrls": [
+            "assets/monsters/skeleton-warrior-image2/attack_01.png"
+          ],
+          "frameWidth": 64,
+          "frameHeight": 64,
+          "frameCount": 4,
+          "fps": 8,
+          "durationSeconds": 0.55,
+          "loop": false,
+          "flipX": true,
+          "guideFrame": "assets/monsters/skeleton-warrior-image2/attack_01.png",
+          "assetPath": "assets/monsters/skeleton-warrior-image2/attack_01.png",
+          "anchors": {
+            "body": {
+              "x": 0.5,
+              "y": 0.72,
+              "label": "身体"
+            },
+            "weapon": {
+              "x": 0.78,
+              "y": 0.43,
+              "label": "武器"
+            },
+            "cast": {
+              "x": 0.68,
+              "y": 0.48,
+              "label": "前摇"
+            },
+            "projectileSpawn": {
+              "x": 0.78,
+              "y": 0.43,
+              "label": "弹体"
+            }
+          },
+          "combatScale": 1,
+          "hitFrameIndex": 2
+        },
+        {
+          "entityId": "dungeon-skeleton-warrior",
+          "slot": "death",
+          "combatAction": "death",
+          "frameUrls": [
+            "assets/monsters/skeleton-warrior-image2/idle_01.png"
+          ],
+          "frameWidth": 64,
+          "frameHeight": 64,
+          "frameCount": 4,
+          "fps": 4,
+          "durationSeconds": 1,
+          "loop": false,
+          "flipX": true,
+          "guideFrame": "assets/monsters/skeleton-warrior-image2/idle_01.png",
+          "assetPath": "assets/monsters/skeleton-warrior-image2/idle_01.png",
+          "anchors": {
+            "body": {
+              "x": 0.5,
+              "y": 0.72,
+              "label": "身体"
+            },
+            "weapon": {
+              "x": 0.78,
+              "y": 0.43,
+              "label": "武器"
+            },
+            "cast": {
+              "x": 0.68,
+              "y": 0.48,
+              "label": "前摇"
+            },
+            "projectileSpawn": {
+              "x": 0.78,
+              "y": 0.43,
+              "label": "弹体"
+            }
+          },
+          "combatScale": 1
+        },
+        {
+          "entityId": "dungeon-skeleton-warrior",
+          "slot": "cast",
+          "combatAction": "cast",
+          "frameUrls": [
+            "assets/developer-assets/dungeon-skeleton-warrior/cast/frame_01.png"
+          ],
+          "frameWidth": 64,
+          "frameHeight": 64,
+          "frameCount": 1,
+          "fps": 4,
+          "durationSeconds": 1,
+          "loop": false,
+          "flipX": false,
+          "guideFrame": "assets/developer-assets/dungeon-skeleton-warrior/cast/frame_01.png",
+          "assetPath": "assets/developer-assets/dungeon-skeleton-warrior/cast/frame_01.png",
+          "combatScale": 1,
+          "hitFrameIndex": 0
+        },
+        {
+          "entityId": "dungeon-skeleton-warrior",
+          "slot": "skill_2",
+          "combatAction": "skill2",
+          "frameUrls": [
+            "assets/developer-assets/dungeon-skeleton-warrior/skill_2/frame_01.png"
+          ],
+          "frameWidth": 64,
+          "frameHeight": 64,
+          "frameCount": 1,
+          "fps": 8,
+          "durationSeconds": 1,
+          "loop": false,
+          "flipX": true,
+          "guideFrame": "assets/developer-assets/dungeon-skeleton-warrior/skill_2/frame_01.png",
+          "assetPath": "assets/developer-assets/dungeon-skeleton-warrior/skill_2/frame_01.png",
+          "combatScale": 1,
+          "hitFrameIndex": 0
+        },
+        {
+          "entityId": "dungeon-skeleton-warrior",
+          "slot": "skill_1",
+          "combatAction": "skill",
+          "frameUrls": [
+            "assets/developer-assets/dungeon-skeleton-warrior/skill_1/frame_01.png"
+          ],
+          "frameWidth": 64,
+          "frameHeight": 64,
+          "frameCount": 1,
+          "fps": 8,
+          "durationSeconds": 1,
+          "loop": false,
+          "flipX": false,
+          "guideFrame": "assets/developer-assets/dungeon-skeleton-warrior/skill_1/frame_01.png",
+          "assetPath": "assets/developer-assets/dungeon-skeleton-warrior/skill_1/frame_01.png",
+          "combatScale": 1,
+          "hitFrameIndex": 0
+        }
+      ]
+    }
+  ]
+}

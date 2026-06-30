@@ -1,5 +1,8 @@
 import { getCampaignIndex } from './config'
+import { normalizeCampaignDifficulty } from './difficulty'
+import type { EquipmentDropTier } from './monsterDataCards'
 import type {
+  CampaignDifficulty,
   EquipmentBonus,
   EquipmentDismantleCategory,
   EquipmentItem,
@@ -11,7 +14,9 @@ import type {
   EquipmentSkillModifier,
   EquipmentSlot,
   SkillBuildTag,
+  WeaponId,
 } from './types'
+import { WEAPON_DEFINITION_MAP } from './weapons'
 
 export const EQUIPMENT_SLOTS: EquipmentSlot[] = [
   'weapon',
@@ -126,6 +131,59 @@ const RARITY_SCORE: Record<EquipmentRarity, number> = {
 
 export const getEquipmentRarityScore = (rarity: EquipmentRarity) => RARITY_SCORE[rarity]
 
+export const EQUIPMENT_DROP_RATE_BY_TIER_AND_DIFFICULTY: Record<EquipmentDropTier, Record<CampaignDifficulty, number>> = {
+  none: { normal: 0, hard: 0, hell: 0, nightmare: 0 },
+  fodder: { normal: 0.0015, hard: 0.0025, hell: 0.0035, nightmare: 0.005 },
+  'theme-normal': { normal: 0.008, hard: 0.012, hell: 0.017, nightmare: 0.024 },
+  'high-threat': { normal: 0.016, hard: 0.024, hell: 0.034, nightmare: 0.048 },
+  'heavy-support': { normal: 0.022, hard: 0.032, hell: 0.046, nightmare: 0.064 },
+  'endgame-pressure': { normal: 0.03, hard: 0.045, hell: 0.065, nightmare: 0.09 },
+  elite: { normal: 0.12, hard: 0.18, hell: 0.25, nightmare: 0.34 },
+  'boss-guard': { normal: 0.005, hard: 0.008, hell: 0.011, nightmare: 0.015 },
+}
+
+const LEGENDARY_RATE_BY_TIER_AND_DIFFICULTY: Record<EquipmentDropTier, Record<CampaignDifficulty, number>> = {
+  none: { normal: 0, hard: 0, hell: 0, nightmare: 0 },
+  fodder: { normal: 0, hard: 0, hell: 0, nightmare: 0.0001 },
+  'theme-normal': { normal: 0, hard: 0, hell: 0, nightmare: 0.0001 },
+  'high-threat': { normal: 0, hard: 0, hell: 0.0002, nightmare: 0.0005 },
+  'heavy-support': { normal: 0, hard: 0.0001, hell: 0.0004, nightmare: 0.001 },
+  'endgame-pressure': { normal: 0.0001, hard: 0.0003, hell: 0.0008, nightmare: 0.0018 },
+  elite: { normal: 0.0003, hard: 0.0008, hell: 0.002, nightmare: 0.0045 },
+  'boss-guard': { normal: 0, hard: 0, hell: 0, nightmare: 0.0001 },
+}
+
+const BOSS_EXTRA_LEGENDARY_RATE_BY_DIFFICULTY: Record<CampaignDifficulty, number> = {
+  normal: 0.006,
+  hard: 0.01,
+  hell: 0.02,
+  nightmare: 0.045,
+}
+
+const FINAL_BOSS_EXTRA_LEGENDARY_RATE_BY_DIFFICULTY: Record<CampaignDifficulty, number> = {
+  normal: 0.015,
+  hard: 0.022,
+  hell: 0.035,
+  nightmare: 0.06,
+}
+
+export const getEquipmentDropChanceForTier = (
+  tier: EquipmentDropTier,
+  difficulty: CampaignDifficulty = 'normal',
+) => EQUIPMENT_DROP_RATE_BY_TIER_AND_DIFFICULTY[tier]?.[normalizeCampaignDifficulty(difficulty)] ?? 0
+
+export const getLegendaryRateForDroppedEquipment = (
+  tier: EquipmentDropTier,
+  difficulty: CampaignDifficulty = 'normal',
+) => LEGENDARY_RATE_BY_TIER_AND_DIFFICULTY[tier]?.[normalizeCampaignDifficulty(difficulty)] ?? 0
+
+export const getBossExtraLegendaryRate = (level: number, difficulty: CampaignDifficulty = 'normal') => {
+  const normalized = normalizeCampaignDifficulty(difficulty)
+  return getCampaignIndex(level) >= 10
+    ? FINAL_BOSS_EXTRA_LEGENDARY_RATE_BY_DIFFICULTY[normalized]
+    : BOSS_EXTRA_LEGENDARY_RATE_BY_DIFFICULTY[normalized]
+}
+
 const addMaterial = (materials: EquipmentMaterialInventory, id: EquipmentMaterialId, amount: number) => {
   materials[id] += Math.max(0, Math.round(amount))
 }
@@ -208,6 +266,93 @@ const SLOT_BASE_NAMES: Record<EquipmentSlot, string[]> = {
   ring2: ['赦免戒指', '猎血指环', '残响戒指'],
   cloak: ['影羽披风', '死契斗篷', '巡林披风'],
   necklace: ['蓝晶项链', '赦免吊坠', '猎魂坠饰'],
+}
+
+const LEGACY_WEAPON_EQUIPMENT_META: Record<WeaponId, {
+  rarity: EquipmentRarity
+  buildTag: SkillBuildTag | 'general'
+  affix: string
+  setId?: EquipmentSetId
+  level: number
+  score: number
+}> = {
+  'woodland-shortbow': {
+    rarity: 'common',
+    buildTag: 'general',
+    affix: '新手',
+    level: 1,
+    score: 36,
+  },
+  'stoneheart-hunter-bow': {
+    rarity: 'fine',
+    buildTag: 'pierce',
+    affix: '磐心',
+    level: 8,
+    score: 70,
+  },
+  'swift-reed-longbow': {
+    rarity: 'fine',
+    buildTag: 'spread',
+    affix: '迅苇',
+    level: 12,
+    score: 78,
+  },
+  'frostline-warbow': {
+    rarity: 'rare',
+    buildTag: 'control',
+    affix: '霜纹',
+    setId: 'blue-crystal-contract',
+    level: 20,
+    score: 116,
+  },
+  'embercore-composite': {
+    rarity: 'rare',
+    buildTag: 'spread',
+    affix: '烬芯',
+    setId: 'bloodfeather-ranger',
+    level: 28,
+    score: 142,
+  },
+  'windsplit-serpent-bow': {
+    rarity: 'epic',
+    buildTag: 'spread',
+    affix: '裂风',
+    setId: 'bloodfeather-ranger',
+    level: 36,
+    score: 178,
+  },
+  'starfeather-greatbow': {
+    rarity: 'epic',
+    buildTag: 'pierce',
+    affix: '星羽',
+    setId: 'death-contract-executioner',
+    level: 44,
+    score: 206,
+  },
+  'moonshadow-arc-bow': {
+    rarity: 'legacy',
+    buildTag: 'pierce',
+    affix: '月影',
+    setId: 'death-contract-executioner',
+    level: 55,
+    score: 258,
+  },
+  'yang-birch-bow': {
+    rarity: 'legendary',
+    buildTag: 'general',
+    affix: '白桦',
+    setId: 'blue-crystal-contract',
+    level: 72,
+    score: 340,
+  },
+  'skybreaker-judgement-bow': {
+    rarity: 'legendary',
+    buildTag: 'pierce',
+    affix: '天穹',
+    setId: 'death-contract-executioner',
+    level: 88,
+    score: 410,
+  },
 }
 
 export const getUnlockedEquipmentSlots = (level: number) => {
@@ -449,6 +594,12 @@ export const getEquipmentUpgradeCost = (item: EquipmentItem): EquipmentMaterialI
   return cost
 }
 
+export const getEquipmentUpgradeGoldCost = (item: EquipmentItem) => {
+  const rarityScore = RARITY_SCORE[item.rarity]
+  const nextLevel = (item.upgradeLevel ?? 0) + 1
+  return Math.max(6, Math.round((item.level * 0.55 + item.score * 0.08 + rarityScore * 4) * nextLevel))
+}
+
 const upgradeBonusValue = (key: keyof EquipmentBonus, value: number) => {
   if (key === 'attackIntervalOffset') {
     return Number((value * 1.04).toFixed(3))
@@ -493,23 +644,55 @@ const weightedPick = <T>(entries: Array<[T, number]>, roll = Math.random()) => {
   return entries[entries.length - 1][0]
 }
 
-export const rollEquipmentRarity = (source: 'normal' | 'elite' | 'boss' | 'boss-legacy', level: number, roll = Math.random()): EquipmentRarity | null => {
+const HIGH_VALUE_RARITIES = new Set<EquipmentRarity>(['epic', 'legacy', 'legendary'])
+
+const applyHighValueDropMultiplier = (
+  entries: Array<[EquipmentRarity | null, number]>,
+  highValueDropMultiplier = 1,
+) => {
+  if (highValueDropMultiplier <= 1) {
+    return entries
+  }
+
+  const nullWeight = entries.find(([rarity]) => rarity === null)?.[1] ?? 0
+  const originalDropWeight = entries.reduce((sum, [rarity, weight]) => rarity ? sum + weight : sum, 0)
+  const adjustedDropEntries = entries
+    .filter(([rarity]) => rarity)
+    .map(([rarity, weight]) => {
+      const multiplier = HIGH_VALUE_RARITIES.has(rarity as EquipmentRarity) ? highValueDropMultiplier : 1
+      return [rarity, weight * multiplier] as [EquipmentRarity | null, number]
+    })
+  const adjustedDropWeight = adjustedDropEntries.reduce((sum, [, weight]) => sum + weight, 0)
+  const normalize = adjustedDropWeight > 0 ? originalDropWeight / adjustedDropWeight : 1
+
+  return [
+    ...adjustedDropEntries.map(([rarity, weight]) => [rarity, weight * normalize] as [EquipmentRarity | null, number]),
+    [null, nullWeight] as [EquipmentRarity | null, number],
+  ]
+}
+
+export const rollEquipmentRarity = (
+  source: 'normal' | 'elite' | 'boss' | 'boss-legacy',
+  level: number,
+  roll = Math.random(),
+  highValueDropMultiplier = 1,
+): EquipmentRarity | null => {
   if (source === 'boss-legacy') {
     return 'legacy'
   }
 
   if (source === 'boss') {
-    return weightedPick<EquipmentRarity | null>([
+    return weightedPick<EquipmentRarity | null>(applyHighValueDropMultiplier([
       ['rare', 35],
       ['epic', 25],
       ['legacy', 15],
       ['legendary', getCampaignIndex(level) >= 10 ? 1.5 : 0.6],
       [null, 24],
-    ], roll)
+    ], highValueDropMultiplier), roll)
   }
 
   if (source === 'elite') {
-    return weightedPick<EquipmentRarity | null>([
+    return weightedPick<EquipmentRarity | null>(applyHighValueDropMultiplier([
       ['broken', 35],
       ['common', 28],
       ['fine', 18],
@@ -518,10 +701,10 @@ export const rollEquipmentRarity = (source: 'normal' | 'elite' | 'boss' | 'boss-
       ['legacy', 0.3],
       ['legendary', 0.02],
       [null, 8.18],
-    ], roll)
+    ], highValueDropMultiplier), roll)
   }
 
-  return weightedPick<EquipmentRarity | null>([
+  return weightedPick<EquipmentRarity | null>(applyHighValueDropMultiplier([
     ['broken', 18],
     ['common', 10],
     ['fine', 4],
@@ -529,7 +712,119 @@ export const rollEquipmentRarity = (source: 'normal' | 'elite' | 'boss' | 'boss-
     ['epic', 0.18],
     ['legendary', 0.005],
     [null, 66.615],
-  ], roll)
+  ], highValueDropMultiplier), roll)
+}
+
+const NON_LEGENDARY_DROPPED_RARITY_WEIGHTS: Record<'normal' | 'elite' | 'boss' | 'boss-legacy', Array<[EquipmentRarity, number]>> = {
+  normal: [
+    ['broken', 18],
+    ['common', 10],
+    ['fine', 4],
+    ['rare', 1.2],
+    ['epic', 0.18],
+  ],
+  elite: [
+    ['broken', 35],
+    ['common', 28],
+    ['fine', 18],
+    ['rare', 8],
+    ['epic', 2.5],
+    ['legacy', 0.3],
+  ],
+  boss: [
+    ['rare', 35],
+    ['epic', 25],
+    ['legacy', 15],
+  ],
+  'boss-legacy': [
+    ['legacy', 1],
+  ],
+}
+
+const applyHighValueMultiplierToDroppedWeights = (
+  entries: Array<[EquipmentRarity, number]>,
+  highValueDropMultiplier = 1,
+) => entries.map(([rarity, weight]) => [
+  rarity,
+  weight * (HIGH_VALUE_RARITIES.has(rarity) ? highValueDropMultiplier : 1),
+] as [EquipmentRarity, number])
+
+export const rollDroppedEquipmentRarity = (
+  source: 'normal' | 'elite' | 'boss' | 'boss-legacy',
+  level: number,
+  options: {
+    difficulty?: CampaignDifficulty
+    dropTier?: EquipmentDropTier
+    highValueDropMultiplier?: number
+    legendaryRoll?: number
+    rarityRoll?: number
+  } = {},
+): EquipmentRarity => {
+  if (source === 'boss-legacy') {
+    return 'legacy'
+  }
+
+  const difficulty = normalizeCampaignDifficulty(options.difficulty ?? 'normal')
+  const legendaryRate = source === 'boss'
+    ? getBossExtraLegendaryRate(level, difficulty)
+    : getLegendaryRateForDroppedEquipment(options.dropTier ?? (source === 'elite' ? 'elite' : 'theme-normal'), difficulty)
+
+  if ((options.legendaryRoll ?? Math.random()) < legendaryRate) {
+    return 'legendary'
+  }
+
+  return weightedPick<EquipmentRarity>(
+    applyHighValueMultiplierToDroppedWeights(
+      NON_LEGENDARY_DROPPED_RARITY_WEIGHTS[source],
+      options.highValueDropMultiplier,
+    ),
+    options.rarityRoll ?? Math.random(),
+  )
+}
+
+export const applyDiscoveredEquipmentCandidateWeights = <T extends { equipmentId: string; weight: number }>(
+  candidates: T[],
+  discoveredEquipmentIds: readonly string[] = [],
+) => {
+  const discovered = new Set(discoveredEquipmentIds.filter(Boolean))
+  return candidates.map((candidate) => ({
+    ...candidate,
+    weight: discovered.has(candidate.equipmentId) ? candidate.weight * 2 : candidate.weight,
+  }))
+}
+
+type HighRarityEquipmentCandidate = {
+  equipmentId: string
+  slot: EquipmentSlot
+  buildTag: SkillBuildTag | 'general'
+  affix: string
+  baseName: string
+  weight: number
+}
+
+const HIGH_RARITY_BUILD_TAGS: Array<SkillBuildTag | 'general'> = ['pierce', 'spread', 'control', 'beast', 'general']
+
+export const createHighRarityEquipmentCandidatePool = (
+  rarity: Extract<EquipmentRarity, 'legacy' | 'legendary'>,
+  slots: EquipmentSlot[],
+  preferredBuildTag?: SkillBuildTag,
+  discoveredEquipmentIds: readonly string[] = [],
+): HighRarityEquipmentCandidate[] => {
+  const candidates = slots.flatMap((slot) => HIGH_RARITY_BUILD_TAGS.flatMap((buildTag) => {
+    const affixes = BUILD_AFFIXES[buildTag][rarity] ?? BUILD_AFFIXES.general[rarity] ?? ['契约']
+    const baseNames = SLOT_BASE_NAMES[slot]
+    const buildWeight = preferredBuildTag && buildTag === preferredBuildTag ? 1.62 : buildTag === 'general' ? 0.65 : 1
+    return affixes.flatMap((affix) => baseNames.map((baseName) => ({
+      equipmentId: `equipment-${rarity}-${slot}-${buildTag}-${affix}-${baseName}`,
+      slot,
+      buildTag,
+      affix,
+      baseName,
+      weight: buildWeight,
+    })))
+  }))
+
+  return applyDiscoveredEquipmentCandidateWeights(candidates, discoveredEquipmentIds)
 }
 
 const getBuildTag = (rarity: EquipmentRarity, preferredBuildTag?: SkillBuildTag): SkillBuildTag | 'general' => {
@@ -783,28 +1078,268 @@ const getEquipmentSetId = (rarity: EquipmentRarity, buildTag: SkillBuildTag | 'g
   return undefined
 }
 
+export const STARTER_WEAPON_ID: WeaponId = 'woodland-shortbow'
+
+export const createWeaponEquipmentFromDefinition = (
+  weaponId: WeaponId,
+  options: {
+    source?: EquipmentItem['source']
+    equipped?: boolean
+    locked?: boolean
+    idPrefix?: string
+  } = {},
+): EquipmentItem | null => {
+  const weapon = WEAPON_DEFINITION_MAP[weaponId]
+  const meta = LEGACY_WEAPON_EQUIPMENT_META[weaponId]
+  if (!weapon || !meta) {
+    return null
+  }
+
+  const modifiers = createSkillModifiers(meta.rarity, meta.buildTag, meta.affix)
+  return {
+    id: `${options.idPrefix ?? 'legacy-weapon'}-${weaponId}`,
+    slot: 'weapon',
+    rarity: meta.rarity,
+    name: weapon.name,
+    affix: meta.affix,
+    buildTag: meta.buildTag,
+    setId: meta.setId ?? getEquipmentSetId(meta.rarity, meta.buildTag, meta.affix),
+    level: meta.level,
+    score: meta.score,
+    bonus: { ...weapon.bonus },
+    modifiers,
+    locked: options.locked ?? true,
+    lockedModifierIndexes: [],
+    acquiredLevel: meta.level,
+    isNew: false,
+    upgradeLevel: 0,
+    source: options.source ?? 'system',
+  }
+}
+
+export const createStarterWeaponEquipment = () => {
+  return createWeaponEquipmentFromDefinition(STARTER_WEAPON_ID, {
+    source: 'system',
+    locked: true,
+    idPrefix: 'starter-weapon',
+  })
+}
+
+export const BOSS_LEGACY_WEAPON_POOL: Array<{
+  campaign: number
+  name: string
+  affix: string
+  buildTag: SkillBuildTag | 'general'
+  setId?: EquipmentSetId
+  bonus: EquipmentBonus
+}> = [
+  { campaign: 1, name: '死契处刑长弓', affix: '死契处刑', buildTag: 'pierce', setId: 'death-contract-executioner', bonus: { attackDamage: 18, attackRange: 34, attackPierce: 1, pierceProjectileBonus: 1 } },
+  { campaign: 2, name: '血羽贵族弓', affix: '血羽封场', buildTag: 'spread', setId: 'bloodfeather-ranger', bonus: { attackDamage: 16, attackIntervalOffset: -0.025, spreadProjectileBonus: 1, skillDamageMultiplier: 0.08 } },
+  { campaign: 3, name: '黑月兽骨弓', affix: '兽王契约', buildTag: 'beast', setId: 'beast-king-pardon', bonus: { attackDamage: 14, beastDamageMultiplier: 0.2, skillCooldownMultiplier: 0.05, maxHp: 16 } },
+  { campaign: 4, name: '三相咒弦弓', affix: '契约领域', buildTag: 'control', setId: 'blue-crystal-contract', bonus: { attackDamage: 14, fieldRadiusMultiplier: 0.16, skillDamageMultiplier: 0.1, crystalXpMultiplier: 0.06 } },
+  { campaign: 5, name: '断牙破阵弓', affix: '血羽封场', buildTag: 'spread', setId: 'bloodfeather-ranger', bonus: { attackDamage: 20, attackRange: 16, spreadProjectileBonus: 1, skillDamageMultiplier: 0.08 } },
+  { campaign: 6, name: '星叶审判弓', affix: '审判之弦', buildTag: 'pierce', setId: 'death-contract-executioner', bonus: { attackDamage: 18, attackIntervalOffset: -0.03, attackRange: 28, skillDamageMultiplier: 0.08 } },
+  { campaign: 7, name: '齿轮连射弩', affix: '密集羽簇', buildTag: 'spread', setId: 'bloodfeather-ranger', bonus: { attackDamage: 17, attackIntervalOffset: -0.045, spreadProjectileBonus: 1, attackRange: 18 } },
+  { campaign: 8, name: '沉潮雷鸣弓', affix: '蓝晶契约', buildTag: 'control', setId: 'blue-crystal-contract', bonus: { attackDamage: 17, fieldRadiusMultiplier: 0.14, crystalXpMultiplier: 0.12, skillCooldownMultiplier: 0.04 } },
+  { campaign: 9, name: '重角裂甲弓', affix: '贯通残响', buildTag: 'pierce', setId: 'death-contract-executioner', bonus: { attackDamage: 24, attackRange: 24, attackPierce: 1, skillDamageMultiplier: 0.08 } },
+  { campaign: 10, name: '龙审焚天弓', affix: '禁域审判', buildTag: 'control', setId: 'blue-crystal-contract', bonus: { attackDamage: 28, attackRange: 36, attackPierce: 1, fieldRadiusMultiplier: 0.18, skillDamageMultiplier: 0.14 } },
+]
+
+export const getBossLegacyWeaponForCampaign = (campaign: number) => {
+  return BOSS_LEGACY_WEAPON_POOL.find((weapon) => weapon.campaign === campaign) ?? BOSS_LEGACY_WEAPON_POOL[0]
+}
+
+const createBossLegacyWeaponDrop = (
+  level: number,
+  createId: () => string,
+  preferredBuildTag?: SkillBuildTag,
+  rarityOverride?: EquipmentRarity,
+) => {
+  const campaign = getCampaignIndex(level)
+  const weapon = getBossLegacyWeaponForCampaign(campaign)
+  const rarity: EquipmentRarity = rarityOverride ?? 'legacy'
+  const buildTag = preferredBuildTag && preferredBuildTag === weapon.buildTag ? preferredBuildTag : weapon.buildTag
+  const rolls = createEquipmentRollMultipliers(rarity)
+  const score = Math.round((level * 3.4 + RARITY_SCORE[rarity] * 30) * getRollScoreMultiplier(rolls))
+  const baseBonus = createBonus('weapon', rarity, buildTag, level)
+  const bonus: EquipmentBonus = applyEquipmentRolls({ ...baseBonus, ...weapon.bonus }, 'weapon', rolls)
+
+  return {
+    id: `equipment-boss-weapon-${campaign}-${createId()}`,
+    equipmentId: `boss-legacy-weapon-${campaign}`,
+    slot: 'weapon',
+    rarity,
+    name: weapon.name,
+    affix: weapon.affix,
+    buildTag,
+    setId: weapon.setId ?? getEquipmentSetId(rarity, buildTag, weapon.affix),
+    level,
+    score,
+    bonus,
+    modifiers: createSkillModifiers(rarity, buildTag, weapon.affix),
+    locked: true,
+    lockedModifierIndexes: [],
+    acquiredLevel: level,
+    isNew: true,
+    upgradeLevel: 0,
+    source: 'dungeon',
+    rolls,
+  } satisfies EquipmentItem
+}
+
+type EquipmentRollMultipliers = {
+  main: number
+  secondary: number
+  skillOrBuild: number
+}
+
+const RARITY_ROLL_RANGES: Record<EquipmentRarity, {
+  main: [number, number]
+  secondary: [number, number]
+  skillOrBuild: [number, number]
+}> = {
+  broken: { main: [0.8, 0.95], secondary: [0.8, 0.95], skillOrBuild: [1, 1] },
+  common: { main: [0.9, 1.05], secondary: [0.9, 1.05], skillOrBuild: [0.9, 1.05] },
+  fine: { main: [0.95, 1.15], secondary: [0.95, 1.15], skillOrBuild: [0.95, 1.15] },
+  rare: { main: [1.05, 1.25], secondary: [1, 1.25], skillOrBuild: [1, 1.25] },
+  epic: { main: [1.15, 1.45], secondary: [1.1, 1.4], skillOrBuild: [1.1, 1.4] },
+  legacy: { main: [1.3, 1.65], secondary: [1.2, 1.55], skillOrBuild: [1.2, 1.6] },
+  legendary: { main: [1.5, 2], secondary: [1.35, 1.85], skillOrBuild: [1.4, 2] },
+}
+
+const randomInRange = ([min, max]: [number, number]) => Number((min + (max - min) * Math.random()).toFixed(3))
+
+const createEquipmentRollMultipliers = (rarity: EquipmentRarity): EquipmentRollMultipliers => {
+  const ranges = RARITY_ROLL_RANGES[rarity]
+  return {
+    main: randomInRange(ranges.main),
+    secondary: randomInRange(ranges.secondary),
+    skillOrBuild: randomInRange(ranges.skillOrBuild),
+  }
+}
+
+const isMainBonusKey = (slot: EquipmentSlot, key: keyof EquipmentBonus) => {
+  if (slot === 'weapon') {
+    return key === 'attackDamage'
+  }
+  if (slot === 'chest' || slot === 'legs') {
+    return key === 'maxHp'
+  }
+  if (slot === 'boots' || slot === 'cloak') {
+    return key === 'speed'
+  }
+  return false
+}
+
+const isSkillOrBuildBonusKey = (key: keyof EquipmentBonus) => (
+  key === 'skillDamageMultiplier'
+  || key === 'skillCooldownMultiplier'
+  || key === 'beastDamageMultiplier'
+  || key === 'fieldRadiusMultiplier'
+  || key === 'spreadProjectileBonus'
+  || key === 'pierceProjectileBonus'
+  || key === 'attackPierce'
+)
+
+const applyEquipmentRolls = (
+  bonus: EquipmentBonus,
+  slot: EquipmentSlot,
+  rolls: EquipmentRollMultipliers,
+) => {
+  const rolled: EquipmentBonus = {}
+  ;(Object.keys(bonus) as Array<keyof EquipmentBonus>).forEach((key) => {
+    const value = bonus[key]
+    if (typeof value !== 'number') {
+      return
+    }
+
+    const multiplier = isMainBonusKey(slot, key)
+      ? rolls.main
+      : isSkillOrBuildBonusKey(key)
+        ? rolls.skillOrBuild
+        : rolls.secondary
+    const next = Math.abs(value) < 1
+      ? Number((value * multiplier).toFixed(3))
+      : Math.max(1, Math.round(value * multiplier))
+    rolled[key] = next as never
+  })
+  return rolled
+}
+
+const getRollScoreMultiplier = (rolls: EquipmentRollMultipliers) => (
+  rolls.main * 0.5 + rolls.secondary * 0.25 + rolls.skillOrBuild * 0.25
+)
+
 export const createEquipmentDrop = (
   level: number,
   source: 'normal' | 'elite' | 'boss' | 'boss-legacy',
   createId: () => string,
-  options: { preferredBuildTag?: SkillBuildTag; unlockedSlots?: EquipmentSlot[] } = {},
+  options: {
+    preferredBuildTag?: SkillBuildTag
+    unlockedSlots?: EquipmentSlot[]
+    highValueDropMultiplier?: number
+    forceDrop?: boolean
+    difficulty?: CampaignDifficulty
+    dropTier?: EquipmentDropTier
+    discoveredHighRarityEquipmentIds?: readonly string[]
+  } = {},
 ): EquipmentItem | null => {
-  const rarity = rollEquipmentRarity(source, level)
+  const rarity = options.forceDrop
+    ? rollDroppedEquipmentRarity(source, level, {
+      difficulty: options.difficulty,
+      dropTier: options.dropTier,
+      highValueDropMultiplier: options.highValueDropMultiplier,
+    })
+    : rollEquipmentRarity(source, level, Math.random(), options.highValueDropMultiplier)
   if (!rarity) {
     return null
   }
 
+  if (source === 'boss-legacy') {
+    const campaign = getCampaignIndex(level)
+    const weaponCandidate = {
+      kind: 'weapon' as const,
+      equipmentId: `boss-legacy-weapon-${campaign}`,
+      weight: 38,
+    }
+    const genericCandidate = {
+      kind: 'generic' as const,
+      equipmentId: `boss-legacy-generic-${campaign}`,
+      weight: 62,
+    }
+    const candidate = weightedPick(
+      applyDiscoveredEquipmentCandidateWeights([weaponCandidate, genericCandidate], options.discoveredHighRarityEquipmentIds)
+        .map((entry) => [entry, entry.weight] as [typeof entry, number]),
+    )
+    if (candidate.kind === 'weapon') {
+      return createBossLegacyWeaponDrop(level, createId, options.preferredBuildTag, rarity)
+    }
+  }
+
   const unlockedSlots = options.unlockedSlots ?? getUnlockedEquipmentSlots(level)
-  const slot = unlockedSlots[Math.floor(Math.random() * unlockedSlots.length)] ?? 'weapon'
-  const buildTag = getBuildTag(rarity, options.preferredBuildTag)
+  const highRarityCandidate = rarity === 'legacy' || rarity === 'legendary'
+    ? weightedPick(
+      createHighRarityEquipmentCandidatePool(
+        rarity,
+        unlockedSlots.length ? unlockedSlots : ['weapon'],
+        options.preferredBuildTag,
+        options.discoveredHighRarityEquipmentIds,
+      ).map((candidate) => [candidate, candidate.weight] as [HighRarityEquipmentCandidate, number]),
+    )
+    : null
+  const slot = highRarityCandidate?.slot ?? unlockedSlots[Math.floor(Math.random() * unlockedSlots.length)] ?? 'weapon'
+  const buildTag = highRarityCandidate?.buildTag ?? getBuildTag(rarity, options.preferredBuildTag)
   const affixes = BUILD_AFFIXES[buildTag][rarity] ?? BUILD_AFFIXES.general[rarity] ?? ['契约']
-  const affix = affixes[Math.floor(Math.random() * affixes.length)] ?? '契约'
+  const affix = highRarityCandidate?.affix ?? affixes[Math.floor(Math.random() * affixes.length)] ?? '契约'
   const baseNames = SLOT_BASE_NAMES[slot]
-  const baseName = baseNames[Math.floor(Math.random() * baseNames.length)] ?? EQUIPMENT_SLOT_LABELS[slot]
-  const score = Math.round((level * 2.4 + RARITY_SCORE[rarity] * 18) * (1 + Math.random() * 0.16))
+  const baseName = highRarityCandidate?.baseName ?? baseNames[Math.floor(Math.random() * baseNames.length)] ?? EQUIPMENT_SLOT_LABELS[slot]
+  const rolls = createEquipmentRollMultipliers(rarity)
+  const baseBonus = createBonus(slot, rarity, buildTag, level)
+  const score = Math.round((level * 2.4 + RARITY_SCORE[rarity] * 18) * getRollScoreMultiplier(rolls))
 
   return {
     id: `equipment-${createId()}`,
+    equipmentId: highRarityCandidate?.equipmentId ?? `equipment-${rarity}-${slot}-${buildTag}-${affix}-${baseName}`,
     slot,
     rarity,
     name: `${affix}${baseName}`,
@@ -813,7 +1348,7 @@ export const createEquipmentDrop = (
     setId: getEquipmentSetId(rarity, buildTag, affix),
     level,
     score,
-    bonus: createBonus(slot, rarity, buildTag, level),
+    bonus: applyEquipmentRolls(baseBonus, slot, rolls),
     modifiers: createSkillModifiers(rarity, buildTag, affix),
     locked: RARITY_SCORE[rarity] >= RARITY_SCORE.epic,
     lockedModifierIndexes: [],
@@ -821,6 +1356,7 @@ export const createEquipmentDrop = (
     isNew: true,
     upgradeLevel: 0,
     source: 'dungeon',
+    rolls,
   }
 }
 

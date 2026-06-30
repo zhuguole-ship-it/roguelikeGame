@@ -1,4 +1,5 @@
-import type { EnemyKind, Vector2 } from './types'
+import { getCampaignDifficultyConfig } from './difficulty'
+import type { CampaignDifficulty, EnemyKind, Vector2 } from './types'
 
 export const WORLD_WIDTH = 960
 export const WORLD_HEIGHT = 640
@@ -128,7 +129,7 @@ export const isEliteLevel = (level: number) => {
   const floor = getCampaignFloor(level)
   return floor > 0 && floor < FLOORS_PER_CAMPAIGN && floor % 3 === 0
 }
-export const getHordeMultiplier = (level: number) => {
+export const getLegacyHordeMultiplier = (level: number) => {
   const floor = getCampaignFloor(level)
 
   if (floor === FLOORS_PER_CAMPAIGN) {
@@ -164,6 +165,14 @@ export const getHordeMultiplier = (level: number) => {
   }
 
   return 2.4
+}
+
+export const getHordeMultiplier = (level: number) => {
+  if (isBossLevel(level)) {
+    return 1
+  }
+
+  return getLegacyHordeMultiplier(level) * 2
 }
 
 export type HordeOnScreenTargets = {
@@ -251,7 +260,7 @@ export const getHordeNormalTarget = (level: number) => {
   const targets = getHordeOnScreenTargets(level)
   return Math.round(targets.normalMax * getHordeDensityRatio(level))
 }
-export const getEliteBudget = (level: number) => {
+export const getEliteBudget = (level: number, difficulty: CampaignDifficulty = 'normal') => {
   const floor = getCampaignFloor(level)
   const campaignBonus = getCampaignIndex(level) >= 9 ? 1.25 : getCampaignIndex(level) >= 6 ? 0.75 : getCampaignIndex(level) >= 3 ? 0.35 : 0
 
@@ -259,33 +268,36 @@ export const getEliteBudget = (level: number) => {
     return 0
   }
 
+  const difficultyMultiplier = getCampaignDifficultyConfig(difficulty).eliteBudgetMultiplier
+  const scale = (budget: number) => Number((budget * difficultyMultiplier).toFixed(2))
+
   if (floor >= 21) {
-    return 4 + campaignBonus
+    return scale(4 + campaignBonus)
   }
 
   if (floor >= 18) {
-    return 3.5 + campaignBonus
+    return scale(3.5 + campaignBonus)
   }
 
   if (floor >= 15) {
-    return 3 + campaignBonus
+    return scale(3 + campaignBonus)
   }
 
   if (floor >= 12) {
-    return 2.5 + campaignBonus
+    return scale(2.5 + campaignBonus)
   }
 
   if (floor >= 9) {
-    return 2 + campaignBonus
+    return scale(2 + campaignBonus)
   }
 
   if (floor >= 6) {
-    return 1.5 + campaignBonus
+    return scale(1.5 + campaignBonus)
   }
 
-  return 1 + campaignBonus
+  return scale(1 + campaignBonus)
 }
-export const getLevelGoal = (level: number) => {
+export const getLevelGoal = (level: number, difficulty: CampaignDifficulty = 'normal') => {
   if (isBossLevel(level)) {
     return 1 + Math.min(8, 2 + getCampaignIndex(level))
   }
@@ -293,7 +305,7 @@ export const getLevelGoal = (level: number) => {
   const floor = getCampaignFloor(level)
   const target = getHordeNormalTarget(level)
   const clearMultiplier = floor <= 2 ? 1.25 : floor <= 8 ? 1.45 : 1.7
-  return Math.max(12, Math.round(target * clearMultiplier))
+  return Math.max(12, Math.round(target * clearMultiplier * getHordeMultiplier(level) * getCampaignDifficultyConfig(difficulty).quantityMultiplier))
 }
 export const getExperienceTarget = (contractLevel: number) => 70 + Math.max(0, contractLevel - 1) * 28
 export const getSpawnInterval = (level: number) => {
@@ -301,7 +313,7 @@ export const getSpawnInterval = (level: number) => {
   const campaign = getCampaignIndex(level)
   return Math.max(0.045, 0.36 - floor * 0.008 - campaign * 0.008 - (getHordeDensityRatio(level) - 0.4) * 0.12)
 }
-export const getMaxEnemiesOnField = (level: number) => {
+export const getMaxEnemiesOnField = (level: number, difficulty: CampaignDifficulty = 'normal') => {
   if (isBossLevel(level)) {
     return 1 + Math.min(12, 4 + getCampaignIndex(level))
   }
@@ -317,7 +329,7 @@ export const getMaxEnemiesOnField = (level: number) => {
 
   return Math.min(
     targets.hardCap,
-    Math.max(8, Math.round(targetCapacity * density)),
+    Math.max(8, Math.round(targetCapacity * density * Math.min(1.18, getCampaignDifficultyConfig(difficulty).quantityMultiplier))),
   )
 }
 export const getEnemyCountWeight = (level: number) => Math.min(0.65, Math.max(0, (getCampaignFloor(level) - 3) * 0.06 + getCampaignIndex(level) * 0.025))
@@ -378,17 +390,19 @@ export const getFeaturedEnemyKind = (level: number, spawnedCount: number): Enemy
   return null
 }
 
-export const getEnemyStats = (level: number, kind: EnemyKind) => {
+export const getEnemyStats = (level: number, kind: EnemyKind, difficulty: CampaignDifficulty = 'normal') => {
   const campaign = getCampaignIntensity(level)
   const floor = getFloorIntensity(level)
-  const scaleHp = (base: number) => base * campaign.hp * floor
-  const scaleAttack = (base: number) => base * campaign.attack * floor
+  const difficultyConfig = getCampaignDifficultyConfig(difficulty)
+  const scaleHp = (base: number) => base * campaign.hp * floor * difficultyConfig.hpMultiplier
+  const scaleAttack = (base: number) => base * campaign.attack * floor * difficultyConfig.attackMultiplier
+  const scaleSpeed = (base: number) => base * difficultyConfig.speedMultiplier
 
   if (kind === 'boss') {
     return {
       hp: 520 + level * 42,
       attack: scaleAttack(64),
-      speed: 44,
+      speed: scaleSpeed(44),
       size: ENEMY_SIZE + 16,
       tint: '#f97316',
     }
@@ -398,7 +412,7 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
     return {
       hp: scaleHp(108),
       attack: scaleAttack(32),
-      speed: 54,
+      speed: scaleSpeed(54),
       size: ENEMY_SIZE + 8,
       tint: '#c084fc',
     }
@@ -408,7 +422,7 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
     return {
       hp: scaleHp(20),
       attack: scaleAttack(16),
-      speed: 54,
+      speed: scaleSpeed(54),
       size: ENEMY_SIZE + 2,
       tint: PALETTE.rangedEnemy,
     }
@@ -418,7 +432,7 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
     return {
       hp: scaleHp(24),
       attack: scaleAttack(20),
-      speed: 74,
+      speed: scaleSpeed(74),
       size: ENEMY_SIZE + 2,
       tint: '#fb7185',
     }
@@ -428,7 +442,7 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
     return {
       hp: scaleHp(18),
       attack: scaleAttack(12),
-      speed: 62,
+      speed: scaleSpeed(62),
       size: ENEMY_SIZE + 3,
       tint: '#a3e635',
     }
@@ -438,7 +452,7 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
     return {
       hp: scaleHp(22),
       attack: scaleAttack(22),
-      speed: 58,
+      speed: scaleSpeed(58),
       size: ENEMY_SIZE + 1,
       tint: '#f59e0b',
     }
@@ -447,7 +461,7 @@ export const getEnemyStats = (level: number, kind: EnemyKind) => {
   return {
     hp: scaleHp(22),
     attack: scaleAttack(14),
-    speed: 58,
+    speed: scaleSpeed(58),
     size: ENEMY_SIZE + Math.min(getCampaignFloor(level), 4),
     tint: PALETTE.enemy,
   }

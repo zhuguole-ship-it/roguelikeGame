@@ -2,29 +2,19 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { CANVAS_HEIGHT, CANVAS_SCALE, CANVAS_WIDTH, WORLD_HEIGHT, WORLD_WIDTH } from '../../game/config'
 import { getSmoothedCameraOffset, renderGame } from '../../game/render'
+import { loadRuntimeAssetDraftConfigFromStorage, loadRuntimeAssetProjectConfig } from '../../game/runtimeAssetOverrides'
 import { useGameLoop } from '../../hooks/useGameLoop'
 import { useKeyboard } from '../../hooks/useKeyboard'
 import { useGameStore } from '../../store/useGameStore'
+import { DeveloperAssetPanel, isDeveloperAssetPanelVisible } from './DeveloperAssetPanel'
 import { GameOverlay } from './GameOverlay'
 import { GamePauseOverlay } from './GamePauseOverlay'
 import { GameStatusBar } from './GameStatusBar'
 
-const isLocalTestControlsVisible = () => {
-  if (import.meta.env.DEV) {
-    return true
-  }
-  if (typeof window === 'undefined') {
-    return false
-  }
-  return ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
-}
-
 function LocalTestControls() {
   const [open, setOpen] = useState(false)
-  const debugControls = useGameStore((state) => state.debugControls)
-  const updateDebugControls = useGameStore((state) => state.updateDebugControls)
 
-  if (!isLocalTestControlsVisible()) {
+  if (!isDeveloperAssetPanelVisible()) {
     return null
   }
 
@@ -37,26 +27,7 @@ function LocalTestControls() {
       >
         测试
       </button>
-      {open ? (
-        <div className="mt-2 w-48 border border-[rgba(218,165,71,0.58)] bg-[rgba(8,16,11,0.92)] p-3 shadow-[inset_0_0_0_1px_rgba(244,240,215,0.06),0_8px_0_rgba(0,0,0,0.28)]">
-          <label className="flex cursor-pointer items-center justify-between gap-3 font-pixel text-[8px] text-[#9dd5ac]">
-            <span>生命无限</span>
-            <input
-              type="checkbox"
-              checked={debugControls.infiniteHealth}
-              onChange={(event) => updateDebugControls({ infiniteHealth: event.currentTarget.checked })}
-            />
-          </label>
-          <label className="mt-3 flex cursor-pointer items-center justify-between gap-3 font-pixel text-[8px] text-[#9dd5ac]">
-            <span>不攻击</span>
-            <input
-              type="checkbox"
-              checked={debugControls.disableAttacks}
-              onChange={(event) => updateDebugControls({ disableAttacks: event.currentTarget.checked })}
-            />
-          </label>
-        </div>
-      ) : null}
+      {open ? <DeveloperAssetPanel onClose={() => setOpen(false)} /> : null}
     </div>
   )
 }
@@ -91,6 +62,18 @@ export function GameCanvas() {
       renderGame(context, latestState.current, cameraRef.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (!isDeveloperAssetPanelVisible()) {
+      return
+    }
+    void loadRuntimeAssetProjectConfig().then((projectConfig) => {
+      if (!projectConfig) {
+        loadRuntimeAssetDraftConfigFromStorage()
+      }
+      renderCurrentState()
+    })
+  }, [renderCurrentState])
 
   useEffect(() => {
     renderCurrentState()

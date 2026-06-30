@@ -10,14 +10,13 @@ afterEach(() => {
 })
 
 describe('GameStatusBar', () => {
-  it('renders compact combat info in the top bar', () => {
+  it('moves combat vitals and skills to bottom HUD clusters without top character info', () => {
     const base = createInitialSnapshot('running')
 
     useGameStore.setState({
       ...base,
       currency: 180,
       equippedWeaponId: 'woodland-shortbow',
-      targetPriority: 'ranged',
       fixedPassiveLevel: 2,
       skillAllocations: {
         vitality: 1,
@@ -38,11 +37,19 @@ describe('GameStatusBar', () => {
 
     render(<GameStatusBar />)
 
-    expect(screen.getByText('弓箭手')).toBeTruthy()
-    expect(screen.getByText('林地短弓')).toBeTruthy()
-    expect(screen.getByText('6/6')).toBeTruthy()
-    expect(screen.getByText('◎ 远程优先')).toBeTruthy()
-    expect(screen.getByText('第 1 层')).toBeTruthy()
+    expect(screen.getByTestId('combat-vitals-hud').className).toContain('bottom-4')
+    expect(screen.getByTestId('combat-vitals-hud').className).toContain('left-4')
+    expect(screen.getByTestId('combat-skills-hud').className).toContain('bottom-4')
+    expect(screen.getByTestId('combat-skills-hud').className).toContain('left-1/2')
+    expect(screen.getByLabelText('生命 6/6')).toBeTruthy()
+    expect(screen.getByText('Q')).toBeTruthy()
+    expect(screen.getByText('E')).toBeTruthy()
+    expect(screen.getByText('R')).toBeTruthy()
+    expect(screen.queryByText('弓箭手')).toBeNull()
+    expect(screen.queryByText('林地短弓')).toBeNull()
+    expect(screen.queryByText('6/6')).toBeNull()
+    expect(screen.queryByText('⌖ 准星方向')).toBeNull()
+    expect(screen.queryByText('第 1 层')).toBeNull()
     expect(screen.queryByText('180G')).toBeNull()
     expect(screen.queryByText('穿刺箭 Lv.2')).toBeNull()
   })
@@ -134,7 +141,7 @@ describe('GameStatusBar', () => {
     expect(screen.getByText(/复苏 2\.6s \/ 2\.4s/)).toBeTruthy()
   })
 
-  it('shows a symbolic boss priority state while a boss is present', () => {
+  it('keeps the aim direction state while a boss is present', () => {
     const base = createInitialSnapshot('running')
 
     useGameStore.setState({
@@ -167,6 +174,7 @@ describe('GameStatusBar', () => {
 
     render(<GameStatusBar />)
 
-    expect(screen.getByText('◆ Boss优先')).toBeTruthy()
+    expect(screen.queryByText('⌖ 准星方向')).toBeNull()
+    expect(screen.queryByText('◆ Boss优先')).toBeNull()
   })
 })

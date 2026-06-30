@@ -27,12 +27,19 @@ const rewardModeLabel = {
   'new-active': '新技能',
   'upgrade-active': '升级',
   'upgrade-passive': '被动',
+  'in-run-talent': '局内天赋',
 } as const
 
 const rewardBrief = {
   'new-active': '加入技能槽',
   'upgrade-active': '提升等级',
   'upgrade-passive': '射程与穿透',
+  'in-run-talent': '构筑节点',
+} as const
+
+const rewardBuildLabel = {
+  ...SKILL_BUILD_LABELS,
+  general: '通用',
 } as const
 
 const LOOT_DIFF_LABELS: Partial<Record<keyof EquipmentBonus, string>> = {
@@ -95,7 +102,7 @@ const RewardChoices = ({
               {rewardModeLabel[choice.mode]}
             </span>
             <span className="border border-[rgba(157,213,172,0.2)] px-2 py-1 font-pixel text-[7px] uppercase tracking-[0.12em] text-[#9dd5ac]">
-              {SKILL_BUILD_LABELS[choice.buildTag]}
+              {rewardBuildLabel[choice.buildTag]}
             </span>
           </div>
           <p className="mt-4 font-pixel text-[10px] uppercase tracking-[0.14em] text-[#f4f0d7] md:text-xs">{choice.title}</p>
@@ -115,7 +122,6 @@ const RewardChoices = ({
 }
 
 const LootReviewPanel = ({
-  level,
   items,
   equippedItems,
   onEquip,
@@ -123,7 +129,6 @@ const LootReviewPanel = ({
   onDefer,
   isBossQueue = false,
 }: {
-  level: number
   items: EquipmentItem[]
   equippedItems: ReturnType<typeof useGameStore.getState>['equippedItems']
   onEquip: (itemId: string) => void
@@ -136,18 +141,12 @@ const LootReviewPanel = ({
   }
 
   const bossLoot = items.filter((item) => item.rarity === 'legacy' || item.rarity === 'legendary')
-  const lowValueCount = items.filter((item) => ['broken', 'common', 'fine'].includes(item.rarity)).length
   const visibleItems = items
     .filter((item) => !['broken', 'common', 'fine'].includes(item.rarity) || item.score >= (equippedItems[item.slot]?.score ?? 0))
     .slice(0, 6)
 
   return (
     <Panel title={isBossQueue || bossLoot.length > 0 ? 'Boss 战利品处理' : '本层关键战利品'}>
-      {lowValueCount > 0 ? (
-        <div className="mb-3 border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 text-lg leading-tight text-[#9dd5ac]">
-          低价值灰白绿装备 {lowValueCount} 件已并入仓库，可回村批量分解。
-        </div>
-      ) : null}
       {isBossQueue ? (
         <div className="mb-3 flex justify-end">
           <button
@@ -199,7 +198,6 @@ const LootReviewPanel = ({
                 <p data-testid={isBuildRelevant ? 'loot-build-relevant' : undefined} className={isBuildRelevant ? 'text-amber-300' : 'text-[#9dd5ac]'}>
                   {isBuildRelevant ? '黄色符文：影响当前 Q/E/R 或流派构筑' : '基础属性装备'}
                 </p>
-                <p className="text-[#9dd5ac]">获得层数：第 {level} 层 · 稍后处理会保留在仓库</p>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
                 <button className="pixel-button px-3 py-2 font-pixel text-[8px]" onClick={() => onEquip(item.id)}>立即装备</button>
@@ -227,7 +225,7 @@ const RewardScreen = ({
   onEquipLoot,
   onLockLoot,
   onDeferLoot,
-  settlement,
+  onContinue,
 }: {
   eyebrow: string
   title: string
@@ -241,8 +239,11 @@ const RewardScreen = ({
   onEquipLoot: (itemId: string) => void
   onLockLoot: (itemId: string) => void
   onDeferLoot: (itemId?: string) => void
-  settlement: ReturnType<typeof useGameStore.getState>['lastLevelSettlement']
+  onContinue: () => void
 }) => {
+  const showSkillOnly = pendingSkillReward !== null
+  const showLoot = !showSkillOnly && lootItems.length > 0
+
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(3,8,6,0.74)] p-2 md:p-4">
       <div className="pointer-events-auto pixel-panel max-h-[94vh] w-[min(95vw,1480px)] overflow-y-auto p-5 md:p-7">
@@ -254,7 +255,8 @@ const RewardScreen = ({
           <button
             type="button"
             className="pixel-button px-5 py-4 font-pixel text-[10px] uppercase tracking-[0.16em] md:px-6"
-            disabled
+            disabled={showSkillOnly}
+            onClick={showSkillOnly ? undefined : onContinue}
           >
             {actionLabel}
           </button>
@@ -266,34 +268,18 @@ const RewardScreen = ({
           </p>
         </div>
 
-        {settlement ? (
-          <div className="mb-5 grid gap-3 md:grid-cols-3">
-            <div className="border-2 border-[#08100b] bg-[#121b16] px-4 py-3">
-              <p className="font-pixel text-[8px] uppercase tracking-[0.12em] text-[#9dd5ac]">蓝晶回收</p>
-              <p className="mt-2 font-pixel text-[10px] text-[#f4f0d7]">{settlement.absorbedCrystals} 个 / +{Math.round(settlement.absorbedExp)} 经验</p>
-            </div>
-            <div className="border-2 border-[#08100b] bg-[#121b16] px-4 py-3">
-              <p className="font-pixel text-[8px] uppercase tracking-[0.12em] text-[#9dd5ac]">离场自动分解</p>
-              <p className="mt-2 font-pixel text-[10px] text-[#f4f0d7]">{settlement.autoDismantlePreviewCount} 件紫色以下装备</p>
-            </div>
-            <div className="border-2 border-[#08100b] bg-[#121b16] px-4 py-3">
-              <p className="font-pixel text-[8px] uppercase tracking-[0.12em] text-[#9dd5ac]">节点类型</p>
-              <p className="mt-2 font-pixel text-[10px] text-[#f4f0d7]">{settlement.rewardKind === 'light' ? '普通轻结算' : settlement.rewardKind === 'prelude' ? 'Boss 前补给' : settlement.rewardKind === 'boss' ? '本关大结算' : '精英节点'}</p>
-            </div>
+        {showLoot ? (
+          <div className="mb-5">
+            <LootReviewPanel
+              items={lootItems}
+              equippedItems={equippedItems}
+              onEquip={onEquipLoot}
+              onLock={onLockLoot}
+              onDefer={onDeferLoot}
+              isBossQueue={lootItems.some((item) => item.rarity === 'legacy' || item.rarity === 'legendary')}
+            />
           </div>
         ) : null}
-
-        <div className="mb-5">
-          <LootReviewPanel
-            level={Number(eyebrow.match(/\d+/)?.[0] ?? 0)}
-            items={lootItems}
-            equippedItems={equippedItems}
-            onEquip={onEquipLoot}
-            onLock={onLockLoot}
-            onDefer={onDeferLoot}
-            isBossQueue={lootItems.some((item) => item.rarity === 'legacy' || item.rarity === 'legendary')}
-          />
-        </div>
 
         {pendingSkillReward ? (
           <>
@@ -306,11 +292,7 @@ const RewardScreen = ({
               放弃奖励
             </button>
           </>
-        ) : (
-          <div className="border-2 border-[#08100b] bg-[#111913] p-6 text-xl leading-tight text-[#dfe7d5]">
-            奖励已处理，正在准备继续。
-          </div>
-        )}
+        ) : null}
       </div>
     </div>
   )
@@ -322,6 +304,7 @@ export function GamePauseOverlay() {
   const forfeitRun = useGameStore((snapshot) => snapshot.forfeitRun)
   const acceptSkillReward = useGameStore((snapshot) => snapshot.acceptSkillReward)
   const declineSkillReward = useGameStore((snapshot) => snapshot.declineSkillReward)
+  const confirmLevelClear = useGameStore((snapshot) => snapshot.confirmLevelClear)
   const equipEquipment = useGameStore((snapshot) => snapshot.equipEquipment)
   const toggleEquipmentLock = useGameStore((snapshot) => snapshot.toggleEquipmentLock)
   const dismissBossLoot = useGameStore((snapshot) => snapshot.dismissBossLoot)
@@ -362,7 +345,7 @@ export function GamePauseOverlay() {
         }}
         onLockLoot={toggleEquipmentLock}
         onDeferLoot={dismissBossLoot}
-        settlement={state.lastLevelSettlement}
+        onContinue={confirmLevelClear}
       />
     )
   }
@@ -385,7 +368,7 @@ export function GamePauseOverlay() {
         }}
         onLockLoot={toggleEquipmentLock}
         onDeferLoot={dismissBossLoot}
-        settlement={state.lastLevelSettlement}
+        onContinue={confirmLevelClear}
       />
     )
   }

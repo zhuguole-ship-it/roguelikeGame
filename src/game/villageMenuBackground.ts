@@ -1,6 +1,6 @@
 import { WORLD_HEIGHT, WORLD_WIDTH } from './config'
 
-const VILLAGE_MENU_BACKGROUND_SRC = `${import.meta.env.BASE_URL}assets/village-main-menu-background.png`
+const VILLAGE_MENU_BACKGROUND_SRC = `${import.meta.env.BASE_URL}assets/village-main-menu-concept-image2.png`
 
 const villageMenuBackground =
   typeof Image === 'undefined'
@@ -18,7 +18,15 @@ export const drawVillageMenuBackground = (ctx: CanvasRenderingContext2D) => {
 
   ctx.save()
   ctx.imageSmoothingEnabled = false
-  ctx.drawImage(villageMenuBackground, 0, 0, WORLD_WIDTH, WORLD_HEIGHT)
+  ctx.fillStyle = '#050908'
+  ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
+  const imageRatio = villageMenuBackground.naturalWidth / villageMenuBackground.naturalHeight
+  const worldRatio = WORLD_WIDTH / WORLD_HEIGHT
+  const drawWidth = imageRatio > worldRatio ? WORLD_WIDTH : WORLD_HEIGHT * imageRatio
+  const drawHeight = imageRatio > worldRatio ? WORLD_WIDTH / imageRatio : WORLD_HEIGHT
+  const drawX = (WORLD_WIDTH - drawWidth) / 2
+  const drawY = (WORLD_HEIGHT - drawHeight) / 2
+  ctx.drawImage(villageMenuBackground, Math.round(drawX), Math.round(drawY), Math.round(drawWidth), Math.round(drawHeight))
   ctx.restore()
   return true
 }

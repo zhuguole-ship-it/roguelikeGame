@@ -3,7 +3,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resetGameSoundRuntimeForTests, setGameSoundNowProviderForTests, setGameSoundTestPlayer } from '../game/audio'
 import { createInitialSnapshot } from '../game/engine'
 import type { Enemy, EquipmentItem, Pickup, Projectile } from '../game/types'
-import { GAME_SAVE_STORAGE_KEY, extractPersistedGameState, restorePersistedGameState, useGameStore } from './useGameStore'
+import { GAME_SAVE_STORAGE_KEY, extractPersistedGameState, getSimulationSoundEvents, restorePersistedGameState, useGameStore } from './useGameStore'
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+  resetGameSoundRuntimeForTests()
+  localStorage.removeItem(GAME_SAVE_STORAGE_KEY)
+  useGameStore.setState({ ...createInitialSnapshot('idle') })
+})
 
 const makeEquipment = (): EquipmentItem => ({
   id: 'persisted-ember-bow',
@@ -32,11 +40,12 @@ describe('game store persistence', () => {
     const running = createInitialSnapshot('running')
     running.currency = 321
     running.bestLevel = 77
-    running.selectedCampaign = 8
+    running.selectedCampaign = 3
     running.unlockedWeapons = ['woodland-shortbow', 'embercore-composite']
     running.equippedWeaponId = 'embercore-composite'
     running.equipmentInventory = [equipment]
     running.equippedItems = { weapon: equipment }
+    running.discoveredHighRarityEquipmentIds = ['legacy-bow-1', 'legacy-bow-1', 'legendary-bow-2']
     running.equipmentMaterials = {
       ...running.equipmentMaterials,
       ironScraps: 34,
@@ -48,6 +57,30 @@ describe('game store persistence', () => {
     running.contractLevel = 12
     running.exp = 40
     running.expToNext = 180
+    running.completedCampaigns = [1, 3]
+    running.completedCampaignDifficulties = {
+      ...running.completedCampaignDifficulties,
+      3: ['normal', 'hard'],
+    }
+    running.unlockedCampaignDifficulties = {
+      ...running.unlockedCampaignDifficulties,
+      3: ['normal', 'hard', 'hell'],
+    }
+    running.selectedCampaignDifficulty = 'hell'
+    running.talentPoints = 27
+    running.talentPointRecords = [{
+      id: 'talent-1',
+      source: 'death',
+      campaign: 3,
+      reachedLevel: 44,
+      kills: 410,
+      cumulativeExp: 880,
+      highestContractLevel: 9,
+      eliteKills: 4,
+      bossKills: 0,
+      firstClear: false,
+      points: 27,
+    }]
     running.runHistory = [{
       id: 'record-1',
       level: 44,
@@ -101,16 +134,24 @@ describe('game store persistence', () => {
     expect(restored.phase).toBe('idle')
     expect(restored.currency).toBe(321)
     expect(restored.bestLevel).toBe(77)
-    expect(restored.selectedCampaign).toBe(8)
+    expect(restored.selectedCampaign).toBe(3)
     expect(restored.unlockedWeapons).toHaveLength(0)
     expect(restored.equippedWeaponId).toBeNull()
     expect(restored.equipmentInventory.some((item) => item.id === equipment.id)).toBe(true)
     expect(restored.equippedItems.weapon?.id).toBe(equipment.id)
+    expect(restored.discoveredHighRarityEquipmentIds).toEqual(['legacy-bow-1', 'legendary-bow-2'])
     expect(restored.equipmentMaterials.ironScraps).toBe(34)
     expect(restored.equipmentMaterials.legacyEmber).toBe(2)
     expect(restored.unsealedEquipmentSlots).toContain('helmet')
-    expect(restored.contractBoons.pierce).toBe(3)
-    expect(restored.contractLevel).toBe(12)
+    expect(restored.contractBoons.pierce).toBe(0)
+    expect(restored.contractLevel).toBe(1)
+    expect(restored.exp).toBe(0)
+    expect(restored.completedCampaigns).toEqual([1, 3])
+    expect(restored.completedCampaignDifficulties[3]).toEqual(['normal', 'hard'])
+    expect(restored.unlockedCampaignDifficulties[3]).toEqual(['normal', 'hard', 'hell'])
+    expect(restored.selectedCampaignDifficulty).toBe('hell')
+    expect(restored.talentPoints).toBe(27)
+    expect(restored.talentPointRecords[0].points).toBe(27)
     expect(restored.runHistory[0].level).toBe(44)
     expect(restored.enemies).toHaveLength(0)
     expect(restored.projectiles).toHaveLength(0)
@@ -153,12 +194,54 @@ describe('game store persistence', () => {
     expect(state.enemies).toHaveLength(0)
     expect(state.projectiles).toHaveLength(0)
   })
+
+  it('migrates legacy completed campaigns into per-campaign normal difficulty progress', () => {
+    const restored = restorePersistedGameState({
+      completedCampaigns: [2],
+      selectedCampaign: 2,
+      selectedCampaignDifficulty: 'hard',
+    })
+
+    expect(restored.completedCampaignDifficulties[2]).toEqual(['normal'])
+    expect(restored.unlockedCampaignDifficulties[2]).toEqual(['normal', 'hard'])
+    expect(restored.unlockedCampaignDifficulties[1]).toEqual(['normal'])
+    expect(restored.selectedCampaignDifficulty).toBe('hard')
+  })
+
+  it('restores old nightmare saves as torment display progress and keeps internal compatibility id', () => {
+    const restored = restorePersistedGameState({
+      selectedCampaign: 1,
+      selectedCampaignDifficulty: '噩梦',
+      completedCampaignDifficulties: { 1: ['normal', 'hard', 'hell'] },
+      unlockedCampaignDifficulties: { 1: ['normal', 'hard', 'hell', '噩梦'] },
+    })
+
+    expect(restored.selectedCampaignDifficulty).toBe('nightmare')
+    expect(restored.unlockedCampaignDifficulties[1]).toEqual(['normal', 'hard', 'hell', 'nightmare'])
+  })
+
+  it('deduplicates discovered high-rarity equipment ids and exposes store helpers for drop weighting consumers', () => {
+    const restored = restorePersistedGameState({
+      discoveredHighRarityEquipmentIds: ['black-moon-bone-bow', 'black-moon-bone-bow', '', 42],
+    })
+
+    expect(restored.discoveredHighRarityEquipmentIds).toEqual(['black-moon-bone-bow'])
+
+    useGameStore.setState({ ...restored })
+    expect(useGameStore.getState().hasDiscoveredHighRarityEquipment('black-moon-bone-bow')).toBe(true)
+    expect(useGameStore.getState().hasDiscoveredHighRarityEquipment('dragon-judgement-bow')).toBe(false)
+
+    useGameStore.getState().recordHighRarityEquipmentDiscovery('dragon-judgement-bow')
+    useGameStore.getState().recordHighRarityEquipmentDiscovery('dragon-judgement-bow')
+    expect(useGameStore.getState().discoveredHighRarityEquipmentIds).toEqual(['black-moon-bone-bow', 'dragon-judgement-bow'])
+  })
 })
 
 describe('game store audio events', () => {
   const makeEnemy = (overrides: Partial<Enemy> = {}): Enemy => ({
     id: overrides.id ?? 'audio-enemy',
     kind: overrides.kind ?? 'melee',
+    archetypeId: overrides.archetypeId,
     grantsEliteReward: overrides.grantsEliteReward ?? false,
     position: overrides.position ?? { x: 260, y: 200 },
     hp: overrides.hp ?? 20,
@@ -262,8 +345,8 @@ describe('game store audio events', () => {
     useGameStore.setState({
       ...base,
       pickups: [crystal, equipment],
-      enemies: [makeEnemy({ hp: 1, position: { x: 260, y: 200 } })],
-      projectiles: [makeProjectile({ position: { x: 260, y: 200 }, damage: 20 })],
+      enemies: [],
+      projectiles: [],
       remainingToSpawn: 0,
       spawnCooldown: 999,
       levelTimer: 0,
@@ -275,8 +358,17 @@ describe('game store audio events', () => {
 
     expect(player).toHaveBeenCalledWith('crystal-pickup', 0.3)
     expect(player).toHaveBeenCalledWith('equipment-pickup', 0.3)
-    expect(player).toHaveBeenCalledWith('enemy-death', 0.3)
-    expect(player).toHaveBeenCalledWith('skill-hit', 0.3)
+
+    const combatPrevious = createInitialSnapshot('running')
+    combatPrevious.enemies = [makeEnemy({ id: 'audio-hit-target', hp: 10, maxHp: 10 })]
+    combatPrevious.projectiles = [makeProjectile({ sourceSkillId: 'pierce-arrow' })]
+    const combatNext = createInitialSnapshot('running')
+    combatNext.enemies = [{ ...combatPrevious.enemies[0], hp: 0 }]
+    combatNext.kills = combatPrevious.kills + 1
+
+    expect(getSimulationSoundEvents(combatPrevious, combatNext)).toEqual(
+      expect.arrayContaining(['enemy-death', 'skill-hit']),
+    )
 
     player.mockClear()
     const bossRun = createInitialSnapshot('running')
@@ -307,7 +399,7 @@ describe('game store audio events', () => {
     const base = createInitialSnapshot('running')
     useGameStore.setState({
       ...base,
-      enemies: [makeEnemy({ id: 'drop-enemy', hp: 1, position: { x: 260, y: 200 } })],
+      enemies: [makeEnemy({ id: 'drop-enemy', hp: 1, position: { x: 260, y: 200 }, archetypeId: 'dungeon-hellhound' })],
       projectiles: [makeProjectile({ position: { x: 260, y: 200 }, damage: 20 })],
       levelTargetKills: 99,
       remainingToSpawn: 1,

@@ -2,8 +2,16 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import { Coins, RotateCcw } from 'lucide-react'
 
 import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, ARCHER_FIXED_PASSIVE, ARCHER_FIXED_PASSIVE_LEVELS, SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
-import { ACTIVE_SKILL_DAMAGE_MULTIPLIER, FLOORS_PER_CAMPAIGN, isBossLevel, isEliteLevel } from '../../game/config'
-import { CAMPAIGN_MONSTER_THEMES, getCampaignFloorEnemyPool, getCampaignLootProfile, type CampaignEnemyArchetype } from '../../game/campaignMonsters'
+import { ACTIVE_SKILL_DAMAGE_MULTIPLIER } from '../../game/config'
+import {
+  CAMPAIGN_DIFFICULTY_ORDER,
+  getCampaignDifficultyLabel,
+  getCampaignDifficultyConfig,
+  getCampaignDifficultyUnlockHint,
+  isCampaignDifficultyCompleted,
+  isCampaignDifficultyUnlocked,
+} from '../../game/difficulty'
+import { CAMPAIGN_MONSTER_THEMES, getCampaignLootProfile, type CampaignEnemyArchetype } from '../../game/campaignMonsters'
 import {
   EQUIPMENT_MATERIAL_IDS,
   EQUIPMENT_MATERIAL_LABELS,
@@ -13,20 +21,24 @@ import {
   EQUIPMENT_SLOTS,
   EQUIPMENT_SLOT_LABELS,
   getEquipmentBonusSummary,
-  getEquipmentReforgeCost,
   getEquipmentRelevance,
-  getEquipmentSlotUnlockCost,
   getEquipmentSetCounts,
-  getEquipmentUpgradeCost,
-  getEquipmentUpgradeLimit,
   getEffectiveUnlockedEquipmentSlots,
 } from '../../game/equipment'
+import { hasDiscoveredHighRarityEquipment } from '../../game/equipmentDiscovery'
 import { MONSTER_FRAME_SPECS, drawMonsterGuideFrame, getMonsterSpriteAtlasForEnemy, type MonsterFrameAction } from '../../game/sprites'
-import type { EnemyKind, EquipmentDismantleCategory, EquipmentItem, EquipmentRarity, EquipmentSlot, SkillBuildTag } from '../../game/types'
-import { WEAPON_DEFINITIONS } from '../../game/weapons'
+import { getTalentImplementationBlockers } from '../../game/talents'
+import type { EnemyKind, EquipmentDismantleCategory, EquipmentItem, EquipmentRarity, EquipmentSkillModifier, EquipmentSlot, SkillBuildTag, TalentPointRecord } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
 
 type VillageModal = 'campaign' | 'shop' | 'guide' | 'character' | 'inventory' | 'settings' | 'hunter-home' | null
+type GuideTab = 'career' | 'skills' | 'monsters'
+
+const guideTabs: Array<{ id: GuideTab; label: string }> = [
+  { id: 'monsters', label: '怪物' },
+  { id: 'career', label: '职业' },
+  { id: 'skills', label: '技能' },
+]
 
 const formatScaledDamage = (damage: number) => {
   return Number((damage * ACTIVE_SKILL_DAMAGE_MULTIPLIER).toFixed(1))
@@ -39,8 +51,6 @@ const milestoneRewards = [
   { level: 100, reward: '永久角色皮肤' },
   { level: 200, reward: '永久武器皮肤' },
 ]
-
-const floorNumbers = Array.from({ length: FLOORS_PER_CAMPAIGN }, (_, index) => index + 1)
 
 const monsterKindLabels: Record<EnemyKind, string> = {
   melee: '近战',
@@ -67,36 +77,16 @@ const skillTraitLabels: Record<CampaignEnemyArchetype['skillTrait'], string> = {
   'skeleton-revive': '骷髅复活',
 }
 
-const getAbsoluteCampaignLevel = (campaign: number, floor: number) => (campaign - 1) * FLOORS_PER_CAMPAIGN + floor
-
 const getMonsterPreviewName = (monster: CampaignEnemyArchetype) => {
   if (monster.id === 'dungeon-warden') return `${monster.name}（骷髅骑士）`
   return monster.name
 }
 
-const formatMonsterNames = (monsters: CampaignEnemyArchetype[]) => monsters.map((monster) => monster.name).join(' / ')
+const formatPortalDropHint = (hint: string) => hint.replace(/^适合刷/, '').replace(/[。.]$/, '')
 
 const getUniqueCampaignMonsters = (theme: (typeof CAMPAIGN_MONSTER_THEMES)[number]) => {
   const allMonsters = [...theme.normalPool, ...theme.elitePool, theme.boss]
   return allMonsters.filter((monster, index) => allMonsters.findIndex((candidate) => candidate.id === monster.id) === index)
-}
-
-const buildCampaignFloorRows = (theme: (typeof CAMPAIGN_MONSTER_THEMES)[number]) => {
-  return floorNumbers.map((floor) => {
-    const level = getAbsoluteCampaignLevel(theme.campaign, floor)
-    const normalPool = getCampaignFloorEnemyPool(level)
-    const elite = isEliteLevel(level)
-    const boss = isBossLevel(level)
-
-    return {
-      floor,
-      level,
-      normalPool,
-      elitePool: elite ? theme.elitePool : [],
-      boss: boss ? theme.boss : null,
-      tag: boss ? 'Boss层' : elite ? '精英层' : floor <= 2 ? '首批池' : '普通层',
-    }
-  })
 }
 
 const formatEquipmentBonus = (item: EquipmentItem) => {
@@ -121,27 +111,119 @@ const formatEquipmentBonus = (item: EquipmentItem) => {
   return parts.length > 0 ? parts.join(' / ') : '基础契约装备'
 }
 
-const formatWeaponBonus = (weapon: (typeof WEAPON_DEFINITIONS)[number]) => {
-  const bonus = weapon.bonus
-  const parts = [
-    bonus.attackDamage ? `攻击 +${bonus.attackDamage}` : null,
-    bonus.attackRange ? `射程 +${bonus.attackRange}` : null,
-    bonus.attackPierce ? `穿透 +${bonus.attackPierce}` : null,
-    bonus.speed ? `移速 +${bonus.speed}` : null,
-    bonus.attackIntervalOffset ? `攻速 ${bonus.attackIntervalOffset.toFixed(2)}s` : null,
-  ].filter(Boolean)
-
-  return parts.length > 0 ? parts.join(' / ') : '基础猎弓属性'
+const equipmentBonusLabels: Partial<Record<keyof EquipmentItem['bonus'], string>> = {
+  maxHp: '生命',
+  attackDamage: '攻击',
+  attackRange: '射程',
+  attackPierce: '穿透',
+  speed: '移速',
+  attackIntervalOffset: '攻速',
+  skillDamageMultiplier: '技能伤害',
+  skillCooldownMultiplier: '技能冷却',
+  crystalXpMultiplier: '晶石经验',
+  pickupRange: '拾取范围',
+  beastDamageMultiplier: '野兽伤害',
+  fieldRadiusMultiplier: '领域范围',
+  spreadProjectileBonus: '散射弹道',
+  pierceProjectileBonus: '技能穿透',
 }
 
-const getWeaponEffectLabel = (weaponId: string) => {
-  if (weaponId.includes('frost')) return '冰晶箭轨'
-  if (weaponId.includes('ember')) return '烬火尾迹'
-  if (weaponId.includes('wind')) return '疾风双线'
-  if (weaponId.includes('moon')) return '月影残光'
-  if (weaponId.includes('sky')) return '审判双线'
-  if (weaponId.includes('yang')) return '金羽弦光'
-  return '弓弦强化'
+const percentBonusKeys = new Set<keyof EquipmentItem['bonus']>([
+  'skillDamageMultiplier',
+  'skillCooldownMultiplier',
+  'crystalXpMultiplier',
+  'beastDamageMultiplier',
+  'fieldRadiusMultiplier',
+])
+
+const formatSignedValue = (value: number, key?: keyof EquipmentItem['bonus']) => {
+  const scaled = key && percentBonusKeys.has(key) ? Math.round(value * 100) : Number(value.toFixed(2))
+  return `${scaled >= 0 ? '+' : ''}${scaled}${key && percentBonusKeys.has(key) ? '%' : ''}`
+}
+
+const formatEquipmentBonusDiff = (item: EquipmentItem, baseline?: EquipmentItem) => {
+  if (!baseline) {
+    return formatEquipmentBonus(item)
+  }
+
+  const keys = Array.from(new Set([
+    ...Object.keys(item.bonus),
+    ...Object.keys(baseline.bonus),
+  ])) as Array<keyof EquipmentItem['bonus']>
+  const diffs = keys
+    .map((key) => {
+      const diff = Number(item.bonus[key] ?? 0) - Number(baseline.bonus[key] ?? 0)
+      if (!diff) {
+        return null
+      }
+      return `${equipmentBonusLabels[key] ?? key} ${formatSignedValue(diff, key)}`
+    })
+    .filter(Boolean)
+
+  return diffs.length > 0 ? diffs.join(' / ') : '属性持平'
+}
+
+const formatEquipmentRollDiff = (item: EquipmentItem, baseline?: EquipmentItem) => {
+  if (!baseline) {
+    return '无对比'
+  }
+
+  const scoreDiff = item.score - baseline.score
+  const modifierDiff = item.modifiers.length - baseline.modifiers.length
+  const setDiff = (item.setId ?? '无套装') === (baseline.setId ?? '无套装')
+    ? '套装持平'
+    : `套装 ${baseline.setId ? EQUIPMENT_SET_LABELS[baseline.setId] : '无'} -> ${item.setId ? EQUIPMENT_SET_LABELS[item.setId] : '无'}`
+
+  return `评分 ${formatSignedValue(scoreDiff)} · ${formatEquipmentBonusDiff(item, baseline)} · 符文 ${formatSignedValue(modifierDiff)} · ${setDiff}`
+}
+
+const isHighRarityProtected = (item: EquipmentItem) => ['epic', 'legacy', 'legendary'].includes(item.rarity)
+
+const talentPointSourceLabels: Record<TalentPointRecord['source'], string> = {
+  death: '阵亡',
+  forfeit: '撤退',
+  'campaign-clear': '通关',
+}
+
+const formatEquipmentModifier = (modifier: EquipmentSkillModifier) => {
+  switch (modifier.type) {
+    case 'projectile-count':
+      return `弹道 +${modifier.amount}`
+    case 'ricochet-bounces':
+      return `弹跳 +${modifier.amount}`
+    case 'pierce-echo':
+      return `穿透回响 ${modifier.everyHits} 命中`
+    case 'elite-parallel-line':
+      return '精英并行箭线'
+    case 'double-line':
+      return '双线箭'
+    case 'spread-slow':
+      return `散射减速 ${modifier.duration}s`
+    case 'spread-speed':
+      return `弹速 +${Math.round((modifier.multiplier - 1) * 100)}%`
+    case 'spread-angle':
+      return `扇面 +${Math.round((modifier.multiplier - 1) * 100)}%`
+    case 'spread-double-next':
+      return `${modifier.everyCasts} 次双倍箭幕`
+    case 'field-duration':
+      return `区域持续 +${Math.round((modifier.multiplier - 1) * 100)}%`
+    case 'field-end-burst':
+      return '区域结束爆发'
+    case 'beast-shield':
+      return '野兽护盾'
+    case 'beast-taunt':
+      return '野兽嘲讽'
+    case 'beast-extra-summon':
+      return '额外野兽'
+    case 'beast-duration':
+      return `野兽持续 +${Math.round((modifier.multiplier - 1) * 100)}%`
+    case 'beast-on-hit-haste':
+      return '野兽命中急速'
+    case 'beast-dual-bond':
+      return '双兽协同'
+    case 'beast-death-trigger':
+      return '野兽倒地爆发'
+  }
 }
 
 const formatMaterialSummary = (materials: Record<string, number>) => {
@@ -149,22 +231,7 @@ const formatMaterialSummary = (materials: Record<string, number>) => {
     .filter((id) => (materials[id] ?? 0) > 0)
     .map((id) => `${EQUIPMENT_MATERIAL_LABELS[id]} ${materials[id]}`)
 
-  return visible.length > 0 ? visible.join(' / ') : '暂无锻造材料'
-}
-
-const formatUpgradeCost = (item: EquipmentItem) => {
-  const cost = getEquipmentUpgradeCost(item)
-  return EQUIPMENT_MATERIAL_IDS
-    .filter((id) => cost[id] > 0)
-    .map((id) => `${EQUIPMENT_MATERIAL_LABELS[id]} ${cost[id]}`)
-    .join(' / ')
-}
-
-const formatMaterialCost = (materials: Record<string, number>) => {
-  return EQUIPMENT_MATERIAL_IDS
-    .filter((id) => (materials[id] ?? 0) > 0)
-    .map((id) => `${EQUIPMENT_MATERIAL_LABELS[id]} ${materials[id]}`)
-    .join(' / ') || '无消耗'
+  return visible.length > 0 ? visible.join(' / ') : '暂无材料'
 }
 
 const getActiveEquipmentContext = (activeSkills: Array<{ skillId: string }>) => {
@@ -183,17 +250,6 @@ const getActiveEquipmentContext = (activeSkills: Array<{ skillId: string }>) => 
   return { activeSkillIds, activeBuildTags }
 }
 
-const monsterActionLabels = {
-  idle: '待机',
-  move: '移动',
-  attack: '攻击',
-  skill: '技能1',
-  skill2: '技能2',
-  hit: '受击',
-  phase: '转阶段',
-  death: '死亡',
-} satisfies Record<MonsterFrameAction, string>
-
 const MonsterAnimationStrip = ({
   monster,
   campaignIndex,
@@ -209,11 +265,11 @@ const MonsterAnimationStrip = ({
     displayName: monster.name,
   })
   const frameSize = atlas?.frameSize ?? MONSTER_FRAME_SPECS[monster.kind].frameSize
-  const actions = (atlas ? Object.keys(atlas.actions) : MONSTER_FRAME_SPECS[monster.kind].actions) as MonsterFrameAction[]
-  const canvasWidth = frameSize * actions.length
+  const idleAction = (atlas?.actions.idle ? 'idle' : Object.keys(atlas?.actions ?? {})[0] ?? 'idle') as MonsterFrameAction
+  const previewAction = (atlas?.guidePreviewAction ?? (atlas?.guidePreviewSrc ? 'attack' : idleAction)) as MonsterFrameAction
 
   useEffect(() => {
-    if (!atlas) {
+    if (!atlas || atlas.guidePreviewSrc) {
       return
     }
     const canvas = canvasRef.current
@@ -234,9 +290,7 @@ const MonsterAnimationStrip = ({
       }
       context.imageSmoothingEnabled = false
       context.clearRect(0, 0, canvas.width, canvas.height)
-      actions.forEach((action, index) => {
-        drawMonsterGuideFrame(context, monster.kind, action, index, index * frameSize, 0, { atlas, atlasImage })
-      })
+      drawMonsterGuideFrame(context, monster.kind, previewAction, 0, 0, 0, { atlas, atlasImage })
     }
 
     if (atlas && typeof Image !== 'undefined') {
@@ -252,7 +306,7 @@ const MonsterAnimationStrip = ({
         atlasImage.onload = null
       }
     }
-  }, [actions, atlas, frameSize, monster.kind])
+  }, [atlas, frameSize, previewAction, monster.kind])
 
   if (!atlas) {
     return (
@@ -275,7 +329,6 @@ const MonsterAnimationStrip = ({
           <div className="min-w-0">
             <p className="font-pixel text-[8px] uppercase tracking-[0.14em] text-[#f4f0d7]">{name}</p>
             <p className="mt-2 text-[0.95rem] leading-tight text-[#9dd5ac]">{monsterKindLabels[monster.kind]} · {skillTraitLabels[monster.skillTrait]}</p>
-            <p className="mt-1 truncate font-pixel text-[7px] uppercase tracking-[0.12em] text-amber-300">{monster.id}</p>
           </div>
         </div>
       </div>
@@ -285,36 +338,43 @@ const MonsterAnimationStrip = ({
   return (
     <div
       className="monster-strip-frame"
-      style={{ '--monster-frame-count': actions.length } as CSSProperties}
+      style={{ '--monster-frame-count': 1 } as CSSProperties}
       aria-label={`${name}立绘`}
       role="img"
-      title={`${name}动作帧，规格 ${frameSize}x${frameSize}，PNG 图集优先`}
+      title={`${name}待机帧，规格 ${frameSize}x${frameSize}`}
       data-asset-src={atlas?.src}
       data-archetype-id={monster.id}
       data-campaign-index={campaignIndex}
+      data-preview-action={previewAction}
     >
-      <canvas ref={canvasRef} className="monster-strip-canvas" width={canvasWidth} height={frameSize} />
-      <div className="monster-action-labels" aria-hidden="true">
-        {actions.map((action) => (
-          <span key={action}>{monsterActionLabels[action]}</span>
-        ))}
+      <div className="flex min-h-[72px] items-center gap-3 px-3 py-3">
+        <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden border-2 border-[#08100b] bg-[#0b120d] shadow-[0_0_0_1px_rgba(244,240,215,0.16)]">
+          {atlas.guidePreviewSrc ? (
+            <img
+              src={atlas.guidePreviewSrc}
+              alt=""
+              aria-hidden="true"
+              className="h-14 w-14 object-contain [image-rendering:pixelated]"
+              draggable={false}
+            />
+          ) : (
+            <canvas
+              ref={canvasRef}
+              className="monster-strip-canvas"
+              width={frameSize}
+              height={frameSize}
+              style={{ width: '56px', maxWidth: '100%' }}
+            />
+          )}
+        </div>
+        <div className="min-w-0">
+          <p className="font-pixel text-[8px] uppercase tracking-[0.14em] text-[#f4f0d7]">{name}</p>
+          <p className="mt-2 text-[0.95rem] leading-tight text-[#9dd5ac]">{monsterKindLabels[monster.kind]} · {skillTraitLabels[monster.skillTrait]}</p>
+        </div>
       </div>
     </div>
   )
 }
-
-const weaponVisuals = {
-  'woodland-shortbow': { glow: '#84cc16', body: '#8a552c', rune: '#9dd5ac' },
-  'stoneheart-hunter-bow': { glow: '#9ca3af', body: '#5e5a4f', rune: '#cbd5e1' },
-  'swift-reed-longbow': { glow: '#bef264', body: '#7c5f2d', rune: '#d9f99d' },
-  'frostline-warbow': { glow: '#93c5fd', body: '#334155', rune: '#dbeafe' },
-  'embercore-composite': { glow: '#fb923c', body: '#5b3416', rune: '#fed7aa' },
-  'windsplit-serpent-bow': { glow: '#a7f3d0', body: '#315c42', rune: '#34d399' },
-  'starfeather-greatbow': { glow: '#fde68a', body: '#6b4423', rune: '#fef3c7' },
-  'moonshadow-arc-bow': { glow: '#c084fc', body: '#312e81', rune: '#e9d5ff' },
-  'yang-birch-bow': { glow: '#fef08a', body: '#d8a24d', rune: '#fef3c7' },
-  'skybreaker-judgement-bow': { glow: '#fbbf24', body: '#fef3c7', rune: '#ffffff' },
-} satisfies Record<(typeof WEAPON_DEFINITIONS)[number]['id'], { glow: string; body: string; rune: string }>
 
 const iconPixel = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string) => {
   ctx.fillStyle = color
@@ -420,68 +480,6 @@ const drawEquipmentSlotGlyph = (ctx: CanvasRenderingContext2D, slot: EquipmentSl
   iconPixel(ctx, 31, 39, 3, 10, color)
 }
 
-const WeaponPixelIcon = ({ weaponId, equipped }: { weaponId: (typeof WEAPON_DEFINITIONS)[number]['id']; equipped: boolean }) => {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) {
-      return
-    }
-
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
-      return
-    }
-
-    const visual = weaponVisuals[weaponId]
-    ctx.imageSmoothingEnabled = false
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    iconPixel(ctx, 4, 4, 56, 56, equipped ? 'rgba(251, 191, 36, 0.18)' : 'rgba(8, 16, 11, 0.34)')
-    iconPixel(ctx, 7, 7, 50, 50, 'rgba(18, 27, 22, 0.92)')
-    iconPixel(ctx, 11, 48, 42, 3, visual.glow)
-    iconPixel(ctx, 18, 13, 5, 33, visual.body)
-    iconPixel(ctx, 22, 10, 7, 5, visual.body)
-    iconPixel(ctx, 22, 43, 7, 5, visual.body)
-    iconPixel(ctx, 29, 14, 4, 31, visual.body)
-    iconPixel(ctx, 34, 17, 5, 24, visual.body)
-    iconPixel(ctx, 39, 22, 4, 14, visual.body)
-    iconPixel(ctx, 45, 29, 7, 2, '#f4f0d7')
-    iconPixel(ctx, 18, 15, 1, 31, '#fef3c7')
-    iconPixel(ctx, 31, 15, 1, 29, visual.rune)
-    iconPixel(ctx, 36, 20, 2, 5, visual.rune)
-    iconPixel(ctx, 36, 34, 2, 5, visual.rune)
-    iconPixel(ctx, 13, 22, 3, 3, visual.glow)
-    iconPixel(ctx, 13, 36, 3, 3, visual.glow)
-    iconPixel(ctx, 49, 26, 2, 9, equipped ? '#ffffff' : visual.rune)
-    if (weaponId === 'skybreaker-judgement-bow' || weaponId === 'yang-birch-bow') {
-      iconPixel(ctx, 9, 10, 46, 2, '#fef3c7')
-      iconPixel(ctx, 9, 54, 46, 2, '#fbbf24')
-      iconPixel(ctx, 50, 14, 3, 3, '#ffffff')
-    } else if (weaponId === 'moonshadow-arc-bow') {
-      iconPixel(ctx, 10, 14, 36, 2, '#7e22ce')
-      iconPixel(ctx, 10, 50, 30, 2, '#c084fc')
-    } else if (weaponId === 'embercore-composite') {
-      iconPixel(ctx, 10, 12, 8, 3, '#fb923c')
-      iconPixel(ctx, 12, 8, 4, 5, '#fef3c7')
-    } else if (weaponId === 'frostline-warbow') {
-      iconPixel(ctx, 10, 11, 4, 4, '#dbeafe')
-      iconPixel(ctx, 50, 44, 4, 4, '#93c5fd')
-    }
-  }, [weaponId, equipped])
-
-  return (
-    <canvas
-      ref={canvasRef}
-      width={64}
-      height={64}
-      className="shrink-0 border-2 border-[#08100b] bg-[#07100c]"
-      style={{ width: 52, height: 52, imageRendering: 'pixelated' }}
-      aria-hidden="true"
-    />
-  )
-}
-
 const EquipmentPixelIcon = ({ item, equipped }: { item: EquipmentItem; equipped: boolean }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
 
@@ -581,112 +579,20 @@ const SectionPanel = ({
   actions?: ReactNode
   contentClassName?: string
 }) => {
+  const hasHeader = Boolean(eyebrow || title || actions)
   return (
     <div className="flex h-full min-h-0 flex-col border-2 border-[#08100b] bg-[#111913] p-4 shadow-[0_0_0_2px_rgba(157,213,172,0.1)]">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#9dd5ac] md:text-[10px]">{eyebrow}</p>
-          <h3 className="mt-2 font-pixel text-sm uppercase tracking-[0.18em] text-[#f4f0d7] md:text-base">{title}</h3>
+      {hasHeader ? (
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            {eyebrow ? <p className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#9dd5ac] md:text-[10px]">{eyebrow}</p> : null}
+            {title ? <h3 className={eyebrow ? 'mt-2 font-pixel text-sm uppercase tracking-[0.18em] text-[#f4f0d7] md:text-base' : 'font-pixel text-sm uppercase tracking-[0.18em] text-[#f4f0d7] md:text-base'}>{title}</h3> : null}
+          </div>
+          {actions ? <div className="shrink-0">{actions}</div> : null}
         </div>
-        {actions ? <div className="shrink-0">{actions}</div> : null}
-      </div>
-      <div className={contentClassName ? `mt-4 ${contentClassName}` : 'mt-4'}>{children}</div>
+      ) : null}
+      <div className={contentClassName ? `${hasHeader ? 'mt-4 ' : ''}${contentClassName}` : hasHeader ? 'mt-4' : ''}>{children}</div>
     </div>
-  )
-}
-
-const WeaponShopPanel = ({
-  currency,
-  bestLevel,
-  unlockedWeapons,
-  equippedWeaponId,
-  purchaseWeapon,
-  equipWeapon,
-}: {
-  currency: number
-  bestLevel: number
-  unlockedWeapons: string[]
-  equippedWeaponId: string | null
-  purchaseWeapon: (weaponId: (typeof WEAPON_DEFINITIONS)[number]['id']) => void
-  equipWeapon: (weaponId: (typeof WEAPON_DEFINITIONS)[number]['id']) => void
-}) => {
-  const progress = Math.min(100, Math.round((bestLevel / 10) * 100))
-
-  return (
-    <SectionPanel eyebrow="武器商店" title="10 把成长型弓系武器">
-      <div className="mb-4 flex items-center justify-between gap-4">
-        <div className="text-xl text-[#dfe7d5]">
-          <p>当前金币：{currency}</p>
-          <p>历史最高层：{bestLevel}</p>
-        </div>
-        <div className="text-right">
-          <p className="font-pixel text-[8px] uppercase tracking-[0.18em] text-[#9dd5ac] md:text-[9px]">当前装备</p>
-          <p className="mt-1 font-pixel text-[10px] uppercase tracking-[0.12em] text-[#f4f0d7]">
-            {equippedWeaponId ? WEAPON_DEFINITIONS.find((weapon) => weapon.id === equippedWeaponId)?.name : '默认猎弓'}
-          </p>
-          <p className="mt-2 font-pixel text-[8px] uppercase tracking-[0.16em] text-amber-300 md:text-[9px]">解锁进度 {progress}%</p>
-        </div>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-2">
-        {WEAPON_DEFINITIONS.map((weapon) => {
-          const unlockedByProgress = progress >= Math.round(weapon.unlockProgress * 100)
-          const owned = unlockedWeapons.includes(weapon.id)
-          const equipped = equippedWeaponId === weapon.id
-          const canBuy = unlockedByProgress && !owned && currency >= weapon.price
-
-          return (
-            <div key={weapon.id} className="border-2 border-[#08100b] bg-[#121b16] px-3 py-3 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-start gap-3">
-                  <WeaponPixelIcon weaponId={weapon.id} equipped={equipped} />
-                  <div className="min-w-0">
-                  <p className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#f4f0d7] md:text-[10px]">{weapon.name}</p>
-                  <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">{weapon.description}</p>
-                  <p className="mt-2 text-[1rem] leading-tight text-amber-300">
-                    特效：{weapon.id.includes('frost') ? '冰晶箭轨' : weapon.id.includes('ember') ? '烬火尾迹' : weapon.id.includes('wind') ? '疾风双线' : weapon.id.includes('moon') ? '月影残光' : weapon.id.includes('sky') ? '审判双线' : weapon.id.includes('yang') ? '金羽弦光' : '弓弦强化'}
-                  </p>
-                  </div>
-                </div>
-                <span className="font-pixel text-[8px] uppercase tracking-[0.16em] text-amber-300">{weapon.price}G</span>
-              </div>
-
-              <div className="mt-3 space-y-1 text-[1rem] leading-tight text-[#9dd5ac]">
-                {weapon.bonus.attackDamage ? <p>伤害 +{weapon.bonus.attackDamage}</p> : null}
-                {weapon.bonus.attackRange ? <p>射程 +{weapon.bonus.attackRange}</p> : null}
-                {weapon.bonus.speed ? <p>移速 +{weapon.bonus.speed}</p> : null}
-                {weapon.bonus.attackPierce ? <p>穿透 +{weapon.bonus.attackPierce}</p> : null}
-                {weapon.bonus.attackIntervalOffset ? <p>攻速 {weapon.bonus.attackIntervalOffset.toFixed(2)}s</p> : null}
-              </div>
-
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <p className="font-pixel text-[8px] uppercase tracking-[0.16em] text-[#9dd5ac] md:text-[9px]">
-                  解锁要求 {Math.round(weapon.unlockProgress * 100)}%
-                </p>
-                {equipped ? (
-                  <span className="font-pixel text-[8px] uppercase tracking-[0.16em] text-amber-300 md:text-[9px]">已装备</span>
-                ) : owned ? (
-                  <button
-                    className="pixel-button px-3 py-2 font-pixel text-[10px] uppercase tracking-[0.16em]"
-                    onClick={() => equipWeapon(weapon.id)}
-                  >
-                    装备
-                  </button>
-                ) : (
-                  <button
-                    className="pixel-button px-3 py-2 font-pixel text-[10px] uppercase tracking-[0.16em] disabled:translate-x-0 disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-                    onClick={() => purchaseWeapon(weapon.id)}
-                    disabled={!canBuy}
-                  >
-                    {unlockedByProgress ? '购买' : '未解锁'}
-                  </button>
-                )}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </SectionPanel>
   )
 }
 
@@ -708,19 +614,33 @@ const VillageClickArea = ({
   />
 )
 
-const VillageModalShell = ({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) => (
+const VillageModalShell = ({
+  title,
+  onClose,
+  children,
+  headerExtra,
+  stickyHeader = false,
+}: {
+  title: string
+  onClose: () => void
+  children: ReactNode
+  headerExtra?: ReactNode
+  stickyHeader?: boolean
+}) => (
   <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(3,8,6,0.68)] p-4">
-    <div className="pointer-events-auto pixel-panel max-h-[92vh] w-[min(94vw,1280px)] overflow-y-auto p-5 md:p-6">
-      <div className="mb-4 flex items-center justify-between gap-4">
-        <div>
-          <p className="font-pixel text-[9px] uppercase tracking-[0.2em] text-[#9dd5ac] md:text-[10px]">村庄交互</p>
-          <h2 className="mt-2 font-pixel text-sm uppercase tracking-[0.18em] text-[#f4f0d7] md:text-base">{title}</h2>
+    <div className={`pointer-events-auto pixel-panel max-h-[92vh] w-[min(94vw,1280px)] ${stickyHeader ? 'flex flex-col overflow-hidden p-0' : 'overflow-y-auto p-5 md:p-6'}`}>
+      <div className={stickyHeader ? 'shrink-0 border-b-2 border-[rgba(157,213,172,0.18)] bg-[#101913] px-5 py-5 shadow-[0_10px_18px_rgba(0,0,0,0.24)] md:px-6 md:py-6' : 'mb-4'}>
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="font-pixel text-sm uppercase tracking-[0.18em] text-[#f4f0d7] md:text-base">{title}</h2>
+          <button type="button" className="pixel-button px-4 py-3 font-pixel text-[10px] uppercase tracking-[0.16em]" onClick={onClose}>
+            关闭
+          </button>
         </div>
-        <button type="button" className="pixel-button px-4 py-3 font-pixel text-[10px] uppercase tracking-[0.16em]" onClick={onClose}>
-          关闭
-        </button>
+        {headerExtra ? <div className="mt-4">{headerExtra}</div> : null}
       </div>
-      {children}
+      <div className={stickyHeader ? 'min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4 md:px-6 md:pb-6' : undefined}>
+        {children}
+      </div>
     </div>
   </div>
 )
@@ -737,12 +657,17 @@ export function GameOverlay() {
   const bestLevel = useGameStore((state) => state.bestLevel)
   const runHistory = useGameStore((state) => state.runHistory)
   const achievedMilestones = useGameStore((state) => state.achievedMilestones)
-  const unlockedWeapons = useGameStore((state) => state.unlockedWeapons)
-  const equippedWeaponId = useGameStore((state) => state.equippedWeaponId)
+  const talentPoints = useGameStore((state) => state.talentPoints)
+  const talentPointRecords = useGameStore((state) => state.talentPointRecords)
+  const lastTalentPointRecord = useGameStore((state) => state.lastTalentPointRecord)
   const equipmentInventory = useGameStore((state) => state.equipmentInventory)
   const equippedItems = useGameStore((state) => state.equippedItems)
   const equipmentMaterials = useGameStore((state) => state.equipmentMaterials)
+  const discoveredHighRarityEquipmentIds = useGameStore((state) => state.discoveredHighRarityEquipmentIds)
   const selectedCampaign = useGameStore((state) => state.selectedCampaign)
+  const selectedCampaignDifficulty = useGameStore((state) => state.selectedCampaignDifficulty)
+  const unlockedCampaignDifficulties = useGameStore((state) => state.unlockedCampaignDifficulties)
+  const completedCampaignDifficulties = useGameStore((state) => state.completedCampaignDifficulties)
   const unsealedEquipmentSlots = useGameStore((state) => state.unsealedEquipmentSlots)
   const activeSkills = useGameStore((state) => state.activeSkills)
   const skillAllocations = useGameStore((state) => state.skillAllocations)
@@ -750,9 +675,8 @@ export function GameOverlay() {
   const audioSettings = useGameStore((state) => state.audioSettings)
   const startGame = useGameStore((state) => state.startGame)
   const selectCampaign = useGameStore((state) => state.selectCampaign)
+  const selectCampaignDifficulty = useGameStore((state) => state.selectCampaignDifficulty)
   const returnToVillage = useGameStore((state) => state.returnToVillage)
-  const purchaseWeapon = useGameStore((state) => state.purchaseWeapon)
-  const equipWeapon = useGameStore((state) => state.equipWeapon)
   const equipEquipment = useGameStore((state) => state.equipEquipment)
   const toggleEquipmentLock = useGameStore((state) => state.toggleEquipmentLock)
   const dismantleEquipment = useGameStore((state) => state.dismantleEquipment)
@@ -765,6 +689,8 @@ export function GameOverlay() {
   const [villageModal, setVillageModal] = useState<VillageModal>(null)
   const [moveKeys, setMoveKeys] = useState('WASD')
   const [inventorySlot, setInventorySlot] = useState<EquipmentSlot>('weapon')
+  const [guideCampaign, setGuideCampaign] = useState(1)
+  const [guideTab, setGuideTab] = useState<GuideTab>('monsters')
   const skillSections = useMemo(() => {
     return [
       { buildTag: 'pierce' as const, label: SKILL_BUILD_LABELS.pierce, items: ARCHER_ACTIVE_SKILLS.filter((skill) => skill.buildTag === 'pierce') },
@@ -775,10 +701,9 @@ export function GameOverlay() {
   }, [])
 
   if (phase === 'idle') {
-    const equippedWeaponName = equippedWeaponId ? WEAPON_DEFINITIONS.find((weapon) => weapon.id === equippedWeaponId)?.name : '默认猎弓'
-    const ownedWeapons = WEAPON_DEFINITIONS.filter((weapon) => unlockedWeapons.includes(weapon.id))
+    const equippedWeaponName = equippedItems.weapon?.name ?? '林地短弓'
     const equipmentSlotCounts = EQUIPMENT_SLOTS.reduce<Record<EquipmentSlot, number>>((counts, slot) => {
-      counts[slot] = equipmentInventory.filter((item) => item.slot === slot).length + (slot === 'weapon' ? ownedWeapons.length : 0)
+      counts[slot] = equipmentInventory.filter((item) => item.slot === slot).length
       return counts
     }, {} as Record<EquipmentSlot, number>)
     const activeInventorySlot = equipmentSlotCounts[inventorySlot] > 0
@@ -789,45 +714,54 @@ export function GameOverlay() {
     const equipmentBonus = getEquipmentBonusSummary(equippedItems)
     const equipmentSetCounts = getEquipmentSetCounts(equippedItems)
     const equipmentContext = getActiveEquipmentContext(activeSkills)
+    const talentBlockers = getTalentImplementationBlockers()
     const batchLabels: Array<[EquipmentDismantleCategory, string]> = [
       ['low-rarity', '分解灰白绿'],
       ['low-score-rare', '分解低分蓝装'],
       ['off-build-rare', '分解非本流派蓝装'],
     ]
+    const selectedDifficultyConfig = getCampaignDifficultyConfig(selectedCampaignDifficulty)
 
     return (
       <div className="pointer-events-none absolute inset-0 z-10">
-        <div className="absolute left-1/2 top-1/2 aspect-[3/2] h-auto max-h-screen w-full max-w-[calc(100vh*1.5)] -translate-x-1/2 -translate-y-1/2">
-          <VillageClickArea label="开始游戏" className="z-20 left-[2%] top-[55%] h-[7%] w-[15%]" onClick={() => setVillageModal('campaign')} />
-          <VillageClickArea label="角色选择" className="z-20 left-[2%] top-[63%] h-[7%] w-[15%]" onClick={() => setVillageModal('character')} />
-          <VillageClickArea label="物品仓库" className="z-20 left-[2%] top-[71%] h-[7%] w-[15%]" onClick={() => setVillageModal('inventory')} />
-          <VillageClickArea label="设置" className="z-20 left-[2%] top-[79%] h-[7%] w-[15%]" onClick={() => setVillageModal('settings')} />
+        <div className="absolute left-1/2 top-1/2 aspect-[1672/941] h-auto w-full max-w-[calc(100vh*1.5)] -translate-x-1/2 -translate-y-1/2">
+          <img
+            src={`${import.meta.env.BASE_URL}assets/village-main-menu-concept-image2.png`}
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+            draggable={false}
+          />
+          <VillageClickArea label="开始游戏" className="z-20 left-[2.4%] top-[50.7%] h-[7.9%] w-[16.8%]" onClick={() => setVillageModal('campaign')} />
+          <VillageClickArea label="角色选择" className="z-20 left-[2.4%] top-[59.7%] h-[7.9%] w-[16.8%]" onClick={() => setVillageModal('character')} />
+          <VillageClickArea label="物品仓库" className="z-20 left-[2.4%] top-[68.8%] h-[7.9%] w-[16.8%]" onClick={() => setVillageModal('inventory')} />
+          <VillageClickArea label="设置" className="z-20 left-[2.4%] top-[77.8%] h-[7.9%] w-[16.8%]" onClick={() => setVillageModal('settings')} />
           <VillageClickArea
             label="铁匠铺"
-            className="z-10 left-[4%] top-[31%] h-[36%] w-[25%]"
+            className="z-10 left-[10.5%] top-[31.5%] h-[38%] w-[24%]"
             onClick={() => setVillageModal('shop')}
           />
           <VillageClickArea
             label="猎手之家"
-            className="z-10 left-[34%] top-[27%] h-[30%] w-[27%]"
+            className="z-10 left-[35.5%] top-[20%] h-[45%] w-[30%]"
             onClick={() => setVillageModal('hunter-home')}
           />
           <VillageClickArea
             label="传送门"
-            className="z-10 left-[64%] top-[32%] h-[35%] w-[16%]"
+            className="z-10 left-[69%] top-[27%] h-[40%] w-[15%]"
             onClick={() => setVillageModal('campaign')}
           />
           <VillageClickArea
             label="告示牌"
-            className="z-10 left-[79%] top-[45%] h-[33%] w-[18%]"
+            className="z-10 left-[83%] top-[42%] h-[34%] w-[16%]"
             onClick={() => setVillageModal('guide')}
           />
         </div>
 
         {villageModal === 'campaign' ? (
-          <VillageModalShell title="关卡选择" onClose={() => setVillageModal(null)}>
+          <VillageModalShell title="关卡" onClose={() => setVillageModal(null)}>
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-              <SectionPanel eyebrow="传送门目标" title="选择要进入的战役">
+              <SectionPanel eyebrow="" title="">
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {CAMPAIGN_MONSTER_THEMES.map((theme) => {
                     const active = selectedCampaign === theme.campaign
@@ -846,32 +780,80 @@ export function GameOverlay() {
                         <p className="font-pixel text-[9px] uppercase tracking-[0.14em] text-[#9dd5ac]">第 {theme.campaign} 关</p>
                         <p className="mt-2 text-xl leading-tight">{theme.name}</p>
                         <p className="mt-2 text-[0.95rem] leading-tight text-[#9dd5ac]">
-                          Boss：{theme.boss.name} · 22 层 · 每 3 层精英
+                          Boss：{theme.boss.name}
                         </p>
-                        <p className="mt-2 text-[0.9rem] leading-tight text-amber-200">{lootProfile.portalHint}</p>
+                        <p className="mt-2 text-[0.9rem] leading-tight text-amber-200">掉落：{formatPortalDropHint(lootProfile.portalHint)}</p>
+                        <p className="mt-2 text-[0.9rem] leading-tight text-[#9dd5ac]">推荐：{lootProfile.recommendedState}</p>
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {CAMPAIGN_DIFFICULTY_ORDER.map((difficulty) => {
+                            const unlocked = isCampaignDifficultyUnlocked(unlockedCampaignDifficulties, theme.campaign, difficulty)
+                            const completed = isCampaignDifficultyCompleted(completedCampaignDifficulties, theme.campaign, difficulty)
+                            return (
+                              <span
+                                key={difficulty}
+                                className={`border px-2 py-1 font-pixel text-[7px] ${completed ? 'border-amber-300 text-amber-200' : unlocked ? 'border-[rgba(157,213,172,0.35)] text-[#9dd5ac]' : 'border-[rgba(80,104,89,0.35)] text-[#506859]'}`}
+                              >
+                                {getCampaignDifficultyLabel(difficulty)}
+                              </span>
+                            )
+                          })}
+                        </div>
                       </button>
                     )
                   })}
                 </div>
               </SectionPanel>
 
-              <SectionPanel eyebrow="当前选择" title={CAMPAIGN_MONSTER_THEMES[selectedCampaign - 1]?.name ?? '死契地牢'}>
+              <SectionPanel eyebrow="" title="">
                 <div className="border-2 border-[#08100b] bg-[#101913] p-4">
                   {(() => {
                     const lootProfile = getCampaignLootProfile(selectedCampaign)
                     return (
                       <div className="mb-4 grid gap-2 text-[0.95rem] leading-tight text-[#dfe7d5]">
-                        <p><span className="font-pixel text-[8px] text-[#9dd5ac]">刷装理由</span> {lootProfile.primaryLootReason}</p>
-                        <p><span className="font-pixel text-[8px] text-[#9dd5ac]">推荐状态</span> {lootProfile.recommendedState}</p>
-                        <p><span className="font-pixel text-[8px] text-[#9dd5ac]">主题威胁</span> {lootProfile.themeThreat}</p>
+                        <p><span className="font-pixel text-[8px] text-[#9dd5ac]">掉落</span> {lootProfile.primaryLootReason}</p>
+                        <p><span className="font-pixel text-[8px] text-[#9dd5ac]">威胁</span> {lootProfile.themeThreat}</p>
+                        <p><span className="font-pixel text-[8px] text-[#9dd5ac]">推荐</span> {lootProfile.recommendedState}</p>
                       </div>
                     )
                   })()}
-                  <p className="font-pixel text-[9px] uppercase tracking-[0.14em] text-amber-300">入口层数</p>
-                  <p className="mt-3 text-2xl text-[#f4f0d7]">第 1 层 / 目标独立进度</p>
-                  <p className="mt-3 text-lg leading-tight text-[#9dd5ac]">
-                    将使用该战役的主题怪物池、精英词缀、Boss 技能和掉落倾向。
-                  </p>
+                  <div className="border-2 border-[#08100b] bg-[#0b120d] p-3" data-testid="campaign-difficulty-selector">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-pixel text-[8px] uppercase tracking-[0.14em] text-[#9dd5ac]">难度</p>
+                      <span className="font-pixel text-[8px] text-amber-300" data-testid="selected-campaign-difficulty">
+                        {selectedDifficultyConfig.label}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {CAMPAIGN_DIFFICULTY_ORDER.map((difficulty) => {
+                        const unlocked = isCampaignDifficultyUnlocked(unlockedCampaignDifficulties, selectedCampaign, difficulty)
+                        const activeDifficulty = selectedCampaignDifficulty === difficulty
+                        const completed = isCampaignDifficultyCompleted(completedCampaignDifficulties, selectedCampaign, difficulty)
+                        return (
+                          <button
+                            key={difficulty}
+                            type="button"
+                            disabled={!unlocked}
+                            className={`border-2 px-3 py-2 text-left font-pixel text-[8px] transition-colors ${
+                              activeDifficulty
+                                ? 'border-amber-300 bg-[#2b2110] text-amber-200'
+                                : unlocked
+                                  ? 'border-[#08100b] bg-[#101913] text-[#9dd5ac] hover:border-amber-300'
+                                  : 'cursor-not-allowed border-[#08100b] bg-[#070d0a] text-[#506859]'
+                            }`}
+                            aria-label={`${getCampaignDifficultyLabel(difficulty)}${unlocked ? '' : '未解锁'}`}
+                            title={getCampaignDifficultyUnlockHint(unlockedCampaignDifficulties, selectedCampaign, difficulty)}
+                            onClick={() => selectCampaignDifficulty(selectedCampaign, difficulty)}
+                          >
+                            <span>{getCampaignDifficultyLabel(difficulty)}</span>
+                            <span className="ml-2 text-[7px]">{completed ? '已通关' : unlocked ? '开放' : '锁定'}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <p className="mt-3 text-[0.9rem] leading-tight text-[#9dd5ac]" data-testid="campaign-difficulty-hint">
+                      {selectedDifficultyConfig.pressureTags.join(' / ')}
+                    </p>
+                  </div>
                   <button
                     type="button"
                     className="pixel-button mt-5 w-full px-5 py-4 font-pixel text-[10px]"
@@ -880,7 +862,7 @@ export function GameOverlay() {
                       startGame()
                     }}
                   >
-                    进入所选关卡
+                    进入
                   </button>
                 </div>
               </SectionPanel>
@@ -917,40 +899,78 @@ export function GameOverlay() {
         ) : null}
 
         {villageModal === 'inventory' ? (
-          <VillageModalShell title="物品仓库" onClose={() => setVillageModal(null)}>
+          <VillageModalShell title="仓库" onClose={() => setVillageModal(null)}>
             <div className="grid gap-4 xl:grid-cols-[minmax(360px,0.92fr)_minmax(0,1.08fr)]">
-              <SectionPanel eyebrow="角色装备面板" title={`12 槽 · 仓库 ${equipmentInventory.length} / 48`}>
+              <SectionPanel eyebrow="" title="装备">
                 <div className="grid gap-4">
+                  <p className="font-pixel text-[9px] uppercase tracking-[0.14em] text-[#9dd5ac]">12 槽 · 背包 {equipmentInventory.length} / 48</p>
                   <div className="grid gap-3 sm:grid-cols-2">
                     {EQUIPMENT_SLOTS.map((slot) => {
                       const item = equippedItems[slot]
                       const unlocked = unlockedEquipmentSlots.includes(slot)
+                      const displayName = !unlocked
+                        ? '封印'
+                        : item
+                          ? item.name
+                          : '未装备'
+                      const slotState = item ? `+${item.upgradeLevel ?? 0}` : unlocked ? '空槽' : '封印'
+                      const slotRelevance = item ? getEquipmentRelevance(item, equipmentContext) : null
+                      const slotActions = !item && !unlocked ? (
+                        <button className="pixel-button px-3 py-2 font-pixel text-[8px]" onClick={() => unlockEquipmentSlot(slot)}>
+                          解封
+                        </button>
+                      ) : null
                       return (
-                        <div key={slot} className="border-2 border-[#08100b] bg-[#101913] p-3" data-testid="equipment-slot">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
+                        <div key={slot} className="min-h-[6.5rem] border-2 border-[#08100b] bg-[#101913] p-3" data-testid="equipment-slot" aria-label={`${EQUIPMENT_SLOT_LABELS[slot]}：${displayName}`}>
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
                               <p className="font-pixel text-[8px] uppercase tracking-[0.14em] text-[#9dd5ac]">{EQUIPMENT_SLOT_LABELS[slot]}</p>
-                              <p className="mt-2 text-lg leading-tight text-[#f4f0d7]">
-                                {!unlocked ? '契约封印' : item ? item.name : '未装备'}
-                              </p>
+                              {item ? (
+                                <div className="group relative mt-2 inline-block max-w-full align-top">
+                                  <button
+                                    type="button"
+                                    className="max-w-full truncate text-left text-lg leading-tight text-[#f4f0d7] underline-offset-4 hover:text-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+                                    aria-describedby={`equipment-tooltip-${item.id}`}
+                                  >
+                                    {displayName}
+                                  </button>
+                                  <div
+                                    id={`equipment-tooltip-${item.id}`}
+                                    role="tooltip"
+                                    className="pointer-events-none absolute left-0 top-full z-50 mt-2 hidden w-72 border-2 border-amber-300 bg-[#0b120d] p-3 text-left shadow-[0_8px_22px_rgba(0,0,0,0.45)] group-hover:block group-focus-within:block"
+                                  >
+                                    <p className="text-lg leading-tight text-[#f4f0d7]">{item.name}</p>
+                                    <p className="mt-2 font-pixel text-[8px] uppercase tracking-[0.14em] text-amber-300">
+                                      {EQUIPMENT_RARITY_LABELS[item.rarity]} · {EQUIPMENT_SLOT_LABELS[item.slot]} · 评分 {item.score}
+                                      {typeof item.level === 'number' ? ` · Lv.${item.level}` : ''}
+                                    </p>
+                                    <p className="mt-3 text-[0.95rem] leading-tight text-[#9dd5ac]">属性：{formatEquipmentBonus(item)}</p>
+                                    <p className="mt-2 text-[0.95rem] leading-tight text-[#dfe7d5]">套装：{item.setId ? EQUIPMENT_SET_LABELS[item.setId] : '无套装'}</p>
+                                    <p className="mt-2 text-[0.95rem] leading-tight text-[#dfe7d5]">
+                                      符文：{item.modifiers.length > 0 ? item.modifiers.map(formatEquipmentModifier).join(' / ') : '无'}
+                                    </p>
+                                    {slotRelevance ? (
+                                      <p className="mt-2 text-[0.95rem] leading-tight text-amber-200">
+                                        {slotRelevance.affectsActiveSkill ? '命中当前 Q/E/R' : slotRelevance.matchesActiveBuild ? '当前主流派' : '普通装备'}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="mt-2 text-lg leading-tight text-[#f4f0d7]">
+                                  {displayName}
+                                </p>
+                              )}
                             </div>
-                            <span className="font-pixel text-[8px] text-amber-300">{item ? `+${item.upgradeLevel ?? 0}` : unlocked ? '空槽' : '封印'}</span>
+                            <div className="flex min-w-[7rem] shrink-0 flex-col items-end gap-2">
+                              <span className="font-pixel text-[8px] text-amber-300">{slotState}</span>
+                              {slotActions ? (
+                                <div className="flex flex-wrap justify-end gap-2">
+                                  {slotActions}
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
-                          {item ? (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              <button className="pixel-button px-3 py-2 font-pixel text-[8px]" onClick={() => upgradeEquippedEquipment(slot)}>
-                                强化
-                              </button>
-                              <span className="self-center text-[0.9rem] text-[#9dd5ac]">上限 +{getEquipmentUpgradeLimit(item)} · {formatUpgradeCost(item)}</span>
-                            </div>
-                          ) : !unlocked ? (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              <button className="pixel-button px-3 py-2 font-pixel text-[8px]" onClick={() => unlockEquipmentSlot(slot)}>
-                                解封
-                              </button>
-                              <span className="self-center text-[0.9rem] text-[#9dd5ac]">{formatMaterialCost(getEquipmentSlotUnlockCost(slot))}</span>
-                            </div>
-                          ) : null}
                         </div>
                       )
                     })}
@@ -958,7 +978,7 @@ export function GameOverlay() {
 
                   <div className="grid gap-3 lg:grid-cols-2">
                     <div className="border-2 border-[#08100b] bg-[#101913] p-4">
-                      <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#9dd5ac]">核心角色属性</p>
+                      <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#9dd5ac]">属性</p>
                       <div className="mt-3 grid gap-2 text-[1rem] leading-tight text-[#dfe7d5] sm:grid-cols-2">
                         <p>最大生命 {player.maxHp}</p>
                         <p>攻击 {player.attackDamage}</p>
@@ -968,17 +988,13 @@ export function GameOverlay() {
                         <p>穿透 {player.attackPierce}</p>
                         <p>技能伤害 +{Math.round(equipmentBonus.skillDamageMultiplier * 100)}%</p>
                         <p>技能冷却 -{Math.round(equipmentBonus.skillCooldownMultiplier * 100)}%</p>
-                        <p>蓝晶经验 +{Math.round(equipmentBonus.crystalXpMultiplier * 100)}%</p>
-                        <p>拾取范围 +{equipmentBonus.pickupRange}</p>
-                        <p>掉落加成 +{Math.round(equipmentBonus.dropRateMultiplier * 100)}%</p>
-                        <p>区域范围 +{Math.round(equipmentBonus.fieldRadiusMultiplier * 100)}%</p>
                         <p>散射弹道 +{equipmentBonus.spreadProjectileBonus}</p>
                         <p>野兽伤害 +{Math.round(equipmentBonus.beastDamageMultiplier * 100)}%</p>
                       </div>
                     </div>
 
                     <div className="border-2 border-[#08100b] bg-[#101913] p-4">
-                      <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#9dd5ac]">锻造材料</p>
+                      <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#9dd5ac]">材料</p>
                       <p className="mt-3 text-lg leading-tight text-[#dfe7d5]">{formatMaterialSummary(equipmentMaterials)}</p>
                       <p className="mt-3 text-[1rem] leading-tight text-amber-300">
                         套装：{Object.entries(equipmentSetCounts).length > 0
@@ -997,7 +1013,7 @@ export function GameOverlay() {
                 </div>
               </SectionPanel>
 
-              <SectionPanel eyebrow="全部装备列表" title={EQUIPMENT_SLOT_LABELS[activeInventorySlot]}>
+              <SectionPanel eyebrow="" title="背包">
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4" role="tablist" aria-label="装备部位分类">
                   {EQUIPMENT_SLOTS.map((slot) => {
                     const count = equipmentSlotCounts[slot]
@@ -1031,42 +1047,21 @@ export function GameOverlay() {
                   })}
                 </div>
 
-                {activeInventorySlot === 'weapon' && ownedWeapons.length === 0 && equipmentInventory.filter((item) => item.slot === 'weapon').length === 0 ? (
-                  <p className="mt-4 text-xl text-[#dfe7d5]">武器列表为空。铁匠铺购买武器或地下城掉落武器后会显示在这里。</p>
-                ) : activeInventorySlot !== 'weapon' && equipmentInventory.filter((item) => item.slot === activeInventorySlot).length === 0 ? (
-                  <p className="mt-4 text-xl text-[#dfe7d5]">该部位还没有获得装备。</p>
+                {equipmentInventory.filter((item) => item.slot === activeInventorySlot).length === 0 ? (
+                  <p className="mt-4 text-xl text-[#dfe7d5]">暂无装备</p>
                 ) : (
                   <div className="mt-4 grid gap-3">
-                    {activeInventorySlot === 'weapon'
-                      ? ownedWeapons.map((weapon) => (
-                        <div key={`weapon-${weapon.id}`} className="border-2 border-[#08100b] bg-[#121b16] p-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex min-w-0 items-start gap-3">
-                              <WeaponPixelIcon weaponId={weapon.id} equipped={equippedWeaponId === weapon.id} />
-                              <div className="min-w-0">
-                                <p className="font-pixel text-[10px] text-[#f4f0d7]">{weapon.name}</p>
-                                <p className="mt-2 font-pixel text-[8px] uppercase tracking-[0.12em] text-amber-300">
-                                  铁匠铺购买 · 武器 · 评分 {Math.round(weapon.price / 4)}
-                                </p>
-                                <p className="mt-2 text-[1rem] leading-tight text-[#dfe7d5]">{formatWeaponBonus(weapon)}</p>
-                                <p className="mt-2 text-[0.95rem] leading-tight text-[#9dd5ac]">关键词缀：{getWeaponEffectLabel(weapon.id)}</p>
-                              </div>
-                            </div>
-                            <span className="shrink-0 font-pixel text-[8px] text-amber-300">{equippedWeaponId === weapon.id ? '已装备' : `${weapon.price}G`}</span>
-                          </div>
-                          {equippedWeaponId !== weapon.id ? (
-                            <button className="pixel-button mt-4 px-4 py-3 font-pixel text-[10px]" onClick={() => equipWeapon(weapon.id)}>装备</button>
-                          ) : null}
-                        </div>
-                      ))
-                      : null}
-
                     {equipmentInventory.filter((item) => item.slot === activeInventorySlot).map((item) => {
                       const equipped = equippedItems[item.slot]?.id === item.id
-                      const currentScore = equippedItems[item.slot]?.score ?? 0
-                      const diff = item.score - currentScore
+                      const equippedBaseline = equippedItems[item.slot]?.id !== item.id ? equippedItems[item.slot] : undefined
+                      const sameNameBaseline = equipmentInventory.find((candidate) => candidate.id !== item.id && candidate.name === item.name)
+                      const comparisonItem = equippedBaseline ?? sameNameBaseline
+                      const diff = comparisonItem ? item.score - comparisonItem.score : item.score
                       const relevance = getEquipmentRelevance(item, equipmentContext)
                       const confirmHighRarity = item.rarity === 'legacy' || item.rarity === 'legendary'
+                      const protectedHighRarity = isHighRarityProtected(item)
+                      const discovered = hasDiscoveredHighRarityEquipment(discoveredHighRarityEquipmentIds, item.equipmentId)
+                      const compareLabel = equippedBaseline ? '对比当前' : sameNameBaseline ? '同名 roll' : '基础'
                       return (
                         <div key={item.id} className="border-2 border-[#08100b] bg-[#121b16] p-4 shadow-[0_0_0_2px_rgba(157,213,172,0.06)]">
                           <div className="flex items-start justify-between gap-3">
@@ -1075,13 +1070,28 @@ export function GameOverlay() {
                               <div className="min-w-0">
                                 <p className="truncate font-pixel text-[10px] text-[#f4f0d7]">{item.isNew ? '新 · ' : ''}{item.locked ? '锁 · ' : ''}{item.name}</p>
                                 <p className="mt-2 font-pixel text-[8px] uppercase tracking-[0.12em]" style={{ color: EQUIPMENT_RARITY_COLORS[item.rarity] }}>
-                                  地下城掉落 · {EQUIPMENT_RARITY_LABELS[item.rarity]} · {EQUIPMENT_SLOT_LABELS[item.slot]} · 评分 {item.score}（{diff >= 0 ? '+' : ''}{diff}）
+                                  {EQUIPMENT_RARITY_LABELS[item.rarity]} · {EQUIPMENT_SLOT_LABELS[item.slot]} · 评分 {item.score}（{diff >= 0 ? '+' : ''}{diff}）
                                 </p>
                                 {item.setId ? (
                                   <p className="mt-2 text-[0.95rem] leading-tight text-amber-300">套装：{EQUIPMENT_SET_LABELS[item.setId]}</p>
                                 ) : null}
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  {protectedHighRarity ? (
+                                    <span className="border border-amber-300 px-2 py-1 font-pixel text-[7px] text-amber-200">
+                                      高稀有 · 默认锁定
+                                    </span>
+                                  ) : null}
+                                  {item.rarity === 'legacy' || item.rarity === 'legendary' ? (
+                                    <span
+                                      className="border border-[rgba(157,213,172,0.35)] px-2 py-1 font-pixel text-[7px] text-[#9dd5ac]"
+                                      data-testid={`equipment-discovery-${item.id}`}
+                                    >
+                                      {discovered ? '已发现 · 追刷激活' : '未发现'}
+                                    </span>
+                                  ) : null}
+                                </div>
                                 {item.modifiers.length > 0 ? (
-                                  <p className="mt-2 text-[0.95rem] leading-tight text-amber-300">符文特效：{item.modifiers.length} 项{relevance.affectsActiveSkill ? ' · 命中当前 Q/E/R' : ''}</p>
+                                  <p className="mt-2 text-[0.95rem] leading-tight text-amber-300">符文：{item.modifiers.length} 项{relevance.affectsActiveSkill ? ' · Q/E/R' : ''}</p>
                                 ) : null}
                                 {item.modifiers.length > 0 ? (
                                   <div className="mt-2 flex flex-wrap gap-2">
@@ -1105,9 +1115,12 @@ export function GameOverlay() {
                             <span className="shrink-0 font-pixel text-[8px] text-amber-300">{equipped ? '已装备' : `Lv.${item.level}`}</span>
                           </div>
                           <p className="mt-3 text-lg leading-tight text-[#9dd5ac]">{formatEquipmentBonus(item)}</p>
+                          <p className="mt-2 text-[0.95rem] leading-tight text-[#dfe7d5]" data-testid={`equipment-roll-diff-${item.id}`}>
+                            {compareLabel}：{formatEquipmentRollDiff(item, comparisonItem)}
+                          </p>
                           <div className="mt-4 flex flex-wrap gap-2">
                             {!equipped ? (
-                              <button className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => equipEquipment(item.id)}>装备</button>
+                              <button className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => equipEquipment(item.id)}>穿戴</button>
                             ) : null}
                             <button className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => toggleEquipmentLock(item.id)}>
                               {item.locked ? '解锁' : '锁定'}
@@ -1126,9 +1139,6 @@ export function GameOverlay() {
                               </button>
                             ) : null}
                           </div>
-                          <p className="mt-3 text-[0.9rem] leading-tight text-[#9dd5ac]">
-                            重铸消耗：{formatMaterialCost(getEquipmentReforgeCost(item, 'secondary'))}
-                          </p>
                         </div>
                       )
                     })}
@@ -1166,7 +1176,7 @@ export function GameOverlay() {
                       移动：{option}
                     </button>
                   ))}
-                  <p className="text-xl text-[#dfe7d5]">技能：Q / E / R，闪避：Space，暂停：Esc，目标切换：Tab。</p>
+                  <p className="text-xl text-[#dfe7d5]">技能：Q / E / R 跟随鼠标准星方向释放，闪避：Space，暂停：Esc。</p>
                 </div>
               </SectionPanel>
             </div>
@@ -1190,6 +1200,46 @@ export function GameOverlay() {
                 <p className="mt-4 text-xl text-[#dfe7d5]">
                   当前成长：生命 {skillAllocations.vitality} / 力量 {skillAllocations.power} / 急速 {skillAllocations.haste} / 灵巧 {skillAllocations.agility}
                 </p>
+              </SectionPanel>
+              <SectionPanel eyebrow="当前阶段" title="天赋">
+                <div className="grid gap-3 md:grid-cols-[160px_minmax(0,1fr)]">
+                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
+                    <p className="font-pixel text-[8px] text-[#9dd5ac]">余额</p>
+                    <p className="mt-3 font-pixel text-sm text-amber-300" data-testid="hunter-home-talent-balance">{talentPoints}</p>
+                  </div>
+                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
+                    <p className="font-pixel text-[8px] text-[#9dd5ac]">状态</p>
+                    <p className="mt-3 text-lg leading-tight text-[#dfe7d5]" data-testid="hunter-home-talent-status">
+                      点数结算 / 记录 / 存档已开放；完整树与局内候选待确认
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  {talentPointRecords.length === 0 ? (
+                    <p className="border-2 border-[#08100b] bg-[#121b16] p-4 text-xl text-[#dfe7d5]" data-testid="hunter-home-talent-empty">暂无天赋记录</p>
+                  ) : (
+                    talentPointRecords.slice(0, 4).map((record) => (
+                      <div key={record.id} className="border-2 border-[#08100b] bg-[#121b16] p-4" data-testid="hunter-home-talent-record">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-pixel text-[9px] text-amber-300">+{record.points}</p>
+                          <p className="font-pixel text-[8px] text-[#f4f0d7]">{talentPointSourceLabels[record.source]}</p>
+                        </div>
+                        <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">第 {record.campaign} 关 · 到达 {record.reachedLevel} 层</p>
+                        <p className="mt-1 text-lg leading-tight text-[#9dd5ac]">
+                          经验 {record.cumulativeExp} / 局内 Lv.{record.highestContractLevel} / 精英 {record.eliteKills} / Boss {record.bossKills}
+                          {record.firstClear ? ' / 首通' : ''}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2" data-testid="hunter-home-talent-blockers">
+                  {talentBlockers.map((blocker) => (
+                    <span key={blocker.area} className="border border-[rgba(157,213,172,0.35)] px-2 py-1 font-pixel text-[7px] text-[#9dd5ac]">
+                      {blocker.area === 'meta-talent-tree' ? '84 局外天赋待确认' : '40 局内候选待确认'}
+                    </span>
+                  ))}
+                </div>
               </SectionPanel>
               <SectionPanel eyebrow="通关记录" title="历史冒险">
                 <div className="grid gap-3 md:grid-cols-2">
@@ -1215,147 +1265,196 @@ export function GameOverlay() {
         ) : null}
 
         {villageModal === 'shop' ? (
-          <VillageModalShell title="铁匠铺老板" onClose={() => setVillageModal(null)}>
-            <WeaponShopPanel
-              currency={currency}
-              bestLevel={bestLevel}
-              unlockedWeapons={unlockedWeapons}
-              equippedWeaponId={equippedWeaponId}
-              purchaseWeapon={purchaseWeapon}
-              equipWeapon={equipWeapon}
-            />
-          </VillageModalShell>
-        ) : null}
-
-        {villageModal === 'guide' ? (
-          <VillageModalShell title="职业与技能告示牌" onClose={() => setVillageModal(null)}>
-            <div className="space-y-4">
-              <SectionPanel eyebrow="职业介绍" title="弓箭手">
-                <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-                  <div className="space-y-3 text-xl text-[#dfe7d5]">
-                    <p>弓箭手是围绕走位、射程与 Q / E / R 主动技能槽构建的远程职业。</p>
-                    <p>基础定位偏向拉扯输出，适合通过鼠标指向控制穿透箭线、散射扇面和野兽伙伴指令。</p>
-                    <p>奖励会根据你已经选择的技能产生轻微流派倾向，连续选择同一方向后更容易形成完整构筑。</p>
+          <VillageModalShell title="铁匠铺" onClose={() => setVillageModal(null)}>
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+              <SectionPanel eyebrow="" title="分解">
+                <div className="grid gap-4">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="border-2 border-[#08100b] bg-[#101913] p-3 font-pixel text-[8px] text-[#9dd5ac]">
+                      分解
+                    </div>
+                    <div className="border-2 border-[#08100b] bg-[#101913] p-3 font-pixel text-[8px] text-[#9dd5ac]">
+                      强化
+                    </div>
+                    <div className="border-2 border-[#08100b] bg-[#070d0a] p-3 font-pixel text-[8px] text-[#506859]">
+                      重铸 · 后续
+                    </div>
                   </div>
-                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]">
-                    <p className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#f4f0d7] md:text-[10px]">固定被动</p>
-                    <p className="mt-2 text-xl text-[#dfe7d5]">{ARCHER_FIXED_PASSIVE.name}</p>
-                    <p className="mt-2 text-lg leading-tight text-[#9dd5ac]">{ARCHER_FIXED_PASSIVE.description}</p>
-                    <div className="mt-4 grid gap-2 text-[1rem] leading-tight text-[#dfe7d5] md:grid-cols-2">
-                      {ARCHER_FIXED_PASSIVE_LEVELS.map((passiveLevel) => (
-                        <p key={passiveLevel.level}>Lv.{passiveLevel.level}：{passiveLevel.description}</p>
+                  <div className="border-2 border-[#08100b] bg-[#101913] p-4">
+                    <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-amber-300">金币 {currency}G</p>
+                  </div>
+                  <div className="border-2 border-[#08100b] bg-[#101913] p-4">
+                    <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#9dd5ac]">材料</p>
+                    <p className="mt-3 text-lg leading-tight text-[#dfe7d5]">{formatMaterialSummary(equipmentMaterials)}</p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {batchLabels.map(([category, label]) => (
+                        <button key={category} className="pixel-button px-3 py-2 font-pixel text-[8px]" onClick={() => batchDismantleEquipment(category)}>
+                          {label}
+                        </button>
                       ))}
                     </div>
                   </div>
                 </div>
               </SectionPanel>
-              <SectionPanel eyebrow="怪物图鉴" title="按战役/层数查看" contentClassName="guide-monster-section">
-                <div className="space-y-5">
-                  {CAMPAIGN_MONSTER_THEMES.map((theme) => {
-                    const floorRows = buildCampaignFloorRows(theme)
-                    const previewMonsters = getUniqueCampaignMonsters(theme)
-                    const lootProfile = getCampaignLootProfile(theme.campaign)
 
+              <SectionPanel eyebrow="" title="强化">
+                <div className="grid gap-3">
+                  {EQUIPMENT_SLOTS.map((slot) => {
+                    const item = equippedItems[slot]
                     return (
-                      <article
-                        key={theme.campaign}
-                        data-testid={`campaign-guide-${theme.campaign}`}
-                        className="border-2 border-[#08100b] bg-[#121b16] p-4 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#9dd5ac] md:text-[10px]">第 {theme.campaign} 关</p>
-                            <h4 className="mt-2 font-pixel text-sm uppercase tracking-[0.16em] text-[#f4f0d7] md:text-base">{theme.name}</h4>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <span className="border border-[rgba(246,200,111,0.35)] px-2 py-1 font-pixel text-[7px] text-amber-300">22 层</span>
-                            <span className="border border-[rgba(246,200,111,0.35)] px-2 py-1 font-pixel text-[7px] text-amber-300">精英 3/6/9/12/15/18/21</span>
-                            <span className="border border-[rgba(246,200,111,0.35)] px-2 py-1 font-pixel text-[7px] text-amber-300">Boss：{theme.boss.name}</span>
-                          </div>
+                      <div key={`blacksmith-${slot}`} className="flex items-center justify-between gap-3 border-2 border-[#08100b] bg-[#101913] p-3">
+                        <div className="min-w-0">
+                          <p className="font-pixel text-[8px] uppercase tracking-[0.14em] text-[#9dd5ac]">{EQUIPMENT_SLOT_LABELS[slot]}</p>
+                          <p className="mt-1 truncate text-lg text-[#f4f0d7]">{item ? item.name : '未装备'}</p>
                         </div>
-                        <div className="mt-3 grid gap-2 border border-[rgba(157,213,172,0.12)] bg-[#0d1711] p-3 text-[0.95rem] leading-tight text-[#dfe7d5] md:grid-cols-3">
-                          <p><span className="font-pixel text-[8px] text-[#9dd5ac]">刷装</span> {lootProfile.primaryLootReason}</p>
-                          <p><span className="font-pixel text-[8px] text-[#9dd5ac]">推荐</span> {lootProfile.recommendedState}</p>
-                          <p><span className="font-pixel text-[8px] text-[#9dd5ac]">威胁</span> {lootProfile.themeThreat}</p>
-                        </div>
-
-                        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                          {previewMonsters.map((monster) => (
-                            <MonsterAnimationStrip key={monster.id} monster={monster} campaignIndex={theme.campaign} />
-                          ))}
-                        </div>
-
-                        <div className="mt-4 grid gap-2" role="table" aria-label={`${theme.name}每层怪物`}>
-                          <div className="hidden grid-cols-[86px_72px_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,0.9fr)] gap-2 border-b border-[rgba(157,213,172,0.16)] pb-2 font-pixel text-[8px] uppercase tracking-[0.14em] text-[#9dd5ac] md:grid">
-                            <span>层数</span>
-                            <span>标记</span>
-                            <span>普通怪 / 护卫来源</span>
-                            <span>精英池</span>
-                            <span>Boss</span>
-                          </div>
-                          {floorRows.map((row) => (
-                            <div
-                              key={row.floor}
-                              data-testid={`campaign-floor-row-${theme.campaign}-${row.floor}`}
-                              className="grid gap-2 border border-[rgba(157,213,172,0.12)] bg-[#0d1711] px-3 py-2 text-[0.95rem] leading-tight text-[#dfe7d5] md:grid-cols-[86px_72px_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,0.9fr)]"
-                              role="row"
-                            >
-                              <span className="font-pixel text-[8px] text-[#f4f0d7]">第 {row.floor} 层</span>
-                              <span className={row.boss ? 'font-pixel text-[8px] text-amber-300' : row.elitePool.length > 0 ? 'font-pixel text-[8px] text-[#c084fc]' : 'font-pixel text-[8px] text-[#9dd5ac]'}>
-                                {row.tag}
-                              </span>
-                              <span>
-                                <span className="md:hidden text-[#9dd5ac]">普通怪：</span>
-                                {formatMonsterNames(row.normalPool)}
-                              </span>
-                              <span>
-                                <span className="md:hidden text-[#9dd5ac]">精英池：</span>
-                                {row.elitePool.length > 0 ? formatMonsterNames(row.elitePool) : '—'}
-                              </span>
-                              <span>
-                                <span className="md:hidden text-[#9dd5ac]">Boss：</span>
-                                {row.boss ? row.boss.name : '—'}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </article>
+                        {item ? (
+                          <button className="pixel-button shrink-0 px-3 py-2 font-pixel text-[8px]" onClick={() => upgradeEquippedEquipment(slot)}>
+                            强化
+                          </button>
+                        ) : null}
+                      </div>
                     )
                   })}
                 </div>
               </SectionPanel>
+            </div>
+          </VillageModalShell>
+        ) : null}
 
-              <SectionPanel eyebrow="技能介绍" title={`弓箭手技能池 ${ARCHER_ACTIVE_SKILLS.length} 项`}>
-                <div className="space-y-4">
-                  {skillSections.map((section) => (
-                    <div key={section.label}>
-                      <p className="mb-3 font-pixel text-[9px] uppercase tracking-[0.18em] text-[#9dd5ac] md:text-[10px]">{section.label}</p>
-                      <p className="mb-3 text-lg leading-tight text-[#dfe7d5]">{SKILL_BUILD_DESCRIPTIONS[section.buildTag]}</p>
-                      <div className="grid gap-3 md:grid-cols-2">
-                        {section.items.map((skill) => (
-                          <div key={skill.id} className="border-2 border-[#08100b] bg-[#121b16] px-3 py-3 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]">
-                            <p className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#f4f0d7] md:text-[10px]">{skill.name}</p>
-                            <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">{skill.description}</p>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {skill.tacticalTags.map((tag) => (
-                                <span key={tag} className="border border-[rgba(157,213,172,0.22)] bg-[rgba(8,16,11,0.5)] px-2 py-1 font-pixel text-[7px] uppercase tracking-[0.12em] text-[#9dd5ac]">
-                                  {tag}
-                                </span>
-                              ))}
-                            </div>
-                            <div className="mt-3 space-y-1 text-[1rem] leading-tight text-[#9dd5ac]">
-                              <p>流派：{SKILL_BUILD_LABELS[skill.buildTag]}</p>
-                              <p>Lv.1 伤害：{formatScaledDamage(skill.levels[0].damage)}</p>
-                              <p>Lv.5 伤害：{formatScaledDamage(skill.levels[4].damage)}</p>
-                              <p>冷却：{skill.levels[0].cooldown}s 到 {skill.levels[4].cooldown}s</p>
-                            </div>
-                          </div>
+        {villageModal === 'guide' ? (
+          <VillageModalShell
+            title="图鉴"
+            onClose={() => setVillageModal(null)}
+            stickyHeader
+            headerExtra={(
+              <div className="flex flex-wrap gap-2" role="tablist" aria-label="图鉴栏目">
+                {guideTabs.map((tab) => {
+                  const active = guideTab === tab.id
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      className={`border-2 px-4 py-3 font-pixel text-[9px] uppercase tracking-[0.14em] ${active ? 'border-amber-300 bg-[rgba(251,191,36,0.16)] text-amber-200' : 'border-[#08100b] bg-[#101913] text-[#9dd5ac] hover:border-[rgba(246,200,111,0.5)] hover:text-[#f4f0d7]'}`}
+                      onClick={() => setGuideTab(tab.id)}
+                    >
+                      {tab.label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          >
+            <div className="space-y-4">
+              {guideTab === 'career' ? (
+                <SectionPanel eyebrow="" title="职业">
+                  <div className="space-y-3 text-xl text-[#dfe7d5]">
+                    <p>弓箭手是围绕走位、射程与 Q / E / R 主动技能槽构建的远程职业。</p>
+                    <p>基础定位偏向拉扯输出，适合通过鼠标指向控制穿透箭线、散射扇面和野兽伙伴指令。</p>
+                    <p>奖励会根据你已经选择的技能产生轻微流派倾向，连续选择同一方向后更容易形成完整构筑。</p>
+                  </div>
+                </SectionPanel>
+              ) : null}
+
+              {guideTab === 'skills' ? (
+                <SectionPanel eyebrow="" title="技能">
+                  <div className="space-y-4">
+                    <div className="border-2 border-[#08100b] bg-[#121b16] p-4 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]">
+                      <p className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#f4f0d7] md:text-[10px]">固定被动</p>
+                      <p className="mt-2 text-xl text-[#dfe7d5]">{ARCHER_FIXED_PASSIVE.name}</p>
+                      <p className="mt-2 text-lg leading-tight text-[#9dd5ac]">{ARCHER_FIXED_PASSIVE.description}</p>
+                      <div className="mt-4 grid gap-2 text-[1rem] leading-tight text-[#dfe7d5] md:grid-cols-2">
+                        {ARCHER_FIXED_PASSIVE_LEVELS.map((passiveLevel) => (
+                          <p key={passiveLevel.level}>Lv.{passiveLevel.level}：{passiveLevel.description}</p>
                         ))}
                       </div>
                     </div>
-                  ))}
-                </div>
-              </SectionPanel>
+
+                    {skillSections.map((section) => (
+                      <div key={section.label}>
+                        <p className="mb-3 font-pixel text-[9px] uppercase tracking-[0.18em] text-[#9dd5ac] md:text-[10px]">{section.label}</p>
+                        <p className="mb-3 text-lg leading-tight text-[#dfe7d5]">{SKILL_BUILD_DESCRIPTIONS[section.buildTag]}</p>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          {section.items.map((skill) => (
+                            <div key={skill.id} className="border-2 border-[#08100b] bg-[#121b16] px-3 py-3 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]">
+                              <p className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#f4f0d7] md:text-[10px]">{skill.name}</p>
+                              <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">{skill.description}</p>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {skill.tacticalTags.map((tag) => (
+                                  <span key={tag} className="border border-[rgba(157,213,172,0.22)] bg-[rgba(8,16,11,0.5)] px-2 py-1 font-pixel text-[7px] uppercase tracking-[0.12em] text-[#9dd5ac]">
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                              <div className="mt-3 space-y-1 text-[1rem] leading-tight text-[#9dd5ac]">
+                                <p>流派：{SKILL_BUILD_LABELS[skill.buildTag]}</p>
+                                <p>Lv.1 伤害：{formatScaledDamage(skill.levels[0].damage)}</p>
+                                <p>Lv.5 伤害：{formatScaledDamage(skill.levels[4].damage)}</p>
+                                <p>冷却：{skill.levels[0].cooldown}s 到 {skill.levels[4].cooldown}s</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </SectionPanel>
+              ) : null}
+
+              {guideTab === 'monsters' ? (
+                <SectionPanel eyebrow="" title="怪物" contentClassName="guide-monster-section">
+                  <div className="space-y-5">
+                    {(() => {
+                      const selectedTheme = CAMPAIGN_MONSTER_THEMES[guideCampaign - 1] ?? CAMPAIGN_MONSTER_THEMES[0]
+                      const lootProfile = getCampaignLootProfile(selectedTheme.campaign)
+                      return (
+                        <div data-testid="campaign-guide-detail" className="grid gap-2 border-2 border-[#08100b] bg-[#0d1711] p-3 text-[0.95rem] leading-tight text-[#dfe7d5] md:grid-cols-3">
+                          <p><span className="font-pixel text-[8px] text-[#9dd5ac]">掉落</span> {lootProfile.primaryLootReason}</p>
+                          <p><span className="font-pixel text-[8px] text-[#9dd5ac]">威胁</span> {lootProfile.themeThreat}</p>
+                          <p><span className="font-pixel text-[8px] text-[#9dd5ac]">推荐</span> {lootProfile.recommendedState}</p>
+                        </div>
+                      )
+                    })()}
+                    {CAMPAIGN_MONSTER_THEMES.map((theme) => {
+                      const previewMonsters = getUniqueCampaignMonsters(theme)
+                      const active = guideCampaign === theme.campaign
+
+                      return (
+                        <article
+                          key={theme.campaign}
+                          data-testid={`campaign-guide-${theme.campaign}`}
+                          className={`border-2 bg-[#121b16] p-4 shadow-[0_0_0_2px_rgba(157,213,172,0.08)] ${active ? 'border-amber-300' : 'border-[#08100b]'}`}
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#9dd5ac] md:text-[10px]">第 {theme.campaign} 关</p>
+                              <h4 className="mt-2 font-pixel text-sm uppercase tracking-[0.16em] text-[#f4f0d7] md:text-base">{theme.name}</h4>
+                              <p className="mt-2 text-[0.95rem] leading-tight text-[#9dd5ac]">Boss：{theme.boss.name}</p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <span className="border border-[rgba(246,200,111,0.35)] px-2 py-1 font-pixel text-[7px] text-amber-300">精英 3/6/9/12/15/18/21</span>
+                              <button
+                                type="button"
+                                className="border border-[rgba(246,200,111,0.35)] px-2 py-1 font-pixel text-[7px] text-amber-300 hover:bg-[rgba(251,191,36,0.12)]"
+                                onClick={() => setGuideCampaign(theme.campaign)}
+                              >
+                                详情
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                            {previewMonsters.map((monster) => (
+                              <MonsterAnimationStrip key={monster.id} monster={monster} campaignIndex={theme.campaign} />
+                            ))}
+                          </div>
+                        </article>
+                      )
+                    })}
+                  </div>
+                </SectionPanel>
+              ) : null}
             </div>
           </VillageModalShell>
         ) : null}
@@ -1388,7 +1487,15 @@ export function GameOverlay() {
                   <p>击杀数量：{kills}</p>
                   <p>本局奖励：{earnedGold} 金币</p>
                   <p>当前金币：{currency}</p>
+                  <p>天赋点：+{lastTalentPointRecord?.points ?? 0}</p>
+                  <p>天赋余额：{talentPoints}</p>
                 </div>
+                {lastTalentPointRecord ? (
+                  <p className="mt-3 text-lg text-[#9dd5ac]">
+                    累计经验 {lastTalentPointRecord.cumulativeExp} / 最高局内 Lv.{lastTalentPointRecord.highestContractLevel} / 精英 {lastTalentPointRecord.eliteKills} / Boss {lastTalentPointRecord.bossKills}
+                    {lastTalentPointRecord.firstClear ? ' / 首通奖励' : ''}
+                  </p>
+                ) : null}
                 <p className="mt-3 text-lg text-[#9dd5ac]">
                   {nextMilestone
                     ? `距离 ${nextMilestone.level} 层奖励「${nextMilestone.reward}」还差 ${Math.max(0, nextMilestone.level - level)} 层`

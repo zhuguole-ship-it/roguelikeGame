@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { INFINITE_ACTIVE_CHUNK_LIMIT, TILE_SIZE, WORLD_HEIGHT, WORLD_WIDTH } from './config'
 import { advanceGame, createInitialSnapshot } from './engine'
@@ -6,10 +6,16 @@ import {
   getCameraOffset,
   getInfiniteFloorTileIndex,
   getInfiniteFloorTileIndexForWorldPosition,
+  getLevelOneDungeonFloorTileRange,
   getSmoothedCameraOffset,
+  LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE,
+  LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC,
   shouldDrawFixedRoomBoundary,
+  shouldUseLevelOneDungeonFloorTile,
 } from './render'
 import {
+  drawBeastCompanionSprite,
+  drawEnemySprite,
   getSkeletonArcherAtlasAction,
   getSkeletonArcherAtlasFrame,
   getSkeletonWarriorAtlasAction,
@@ -22,7 +28,42 @@ import {
   SKELETON_WARRIOR_MOVE_FPS,
   SKELETON_WARRIOR_SPRITE_ATLAS,
 } from './sprites'
+import { clearRuntimeAssetOverrides, setRuntimeAssetActionOverride } from './runtimeAssetOverrides'
 import type { Enemy } from './types'
+
+afterEach(() => {
+  clearRuntimeAssetOverrides()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
+
+const createMockCanvasContext = () => ({
+  imageSmoothingEnabled: true,
+  fillStyle: '',
+  strokeStyle: '',
+  lineWidth: 1,
+  globalAlpha: 1,
+  save: vi.fn(),
+  restore: vi.fn(),
+  translate: vi.fn(),
+  scale: vi.fn(),
+  rotate: vi.fn(),
+  beginPath: vi.fn(),
+  closePath: vi.fn(),
+  moveTo: vi.fn(),
+  lineTo: vi.fn(),
+  arc: vi.fn(),
+  ellipse: vi.fn(),
+  fill: vi.fn(),
+  stroke: vi.fn(),
+  fillRect: vi.fn(),
+  strokeRect: vi.fn(),
+  clearRect: vi.fn(),
+  drawImage: vi.fn(),
+  setLineDash: vi.fn(),
+  fillText: vi.fn(),
+  measureText: vi.fn(() => ({ width: 10 })),
+}) as unknown as CanvasRenderingContext2D & { drawImage: ReturnType<typeof vi.fn> }
 
 describe('game render helpers', () => {
   it('maps archer player states to the imported sprite folders', () => {
@@ -80,6 +121,481 @@ describe('game render helpers', () => {
     expect(SKELETON_ARCHER_SPRITE_ATLAS.actions.idle?.start).toBe(0)
     expect(SKELETON_ARCHER_SPRITE_ATLAS.actions.move?.start).toBe(4)
     expect(SKELETON_ARCHER_SPRITE_ATLAS.actions.attack?.start).toBe(8)
+  })
+
+  it('draws combat sprites from developer runtime asset overrides when a draft is applied', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 64
+      naturalHeight = 64
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    setRuntimeAssetActionOverride({
+      entityId: 'dungeon-skeleton-archer',
+      slot: 'move',
+      combatAction: 'move',
+      frameUrls: ['blob:archer-move-01.png'],
+      frameWidth: 64,
+      frameHeight: 64,
+      frameCount: 1,
+      fps: 7,
+      loop: true,
+      flipX: true,
+      combatScale: 1.25,
+      hitFrameIndex: 0,
+    })
+    const enemy = {
+      id: 'archer',
+      archetypeId: 'dungeon-skeleton-archer',
+      displayName: '骷髅弓手',
+      kind: 'ranged',
+      position: { x: 100, y: 100 },
+      size: 22,
+      hitFlash: 0,
+      rangedAttackWindup: 0,
+      walkTimer: 2,
+      facingDirection: { x: 1, y: 0 },
+    } as Enemy
+    const ctx = createMockCanvasContext()
+
+    drawEnemySprite(ctx, enemy, 0.5, 1, { campaignOverlay: false })
+
+    expect(ctx.drawImage).toHaveBeenCalled()
+    expect(ctx.drawImage.mock.calls[0]?.[7]).toBeGreaterThan(70)
+  })
+
+  it('honors runtime asset flip and duration settings during combat rendering', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 64
+      naturalHeight = 64
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    setRuntimeAssetActionOverride({
+      entityId: 'dungeon-skeleton-archer',
+      slot: 'move',
+      combatAction: 'move',
+      frameUrls: ['blob:archer-move-01.png', 'blob:archer-move-02.png'],
+      frameWidth: 64,
+      frameHeight: 64,
+      frameCount: 2,
+      fps: 1,
+      durationSeconds: 2,
+      loop: true,
+      flipX: true,
+      combatScale: 1,
+    })
+    const enemy = {
+      id: 'archer',
+      archetypeId: 'dungeon-skeleton-archer',
+      displayName: '骷髅弓手',
+      kind: 'ranged',
+      position: { x: 100, y: 100 },
+      size: 22,
+      hitFlash: 0,
+      rangedAttackWindup: 0,
+      walkTimer: 2,
+      facingDirection: { x: 1, y: 0 },
+    } as Enemy
+    const ctx = createMockCanvasContext()
+
+    drawEnemySprite(ctx, enemy, 1.25, 1, { campaignOverlay: false })
+
+    expect(ctx.scale).toHaveBeenCalledWith(-1, 1)
+    const imageArg = ctx.drawImage.mock.calls[0]?.[0] as { src?: string }
+    expect(imageArg.src).toBe('blob:archer-move-02.png')
+  })
+
+  it('draws hellhound combat frames from developer overrides even when the legacy atlas is missing', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 64
+      naturalHeight = 64
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+        if (value.includes('hellhound-sheet.png')) {
+          this.naturalWidth = 0
+          this.naturalHeight = 0
+        }
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    setRuntimeAssetActionOverride({
+      entityId: 'dungeon-hellhound',
+      slot: 'move',
+      combatAction: 'move',
+      frameUrls: ['assets/developer-assets/dungeon-hellhound/move/frame_01.png'],
+      frameWidth: 64,
+      frameHeight: 64,
+      frameCount: 1,
+      fps: 6,
+      durationSeconds: 0.8,
+      loop: true,
+      flipX: true,
+      combatScale: 1,
+    })
+    const enemy = {
+      id: 'hellhound',
+      archetypeId: 'dungeon-hellhound',
+      displayName: '地狱犬',
+      kind: 'charger',
+      position: { x: 100, y: 100 },
+      size: 22,
+      hitFlash: 0,
+      behaviorTimer: 0,
+      breathTimer: 0,
+      walkTimer: 2,
+      facingDirection: { x: 1, y: 0 },
+    } as Enemy
+    const ctx = createMockCanvasContext()
+
+    drawEnemySprite(ctx, enemy, 0.5, 1, { campaignOverlay: false })
+
+    expect(ctx.drawImage).toHaveBeenCalled()
+    expect(ctx.scale).toHaveBeenCalledWith(-1, 1)
+    const imageArg = ctx.drawImage.mock.calls[0]?.[0] as { src?: string }
+    expect(imageArg.src).toBe('/assets/developer-assets/dungeon-hellhound/move/frame_01.png')
+  })
+
+  it('flips hellhound skill frames relative to the locked combat facing', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 64
+      naturalHeight = 64
+      src = ''
+    }
+    vi.stubGlobal('Image', MockImage)
+    setRuntimeAssetActionOverride({
+      entityId: 'dungeon-hellhound',
+      slot: 'skill_1',
+      combatAction: 'skill',
+      frameUrls: ['assets/developer-assets/dungeon-hellhound/skill_1/frame_01.png'],
+      frameWidth: 64,
+      frameHeight: 64,
+      frameCount: 1,
+      fps: 6,
+      durationSeconds: 0.8,
+      loop: false,
+      flipX: true,
+      combatScale: 1,
+    })
+    const enemy = {
+      id: 'hellhound',
+      archetypeId: 'dungeon-hellhound',
+      displayName: '地狱犬',
+      kind: 'charger',
+      position: { x: 100, y: 100 },
+      size: 22,
+      hitFlash: 0,
+      behaviorTimer: 0,
+      breathTimer: 0.6,
+      walkTimer: 0,
+      facingDirection: { x: 1, y: 0 },
+    } as Enemy
+
+    const rightFacingCtx = createMockCanvasContext()
+    drawEnemySprite(rightFacingCtx, enemy, 0.5, 1, { campaignOverlay: false })
+    expect(rightFacingCtx.scale).toHaveBeenCalledWith(-1, 1)
+
+    const leftFacingCtx = createMockCanvasContext()
+    drawEnemySprite(leftFacingCtx, { ...enemy, facingDirection: { x: -1, y: 0 } }, 0.5, 1, { campaignOverlay: false })
+    expect(leftFacingCtx.scale).not.toHaveBeenCalled()
+  })
+
+  it('does not fall back to procedural hellhound art while configured project frames are still loading', () => {
+    class MockImage {
+      complete = false
+      naturalWidth = 0
+      naturalHeight = 0
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    setRuntimeAssetActionOverride({
+      entityId: 'dungeon-hellhound',
+      slot: 'move',
+      combatAction: 'move',
+      frameUrls: ['assets/developer-assets/dungeon-hellhound/loading-only/frame_01.png'],
+      frameWidth: 64,
+      frameHeight: 64,
+      frameCount: 1,
+      fps: 6,
+      loop: true,
+      flipX: false,
+      combatScale: 1,
+    })
+    const enemy = {
+      id: 'hellhound',
+      archetypeId: 'dungeon-hellhound',
+      displayName: '地狱犬',
+      kind: 'charger',
+      position: { x: 100, y: 100 },
+      size: 22,
+      hitFlash: 0,
+      behaviorTimer: 0,
+      breathTimer: 0,
+      walkTimer: 2,
+      facingDirection: { x: 1, y: 0 },
+    } as Enemy
+    const ctx = createMockCanvasContext()
+
+    drawEnemySprite(ctx, enemy, 0.5, 1, { campaignOverlay: false })
+
+    expect(ctx.drawImage).not.toHaveBeenCalled()
+    expect((ctx.fillRect as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBeLessThan(3)
+  })
+
+  it('uses available configured hellhound skill frames even when the action slot is incomplete', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 64
+      naturalHeight = 64
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    setRuntimeAssetActionOverride({
+      entityId: 'dungeon-hellhound',
+      slot: 'skill_1',
+      combatAction: 'skill',
+      frameUrls: [
+        'assets/developer-assets/dungeon-hellhound/skill_1/frame_01.png',
+        'assets/developer-assets/dungeon-hellhound/skill_1/frame_02.png',
+      ],
+      frameWidth: 64,
+      frameHeight: 64,
+      frameCount: 6,
+      fps: 7,
+      durationSeconds: 0.86,
+      loop: false,
+      flipX: true,
+      combatScale: 1,
+    })
+    const enemy = {
+      id: 'hellhound',
+      archetypeId: 'dungeon-hellhound',
+      displayName: '地狱犬',
+      kind: 'charger',
+      position: { x: 100, y: 100 },
+      size: 22,
+      hitFlash: 0,
+      behaviorTimer: 0,
+      breathTimer: 0.6,
+      walkTimer: 0,
+      facingDirection: { x: 1, y: 0 },
+    } as Enemy
+    const ctx = createMockCanvasContext()
+
+    drawEnemySprite(ctx, enemy, 0.5, 1, { campaignOverlay: false })
+
+    expect(ctx.drawImage).toHaveBeenCalled()
+    const imageArg = ctx.drawImage.mock.calls[0]?.[0] as { src?: string }
+    expect(imageArg.src).toBe('/assets/developer-assets/dungeon-hellhound/skill_1/frame_02.png')
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('2/6 configured frames'))
+  })
+
+  it('draws generic campaign fallback monsters from developer asset overrides in combat', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 64
+      naturalHeight = 64
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    setRuntimeAssetActionOverride({
+      entityId: 'vampire-servant',
+      slot: 'move',
+      combatAction: 'move',
+      frameUrls: ['assets/developer-assets/vampire-servant/move/frame_01.png'],
+      frameWidth: 64,
+      frameHeight: 64,
+      frameCount: 1,
+      fps: 6,
+      durationSeconds: 0.8,
+      loop: true,
+      flipX: true,
+      combatScale: 1,
+    })
+    const enemy = {
+      id: 'vampire-servant',
+      archetypeId: 'vampire-servant',
+      displayName: '吸血鬼仆从',
+      campaignIndex: 2,
+      kind: 'melee',
+      position: { x: 120, y: 120 },
+      size: 24,
+      tint: '#ef4444',
+      hitFlash: 0,
+      behaviorTimer: 0,
+      walkTimer: 2,
+      facingDirection: { x: 1, y: 0 },
+    } as Enemy
+    const ctx = createMockCanvasContext()
+
+    drawEnemySprite(ctx, enemy, 0.5, 2, { campaignOverlay: false })
+
+    expect(ctx.drawImage).toHaveBeenCalled()
+    const imageArg = ctx.drawImage.mock.calls[0]?.[0] as { src?: string }
+    expect(imageArg.src).toBe('/assets/developer-assets/vampire-servant/move/frame_01.png')
+  })
+
+  it('draws boss and elite combat frames from the same developer asset override source', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 64
+      naturalHeight = 64
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    setRuntimeAssetActionOverride({
+      entityId: 'dungeon-skeleton-knight',
+      slot: 'idle',
+      combatAction: 'idle',
+      frameUrls: ['assets/developer-assets/dungeon-skeleton-knight/idle/frame_01.png'],
+      frameWidth: 64,
+      frameHeight: 64,
+      frameCount: 1,
+      fps: 4,
+      loop: true,
+      flipX: false,
+      combatScale: 1,
+    })
+    setRuntimeAssetActionOverride({
+      entityId: 'corrupted-jailer',
+      slot: 'idle',
+      combatAction: 'idle',
+      frameUrls: ['assets/developer-assets/corrupted-jailer/idle/frame_01.png'],
+      frameWidth: 64,
+      frameHeight: 64,
+      frameCount: 1,
+      fps: 4,
+      loop: true,
+      flipX: false,
+      combatScale: 1,
+    })
+    const boss = {
+      id: 'boss',
+      archetypeId: 'dungeon-skeleton-knight',
+      displayName: '地牢典狱长',
+      kind: 'boss',
+      position: { x: 120, y: 120 },
+      size: 34,
+      hitFlash: 0,
+      behaviorTimer: 0,
+      walkTimer: 0,
+      facingDirection: { x: 1, y: 0 },
+    } as Enemy
+    const elite = {
+      id: 'elite',
+      archetypeId: 'corrupted-jailer',
+      displayName: '腐化狱卒长',
+      kind: 'elite',
+      position: { x: 180, y: 120 },
+      size: 28,
+      hitFlash: 0,
+      behaviorTimer: 0,
+      walkTimer: 0,
+      facingDirection: { x: 1, y: 0 },
+    } as Enemy
+    const ctx = createMockCanvasContext()
+
+    drawEnemySprite(ctx, boss, 0.5, 1, { campaignOverlay: false })
+    drawEnemySprite(ctx, elite, 0.5, 1, { campaignOverlay: false })
+
+    const drawnSources = ctx.drawImage.mock.calls.map((call) => (call[0] as { src?: string }).src)
+    expect(drawnSources).toContain('/assets/developer-assets/dungeon-skeleton-knight/idle/frame_01.png')
+    expect(drawnSources).toContain('/assets/developer-assets/corrupted-jailer/idle/frame_01.png')
+  })
+
+  it('draws beast companion frames from developer asset overrides', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 64
+      naturalHeight = 64
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    setRuntimeAssetActionOverride({
+      entityId: 'beast-frost-wolf',
+      slot: 'idle',
+      combatAction: 'idle',
+      frameUrls: ['assets/developer-assets/beast-frost-wolf/idle/frame_01.png'],
+      frameWidth: 64,
+      frameHeight: 64,
+      frameCount: 1,
+      fps: 4,
+      loop: true,
+      flipX: false,
+      combatScale: 1,
+    })
+    const beast = {
+      kind: 'wolf',
+      position: { x: 100, y: 100 },
+      commandPoint: { x: 100, y: 100 },
+      commandTtl: 0,
+      reviveTimer: 0,
+      specialCooldown: 0,
+      attackCooldown: 0,
+      attackInterval: 1,
+      size: 22,
+      isAlpha: false,
+      tint: '#bfdbfe',
+      hurtCooldown: 0,
+    } as Parameters<typeof drawBeastCompanionSprite>[1]
+    const ctx = createMockCanvasContext()
+
+    drawBeastCompanionSprite(ctx, beast, 0.5)
+
+    expect(ctx.drawImage).toHaveBeenCalled()
+    const imageArg = ctx.drawImage.mock.calls[0]?.[0] as { src?: string }
+    expect(imageArg.src).toBe('/assets/developer-assets/beast-frost-wolf/idle/frame_01.png')
   })
 
   it('maps skeleton warrior sheet rows to idle, move, then attack', () => {
@@ -225,6 +741,48 @@ describe('game render helpers', () => {
 
     const village = createInitialSnapshot('idle')
     expect(shouldDrawFixedRoomBoundary(village)).toBe(true)
+  })
+
+  it('uses the designer dungeon floor tile only for first-campaign ordinary infinite combat', () => {
+    const firstCampaign = createInitialSnapshot('running')
+    firstCampaign.level = 1
+    firstCampaign.battlefield.mode = 'infinite'
+
+    expect(LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC).toContain('/assets/tiles/dungeon-floor-level1-128-image2.png')
+    expect(shouldUseLevelOneDungeonFloorTile(firstCampaign)).toBe(true)
+
+    const firstCampaignBoss = createInitialSnapshot('running')
+    firstCampaignBoss.level = 22
+    firstCampaignBoss.battlefield.mode = 'boss-arena'
+    expect(shouldUseLevelOneDungeonFloorTile(firstCampaignBoss)).toBe(false)
+
+    const secondCampaign = createInitialSnapshot('running')
+    secondCampaign.level = 23
+    secondCampaign.battlefield.mode = 'infinite'
+    expect(shouldUseLevelOneDungeonFloorTile(secondCampaign)).toBe(false)
+
+    const village = createInitialSnapshot('idle')
+    village.battlefield.mode = 'village'
+    expect(shouldUseLevelOneDungeonFloorTile(village)).toBe(false)
+  })
+
+  it('tiles the first-campaign dungeon floor on a stable 128px world grid', () => {
+    const camera = { x: LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE * 3 + 17, y: -LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE * 2 + 91 }
+    const range = getLevelOneDungeonFloorTileRange(camera)
+
+    expect(range.startTileX).toBe(2)
+    expect(range.startTileY).toBe(-3)
+    expect(range.endTileX).toBe(Math.ceil((camera.x + WORLD_WIDTH) / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) + 1)
+    expect(range.endTileY).toBe(Math.ceil((camera.y + WORLD_HEIGHT) / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) + 1)
+
+    const watchedTileX = 4
+    const watchedTileWorldX = watchedTileX * LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE + 8
+    const beforeBoundaryCamera = { x: LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE - 2, y: 0 }
+    const afterBoundaryCamera = { x: LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE + 2, y: 0 }
+    expect(Math.floor(watchedTileWorldX / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE)).toBe(watchedTileX)
+    expect(getLevelOneDungeonFloorTileRange(beforeBoundaryCamera).startTileX).toBe(-1)
+    expect(getLevelOneDungeonFloorTileRange(afterBoundaryCamera).startTileX).toBe(0)
+    expect(watchedTileX).toBeGreaterThanOrEqual(getLevelOneDungeonFloorTileRange(afterBoundaryCamera).startTileX)
   })
 
   it('keeps camera snapping and chunk obstacles stable during sustained diagonal travel', () => {

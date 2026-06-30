@@ -1,0 +1,37 @@
+{
+  "frameSize": [
+    64,
+    64
+  ],
+  "facing": "right",
+  "source": "gpt-image-2/image2 chroma-key normalized",
+  "animations": {
+    "idle": {
+      "frames": 4,
+      "files": [
+        "idle_01.png",
+        "idle_02.png",
+        "idle_03.png",
+        "idle_04.png"
+      ]
+    },
+    "move": {
+      "frames": 4,
+      "files": [
+        "move_01.png",
+        "move_02.png",
+        "move_03.png",
+        "move_04.png"
+      ]
+    },
+    "attack": {
+      "frames": 4,
+      "files": [
+        "attack_01.png",
+        "attack_02.png",
+        "attack_03.png",
+        "attack_04.png"
+      ]
+    }
+  }
+}

@@ -36,7 +36,8 @@ export type SkillEffectTag = 'none' | 'burn' | 'slow' | 'mark' | 'dark'
 export type SkillBuildTag = 'pierce' | 'spread' | 'control' | 'beast'
 export type ContractBoonTag = SkillBuildTag | 'general'
 export type BeastKind = 'hawk' | 'wolf' | 'boar' | 'bear' | 'snake' | 'deer'
-export type RewardChoiceMode = 'new-active' | 'upgrade-active' | 'upgrade-passive'
+export type CampaignDifficulty = 'normal' | 'hard' | 'hell' | 'nightmare'
+export type RewardChoiceMode = 'new-active' | 'upgrade-active' | 'upgrade-passive' | 'in-run-talent'
 export type ObstacleKind = 'pillar' | 'crate' | 'wagon' | 'ruin'
 export type PickupKind = 'health-pack' | 'soul-crystal' | 'equipment'
 export type EquipmentSlot = 'weapon' | 'helmet' | 'chest' | 'shoulders' | 'wrists' | 'hands' | 'legs' | 'boots' | 'ring1' | 'ring2' | 'cloak' | 'necklace'
@@ -258,6 +259,8 @@ export type EquipmentSkillModifier =
 
 export type EquipmentItem = {
   id: string
+  /** Stable template id used for high-rarity discovery tracking. Instance id remains in id. */
+  equipmentId?: string
   slot: EquipmentSlot
   rarity: EquipmentRarity
   name: string
@@ -275,6 +278,11 @@ export type EquipmentItem = {
   upgradeLevel?: number
   bossLegacyReforged?: boolean
   source?: 'dungeon' | 'blacksmith' | 'system'
+  rolls?: {
+    main: number
+    secondary: number
+    skillOrBuild: number
+  }
 }
 
 export type WeaponDefinition = {
@@ -299,10 +307,11 @@ export type SkillRewardChoice = {
   skillId: string
   title: string
   description: string
-  buildTag: SkillBuildTag
+  buildTag: SkillBuildTag | 'general'
   tacticalTags: string[]
   levelText: string
   tacticalText: string
+  talentId?: string
 }
 
 export type PendingSkillReward = {
@@ -385,9 +394,29 @@ export type Enemy = {
   rangedAttackTarget?: Vector2
   meleeAttackWindup?: number
   meleeAttackReady?: boolean
+  meleeAttackImpactDelay?: number
+  meleeAttackRecovery?: number
+  meleeAttackHitFrame?: number
+  skillCooldownBase?: number
+  skillWindupBase?: number
+  skillWarningBase?: number
+  skillRangeBase?: number
+  skillDamageMultiplier?: number
+  dropWeight?: {
+    equipment: number
+    crystal: number
+    potion: number
+  }
+  meleeAttackOrigin?: Vector2
+  meleeAttackDirection?: Vector2
   walkTimer?: number
   affixCooldown?: number
   bossSkillIndex?: number
+  bossLastSkillId?: string
+  bossPhase?: 1 | 2 | 3
+  bossTransitionTimer?: number
+  bossPendingPhase?: 2 | 3
+  bossPhaseHpFloor?: number
 }
 
 export type RunRecord = {
@@ -398,6 +427,30 @@ export type RunRecord = {
   elapsedTime: number
   activeSkillNames: string[]
   statSummary: string
+}
+
+export type TalentPointSettlementSource = 'death' | 'forfeit' | 'campaign-clear'
+
+export type TalentPointRecord = {
+  id: string
+  source: TalentPointSettlementSource
+  campaign: number
+  difficulty?: CampaignDifficulty
+  reachedLevel: number
+  kills: number
+  cumulativeExp: number
+  highestContractLevel: number
+  eliteKills: number
+  bossKills: number
+  firstClear: boolean
+  points: number
+}
+
+export type TalentUnlockRecord = {
+  id: string
+  talentId: string
+  cost: number
+  unlockedAt: number
 }
 
 export type Projectile = {
@@ -452,6 +505,7 @@ export type Projectile = {
 export type SkillField = {
   id: string
   kind: 'rain' | 'trap' | 'storm' | 'turret'
+  owner?: 'player' | 'enemy'
   position: Vector2
   ttl: number
   radius: number
@@ -648,8 +702,20 @@ export type GameSnapshot = {
   bestLevel: number
   runHistory: RunRecord[]
   achievedMilestones: number[]
+  completedCampaigns: number[]
+  completedCampaignDifficulties: Record<number, CampaignDifficulty[]>
+  talentPoints: number
+  talentPointRecords: TalentPointRecord[]
+  lastTalentPointRecord: TalentPointRecord | null
+  unlockedCampaignDifficulties: Record<number, CampaignDifficulty[]>
+  selectedCampaignDifficulty: CampaignDifficulty
+  /** @deprecated Legacy save compatibility. Use selectedCampaignDifficulty. */
+  selectedDifficulty?: CampaignDifficulty
+  unlockedTalentIds: string[]
+  talentUnlockRecords: TalentUnlockRecord[]
   unlockedWeapons: WeaponId[]
   equippedWeaponId: WeaponId | null
+  discoveredHighRarityEquipmentIds: string[]
   equipmentInventory: EquipmentItem[]
   equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>
   equipmentMaterials: EquipmentMaterialInventory
@@ -673,6 +739,11 @@ export type GameSnapshot = {
   contractLevel: number
   exp: number
   expToNext: number
+  runExpGained: number
+  runHighestContractLevel: number
+  runEliteKills: number
+  runBossKills: number
+  runSettlementClaimed: boolean
   kills: number
   levelKills: number
   levelTargetKills: number
@@ -685,6 +756,12 @@ export type GameSnapshot = {
   skillPoints: number
   skillAllocations: SkillAllocations
   contractBoons: Record<ContractBoonTag, number>
+  inRunTalentIds: string[]
+  inRunRewardRerolls: number
+  inRunRewardHistory: {
+    noMainBuildStreak: number
+    lastOfferedChoiceIds: string[]
+  }
   /** @deprecated Legacy save compatibility only. Runtime combat now follows aimPoint/crosshair direction. */
   targetPriority: TargetPriority
   debugControls: DebugControlState

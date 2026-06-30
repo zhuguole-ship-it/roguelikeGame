@@ -1,6 +1,7 @@
 import {
   BOSS_ARENA_RADIUS,
   CONTRACT_RIFT_RADIUS,
+  getCampaignIndex,
   ROOM_PADDING,
   TILE_SIZE,
   TORCHES,
@@ -13,6 +14,12 @@ import { drawBeastCompanionSprite, drawEnemySprite, drawFloorTile, drawObstacleS
 import { drawReferenceArt } from './referenceArt'
 import type { BeastCompanion, Enemy, GameSnapshot, Player, Vector2 } from './types'
 import { drawVillageMenuBackground } from './villageMenuBackground'
+import { clamp } from '../utils/math'
+
+export const LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE = 128
+export const LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC = `${import.meta.env.BASE_URL}assets/tiles/dungeon-floor-level1-128-image2.png`
+
+let levelOneDungeonFloorImage: HTMLImageElement | null = null
 
 const pixel = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, color: string) => {
   ctx.fillStyle = color
@@ -130,14 +137,102 @@ export const getCameraOffset = (state: GameSnapshot): Vector2 => {
   }
 }
 
+const CAMERA_DEAD_ZONE = 18
+const CAMERA_SMOOTHING = 0.42
+const CAMERA_MAX_STEP = 42
+
+const moveCameraAxis = (previous: number, target: number) => {
+  const gap = target - previous
+  if (Math.abs(gap) <= CAMERA_DEAD_ZONE) {
+    return Math.round(previous)
+  }
+
+  const desired = target - Math.sign(gap) * CAMERA_DEAD_ZONE
+  const smoothed = previous + (desired - previous) * CAMERA_SMOOTHING
+  const step = clamp(smoothed - previous, -CAMERA_MAX_STEP, CAMERA_MAX_STEP)
+  return Math.round(previous + step)
+}
+
+export const getSmoothedCameraOffset = (state: GameSnapshot, previous?: Vector2): Vector2 => {
+  const target = getCameraOffset(state)
+  if (!previous || state.phase === 'idle' || state.phase === 'game-over' || state.battlefield.mode === 'village') {
+    return target
+  }
+
+  return {
+    x: moveCameraAxis(previous.x, target.x),
+    y: moveCameraAxis(previous.y, target.y),
+  }
+}
+
 export const shouldDrawFixedRoomBoundary = (state: GameSnapshot) => (
   state.phase === 'idle' || state.phase === 'game-over' || state.battlefield.mode === 'village'
 )
+
+export const shouldUseLevelOneDungeonFloorTile = (state: GameSnapshot) => (
+  state.battlefield.mode === 'infinite' && getCampaignIndex(state.level) === 1
+)
+
+export const getLevelOneDungeonFloorTileRange = (camera: Vector2) => ({
+  startTileX: Math.floor(camera.x / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) - 1,
+  endTileX: Math.ceil((camera.x + WORLD_WIDTH) / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) + 1,
+  startTileY: Math.floor(camera.y / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) - 1,
+  endTileY: Math.ceil((camera.y + WORLD_HEIGHT) / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) + 1,
+})
+
+const getLoadedLevelOneDungeonFloorImage = () => {
+  if (typeof Image === 'undefined') {
+    return null
+  }
+
+  if (!levelOneDungeonFloorImage) {
+    levelOneDungeonFloorImage = new Image()
+    levelOneDungeonFloorImage.decoding = 'async'
+    levelOneDungeonFloorImage.src = LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC
+  }
+
+  if (!levelOneDungeonFloorImage.complete || levelOneDungeonFloorImage.naturalWidth <= 0) {
+    return null
+  }
+
+  return levelOneDungeonFloorImage
+}
+
+const drawLevelOneDungeonFloor = (ctx: CanvasRenderingContext2D, camera: Vector2) => {
+  const image = getLoadedLevelOneDungeonFloorImage()
+  if (!image) {
+    return false
+  }
+
+  const previousSmoothing = ctx.imageSmoothingEnabled
+  ctx.imageSmoothingEnabled = false
+  ctx.save()
+  ctx.translate(-camera.x, -camera.y)
+  const range = getLevelOneDungeonFloorTileRange(camera)
+  for (let tileY = range.startTileY; tileY <= range.endTileY; tileY += 1) {
+    for (let tileX = range.startTileX; tileX <= range.endTileX; tileX += 1) {
+      ctx.drawImage(
+        image,
+        tileX * LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE,
+        tileY * LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE,
+        LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE,
+        LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE,
+      )
+    }
+  }
+  ctx.restore()
+  ctx.imageSmoothingEnabled = previousSmoothing
+  return true
+}
 
 const drawInfiniteFloor = (ctx: CanvasRenderingContext2D, state: GameSnapshot, camera: Vector2) => {
   const theme = getCampaignThemeForLevel(state.level)
   ctx.fillStyle = theme.floorDark
   ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
+
+  if (shouldUseLevelOneDungeonFloorTile(state) && drawLevelOneDungeonFloor(ctx, camera)) {
+    return
+  }
 
   ctx.save()
   ctx.translate(-camera.x, -camera.y)
@@ -1191,10 +1286,10 @@ const drawVillage = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
   drawPortalAndBoard(ctx, state)
 }
 
-export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
+export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot, cameraOverride?: Vector2) => {
   ctx.imageSmoothingEnabled = false
   ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
-  const camera = getCameraOffset(state)
+  const camera = cameraOverride ?? getCameraOffset(state)
 
   if (state.phase === 'idle' || state.phase === 'game-over') {
     drawVillage(ctx, state)
@@ -1234,7 +1329,7 @@ export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot) =
       drawEnemyStatusIndicators(ctx, enemy, state.elapsedTime)
     })
 
-    const isMoving = state.phase === 'running' && state.player.attackCooldown < Math.max(0.2, state.player.attackInterval + 0.02)
+    const isMoving = state.phase === 'running' && state.player.animationState === 'move'
     drawPlayerGrowthEffects(ctx, state)
     drawPlayerSprite(ctx, state.player, state.elapsedTime, isMoving)
     drawPlayerHealthBar(ctx, state.player)
