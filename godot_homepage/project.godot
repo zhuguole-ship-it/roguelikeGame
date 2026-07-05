@@ -1,0 +1,19 @@
+; Engine configuration file.
+; Open this folder with Godot 4.x to preview the Chinese start screen prototype.
+config_version=5
+
+[application]
+config/name="像素地牢猎人 首页原型"
+run/main_scene="res://scenes/main_menu.tscn"
+config/features=PackedStringArray("4.3", "Forward Plus")
+boot_splash/show_image=false
+
+[display]
+window/size/viewport_width=960
+window/size/viewport_height=640
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+textures/canvas_textures/default_texture_filter=0
