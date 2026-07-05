@@ -1270,6 +1270,55 @@ const getRollScoreMultiplier = (rolls: EquipmentRollMultipliers) => (
   rolls.main * 0.5 + rolls.secondary * 0.25 + rolls.skillOrBuild * 0.25
 )
 
+const normalizeEquipmentRolls = (rolls?: EquipmentRollMultipliers): EquipmentRollMultipliers => ({
+  main: rolls?.main ?? 1,
+  secondary: rolls?.secondary ?? 1,
+  skillOrBuild: rolls?.skillOrBuild ?? 1,
+})
+
+const getBonusRollCategory = (slot: EquipmentSlot, key: keyof EquipmentBonus): keyof EquipmentRollMultipliers => {
+  if (isMainBonusKey(slot, key)) {
+    return 'main'
+  }
+  if (isSkillOrBuildBonusKey(key)) {
+    return 'skillOrBuild'
+  }
+  return 'secondary'
+}
+
+const rerollEquipmentBonus = (
+  bonus: EquipmentBonus,
+  slot: EquipmentSlot,
+  previousRolls: EquipmentRollMultipliers,
+  nextRolls: EquipmentRollMultipliers,
+): EquipmentBonus => {
+  const rolled: EquipmentBonus = {}
+  ;(Object.keys(bonus) as Array<keyof EquipmentBonus>).forEach((key) => {
+    const value = bonus[key]
+    if (typeof value !== 'number') {
+      return
+    }
+
+    const category = getBonusRollCategory(slot, key)
+    const previousMultiplier = previousRolls[category] || 1
+    const base = value / previousMultiplier
+    const next = base * nextRolls[category]
+    rolled[key] = (Math.abs(value) < 1
+      ? Number(next.toFixed(3))
+      : Math.max(1, Math.round(next))) as never
+  })
+  return rolled
+}
+
+const reforgeScore = (
+  score: number,
+  previousRolls: EquipmentRollMultipliers,
+  nextRolls: EquipmentRollMultipliers,
+) => {
+  const previousMultiplier = getRollScoreMultiplier(previousRolls) || 1
+  return Math.max(1, Math.round((score / previousMultiplier) * getRollScoreMultiplier(nextRolls)))
+}
+
 export const createEquipmentDrop = (
   level: number,
   source: 'normal' | 'elite' | 'boss' | 'boss-legacy',
@@ -1362,20 +1411,87 @@ export const createEquipmentDrop = (
 
 export const getEquipmentReforgeCost = (item: EquipmentItem, mode: EquipmentReforgeMode = 'secondary') => {
   const cost = createEmptyEquipmentMaterials()
-  const rarityScore = RARITY_SCORE[item.rarity]
   if (mode === 'boss-legacy') {
-    addMaterial(cost, 'legacyEmber', Math.max(1, rarityScore - 4))
-    addMaterial(cost, 'campaignSigil', Math.max(1, Math.ceil(item.level / 22)))
-    addMaterial(cost, 'skillPage', Math.max(1, item.modifiers.length))
+    if (item.rarity === 'legacy') {
+      addMaterial(cost, 'buildRune', 2)
+      addMaterial(cost, 'skillPage', 2)
+      addMaterial(cost, 'legacyEmber', 2)
+      addMaterial(cost, 'campaignSigil', 2)
+    } else if (item.rarity === 'legendary') {
+      addMaterial(cost, 'buildRune', 3)
+      addMaterial(cost, 'skillPage', 3)
+      addMaterial(cost, 'legacyEmber', 4)
+      addMaterial(cost, 'campaignSigil', 3)
+      addMaterial(cost, 'legendaryCore', 1)
+    }
     return cost
   }
 
-  addMaterial(cost, 'crystalDust', 4 + rarityScore * 2)
-  addMaterial(cost, 'refinedIron', 2 + Math.max(0, item.upgradeLevel ?? 0))
-  if (RARITY_SCORE[item.rarity] >= RARITY_SCORE.epic) {
+  if (item.rarity === 'epic') {
+    addMaterial(cost, 'refinedIron', 6)
+    addMaterial(cost, 'crystalDust', 18)
     addMaterial(cost, 'buildRune', 1)
+  } else if (item.rarity === 'legacy') {
+    addMaterial(cost, 'refinedIron', 10)
+    addMaterial(cost, 'crystalDust', 28)
+    addMaterial(cost, 'buildRune', 2)
+    addMaterial(cost, 'legacyEmber', 1)
+  } else if (item.rarity === 'legendary') {
+    addMaterial(cost, 'refinedIron', 14)
+    addMaterial(cost, 'crystalDust', 40)
+    addMaterial(cost, 'buildRune', 3)
+    addMaterial(cost, 'legacyEmber', 2)
+    addMaterial(cost, 'legendaryCore', 1)
   }
   return cost
+}
+
+export const getEquipmentReforgeGoldCost = (
+  item: EquipmentItem,
+  mode: EquipmentReforgeMode = 'secondary',
+) => {
+  if (mode === 'boss-legacy') {
+    if (item.rarity === 'legacy') {
+      return 1000
+    }
+    if (item.rarity === 'legendary') {
+      return 1800
+    }
+    return 0
+  }
+
+  if (item.rarity === 'epic') {
+    return 300
+  }
+  if (item.rarity === 'legacy') {
+    return 600
+  }
+  if (item.rarity === 'legendary') {
+    return 1000
+  }
+  return 0
+}
+
+export const canReforgeEquipmentItem = (
+  item: EquipmentItem,
+  mode: EquipmentReforgeMode = 'secondary',
+) => {
+  if (mode === 'boss-legacy') {
+    return item.rarity === 'legacy' || item.rarity === 'legendary'
+  }
+  return item.rarity === 'epic' || item.rarity === 'legacy' || item.rarity === 'legendary'
+}
+
+const EQUIPMENT_REFORGE_ROLL_RANGES: Record<EquipmentReforgeMode, Partial<Record<EquipmentRarity, [number, number]>>> = {
+  secondary: {
+    epic: [1.1, 1.4],
+    legacy: [1.2, 1.55],
+    legendary: [1.35, 1.85],
+  },
+  'boss-legacy': {
+    legacy: [1.2, 1.6],
+    legendary: [1.4, 2],
+  },
 }
 
 export const toggleEquipmentModifierLock = (item: EquipmentItem, modifierIndex: number): EquipmentItem => {
@@ -1396,32 +1512,29 @@ export const toggleEquipmentModifierLock = (item: EquipmentItem, modifierIndex: 
 export const reforgeEquipmentItem = (
   item: EquipmentItem,
   mode: EquipmentReforgeMode = 'secondary',
-  preferredBuildTag?: SkillBuildTag,
 ): EquipmentItem => {
-  const lockedIndexes = new Set(item.lockedModifierIndexes ?? [])
-  const buildTag = preferredBuildTag ?? (item.buildTag === 'general' ? getBuildTag(item.rarity) : item.buildTag)
-  const affixes = BUILD_AFFIXES[buildTag][item.rarity] ?? BUILD_AFFIXES.general[item.rarity] ?? ['契约']
-  const affix = affixes[Math.floor(Math.random() * affixes.length)] ?? item.affix
-  const nextModifiers = createSkillModifiers(item.rarity, buildTag, affix)
-  const preservedModifiers = item.modifiers.filter((_, index) => lockedIndexes.has(index))
-  const mergedModifiers = [
-    ...preservedModifiers,
-    ...nextModifiers.filter((modifier) => !preservedModifiers.some((preserved) => JSON.stringify(preserved) === JSON.stringify(modifier))),
-  ]
-  const reforgeBonus = mode === 'boss-legacy' ? 1.18 : 1.06
-  const bonus = createBonus(item.slot, item.rarity, buildTag, item.level)
+  if (!canReforgeEquipmentItem(item, mode)) {
+    return item
+  }
+
+  const range = EQUIPMENT_REFORGE_ROLL_RANGES[mode][item.rarity]
+  if (!range) {
+    return item
+  }
+
+  const previousRolls = normalizeEquipmentRolls(item.rolls)
+  const nextRolls = { ...previousRolls }
+  if (mode === 'boss-legacy') {
+    nextRolls.skillOrBuild = randomInRange(range)
+  } else {
+    nextRolls.secondary = randomInRange(range)
+  }
 
   return {
     ...item,
-    affix,
-    buildTag,
-    setId: getEquipmentSetId(item.rarity, buildTag, affix),
-    name: `${affix}${SLOT_BASE_NAMES[item.slot][0] ?? EQUIPMENT_SLOT_LABELS[item.slot]}`,
-    score: Math.round(item.score * reforgeBonus + RARITY_SCORE[item.rarity] * (mode === 'boss-legacy' ? 8 : 3)),
-    bonus,
-    modifiers: mergedModifiers,
-    locked: item.locked,
-    lockedModifierIndexes: Array.from(lockedIndexes).filter((index) => index < mergedModifiers.length),
+    score: reforgeScore(item.score, previousRolls, nextRolls),
+    bonus: rerollEquipmentBonus(item.bonus, item.slot, previousRolls, nextRolls),
+    rolls: nextRolls,
     isNew: false,
     bossLegacyReforged: mode === 'boss-legacy' ? true : item.bossLegacyReforged,
   }

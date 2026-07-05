@@ -108,8 +108,8 @@ const RewardChoices = ({
           <p className="mt-4 font-pixel text-[10px] uppercase tracking-[0.14em] text-[#f4f0d7] md:text-xs">{choice.title}</p>
           <p className="mt-3 text-xl leading-tight text-[#dfe7d5]">{rewardBrief[choice.mode]}</p>
           <div className="mt-4 flex flex-wrap gap-2">
-            {choice.tacticalTags.slice(0, 3).map((tag) => (
-              <span key={tag} className="border border-[rgba(157,213,172,0.22)] bg-[rgba(8,16,11,0.5)] px-2 py-1 font-pixel text-[7px] uppercase tracking-[0.12em] text-[#9dd5ac]">
+            {Array.from(new Set(choice.tacticalTags)).slice(0, 3).map((tag, index) => (
+              <span key={`${tag}-${index}`} className="border border-[rgba(157,213,172,0.22)] bg-[rgba(8,16,11,0.5)] px-2 py-1 font-pixel text-[7px] uppercase tracking-[0.12em] text-[#9dd5ac]">
                 {tag}
               </span>
             ))}
@@ -222,6 +222,8 @@ const RewardScreen = ({
   pendingSkillReward,
   onAccept,
   onDecline,
+  onReroll,
+  rerollsRemaining,
   onEquipLoot,
   onLockLoot,
   onDeferLoot,
@@ -236,6 +238,8 @@ const RewardScreen = ({
   pendingSkillReward: ReturnType<typeof useGameStore.getState>['pendingSkillReward']
   onAccept: (choiceId: string) => void
   onDecline: () => void
+  onReroll: () => void
+  rerollsRemaining: number
   onEquipLoot: (itemId: string) => void
   onLockLoot: (itemId: string) => void
   onDeferLoot: (itemId?: string) => void
@@ -284,13 +288,24 @@ const RewardScreen = ({
         {pendingSkillReward ? (
           <>
             <RewardChoices choices={pendingSkillReward.choices} onAccept={onAccept} />
-            <button
-              type="button"
-              className="mt-4 border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 font-pixel text-[10px] uppercase tracking-[0.14em] text-[#9dd5ac]"
-              onClick={onDecline}
-            >
-              放弃奖励
-            </button>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                className="border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 font-pixel text-[10px] uppercase tracking-[0.14em] text-[#9dd5ac] disabled:opacity-45"
+                onClick={onReroll}
+                disabled={rerollsRemaining <= 0}
+                data-testid="run-upgrade-reroll"
+              >
+                重掷 · {rerollsRemaining}
+              </button>
+              <button
+                type="button"
+                className="border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 font-pixel text-[10px] uppercase tracking-[0.14em] text-[#9dd5ac]"
+                onClick={onDecline}
+              >
+                放弃奖励
+              </button>
+            </div>
           </>
         ) : null}
       </div>
@@ -304,6 +319,7 @@ export function GamePauseOverlay() {
   const forfeitRun = useGameStore((snapshot) => snapshot.forfeitRun)
   const acceptSkillReward = useGameStore((snapshot) => snapshot.acceptSkillReward)
   const declineSkillReward = useGameStore((snapshot) => snapshot.declineSkillReward)
+  const rerollPendingRunTalentReward = useGameStore((snapshot) => snapshot.rerollPendingRunTalentReward)
   const confirmLevelClear = useGameStore((snapshot) => snapshot.confirmLevelClear)
   const equipEquipment = useGameStore((snapshot) => snapshot.equipEquipment)
   const toggleEquipmentLock = useGameStore((snapshot) => snapshot.toggleEquipmentLock)
@@ -339,6 +355,8 @@ export function GamePauseOverlay() {
         pendingSkillReward={state.pendingSkillReward}
         onAccept={acceptSkillReward}
         onDecline={declineSkillReward}
+        onReroll={rerollPendingRunTalentReward}
+        rerollsRemaining={state.runTalentState.rerollsRemaining}
         onEquipLoot={(itemId) => {
           equipEquipment(itemId)
           dismissBossLoot(itemId)
@@ -362,6 +380,8 @@ export function GamePauseOverlay() {
         pendingSkillReward={state.pendingSkillReward}
         onAccept={acceptSkillReward}
         onDecline={declineSkillReward}
+        onReroll={rerollPendingRunTalentReward}
+        rerollsRemaining={state.runTalentState.rerollsRemaining}
         onEquipLoot={(itemId) => {
           equipEquipment(itemId)
           dismissBossLoot(itemId)

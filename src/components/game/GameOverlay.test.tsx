@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CAMPAIGN_MONSTER_THEMES, getCampaignLootProfile } from '../../game/campaignMonsters'
 import { createInitialSnapshot } from '../../game/engine'
@@ -13,6 +13,7 @@ import { useGameStore } from '../../store/useGameStore'
 import { GameOverlay } from './GameOverlay'
 
 afterEach(() => {
+  vi.restoreAllMocks()
   useGameStore.setState({ ...createInitialSnapshot() })
 })
 
@@ -71,9 +72,9 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
     expect(screen.getAllByText('分解').length).toBeGreaterThan(0)
     expect(screen.getAllByText('强化').length).toBeGreaterThan(0)
-    expect(screen.getByText('重铸 · 待确认')).toBeTruthy()
-    expect(screen.getByTestId('blacksmith-reforge-blockers').textContent).toContain('消耗数值待确认')
-    expect(screen.getByTestId('blacksmith-reforge-blockers').textContent).toContain('结果范围待确认')
+    expect(screen.getAllByText('重铸').length).toBeGreaterThan(0)
+    expect(screen.getByText('副属性 / Boss 传承重铸')).toBeTruthy()
+    expect(screen.queryByTestId('blacksmith-reforge-blockers')).toBeNull()
     expect(screen.queryByText(/出售武器|购买武器|买武器/)).toBeNull()
     expect(screen.queryByText('10 把成长型弓系武器')).toBeNull()
     expect(screen.queryByRole('button', { name: '购买' })).toBeNull()
@@ -82,10 +83,13 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
     expect(screen.getByText('历史冒险')).toBeTruthy()
     expect(screen.getByTestId('hunter-home-talent-balance').textContent).toBe('0')
-    expect(screen.getByTestId('hunter-home-talent-status').textContent).toContain('完整树与局内候选待确认')
-    expect(screen.getByTestId('hunter-home-talent-blockers').textContent).toContain('84 局外天赋待确认')
-    expect(screen.getByTestId('hunter-home-talent-blockers').textContent).toContain('40 局内候选待确认')
-    expect(screen.queryByRole('button', { name: /解锁天赋|重置天赋|重掷候选/ })).toBeNull()
+    expect(screen.getByTestId('hunter-home-meta-unlocked-count').textContent).toBe('0/84')
+    expect(screen.getByTestId('hunter-home-meta-talent-tree').textContent).toContain('meta_common_01')
+    expect(screen.getByTestId('hunter-home-run-talent-panel').textContent).toContain('局内候选')
+    expect(screen.getByTestId('hunter-home-talent-summary').textContent).toContain('重置：200 金币 + 5 流派碎片')
+    expect(screen.queryByText('完整树与局内候选待确认')).toBeNull()
+    expect(screen.queryByText('84 局外天赋待确认')).toBeNull()
+    expect(screen.queryByText('40 局内候选待确认')).toBeNull()
   })
 
   it('shows only confirmed talent point balance and settlement records in hunter home', () => {
@@ -130,11 +134,90 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
 
     expect(screen.getByTestId('hunter-home-talent-balance').textContent).toBe('12')
-    expect(screen.getByTestId('hunter-home-talent-status').textContent).toContain('点数结算')
+    expect(screen.getByTestId('hunter-home-meta-unlocked-count').textContent).toBe('0/84')
     expect(screen.getByTestId('hunter-home-talent-record').textContent).toContain('+12')
     expect(screen.getByTestId('hunter-home-talent-record').textContent).toContain('第 3 关')
     expect(screen.getByTestId('hunter-home-talent-record').textContent).toContain('经验 980')
-    expect(screen.queryByRole('button', { name: /解锁|重置|候选|重掷/ })).toBeNull()
+    expect(screen.getByTestId('hunter-home-meta-talent-tree').textContent).toContain('契约记忆')
+    expect(screen.getByTestId('hunter-home-run-talent-panel').textContent).toContain('死契处刑')
+  })
+
+  it('unlocks confirmed meta talents and previews in-run talent candidates from hunter home', () => {
+    const base = createInitialSnapshot('idle')
+    useGameStore.setState({
+      ...base,
+      talentPoints: 3,
+      contractLevel: 5,
+    })
+
+    render(<GameOverlay />)
+
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(within(screen.getByTestId('meta-talent-meta_common_01')).getByRole('button', { name: '解锁' }))
+    fireEvent.click(within(screen.getByTestId('meta-talent-meta_common_02')).getByRole('button', { name: '解锁' }))
+
+    expect(screen.getByTestId('hunter-home-talent-balance').textContent).toBe('0')
+    expect(screen.getByTestId('hunter-home-meta-unlocked-count').textContent).toBe('2/84')
+    expect(useGameStore.getState().unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
+    expect(useGameStore.getState().talentUnlockRecords).toHaveLength(2)
+
+    fireEvent.click(screen.getByTestId('hunter-home-run-talent-generate'))
+
+    expect(screen.getByTestId('hunter-home-run-talent-candidates').textContent).toContain('Lv5 魂爆初醒')
+    expect(screen.getByTestId('hunter-home-run-talent-candidates').textContent).toContain('保底')
+    fireEvent.click(within(screen.getByTestId('run-talent-candidate-run_death_05')).getByRole('button', { name: '选择' }))
+    expect(useGameStore.getState().runTalentState.selectedTalentIds).toContain('run_death_05')
+  })
+
+  it('resets meta talents from hunter home when gold and build shards are available', () => {
+    const base = createInitialSnapshot('idle')
+    useGameStore.setState({
+      ...base,
+      currency: 200,
+      talentPoints: 3,
+      equipmentMaterials: {
+        ...base.equipmentMaterials,
+        buildShard: 5,
+      },
+    })
+
+    render(<GameOverlay />)
+
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(within(screen.getByTestId('meta-talent-meta_common_01')).getByRole('button', { name: '解锁' }))
+    fireEvent.click(within(screen.getByTestId('meta-talent-meta_common_02')).getByRole('button', { name: '解锁' }))
+
+    expect(screen.getByTestId('hunter-home-meta-reset-hint').textContent).toContain('消耗 200 金币 + 5 流派碎片')
+    fireEvent.click(screen.getByTestId('hunter-home-meta-reset'))
+
+    const state = useGameStore.getState()
+    expect(state.unlockedMetaTalentIds).toEqual([])
+    expect(state.talentPoints).toBe(3)
+    expect(state.currency).toBe(0)
+    expect(state.equipmentMaterials.buildShard).toBe(0)
+    expect(state.talentPointLedger[0]?.source).toBe('reset')
+    expect((screen.getByTestId('hunter-home-meta-reset') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('keeps meta reset disabled when reset costs are missing', () => {
+    const base = createInitialSnapshot('idle')
+    useGameStore.setState({
+      ...base,
+      talentPoints: 3,
+      unlockedMetaTalentIds: ['meta_common_01'],
+      unlockedTalentIds: ['meta_common_01'],
+      currency: 199,
+      equipmentMaterials: {
+        ...base.equipmentMaterials,
+        buildShard: 4,
+      },
+    })
+
+    render(<GameOverlay />)
+
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    expect((screen.getByTestId('hunter-home-meta-reset') as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByTestId('hunter-home-meta-reset-hint').textContent).toContain('不足')
   })
 
   it('lists every campaign without rendering per-floor monster rows in the notice board guide', () => {
@@ -488,7 +571,7 @@ describe('GameOverlay', () => {
     })
     expect(screen.getAllByText(/锁定|解锁/).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/锁词条|解锁词条/).length).toBeGreaterThan(0)
-    expect(screen.getAllByRole('button', { name: '重铸待确认' }).every((button) => button.hasAttribute('disabled'))).toBe(true)
+    expect(screen.getAllByRole('button', { name: '副属性重铸' }).length).toBeGreaterThan(0)
     expect(screen.getAllByText('解封').length).toBeGreaterThan(0)
     expect(screen.getAllByText(/分解/).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: '分解灰白绿' })).toBeTruthy()
@@ -540,12 +623,247 @@ describe('GameOverlay', () => {
     expect(screen.getAllByText('黑月兽骨弓').length).toBeGreaterThan(0)
     expect(screen.getAllByText('高稀有 · 默认锁定').length).toBeGreaterThan(0)
     expect(screen.getAllByText('已发现 · 追刷激活').length).toBeGreaterThan(0)
-    expect(screen.getAllByRole('button', { name: '传承重铸待确认' }).every((button) => button.hasAttribute('disabled'))).toBe(true)
+    expect(screen.getAllByRole('button', { name: 'Boss 传承重铸' }).length).toBeGreaterThan(0)
     expect(screen.getByTestId('equipment-roll-diff-roll-better-bow').textContent).toContain('对比当前：评分 +34')
     expect(screen.getByTestId('equipment-roll-diff-roll-better-bow').textContent).toContain('攻击 +6')
     expect(screen.getByTestId('equipment-roll-diff-roll-better-bow').textContent).toContain('野兽伤害 +6%')
     expect(screen.getByTestId('equipment-roll-diff-roll-better-bow').textContent).toContain('技能伤害 +8%')
     expect(screen.getByTestId('equipment-roll-diff-roll-better-bow').textContent).toContain('符文 +1')
+  })
+
+  it('shows reforge availability, confirmation ranges and full cost rows in inventory', () => {
+    const base = createInitialSnapshot('idle')
+    const rareBow = {
+      id: 'rare-reforge-bow',
+      slot: 'weapon' as const,
+      rarity: 'rare' as const,
+      name: '蓝晶猎弓',
+      affix: '蓝晶',
+      buildTag: 'control' as const,
+      level: 18,
+      score: 92,
+      bonus: { attackDamage: 12 },
+      modifiers: [],
+    }
+    const legacyBow = {
+      id: 'legacy-reforge-bow',
+      equipmentId: 'boss-legacy-weapon-3',
+      slot: 'weapon' as const,
+      rarity: 'legacy' as const,
+      name: '黑月兽骨弓',
+      affix: '兽王契约',
+      buildTag: 'beast' as const,
+      setId: 'beast-king-pardon' as const,
+      level: 22,
+      score: 260,
+      bonus: { attackDamage: 18, beastDamageMultiplier: 0.18 },
+      modifiers: [{ type: 'beast-extra-summon' as const, triggerSlot: 2, duration: 6 }],
+      lockedModifierIndexes: [0],
+      rolls: { main: 1.15, secondary: 1.2, skillOrBuild: 1.35 },
+    }
+
+    useGameStore.setState({
+      ...base,
+      unsealedEquipmentSlots: ['weapon'],
+      equipmentInventory: [rareBow, legacyBow],
+      equippedItems: {},
+      equipmentMaterials: {
+        ...base.equipmentMaterials,
+        refinedIron: 10,
+        crystalDust: 28,
+        buildRune: 2,
+        skillPage: 2,
+        legacyEmber: 2,
+        campaignSigil: 2,
+      },
+      currency: 2000,
+    })
+
+    render(<GameOverlay />)
+
+    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
+
+    expect(screen.getAllByRole('button', { name: '副属性重铸不可用' }).some((button) => button.hasAttribute('disabled'))).toBe(true)
+    expect(screen.getAllByRole('button', { name: 'Boss 传承不可用' }).some((button) => button.hasAttribute('disabled'))).toBe(true)
+    expect(screen.getAllByRole('button', { name: '副属性重铸' }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('button', { name: 'Boss 传承重铸' }).length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Boss 传承重铸' })[0])
+
+    expect(screen.getByRole('dialog', { name: 'Boss 传承重铸确认' })).toBeTruthy()
+    expect(screen.getByTestId('reforge-current-roll').textContent).toContain('135%')
+    expect(screen.getByTestId('reforge-roll-range').textContent).toContain('120% - 160%')
+    expect(screen.getByTestId('reforge-lock-note').textContent).toContain('不参与本阶段重铸')
+    expect(screen.getByTestId('reforge-cost-ironScraps').textContent).toContain('铁屑')
+    expect(screen.getByTestId('reforge-cost-ironScraps').textContent).toContain('0')
+    expect(screen.getByTestId('reforge-cost-contractAsh').textContent).toContain('契约灰烬')
+    expect(screen.getByTestId('reforge-cost-refinedIron').textContent).toContain('精炼铁片')
+    expect(screen.getByTestId('reforge-cost-crystalDust').textContent).toContain('蓝晶粉尘')
+    expect(screen.getByTestId('reforge-cost-buildShard').textContent).toContain('流派碎片')
+    expect(screen.getByTestId('reforge-cost-buildRune').textContent).toContain('流派符文')
+    expect(screen.getByTestId('reforge-cost-skillPage').textContent).toContain('技能残页')
+    expect(screen.getByTestId('reforge-cost-legacyEmber').textContent).toContain('传承余烬')
+    expect(screen.getByTestId('reforge-cost-campaignSigil').textContent).toContain('本关印记')
+    expect(screen.getByTestId('reforge-cost-legendaryCore').textContent).toContain('传奇星核')
+    expect(screen.getByTestId('reforge-cost-gold').textContent).toContain('金币')
+    expect(screen.getByTestId('reforge-cost-gold').textContent).toContain('1000')
+  })
+
+  it('executes secondary reforge from the blacksmith and refreshes rolls, score, materials and gold', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const base = createInitialSnapshot('idle')
+    const oldRollBow = {
+      id: 'old-roll-epic-bow',
+      slot: 'weapon' as const,
+      rarity: 'epic' as const,
+      name: '旧档紫弓',
+      affix: '死契',
+      buildTag: 'pierce' as const,
+      level: 20,
+      score: 100,
+      bonus: { attackDamage: 20, attackRange: 40 },
+      modifiers: [{ type: 'projectile-count' as const, amount: 1 }],
+      lockedModifierIndexes: [0],
+    }
+
+    useGameStore.setState({
+      ...base,
+      equipmentInventory: [oldRollBow],
+      equippedItems: { weapon: oldRollBow },
+      equipmentMaterials: {
+        ...base.equipmentMaterials,
+        refinedIron: 6,
+        crystalDust: 18,
+        buildRune: 1,
+      },
+      currency: 500,
+    })
+
+    render(<GameOverlay />)
+
+    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    fireEvent.click(screen.getAllByRole('button', { name: '副属性重铸' })[0])
+
+    expect(screen.getByTestId('reforge-current-roll').textContent).toContain('100%')
+    expect(screen.getByTestId('reforge-roll-range').textContent).toContain('110% - 140%')
+
+    fireEvent.click(screen.getByRole('button', { name: '确认重铸' }))
+
+    const state = useGameStore.getState()
+    expect(state.currency).toBe(200)
+    expect(state.equipmentMaterials.refinedIron).toBe(0)
+    expect(state.equipmentMaterials.crystalDust).toBe(0)
+    expect(state.equipmentMaterials.buildRune).toBe(0)
+    expect(state.equipmentInventory[0].score).toBe(106)
+    expect(state.equipmentInventory[0].rolls?.secondary).toBeCloseTo(1.25)
+    expect(state.equipmentInventory[0].lockedModifierIndexes).toEqual([0])
+    expect(screen.getByTestId('reforge-current-roll').textContent).toContain('125%')
+    expect(screen.getByTestId('reforge-score-preview').textContent).toContain('106')
+    expect(screen.getByTestId('reforge-message').textContent).toContain('副属性重铸完成')
+  })
+
+  it('refreshes blacksmith upgrade level, score, attributes and next cost immediately after enhancement', () => {
+    const base = createInitialSnapshot('idle')
+    const legacyBow = {
+      id: 'qa-upgrade-legacy-bow',
+      slot: 'weapon' as const,
+      rarity: 'legacy' as const,
+      name: 'QA 旧档传承弓',
+      affix: '死契处刑',
+      buildTag: 'pierce' as const,
+      level: 20,
+      score: 180,
+      bonus: { attackDamage: 35, attackRange: 40 },
+      modifiers: [{ type: 'projectile-count' as const, amount: 1 }],
+      locked: true,
+      lockedModifierIndexes: [],
+      upgradeLevel: 0,
+    }
+
+    useGameStore.setState({
+      ...base,
+      equipmentInventory: [legacyBow],
+      equippedItems: { weapon: legacyBow },
+      equipmentMaterials: {
+        ...base.equipmentMaterials,
+        legacyEmber: 10,
+        campaignSigil: 10,
+        buildRune: 10,
+      },
+      currency: 1000,
+    })
+
+    render(<GameOverlay />)
+
+    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    const beforeCard = screen.getByTestId('blacksmith-upgrade-slot-weapon')
+    expect(beforeCard.textContent).toContain('QA 旧档传承弓 +0')
+    expect(screen.getByTestId('blacksmith-upgrade-level-weapon').textContent).toContain('+0')
+    expect(screen.getByTestId('blacksmith-upgrade-score-weapon').textContent).toContain('评分 180 ->')
+    expect(screen.getByTestId('blacksmith-upgrade-bonus-weapon').textContent).toContain('攻击 +35')
+    const beforeCost = screen.getByTestId('blacksmith-upgrade-cost-weapon').textContent ?? ''
+    expect(beforeCost).toContain('成本：')
+    expect(beforeCost).toContain('金币')
+
+    fireEvent.click(within(beforeCard).getByRole('button', { name: '强化' }))
+
+    const upgraded = useGameStore.getState().equippedItems.weapon!
+    const afterCard = screen.getByTestId('blacksmith-upgrade-slot-weapon')
+    expect(upgraded.upgradeLevel).toBe(1)
+    expect(upgraded.score).toBeGreaterThan(180)
+    expect(upgraded.bonus.attackDamage).toBeGreaterThan(35)
+    expect(useGameStore.getState().currency).toBeLessThan(1000)
+    expect(afterCard.textContent).toContain(`QA 旧档传承弓 +${upgraded.upgradeLevel}`)
+    expect(screen.getByTestId('blacksmith-upgrade-score-weapon').textContent).toContain(`评分 ${upgraded.score} ->`)
+    expect(screen.getByTestId('blacksmith-upgrade-bonus-weapon').textContent).toContain(`攻击 +${upgraded.bonus.attackDamage}`)
+    expect(screen.getByTestId('blacksmith-upgrade-next-weapon').textContent).toContain('下档变化')
+    const afterCost = screen.getByTestId('blacksmith-upgrade-cost-weapon').textContent ?? ''
+    expect(afterCost).toContain('成本：')
+    expect(afterCost).toContain('金币')
+    expect(afterCost).not.toBe(beforeCost)
+  })
+
+  it('keeps equipment unchanged and shows a clear prompt when reforge gold is insufficient', () => {
+    const base = createInitialSnapshot('idle')
+    const epicBow = {
+      id: 'gold-blocked-epic-bow',
+      slot: 'weapon' as const,
+      rarity: 'epic' as const,
+      name: '手续费不足弓',
+      affix: '血羽',
+      buildTag: 'spread' as const,
+      level: 20,
+      score: 120,
+      bonus: { attackDamage: 22, attackRange: 44 },
+      modifiers: [],
+      rolls: { main: 1, secondary: 1.1, skillOrBuild: 1 },
+    }
+
+    useGameStore.setState({
+      ...base,
+      equipmentInventory: [epicBow],
+      equippedItems: {},
+      equipmentMaterials: {
+        ...base.equipmentMaterials,
+        refinedIron: 6,
+        crystalDust: 18,
+        buildRune: 1,
+      },
+      currency: 299,
+    })
+
+    render(<GameOverlay />)
+
+    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
+    fireEvent.click(screen.getByRole('button', { name: '副属性重铸' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认重铸' }))
+
+    const state = useGameStore.getState()
+    expect(state.currency).toBe(299)
+    expect(state.equipmentInventory[0].score).toBe(120)
+    expect(state.equipmentInventory[0].rolls?.secondary).toBe(1.1)
+    expect(screen.getByTestId('reforge-message').textContent).toContain('金币不足，重铸需要 300G')
+    expect(screen.getByTestId('reforge-current-roll').textContent).toContain('110%')
   })
 
   it('uses compact empty inventory copy and disables empty slot tabs', () => {

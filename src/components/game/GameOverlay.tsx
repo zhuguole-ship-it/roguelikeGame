@@ -20,15 +20,33 @@ import {
   EQUIPMENT_SET_LABELS,
   EQUIPMENT_SLOTS,
   EQUIPMENT_SLOT_LABELS,
+  canReforgeEquipmentItem,
   getEquipmentBonusSummary,
+  getEquipmentReforgeCost,
+  getEquipmentReforgeGoldCost,
   getEquipmentRelevance,
   getEquipmentSetCounts,
+  getEquipmentUpgradeCost,
+  getEquipmentUpgradeGoldCost,
+  getEquipmentUpgradeLimit,
   getEffectiveUnlockedEquipmentSlots,
+  upgradeEquipmentItem,
 } from '../../game/equipment'
 import { hasDiscoveredHighRarityEquipment } from '../../game/equipmentDiscovery'
 import { MONSTER_FRAME_SPECS, drawMonsterGuideFrame, getMonsterSpriteAtlasForEnemy, type MonsterFrameAction } from '../../game/sprites'
-import { getTalentImplementationBlockers } from '../../game/talents'
-import type { EnemyKind, EquipmentDismantleCategory, EquipmentItem, EquipmentRarity, EquipmentSkillModifier, EquipmentSlot, SkillBuildTag, TalentPointRecord } from '../../game/types'
+import {
+  META_TALENT_NODE_BY_ID,
+  META_TALENT_NODES,
+  TALENT_RESET_BUILD_SHARD_COST,
+  TALENT_RESET_GOLD_COST,
+  getMetaTalentBonusSummary,
+  getMetaTalentUnlockState,
+  getRunTalentBonusSummary,
+  getTalentBuildLabel,
+  type RunTalentBuild,
+  type RunTalentCandidate,
+} from '../../game/talents'
+import type { EnemyKind, EquipmentDismantleCategory, EquipmentItem, EquipmentRarity, EquipmentReforgeMode, EquipmentSkillModifier, EquipmentSlot, SkillBuildTag, TalentPointRecord } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
 
 type VillageModal = 'campaign' | 'shop' | 'guide' | 'character' | 'inventory' | 'settings' | 'hunter-home' | null
@@ -185,12 +203,54 @@ const talentPointSourceLabels: Record<TalentPointRecord['source'], string> = {
   'campaign-clear': '通关',
 }
 
-const reforgeBlockingItems = [
-  '消耗数值待确认',
-  '结果范围待确认',
-  '锁词确认待确认',
-  '二次确认待确认',
-]
+const runTalentBuilds: RunTalentBuild[] = ['death', 'blood', 'beast', 'crystal']
+
+const reforgeModeLabels: Record<EquipmentReforgeMode, string> = {
+  secondary: '副属性重铸',
+  'boss-legacy': 'Boss 传承重铸',
+}
+
+const reforgeRollLabels: Record<EquipmentReforgeMode, string> = {
+  secondary: '副属性浮动',
+  'boss-legacy': '技能 / 流派浮动',
+}
+
+const reforgeRollRanges: Record<EquipmentReforgeMode, Partial<Record<EquipmentRarity, [number, number]>>> = {
+  secondary: {
+    epic: [1.1, 1.4],
+    legacy: [1.2, 1.55],
+    legendary: [1.35, 1.85],
+  },
+  'boss-legacy': {
+    legacy: [1.2, 1.6],
+    legendary: [1.4, 2],
+  },
+}
+
+const normalizeEquipmentRollsForDisplay = (item: EquipmentItem) => ({
+  main: item.rolls?.main ?? 1,
+  secondary: item.rolls?.secondary ?? 1,
+  skillOrBuild: item.rolls?.skillOrBuild ?? 1,
+})
+
+const formatRollPercent = (value: number) => `${Math.round(value * 100)}%`
+
+const getReforgeRollValue = (item: EquipmentItem, mode: EquipmentReforgeMode) => {
+  const rolls = normalizeEquipmentRollsForDisplay(item)
+  return mode === 'boss-legacy' ? rolls.skillOrBuild : rolls.secondary
+}
+
+const formatReforgeRange = (item: EquipmentItem, mode: EquipmentReforgeMode) => {
+  const range = reforgeRollRanges[mode][item.rarity]
+  return range ? `${formatRollPercent(range[0])} - ${formatRollPercent(range[1])}` : '不可用'
+}
+
+const getReforgeDisabledReason = (item: EquipmentItem, mode: EquipmentReforgeMode) => {
+  if (canReforgeEquipmentItem(item, mode)) {
+    return ''
+  }
+  return mode === 'boss-legacy' ? '仅传承 / 传奇' : '仅史诗 / 传承 / 传奇'
+}
 
 const formatEquipmentModifier = (modifier: EquipmentSkillModifier) => {
   switch (modifier.type) {
@@ -666,7 +726,11 @@ export function GameOverlay() {
   const achievedMilestones = useGameStore((state) => state.achievedMilestones)
   const talentPoints = useGameStore((state) => state.talentPoints)
   const talentPointRecords = useGameStore((state) => state.talentPointRecords)
+  const talentPointLedger = useGameStore((state) => state.talentPointLedger)
   const lastTalentPointRecord = useGameStore((state) => state.lastTalentPointRecord)
+  const unlockedMetaTalentIds = useGameStore((state) => state.unlockedMetaTalentIds)
+  const talentUnlockRecords = useGameStore((state) => state.talentUnlockRecords)
+  const runTalentState = useGameStore((state) => state.runTalentState)
   const equipmentInventory = useGameStore((state) => state.equipmentInventory)
   const equippedItems = useGameStore((state) => state.equippedItems)
   const equipmentMaterials = useGameStore((state) => state.equipmentMaterials)
@@ -689,14 +753,25 @@ export function GameOverlay() {
   const dismantleEquipment = useGameStore((state) => state.dismantleEquipment)
   const batchDismantleEquipment = useGameStore((state) => state.batchDismantleEquipment)
   const upgradeEquippedEquipment = useGameStore((state) => state.upgradeEquippedEquipment)
+  const reforgeEquipment = useGameStore((state) => state.reforgeEquipment)
   const toggleEquipmentModifierLock = useGameStore((state) => state.toggleEquipmentModifierLock)
   const unlockEquipmentSlot = useGameStore((state) => state.unlockEquipmentSlot)
   const updateAudioSettings = useGameStore((state) => state.updateAudioSettings)
+  const unlockMetaTalentAction = useGameStore((state) => state.unlockMetaTalent)
+  const resetMetaTalentTreeAction = useGameStore((state) => state.resetMetaTalentTree)
+  const setRunTalentBuild = useGameStore((state) => state.setRunTalentBuild)
+  const selectRunTalent = useGameStore((state) => state.selectRunTalent)
+  const generateRunTalentCandidatesAction = useGameStore((state) => state.generateRunTalentCandidates)
+  const rerollRunTalentCandidatesAction = useGameStore((state) => state.rerollRunTalentCandidates)
   const [villageModal, setVillageModal] = useState<VillageModal>(null)
   const [moveKeys, setMoveKeys] = useState('WASD')
   const [inventorySlot, setInventorySlot] = useState<EquipmentSlot>('weapon')
+  const [reforgeRequest, setReforgeRequest] = useState<{ itemId: string; mode: EquipmentReforgeMode } | null>(null)
   const [guideCampaign, setGuideCampaign] = useState(1)
   const [guideTab, setGuideTab] = useState<GuideTab>('monsters')
+  const [runTalentCandidates, setRunTalentCandidates] = useState<RunTalentCandidate[]>([])
+  const [runTalentSeed, setRunTalentSeed] = useState('hunter-home-preview')
+  const [runTalentRerollBlockedReason, setRunTalentRerollBlockedReason] = useState('')
   const skillSections = useMemo(() => {
     return [
       { buildTag: 'pierce' as const, label: SKILL_BUILD_LABELS.pierce, items: ARCHER_ACTIVE_SKILLS.filter((skill) => skill.buildTag === 'pierce') },
@@ -720,13 +795,79 @@ export function GameOverlay() {
     const equipmentBonus = getEquipmentBonusSummary(equippedItems)
     const equipmentSetCounts = getEquipmentSetCounts(equippedItems)
     const equipmentContext = getActiveEquipmentContext(activeSkills)
-    const talentBlockers = getTalentImplementationBlockers()
+    const metaTalentSummary = getMetaTalentBonusSummary(unlockedMetaTalentIds)
+    const runTalentSummary = getRunTalentBonusSummary(runTalentState.selectedTalentIds)
+    const canResetMetaTalents = unlockedMetaTalentIds.length > 0
+      && currency >= TALENT_RESET_GOLD_COST
+      && (equipmentMaterials.buildShard ?? 0) >= TALENT_RESET_BUILD_SHARD_COST
+    const metaTalentResetHint = unlockedMetaTalentIds.length === 0
+      ? '需要先解锁天赋'
+      : canResetMetaTalents
+        ? `消耗 ${TALENT_RESET_GOLD_COST} 金币 + ${TALENT_RESET_BUILD_SHARD_COST} 流派碎片`
+        : `不足：${TALENT_RESET_GOLD_COST} 金币 + ${TALENT_RESET_BUILD_SHARD_COST} 流派碎片`
+    const metaTalentModules = Array.from(new Set(META_TALENT_NODES.map((node) => node.module)))
+    const getMetaUnlockState = (nodeId: string) => getMetaTalentUnlockState(nodeId, {
+      talentPoints,
+      unlockedMetaTalentIds,
+      unlockedCampaignDifficulties,
+      completedCampaignDifficulties,
+    })
+    const generateRunTalentPreview = () => {
+      const candidates = generateRunTalentCandidatesAction(runTalentSeed)
+      setRunTalentCandidates(candidates)
+      setRunTalentRerollBlockedReason('')
+    }
+    const rerollRunTalentPreview = () => {
+      const result = rerollRunTalentCandidatesAction(runTalentCandidates, `${runTalentSeed}:ui`)
+      setRunTalentCandidates(result.candidates)
+      setRunTalentRerollBlockedReason(result.blockedReason ?? '')
+    }
     const batchLabels: Array<[EquipmentDismantleCategory, string]> = [
       ['low-rarity', '分解灰白绿'],
       ['low-score-rare', '分解低分蓝装'],
       ['off-build-rare', '分解非本流派蓝装'],
     ]
     const selectedDifficultyConfig = getCampaignDifficultyConfig(selectedCampaignDifficulty)
+    const reforgeItem = reforgeRequest ? equipmentInventory.find((item) => item.id === reforgeRequest.itemId) : undefined
+    const reforgeCost = reforgeItem && reforgeRequest ? getEquipmentReforgeCost(reforgeItem, reforgeRequest.mode) : null
+    const reforgeGoldCost = reforgeItem && reforgeRequest ? getEquipmentReforgeGoldCost(reforgeItem, reforgeRequest.mode) : 0
+    const reforgeCostRows = reforgeCost
+      ? [
+          ...EQUIPMENT_MATERIAL_IDS.map((id) => ({
+            id,
+            label: EQUIPMENT_MATERIAL_LABELS[id],
+            value: reforgeCost[id] ?? 0,
+            owned: equipmentMaterials[id] ?? 0,
+          })),
+          { id: 'gold', label: '金币', value: reforgeGoldCost, owned: currency },
+        ]
+      : []
+    const renderReforgeActionButtons = (item: EquipmentItem, sizeClass = 'px-4 py-3 text-[10px]') => {
+      const secondaryDisabledReason = getReforgeDisabledReason(item, 'secondary')
+      const bossDisabledReason = getReforgeDisabledReason(item, 'boss-legacy')
+      return (
+        <>
+          {secondaryDisabledReason ? (
+            <button className={`pixel-button font-pixel opacity-55 ${sizeClass}`} disabled title={secondaryDisabledReason}>
+              副属性重铸不可用
+            </button>
+          ) : (
+            <button className={`pixel-button font-pixel ${sizeClass}`} onClick={() => setReforgeRequest({ itemId: item.id, mode: 'secondary' })}>
+              副属性重铸
+            </button>
+          )}
+          {bossDisabledReason ? (
+            <button className={`pixel-button font-pixel opacity-55 ${sizeClass}`} disabled title={bossDisabledReason}>
+              Boss 传承不可用
+            </button>
+          ) : (
+            <button className={`pixel-button font-pixel ${sizeClass}`} onClick={() => setReforgeRequest({ itemId: item.id, mode: 'boss-legacy' })}>
+              Boss 传承重铸
+            </button>
+          )}
+        </>
+      )
+    }
 
     return (
       <div className="pointer-events-none absolute inset-0 z-10">
@@ -1113,6 +1254,9 @@ export function GameOverlay() {
                                     ))}
                                   </div>
                                 ) : null}
+                                {item.modifiers.length > 0 ? (
+                                  <p className="mt-2 text-[0.85rem] leading-tight text-[#9dd5ac]">锁词条不影响当前重铸</p>
+                                ) : null}
                                 {relevance.matchesActiveBuild ? (
                                   <p className="mt-2 text-[0.95rem] leading-tight text-[#fbbf24]">构筑相关：当前主流派</p>
                                 ) : null}
@@ -1131,14 +1275,7 @@ export function GameOverlay() {
                             <button className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => toggleEquipmentLock(item.id)}>
                               {item.locked ? '解锁' : '锁定'}
                             </button>
-                            <button className="pixel-button px-4 py-3 font-pixel text-[10px] opacity-55" disabled title="重铸消耗、结果范围与确认口径待文档确认">
-                              重铸待确认
-                            </button>
-                            {item.rarity === 'legacy' || item.rarity === 'legendary' ? (
-                              <button className="pixel-button px-4 py-3 font-pixel text-[10px] opacity-55" disabled title="Boss 传承重铸消耗、结果范围与确认口径待文档确认">
-                                传承重铸待确认
-                              </button>
-                            ) : null}
+                            {renderReforgeActionButtons(item)}
                             {!equipped ? (
                               <button className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => dismantleEquipment(item.id, confirmHighRarity)}>
                                 {confirmHighRarity ? '确认分解' : '分解'}
@@ -1207,17 +1344,23 @@ export function GameOverlay() {
                   当前成长：生命 {skillAllocations.vitality} / 力量 {skillAllocations.power} / 急速 {skillAllocations.haste} / 灵巧 {skillAllocations.agility}
                 </p>
               </SectionPanel>
-              <SectionPanel eyebrow="当前阶段" title="天赋">
-                <div className="grid gap-3 md:grid-cols-[160px_minmax(0,1fr)]">
+              <SectionPanel eyebrow="长期成长" title="天赋">
+                <div className="grid gap-3 md:grid-cols-4">
                   <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
                     <p className="font-pixel text-[8px] text-[#9dd5ac]">余额</p>
                     <p className="mt-3 font-pixel text-sm text-amber-300" data-testid="hunter-home-talent-balance">{talentPoints}</p>
                   </div>
                   <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
-                    <p className="font-pixel text-[8px] text-[#9dd5ac]">状态</p>
-                    <p className="mt-3 text-lg leading-tight text-[#dfe7d5]" data-testid="hunter-home-talent-status">
-                      点数结算 / 记录 / 存档已开放；完整树与局内候选待确认
-                    </p>
+                    <p className="font-pixel text-[8px] text-[#9dd5ac]">已解锁</p>
+                    <p className="mt-3 font-pixel text-sm text-amber-300" data-testid="hunter-home-meta-unlocked-count">{unlockedMetaTalentIds.length}/84</p>
+                  </div>
+                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
+                    <p className="font-pixel text-[8px] text-[#9dd5ac]">重掷</p>
+                    <p className="mt-3 font-pixel text-sm text-amber-300" data-testid="hunter-home-meta-rerolls">+{metaTalentSummary.extraSkillRerolls}</p>
+                  </div>
+                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
+                    <p className="font-pixel text-[8px] text-[#9dd5ac]">局内</p>
+                    <p className="mt-3 font-pixel text-sm text-amber-300" data-testid="hunter-home-run-talent-count">{runTalentState.selectedTalentIds.length}</p>
                   </div>
                 </div>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -1239,12 +1382,137 @@ export function GameOverlay() {
                     ))
                   )}
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2" data-testid="hunter-home-talent-blockers">
-                  {talentBlockers.map((blocker) => (
-                    <span key={blocker.area} className="border border-[rgba(157,213,172,0.35)] px-2 py-1 font-pixel text-[7px] text-[#9dd5ac]">
-                      {blocker.area === 'meta-talent-tree' ? '84 局外天赋待确认' : '40 局内候选待确认'}
-                    </span>
-                  ))}
+                <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4" data-testid="hunter-home-meta-talent-tree">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-pixel text-[10px] text-[#f4f0d7]">局外 84</p>
+                      <button
+                        className={`pixel-button ${canResetMetaTalents ? '' : 'opacity-55'}`}
+                        type="button"
+                        disabled={!canResetMetaTalents}
+                        onClick={resetMetaTalentTreeAction}
+                        data-testid="hunter-home-meta-reset"
+                      >
+                        重置
+                      </button>
+                    </div>
+                    <p className="mt-2 text-lg leading-tight text-[#9dd5ac]" data-testid="hunter-home-meta-reset-hint">{metaTalentResetHint}</p>
+                    <div className="mt-3 max-h-[420px] space-y-3 overflow-y-auto pr-2">
+                      {metaTalentModules.map((module) => (
+                        <div key={module} className="border border-[rgba(157,213,172,0.18)] p-3">
+                          <p className="font-pixel text-[8px] text-amber-300">{module}</p>
+                          <div className="mt-2 grid gap-2 md:grid-cols-2">
+                            {META_TALENT_NODES.filter((node) => node.module === module).map((node) => {
+                              const unlocked = unlockedMetaTalentIds.includes(node.id)
+                              const state = getMetaUnlockState(node.id)
+                              const prerequisiteText = node.prerequisites.length > 0
+                                ? node.prerequisites.map((id) => META_TALENT_NODE_BY_ID.get(id)?.name ?? id).join(' / ')
+                                : '无'
+                              return (
+                                <div key={node.id} className="border border-[rgba(157,213,172,0.16)] bg-[#0d1711] p-3" data-testid={`meta-talent-${node.id}`}>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div>
+                                      <p className="font-pixel text-[8px] text-[#f4f0d7]">{node.name}</p>
+                                      <p className="mt-1 font-pixel text-[7px] text-[#9dd5ac]">{node.id} · {node.cost} 点</p>
+                                    </div>
+                                    <span className={`font-pixel text-[7px] ${unlocked ? 'text-[#86efac]' : state.canUnlock ? 'text-amber-300' : 'text-[#f87171]'}`}>
+                                      {unlocked ? '已解锁' : state.canUnlock ? '可解锁' : '锁定'}
+                                    </span>
+                                  </div>
+                                  <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">{node.description}</p>
+                                  <p className="mt-1 text-lg leading-tight text-[#9dd5ac]">前置：{prerequisiteText}</p>
+                                  {!unlocked && !state.canUnlock ? <p className="mt-1 text-lg leading-tight text-[#fca5a5]">{state.reason}</p> : null}
+                                  <button
+                                    type="button"
+                                    className={`mt-3 border px-3 py-2 font-pixel text-[8px] ${!unlocked && state.canUnlock ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.22)] text-[#9dd5ac] opacity-55'}`}
+                                    disabled={unlocked || !state.canUnlock}
+                                    onClick={() => unlockMetaTalentAction(node.id)}
+                                  >
+                                    {unlocked ? '已解锁' : '解锁'}
+                                  </button>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="border-2 border-[#08100b] bg-[#121b16] p-4" data-testid="hunter-home-run-talent-panel">
+                      <p className="font-pixel text-[10px] text-[#f4f0d7]">局内候选</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {runTalentBuilds.map((build) => (
+                          <button
+                            key={build}
+                            type="button"
+                            className={`border px-3 py-2 font-pixel text-[8px] ${runTalentState.selectedBuild === build ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.28)] text-[#9dd5ac]'}`}
+                            onClick={() => {
+                              setRunTalentBuild(build)
+                              setRunTalentCandidates([])
+                            }}
+                          >
+                            {getTalentBuildLabel(build)}
+                          </button>
+                        ))}
+                      </div>
+                      <label className="mt-3 block font-pixel text-[8px] text-[#9dd5ac]">
+                        Seed
+                        <input
+                          className="mt-2 w-full border border-[rgba(157,213,172,0.24)] bg-[#08100b] px-2 py-2 text-[#f4f0d7]"
+                          value={runTalentSeed}
+                          onChange={(event) => setRunTalentSeed(event.currentTarget.value)}
+                          data-testid="hunter-home-run-talent-seed"
+                        />
+                      </label>
+                      <div className="mt-3 flex gap-2">
+                        <button type="button" className="pixel-button" onClick={generateRunTalentPreview} data-testid="hunter-home-run-talent-generate">生成候选</button>
+                        <button type="button" className="pixel-button" onClick={rerollRunTalentPreview} data-testid="hunter-home-run-talent-reroll" disabled={runTalentCandidates.length === 0 || runTalentState.rerollsRemaining <= 0}>重掷</button>
+                      </div>
+                      {runTalentRerollBlockedReason ? <p className="mt-2 text-lg text-[#fca5a5]">{runTalentRerollBlockedReason}</p> : null}
+                      <div className="mt-3 grid gap-2" data-testid="hunter-home-run-talent-candidates">
+                        {runTalentCandidates.length === 0 ? (
+                          <p className="text-xl text-[#dfe7d5]">暂无候选</p>
+                        ) : runTalentCandidates.map((candidate) => (
+                          <div key={candidate.node.id} className="border border-[rgba(157,213,172,0.18)] bg-[#0d1711] p-3" data-testid={`run-talent-candidate-${candidate.node.id}`}>
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="font-pixel text-[8px] text-[#f4f0d7]">{candidate.node.name}</p>
+                              <p className="font-pixel text-[7px] text-amber-300">{candidate.guaranteed ? '保底' : `权重 ${candidate.weight}`}</p>
+                            </div>
+                            <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">{candidate.node.description}</p>
+                            <p className="mt-1 text-lg leading-tight text-[#9dd5ac]">{candidate.reasons.join(' / ') || '基础池'}</p>
+                            <button
+                              type="button"
+                              className="mt-3 border border-[#facc15] px-3 py-2 font-pixel text-[8px] text-[#facc15]"
+                              disabled={runTalentState.selectedTalentIds.includes(candidate.node.id)}
+                              onClick={() => {
+                                selectRunTalent(candidate.node.id)
+                                setRunTalentCandidates([])
+                              }}
+                            >
+                              {runTalentState.selectedTalentIds.includes(candidate.node.id) ? '已选择' : '选择'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="border-2 border-[#08100b] bg-[#121b16] p-4" data-testid="hunter-home-talent-summary">
+                      <p className="font-pixel text-[10px] text-[#f4f0d7]">效果汇总</p>
+                      <p className="mt-3 text-lg leading-tight text-[#dfe7d5]">候选权重：{Object.keys(metaTalentSummary.candidateWeights).length}</p>
+                      <p className="mt-1 text-lg leading-tight text-[#dfe7d5]">局内机制：{Object.keys(runTalentSummary.mechanics).length}</p>
+                      <p className="mt-1 text-lg leading-tight text-[#9dd5ac]">重置：{TALENT_RESET_GOLD_COST} 金币 + {TALENT_RESET_BUILD_SHARD_COST} 流派碎片。</p>
+                    </div>
+                    <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
+                      <p className="font-pixel text-[10px] text-[#f4f0d7]">解锁记录</p>
+                      {talentUnlockRecords.length === 0 ? (
+                        <p className="mt-3 text-xl text-[#dfe7d5]">暂无解锁</p>
+                      ) : talentUnlockRecords.slice(0, 5).map((record) => (
+                        <p key={record.id} className="mt-2 text-lg text-[#dfe7d5]">{META_TALENT_NODE_BY_ID.get(record.talentId)?.name ?? record.talentId} · -{record.cost}</p>
+                      ))}
+                      <p className="mt-3 text-lg text-[#9dd5ac]">流水 {talentPointLedger.length} 条</p>
+                    </div>
+                  </div>
                 </div>
               </SectionPanel>
               <SectionPanel eyebrow="通关记录" title="历史冒险">
@@ -1282,8 +1550,8 @@ export function GameOverlay() {
                     <div className="border-2 border-[#08100b] bg-[#101913] p-3 font-pixel text-[8px] text-[#9dd5ac]">
                       强化
                     </div>
-                    <div className="border-2 border-[#08100b] bg-[#070d0a] p-3 font-pixel text-[8px] text-[#506859]">
-                      重铸 · 待确认
+                    <div className="border-2 border-[#08100b] bg-[#101913] p-3 font-pixel text-[8px] text-[#9dd5ac]">
+                      重铸
                     </div>
                   </div>
                   <div className="border-2 border-[#08100b] bg-[#101913] p-4">
@@ -1307,14 +1575,37 @@ export function GameOverlay() {
                 <div className="grid gap-3">
                   {EQUIPMENT_SLOTS.map((slot) => {
                     const item = equippedItems[slot]
+                    const upgradeLimit = item ? getEquipmentUpgradeLimit(item) : 0
+                    const upgradeLevel = item?.upgradeLevel ?? 0
+                    const canUpgrade = Boolean(item && upgradeLevel < upgradeLimit)
+                    const upgradePreview = item && canUpgrade ? upgradeEquipmentItem(item) : null
+                    const upgradeCost = item && canUpgrade ? getEquipmentUpgradeCost(item) : null
+                    const upgradeGoldCost = item && canUpgrade ? getEquipmentUpgradeGoldCost(item) : 0
                     return (
-                      <div key={`blacksmith-${slot}`} className="flex items-center justify-between gap-3 border-2 border-[#08100b] bg-[#101913] p-3">
-                        <div className="min-w-0">
+                      <div key={`blacksmith-${slot}`} className="flex items-start justify-between gap-3 border-2 border-[#08100b] bg-[#101913] p-3" data-testid={`blacksmith-upgrade-slot-${slot}`}>
+                        <div className="min-w-0 flex-1">
                           <p className="font-pixel text-[8px] uppercase tracking-[0.14em] text-[#9dd5ac]">{EQUIPMENT_SLOT_LABELS[slot]}</p>
-                          <p className="mt-1 truncate text-lg text-[#f4f0d7]">{item ? item.name : '未装备'}</p>
+                          <p className="mt-1 truncate text-lg text-[#f4f0d7]">
+                            {item ? `${item.name} +${upgradeLevel}` : '未装备'}
+                          </p>
+                          {item ? (
+                            <div className="mt-2 space-y-1 text-[0.9rem] leading-tight text-[#dfe7d5]">
+                              <p data-testid={`blacksmith-upgrade-level-${slot}`}>强化等级 +{upgradeLevel} / +{upgradeLimit}</p>
+                              <p data-testid={`blacksmith-upgrade-score-${slot}`}>评分 {item.score}{upgradePreview ? ` -> ${upgradePreview.score}` : ''}</p>
+                              <p data-testid={`blacksmith-upgrade-bonus-${slot}`}>属性：{formatEquipmentBonus(item)}</p>
+                              {upgradePreview ? (
+                                <p data-testid={`blacksmith-upgrade-next-${slot}`}>下档变化：{formatEquipmentBonusDiff(upgradePreview, item)}</p>
+                              ) : (
+                                <p data-testid={`blacksmith-upgrade-next-${slot}`}>下档变化：已达上限</p>
+                              )}
+                              <p data-testid={`blacksmith-upgrade-cost-${slot}`}>
+                                成本：{upgradeCost ? `${formatMaterialSummary(upgradeCost)} · 金币 ${upgradeGoldCost}G` : '无'}
+                              </p>
+                            </div>
+                          ) : null}
                         </div>
                         {item ? (
-                          <button className="pixel-button shrink-0 px-3 py-2 font-pixel text-[8px]" onClick={() => upgradeEquippedEquipment(slot)}>
+                          <button className="pixel-button shrink-0 px-3 py-2 font-pixel text-[8px]" disabled={!canUpgrade} onClick={() => upgradeEquippedEquipment(slot)}>
                             强化
                           </button>
                         ) : null}
@@ -1327,23 +1618,96 @@ export function GameOverlay() {
                 <div className="grid gap-3">
                   <div className="border-2 border-[#08100b] bg-[#101913] p-4">
                     <p className="font-pixel text-[9px] text-amber-300">副属性 / Boss 传承重铸</p>
-                    <p className="mt-3 text-lg leading-tight text-[#dfe7d5]">状态：待文档确认</p>
-                    <div className="mt-3 flex flex-wrap gap-2" data-testid="blacksmith-reforge-blockers">
-                      {reforgeBlockingItems.map((item) => (
-                        <span key={item} className="border border-[rgba(157,213,172,0.35)] px-2 py-1 font-pixel text-[7px] text-[#9dd5ac]">
-                          {item}
-                        </span>
-                      ))}
-                    </div>
+                    <p className="mt-3 text-lg leading-tight text-[#dfe7d5]">金币 {currency}G · {formatMaterialSummary(equipmentMaterials)}</p>
+                    <p className="mt-2 text-[0.95rem] leading-tight text-[#9dd5ac]">锁词条不影响当前重铸</p>
                   </div>
-                  <div className="border-2 border-[#08100b] bg-[#101913] p-4">
-                    <p className="font-pixel text-[8px] text-[#9dd5ac]">材料方向</p>
-                    <p className="mt-3 text-lg leading-tight text-[#dfe7d5]">蓝晶粉尘 / 流派符文 / 本关印记 / 传承余烬 / 金币</p>
-                  </div>
+                  {equipmentInventory.length === 0 ? (
+                    <p className="text-xl text-[#dfe7d5]">暂无装备</p>
+                  ) : (
+                    equipmentInventory.map((item) => (
+                      <div key={`blacksmith-reforge-${item.id}`} className="border-2 border-[#08100b] bg-[#101913] p-4" data-testid={`blacksmith-reforge-item-${item.id}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate font-pixel text-[9px] text-[#f4f0d7]">{item.name}</p>
+                            <p className="mt-2 font-pixel text-[8px]" style={{ color: EQUIPMENT_RARITY_COLORS[item.rarity] }}>
+                              {EQUIPMENT_RARITY_LABELS[item.rarity]} · {EQUIPMENT_SLOT_LABELS[item.slot]} · 评分 {item.score}
+                            </p>
+                          </div>
+                          <p className="shrink-0 font-pixel text-[8px] text-amber-300">{formatRollPercent(getReforgeRollValue(item, 'secondary'))}</p>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {renderReforgeActionButtons(item, 'px-3 py-2 text-[8px]')}
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </SectionPanel>
             </div>
           </VillageModalShell>
+        ) : null}
+
+        {reforgeItem && reforgeRequest && reforgeCost ? (
+          <div className="pointer-events-auto fixed inset-0 z-40 flex items-center justify-center bg-black/65 p-4" role="dialog" aria-modal="true" aria-label={`${reforgeModeLabels[reforgeRequest.mode]}确认`}>
+            <div className="max-h-[88vh] w-full max-w-2xl overflow-y-auto border-4 border-[#08100b] bg-[#162019] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.55)]">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="font-pixel text-[10px] uppercase tracking-[0.16em] text-amber-300">{reforgeModeLabels[reforgeRequest.mode]}</p>
+                  <h3 className="mt-2 truncate font-pixel text-sm text-[#f4f0d7]">{reforgeItem.name}</h3>
+                </div>
+                <button type="button" className="pixel-button px-3 py-2 font-pixel text-[8px]" onClick={() => setReforgeRequest(null)}>
+                  关闭
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div className="border-2 border-[#08100b] bg-[#101913] p-3" data-testid="reforge-current-roll">
+                  <p className="font-pixel text-[8px] text-[#9dd5ac]">{reforgeRollLabels[reforgeRequest.mode]}</p>
+                  <p className="mt-2 font-pixel text-[13px] text-[#f4f0d7]">{formatRollPercent(getReforgeRollValue(reforgeItem, reforgeRequest.mode))}</p>
+                </div>
+                <div className="border-2 border-[#08100b] bg-[#101913] p-3" data-testid="reforge-roll-range">
+                  <p className="font-pixel text-[8px] text-[#9dd5ac]">可能范围</p>
+                  <p className="mt-2 font-pixel text-[13px] text-[#f4f0d7]">{formatReforgeRange(reforgeItem, reforgeRequest.mode)}</p>
+                </div>
+                <div className="border-2 border-[#08100b] bg-[#101913] p-3" data-testid="reforge-score-preview">
+                  <p className="font-pixel text-[8px] text-[#9dd5ac]">当前评分</p>
+                  <p className="mt-2 font-pixel text-[13px] text-[#f4f0d7]">{reforgeItem.score}</p>
+                </div>
+              </div>
+
+              <div className="mt-4 border-2 border-[#08100b] bg-[#101913] p-4">
+                <p className="font-pixel text-[9px] text-amber-300">成本</p>
+                <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3" data-testid="reforge-cost-table">
+                  {reforgeCostRows.map((row) => (
+                    <div key={row.id} className={`border px-2 py-2 ${row.owned < row.value ? 'border-red-400 text-red-200' : 'border-[rgba(157,213,172,0.3)] text-[#dfe7d5]'}`} data-testid={`reforge-cost-${row.id}`}>
+                      <p className="font-pixel text-[7px] text-[#9dd5ac]">{row.label}</p>
+                      <p className="mt-1 font-pixel text-[9px]">{row.value}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <p className="mt-3 text-[0.95rem] leading-tight text-[#9dd5ac]" data-testid="reforge-lock-note">锁词条当前仅记录意图，不参与本阶段重铸</p>
+              {message ? (
+                <p className="mt-3 border border-[rgba(251,191,36,0.35)] bg-[#241b0e] px-3 py-2 text-lg leading-tight text-amber-200" data-testid="reforge-message">
+                  {message}
+                </p>
+              ) : null}
+
+              <div className="mt-5 flex flex-wrap justify-end gap-2">
+                <button type="button" className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => setReforgeRequest(null)}>
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="pixel-button px-4 py-3 font-pixel text-[10px]"
+                  onClick={() => reforgeEquipment(reforgeItem.id, reforgeRequest.mode)}
+                >
+                  确认重铸
+                </button>
+              </div>
+            </div>
+          </div>
         ) : null}
 
         {villageModal === 'guide' ? (
@@ -1397,7 +1761,7 @@ export function GameOverlay() {
                     </div>
 
                     {skillSections.map((section) => (
-                      <div key={section.label}>
+                      <div key={section.buildTag}>
                         <p className="mb-3 font-pixel text-[9px] uppercase tracking-[0.18em] text-[#9dd5ac] md:text-[10px]">{section.label}</p>
                         <p className="mb-3 text-lg leading-tight text-[#dfe7d5]">{SKILL_BUILD_DESCRIPTIONS[section.buildTag]}</p>
                         <div className="grid gap-3 md:grid-cols-2">
@@ -1406,8 +1770,8 @@ export function GameOverlay() {
                               <p className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#f4f0d7] md:text-[10px]">{skill.name}</p>
                               <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">{skill.description}</p>
                               <div className="mt-3 flex flex-wrap gap-2">
-                                {skill.tacticalTags.map((tag) => (
-                                  <span key={tag} className="border border-[rgba(157,213,172,0.22)] bg-[rgba(8,16,11,0.5)] px-2 py-1 font-pixel text-[7px] uppercase tracking-[0.12em] text-[#9dd5ac]">
+                                {Array.from(new Set(skill.tacticalTags)).map((tag, index) => (
+                                  <span key={`${tag}-${index}`} className="border border-[rgba(157,213,172,0.22)] bg-[rgba(8,16,11,0.5)] px-2 py-1 font-pixel text-[7px] uppercase tracking-[0.12em] text-[#9dd5ac]">
                                     {tag}
                                   </span>
                                 ))}

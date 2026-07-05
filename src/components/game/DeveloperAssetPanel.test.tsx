@@ -43,6 +43,10 @@ afterEach(() => {
 })
 
 describe('DeveloperAssetPanel', () => {
+  const expectGapField = (entityId: string, slot: string, field: string, value: string) => {
+    expect(screen.getByTestId(`asset-gap-${entityId}-${slot}-${field}`).textContent).toContain(value)
+  }
+
   it('keeps the developer entry hidden for production builds', () => {
     expect(isDeveloperAssetPanelVisible({ DEV: false, PROD: true, MODE: 'production' }, 'localhost')).toBe(false)
     expect(isDeveloperAssetPanelVisible({ DEV: true, PROD: false, MODE: 'development' }, 'localhost')).toBe(true)
@@ -61,7 +65,159 @@ describe('DeveloperAssetPanel', () => {
     expect(screen.getByTestId('asset-preview')).toBeTruthy()
     expect(screen.getByTestId('asset-config-state').textContent).toContain('来源：Manifest')
     expect(screen.getByTestId('asset-config-source').textContent).toContain('Manifest')
+    expect(screen.getByTestId('asset-selected-identity').textContent).toContain('ID：dungeon-skeleton-warrior')
+    expect(screen.getByTestId('asset-selected-identity').textContent).toContain('类型：普通怪')
+    expect(screen.getByTestId('asset-coverage-summary').textContent).toContain('普通 / 高威胁 / Boss 护卫候选')
     expect(screen.getByText('校验通过')).toBeTruthy()
+  })
+
+  it('exposes a dev-only Boss E2E bridge that calls the approved harness and renders summary fields', async () => {
+    render(<DeveloperAssetPanel onClose={() => undefined} />)
+
+    fireEvent.click(screen.getByTestId('developer-tab-boss-e2e'))
+    expect(screen.getByTestId('boss-e2e-panel')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('boss-e2e-force'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('boss-e2e-summary-campaign').textContent).toContain('1')
+      expect(screen.getByTestId('boss-e2e-summary-difficulty').textContent).toContain('normal')
+      expect(screen.getByTestId('boss-e2e-summary-floor').textContent).toContain('22')
+      expect(screen.getByTestId('boss-e2e-summary-boss-name').textContent).not.toContain('无')
+      expect(screen.getByTestId('boss-e2e-summary-boss-present').textContent).toContain('是')
+      expect(screen.getByTestId('boss-e2e-summary-boss-hp').textContent).toMatch(/\d+\/\d+/)
+      expect(screen.getByTestId('boss-e2e-summary-phase').textContent).toContain('p1')
+      expect(screen.getByTestId('boss-e2e-summary-state-phase').textContent).toContain('running')
+      expect(screen.getByTestId('boss-e2e-summary-diagnosis').textContent).toContain('Boss E2E 状态有效')
+    })
+    expect(useGameStore.getState().debugControls.disableAttacks).toBe(true)
+    expect(screen.getByTestId('boss-e2e-message').textContent).toContain('不攻击已开启')
+    expect(screen.getByTestId('boss-e2e-phase-p2')).toBeTruthy()
+    expect(screen.getByTestId('boss-e2e-phase-p3')).toBeTruthy()
+    expect(screen.getByTestId('boss-e2e-kill')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('boss-e2e-phase-p2'))
+    await waitFor(() => expect(screen.getByTestId('boss-e2e-summary-phase').textContent).toContain('p2'))
+
+    fireEvent.click(screen.getByTestId('boss-e2e-phase-p3'))
+    await waitFor(() => expect(screen.getByTestId('boss-e2e-summary-phase').textContent).toContain('p3'))
+
+    fireEvent.click(screen.getByTestId('boss-e2e-kill'))
+    await waitFor(() => {
+      expect(screen.getByTestId('boss-e2e-summary-settlement').textContent).toContain('是')
+      expect(screen.getByTestId('boss-e2e-summary-pending-loot').textContent).toContain('是')
+    })
+
+    fireEvent.click(screen.getByTestId('boss-e2e-dismiss-loot'))
+    await waitFor(() => expect(screen.getByTestId('boss-e2e-summary-pending-loot').textContent).toContain('否'))
+    expect(screen.getByTestId('boss-e2e-summary-returned-village').textContent).toContain('否')
+
+    fireEvent.click(screen.getByTestId('boss-e2e-return-village'))
+    expect(screen.getByTestId('boss-e2e-message').textContent).toContain('真实回村需使用正式结算按钮')
+    expect(screen.getByTestId('boss-e2e-summary-returned-village').textContent).toContain('否')
+  })
+
+  it('keeps C2 standard Boss E2E controls and settlement summary readable through kill', async () => {
+    render(<DeveloperAssetPanel onClose={() => undefined} />)
+
+    fireEvent.click(screen.getByTestId('developer-tab-boss-e2e'))
+    fireEvent.change(screen.getByTestId('boss-e2e-campaign'), { target: { value: '2' } })
+    fireEvent.change(screen.getByTestId('boss-e2e-player-preset'), { target: { value: 'standard' } })
+    fireEvent.click(screen.getByTestId('boss-e2e-force'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('boss-e2e-summary-campaign').textContent).toContain('2')
+      expect(screen.getByTestId('boss-e2e-summary-boss-present').textContent).toContain('是')
+      expect(screen.getByTestId('boss-e2e-summary-phase').textContent).toContain('p1')
+    })
+
+    fireEvent.click(screen.getByTestId('boss-e2e-phase-p2'))
+    await waitFor(() => {
+      expect(screen.getByTestId('boss-e2e-phase-p2')).toBeTruthy()
+      expect(screen.getByTestId('boss-e2e-summary-boss-present').textContent).toContain('是')
+      expect(screen.getByTestId('boss-e2e-summary-phase').textContent).toContain('p2')
+    })
+
+    fireEvent.click(screen.getByTestId('boss-e2e-phase-p3'))
+    await waitFor(() => {
+      expect(screen.getByTestId('boss-e2e-phase-p3')).toBeTruthy()
+      expect(screen.getByTestId('boss-e2e-summary-boss-present').textContent).toContain('是')
+      expect(screen.getByTestId('boss-e2e-summary-phase').textContent).toContain('p3')
+    })
+
+    fireEvent.click(screen.getByTestId('boss-e2e-kill'))
+    await waitFor(() => {
+      expect(screen.getByTestId('boss-e2e-kill')).toBeTruthy()
+      expect(screen.getByTestId('boss-e2e-summary-settlement').textContent).toContain('是')
+      expect(screen.getByTestId('boss-e2e-summary-pending-loot').textContent).toContain('是')
+      const damage = Number(screen.getByTestId('boss-e2e-summary-player-damage').textContent?.match(/(\d+) 伤害/)?.[1] ?? 0)
+      expect(damage).toBeGreaterThan(0)
+      expect(screen.getByTestId('boss-e2e-summary-diagnosis').textContent).toContain('Boss 已击杀')
+    })
+  })
+
+  it('exposes a dev-only Talent E2E bridge with unlock, Lv5 candidate and consumption evidence', () => {
+    render(<DeveloperAssetPanel onClose={() => undefined} />)
+
+    fireEvent.click(screen.getByTestId('developer-tab-talent-e2e'))
+    expect(screen.getByTestId('talent-e2e-panel')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('talent-e2e-fixture'))
+    expect(screen.getByTestId('talent-e2e-summary-balance').textContent).toContain('20')
+    expect(screen.getByTestId('talent-e2e-summary-ledger').textContent).toContain('campaign-clear')
+    expect(screen.getByTestId('talent-e2e-summary-storage').textContent).toContain('未污染')
+
+    fireEvent.click(screen.getByTestId('talent-e2e-unlock-01'))
+    expect(screen.getByTestId('talent-e2e-summary-meta-count').textContent).toContain('1/84')
+    fireEvent.click(screen.getByTestId('talent-e2e-unlock-02'))
+    expect(screen.getByTestId('talent-e2e-summary-balance').textContent).toContain('17')
+    expect(screen.getByTestId('talent-e2e-summary-meta-count').textContent).toContain('2/84')
+
+    fireEvent.click(screen.getByTestId('talent-e2e-generate'))
+    expect(screen.getByTestId('talent-e2e-summary-run-candidates').textContent).toContain('Lv5 魂爆初醒')
+    expect(screen.getByTestId('talent-e2e-summary-run-guaranteed').textContent).toContain('run_death_05')
+
+    fireEvent.click(screen.getByTestId('talent-e2e-reroll'))
+    expect(screen.getByTestId('talent-e2e-summary-run-guaranteed').textContent).toContain('run_death_05')
+
+    fireEvent.click(screen.getByTestId('talent-e2e-select'))
+    expect(screen.getByTestId('talent-e2e-summary-run-selected').textContent).not.toContain('无')
+
+    fireEvent.click(screen.getByTestId('talent-e2e-consumption'))
+    expect(screen.getByTestId('talent-e2e-summary-pickup-multiplier').textContent).toMatch(/1\./)
+    expect(screen.getByTestId('talent-e2e-summary-pickup-final').textContent).toContain('140 / cap 140')
+    expect(screen.getByTestId('talent-e2e-summary-pickup-health').textContent).toContain('否')
+    expect(screen.getByTestId('talent-e2e-summary-auto-multiplier').textContent).toContain('1.08')
+    expect(screen.getByTestId('talent-e2e-summary-auto-base').textContent).toContain('crystalDust:56')
+    expect(screen.getByTestId('talent-e2e-summary-auto-final').textContent).toContain('crystalDust:60')
+    expect(screen.getByTestId('talent-e2e-summary-auto-final').textContent).toContain('buildShard:17')
+    expect(screen.getByTestId('talent-e2e-summary-storage').textContent).toContain('未污染')
+    expect(screen.getByTestId('talent-e2e-summary-console').textContent).toContain('无')
+  })
+
+  it('prepares dev-only reforge QA fixtures with documented resources and old roll coverage', () => {
+    render(<DeveloperAssetPanel onClose={() => undefined} />)
+
+    fireEvent.click(screen.getByTestId('developer-tab-reforge-qa'))
+    expect(screen.getByTestId('reforge-qa-panel')).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('reforge-qa-secondary-success'))
+    expect(screen.getByTestId('reforge-qa-message').textContent).toContain('qa-secondary-old-roll-epic')
+    expect(useGameStore.getState().currency).toBe(500)
+    expect(useGameStore.getState().equipmentMaterials.refinedIron).toBe(6)
+    expect(useGameStore.getState().equipmentMaterials.crystalDust).toBe(18)
+    expect(useGameStore.getState().equipmentMaterials.buildRune).toBe(1)
+    expect(useGameStore.getState().equipmentInventory[0].rolls).toBeUndefined()
+    expect(useGameStore.getState().equipmentInventory[0].lockedModifierIndexes).toEqual([0])
+
+    fireEvent.click(screen.getByTestId('reforge-qa-boss-success'))
+    expect(screen.getByTestId('reforge-qa-message').textContent).toContain('qa-boss-old-roll-legacy')
+    expect(useGameStore.getState().currency).toBe(1000)
+    expect(useGameStore.getState().equipmentMaterials.buildRune).toBe(2)
+    expect(useGameStore.getState().equipmentMaterials.skillPage).toBe(2)
+    expect(useGameStore.getState().equipmentMaterials.legacyEmber).toBe(2)
+    expect(useGameStore.getState().equipmentMaterials.campaignSigil).toBe(2)
+    expect(useGameStore.getState().equipmentInventory[0].rolls).toBeUndefined()
   })
 
   it('switches between monster and beast manifest entries and reports missing resources', () => {
@@ -70,10 +226,94 @@ describe('DeveloperAssetPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: '野兽召唤物' }))
 
     expect(screen.getAllByText('霜狼').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('状态：缺资源').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('状态：配置来源缺失').length).toBeGreaterThan(0)
     expect(screen.getAllByText(/素材路径不存在或未接入资源/).length).toBeGreaterThan(0)
-    expect(screen.getByTestId('asset-action-slot-idle').textContent).toContain('缺资源')
+    expect(screen.getByTestId('asset-action-slot-idle').textContent).toContain('配置来源缺失')
     expect(screen.getByTestId('asset-preview')).toBeTruthy()
+  })
+
+  it('shows per-entity QA slot states and a structured gap list without marking non-required slots complete', () => {
+    render(<DeveloperAssetPanel onClose={() => undefined} />)
+
+    expect(screen.getByTestId('asset-slot-qa-state').textContent).toContain('施法前摇')
+    expect(screen.getByTestId('asset-slot-qa-state').textContent).toContain('文档未要求此动作槽')
+    expect(screen.getByTestId('asset-gap-row-dungeon-skeleton-warrior-cast')).toBeTruthy()
+    expectGapField('dungeon-skeleton-warrior', 'cast', 'entity-id', 'dungeon-skeleton-warrior')
+    expectGapField('dungeon-skeleton-warrior', 'cast', 'entity-name', '骷髅战士')
+    expectGapField('dungeon-skeleton-warrior', 'cast', 'entity-type', '普通怪')
+    expectGapField('dungeon-skeleton-warrior', 'cast', 'slot', 'cast')
+    expectGapField('dungeon-skeleton-warrior', 'cast', 'status', '缺动作')
+    expectGapField('dungeon-skeleton-warrior', 'cast', 'current-frames', '0')
+    expectGapField('dungeon-skeleton-warrior', 'cast', 'target-frames', '0')
+    expectGapField('dungeon-skeleton-warrior', 'cast', 'source', 'Manifest')
+    expectGapField('dungeon-skeleton-warrior', 'cast', 'reason', '未配置动作槽')
+    expectGapField('dungeon-skeleton-warrior', 'cast', 'impact-level', '影响辨识')
+    expectGapField('dungeon-skeleton-warrior', 'cast', 'blocks-talent', '否')
+    expectGapField('dungeon-skeleton-warrior', 'cast', 'owner', 'UI / 数据结构 / 配置线程')
+
+    fireEvent.click(screen.getByRole('button', { name: '野兽召唤物' }))
+    fireEvent.click(screen.getByTestId('asset-entity-beast-frost-wolf'))
+
+    const gapListText = screen.getByTestId('asset-gap-list').textContent ?? ''
+    expect(screen.getByTestId('asset-gap-row-beast-frost-wolf-idle')).toBeTruthy()
+    expectGapField('beast-frost-wolf', 'idle', 'entity-id', 'beast-frost-wolf')
+    expectGapField('beast-frost-wolf', 'idle', 'entity-name', '霜狼')
+    expectGapField('beast-frost-wolf', 'idle', 'entity-type', '野兽召唤物')
+    expectGapField('beast-frost-wolf', 'idle', 'slot', 'idle')
+    expectGapField('beast-frost-wolf', 'idle', 'status', '配置来源缺失')
+    expectGapField('beast-frost-wolf', 'idle', 'current-frames', '0')
+    expectGapField('beast-frost-wolf', 'idle', 'target-frames', '1')
+    expectGapField('beast-frost-wolf', 'idle', 'source', 'Manifest')
+    expectGapField('beast-frost-wolf', 'idle', 'reason', '素材路径未接入')
+    expectGapField('beast-frost-wolf', 'idle', 'impact-surface', '战斗渲染、图鉴预览、资产后台预览、战斗实测预览')
+    expectGapField('beast-frost-wolf', 'idle', 'impact-level', '影响关键战斗')
+    expectGapField('beast-frost-wolf', 'idle', 'blocks-talent', '否')
+    expectGapField('beast-frost-wolf', 'idle', 'owner', 'UI / 数据结构 / 配置线程')
+    expect(gapListText).not.toContain('阻断该动作完整状态')
+    expect(gapListText).not.toContain('非必填动作不完整')
+    expect(gapListText).not.toContain('待统筹确认')
+  })
+
+  it('renders split fields for missing-frame rows restored from runtime config', async () => {
+    window.localStorage.setItem(RUNTIME_ASSET_DRAFT_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      generatedAt: '2026-06-24T00:00:00.000Z',
+      entities: [{
+        entityId: 'dungeon-skeleton-warrior',
+        actions: [{
+          entityId: 'dungeon-skeleton-warrior',
+          slot: 'attack',
+          combatAction: 'attack',
+          frameUrls: ['assets/developer-assets/project/attack/frame_01.png'],
+          frameWidth: 64,
+          frameHeight: 64,
+          frameCount: 4,
+          fps: 8,
+          loop: false,
+          flipX: true,
+          guideFrame: 'assets/developer-assets/project/attack/frame_01.png',
+          assetPath: 'partial attack config',
+          combatScale: 1,
+        }],
+      }],
+    }))
+
+    render(<DeveloperAssetPanel onClose={() => undefined} />)
+
+    await waitFor(() => expect(screen.getByTestId('asset-gap-row-dungeon-skeleton-warrior-attack')).toBeTruthy())
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'entity-id', 'dungeon-skeleton-warrior')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'entity-name', '骷髅战士')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'entity-type', '普通怪')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'slot', 'attack')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'status', '缺帧')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'current-frames', '1')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'target-frames', '4')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'source', '草稿')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'reason', '1/4')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'impact-surface', '资产后台预览')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'impact-level', '影响辨识')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'blocks-talent', '否')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'owner', 'UI / 数据结构 / 配置线程')
   })
 
   it('includes skeleton archer and campaign fallback entities in the manageable manifest', () => {
@@ -104,6 +344,34 @@ describe('DeveloperAssetPanel', () => {
     })
   })
 
+  it('keeps all backend entity categories and Boss guard candidates covered by documented status labels', () => {
+    const allowedStatuses = new Set(['完整', '缺帧', '缺动作', '待人工验收', '草稿未保存', '配置来源缺失'])
+    const entityById = new Map(developerAssetEntities.map((entity) => [entity.id, entity]))
+    const guardCandidateIds = CAMPAIGN_MONSTER_THEMES.flatMap((theme) => theme.normalPool.map((archetype) => archetype.id))
+
+    expect(developerAssetEntities.some((entity) => entity.category === 'ordinary')).toBe(true)
+    expect(developerAssetEntities.some((entity) => entity.category === 'elite')).toBe(true)
+    expect(developerAssetEntities.some((entity) => entity.category === 'boss')).toBe(true)
+    expect(developerAssetEntities.some((entity) => entity.category === 'beast')).toBe(true)
+    guardCandidateIds.forEach((id) => {
+      expect(entityById.get(id)?.category).toBe('ordinary')
+    })
+    developerAssetEntities.forEach((entity) => {
+      expect(allowedStatuses.has(getDeveloperAssetStatus(entity))).toBe(true)
+    })
+
+    render(<DeveloperAssetPanel onClose={() => undefined} />)
+    expect(screen.getByTestId('asset-entity-dungeon-skeleton-warrior')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('asset-category-elite'))
+    expect(screen.getByTestId('asset-entity-dungeon-chain-captain')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('asset-category-boss'))
+    expect(screen.getByTestId('asset-entity-dungeon-warden')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('asset-category-beast'))
+    expect(screen.getByTestId('asset-entity-beast-frost-wolf')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('asset-entity-beast-frost-wolf'))
+    expect(screen.getByTestId('asset-gap-row-beast-frost-wolf-idle')).toBeTruthy()
+  })
+
   it('validates anchors for skill actions and opens combat sandbox preview', () => {
     render(<DeveloperAssetPanel onClose={() => undefined} />)
 
@@ -122,13 +390,13 @@ describe('DeveloperAssetPanel', () => {
   it('marks manual QA checks without treating them as automatic completion', () => {
     const hellhound = cloneDeveloperAssetEntity(developerAssetEntities.find((entity) => entity.id === 'dungeon-hellhound')!)
 
-    expect(validateDeveloperAssetEntity(hellhound).some((issue) => issue.severity === 'manual' && issue.message.includes('需人工 QA'))).toBe(true)
-    expect(getDeveloperAssetStatus(hellhound)).toBe('需人工 QA')
+    expect(validateDeveloperAssetEntity(hellhound).some((issue) => issue.severity === 'manual' && issue.message.includes('待人工验收'))).toBe(true)
+    expect(getDeveloperAssetStatus(hellhound)).toBe('待人工验收')
 
     render(<DeveloperAssetPanel onClose={() => undefined} />)
     fireEvent.click(screen.getByRole('button', { name: /地狱犬/ }))
 
-    expect(screen.getByTestId('asset-manual-qa').textContent).toContain('四足剪影需人工 QA')
+    expect(screen.getByTestId('asset-manual-qa').textContent).toContain('四足剪影待人工验收')
   })
 
   it('switches hellhound action slots and updates detail state from idle to move and skill', () => {
@@ -158,11 +426,11 @@ describe('DeveloperAssetPanel', () => {
     expect(screen.getByTestId('asset-draft-dirty')).toBeTruthy()
     expect(fpsInput.value).toBe('9')
 
-    fireEvent.click(screen.getByRole('button', { name: '回滚' }))
+    fireEvent.click(screen.getByTestId('asset-rollback-draft'))
     expect((screen.getByLabelText('动作 FPS') as HTMLInputElement).value).toBe('4')
 
     fireEvent.change(screen.getByLabelText('动作 FPS'), { target: { value: '10' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存并应用到战斗' }))
+    fireEvent.click(screen.getByTestId('asset-save-draft'))
     expect(screen.queryByTestId('asset-draft-dirty')).toBeNull()
     expect((screen.getByLabelText('动作 FPS') as HTMLInputElement).value).toBe('10')
   })
@@ -213,7 +481,7 @@ describe('DeveloperAssetPanel', () => {
     fireEvent.change(frameInput, { target: { files } })
 
     expect(await screen.findByText('需要 4 张；已选 4 张')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '保存并应用到战斗' }))
+    fireEvent.click(screen.getByTestId('asset-save-draft'))
 
     const override = getRuntimeAssetActionOverride('dungeon-skeleton-warrior', 'attack')
     expect(override?.frameUrls).toEqual([
@@ -233,11 +501,66 @@ describe('DeveloperAssetPanel', () => {
     const durationInput = screen.getByLabelText('动作总时长') as HTMLInputElement
 
     fireEvent.change(durationInput, { target: { value: '1.6' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存并应用到战斗' }))
+    fireEvent.click(screen.getByTestId('asset-save-draft'))
 
     const override = getRuntimeAssetActionOverride('dungeon-skeleton-warrior', 'attack')
     expect(override?.durationSeconds).toBe(1.6)
     expect(override?.fps).toBe(2.5)
+  })
+
+  it('saves a valid current action flip without blocking on unrelated missing frames', async () => {
+    const makeHellhoundAction = (slot: string, frames: number, frameCount = 6) => ({
+      entityId: 'dungeon-hellhound',
+      slot,
+      combatAction: slot === 'skill_1' ? 'skill' : slot,
+      frameUrls: Array.from({ length: frames }, (_, index) => `assets/developer-assets/dungeon-hellhound/${slot}/frame_${String(index + 1).padStart(2, '0')}.png`),
+      frameWidth: 96,
+      frameHeight: 64,
+      frameCount,
+      fps: 8,
+      loop: slot === 'idle',
+      flipX: false,
+      guideFrame: `assets/developer-assets/dungeon-hellhound/${slot}/frame_01.png`,
+      assetPath: `assets/developer-assets/dungeon-hellhound/${slot}`,
+      combatScale: 1,
+    })
+    window.localStorage.setItem(RUNTIME_ASSET_DRAFT_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      generatedAt: '2026-07-04T00:00:00.000Z',
+      entities: [{
+        entityId: 'dungeon-hellhound',
+        actions: [
+          makeHellhoundAction('idle', 6),
+          makeHellhoundAction('skill_1', 2),
+        ],
+      }],
+    }))
+
+    render(<DeveloperAssetPanel onClose={() => undefined} />)
+
+    fireEvent.click(await screen.findByTestId('asset-entity-dungeon-hellhound'))
+    expect(screen.getByTestId('asset-gap-row-dungeon-hellhound-skill_1')).toBeTruthy()
+    expectGapField('dungeon-hellhound', 'skill_1', 'status', '缺帧')
+    expectGapField('dungeon-hellhound', 'skill_1', 'current-frames', '2')
+    expectGapField('dungeon-hellhound', 'skill_1', 'target-frames', '6')
+
+    const flipInput = screen.getByLabelText('是否左右翻转') as HTMLInputElement
+    expect(flipInput.checked).toBe(false)
+    fireEvent.click(flipInput)
+    expect(flipInput.checked).toBe(true)
+    fireEvent.click(screen.getByTestId('asset-save-draft'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('asset-project-save-status').textContent).not.toContain('保存已阻止')
+      expect(screen.getByTestId('asset-project-save-status').textContent).toContain('已保存当前动作')
+    })
+    expect(getRuntimeAssetActionOverride('dungeon-hellhound', 'idle')?.flipX).toBe(true)
+    expect(getRuntimeAssetActionOverride('dungeon-hellhound', 'skill')?.frameUrls).toHaveLength(2)
+    const saved = JSON.parse(window.localStorage.getItem(RUNTIME_ASSET_DRAFT_STORAGE_KEY) ?? '{}')
+    const idle = saved.entities[0].actions.find((action: { slot: string }) => action.slot === 'idle')
+    expect(idle.flipX).toBe(true)
+    expect(idle.frameUrls).toHaveLength(6)
+    expect(screen.getByTestId('asset-gap-row-dungeon-hellhound-skill_1')).toBeTruthy()
   })
 
   it('edits and validates hit frames as part of the runtime action config', () => {
@@ -248,7 +571,7 @@ describe('DeveloperAssetPanel', () => {
 
     expect(hitFrameInput.value).toBe('2')
     fireEvent.change(hitFrameInput, { target: { value: '3' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存并应用到战斗' }))
+    fireEvent.click(screen.getByTestId('asset-save-draft'))
 
     expect(getRuntimeAssetActionOverride('dungeon-skeleton-warrior', 'attack')?.hitFrameIndex).toBe(3)
 
@@ -268,14 +591,81 @@ describe('DeveloperAssetPanel', () => {
     expect(await screen.findByText('需要 4 张；已选 1 张')).toBeTruthy()
     expect(screen.getAllByText('已配置').length).toBeGreaterThan(0)
     expect(screen.getByTestId('asset-action-slot-move').textContent).toContain('缺帧')
-    fireEvent.click(screen.getByRole('button', { name: '保存并应用到战斗' }))
+    fireEvent.click(screen.getByTestId('asset-save-draft'))
 
     const override = getRuntimeAssetActionOverride('dungeon-skeleton-warrior', 'move')
     expect(screen.getByTestId('asset-project-save-status').textContent).toContain('保存已阻止')
     expect(override).toBeUndefined()
   })
 
-  it('keeps uploaded beast frames as draft when the beast entity still has blocking validation errors', async () => {
+  it('keeps insufficient uploaded frames as a dirty draft without marking the action complete or writing runtime config before save', async () => {
+    stubFileReaderDataUrls()
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    const setItemSpy = vi.spyOn(window.localStorage.__proto__, 'setItem')
+    render(<DeveloperAssetPanel onClose={() => undefined} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /attack 4/ }))
+    fireEvent.change(screen.getByLabelText('批量选择动作素材帧'), {
+      target: { files: [new File(['1'], 'attack_01.png', { type: 'image/png' })] },
+    })
+
+    expect(await screen.findByText('需要 4 张；已选 1 张')).toBeTruthy()
+    expect(screen.getByTestId('asset-draft-dirty')).toBeTruthy()
+    expect(screen.getByTestId('asset-action-slot-attack').textContent).toContain('缺帧')
+    expect(screen.getByTestId('asset-gap-row-dungeon-skeleton-warrior-attack')).toBeTruthy()
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'current-frames', '1')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'target-frames', '4')
+    expect(getRuntimeAssetActionOverride('dungeon-skeleton-warrior', 'attack')).toBeUndefined()
+    expect(window.localStorage.getItem(RUNTIME_ASSET_DRAFT_STORAGE_KEY)).toBeNull()
+    expect(setItemSpy).not.toHaveBeenCalledWith(RUNTIME_ASSET_DRAFT_STORAGE_KEY, expect.any(String))
+    expect(fetchSpy).not.toHaveBeenCalledWith('/__roguelike-asset-config', expect.anything())
+
+    fireEvent.click(screen.getByTestId('asset-save-draft'))
+
+    expect(screen.getByTestId('asset-project-save-status').textContent).toContain('保存已阻止')
+    expect(getRuntimeAssetActionOverride('dungeon-skeleton-warrior', 'attack')).toBeUndefined()
+    expect(window.localStorage.getItem(RUNTIME_ASSET_DRAFT_STORAGE_KEY)).toBeNull()
+    expect(fetchSpy).not.toHaveBeenCalledWith('/__roguelike-asset-config', expect.anything())
+  })
+
+  it('keeps a full frame upload in complete dirty draft state without polluting runtime or project assets until save', async () => {
+    stubFileReaderDataUrls()
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+    const setItemSpy = vi.spyOn(window.localStorage.__proto__, 'setItem')
+    render(<DeveloperAssetPanel onClose={() => undefined} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /attack 4/ }))
+    fireEvent.change(screen.getByLabelText('批量选择动作素材帧'), {
+      target: {
+        files: [
+          new File(['1'], 'attack_01.png', { type: 'image/png' }),
+          new File(['2'], 'attack_02.png', { type: 'image/png' }),
+          new File(['3'], 'attack_03.png', { type: 'image/png' }),
+          new File(['4'], 'attack_04.png', { type: 'image/png' }),
+        ],
+      },
+    })
+
+    expect(await screen.findByText('需要 4 张；已选 4 张')).toBeTruthy()
+    expect(screen.getByTestId('asset-draft-dirty')).toBeTruthy()
+    expect(screen.getByTestId('asset-action-slot-attack').textContent).toContain('草稿未保存')
+    expect(screen.getByTestId('asset-gap-row-dungeon-skeleton-warrior-attack')).toBeTruthy()
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'status', '草稿未保存')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'current-frames', '4')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'target-frames', '4')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'reason', '当前实体存在未保存修改')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'impact-level', '不影响流程')
+    expectGapField('dungeon-skeleton-warrior', 'attack', 'blocks-talent', '否')
+    expect(screen.getByTestId('asset-config-source').textContent).toContain('草稿未保存')
+    expect(getRuntimeAssetActionOverride('dungeon-skeleton-warrior', 'attack')).toBeUndefined()
+    expect(window.localStorage.getItem(RUNTIME_ASSET_DRAFT_STORAGE_KEY)).toBeNull()
+    expect(setItemSpy).not.toHaveBeenCalledWith(RUNTIME_ASSET_DRAFT_STORAGE_KEY, expect.any(String))
+    expect(fetchSpy).not.toHaveBeenCalledWith('/__roguelike-asset-config', expect.anything())
+  })
+
+  it('saves an uploaded beast current action while the rest of the entity stays incomplete', async () => {
     stubFileReaderDataUrls()
     render(<DeveloperAssetPanel onClose={() => undefined} />)
 
@@ -286,10 +676,14 @@ describe('DeveloperAssetPanel', () => {
       target: { files: [new File(['wolf'], 'wolf_move_01.png', { type: 'image/png' })] },
     })
     await screen.findByText('需要 1 张；已选 1 张')
-    fireEvent.click(screen.getByRole('button', { name: '保存并应用到战斗' }))
+    fireEvent.click(screen.getByTestId('asset-save-draft'))
 
-    expect(screen.getByTestId('asset-project-save-status').textContent).toContain('保存已阻止')
-    expect(getRuntimeAssetActionOverride('beast-frost-wolf', 'move')).toBeUndefined()
+    await waitFor(() => {
+      expect(screen.getByTestId('asset-project-save-status').textContent).not.toContain('保存已阻止')
+      expect(screen.getByTestId('asset-project-save-status').textContent).toContain('已保存当前动作')
+    })
+    expect(getRuntimeAssetActionOverride('beast-frost-wolf', 'move')?.frameUrls).toEqual(['data:image/png;base64,wolf_move_01.png'])
+    expect(screen.getByTestId('asset-gap-row-beast-frost-wolf-idle')).toBeTruthy()
   })
 
   it('lets every beast kind expose required action slots for draft replacement', () => {
@@ -359,8 +753,72 @@ describe('DeveloperAssetPanel', () => {
       target: { files: [new File(['bad'], 'attack_01.gif', { type: 'image/gif' })] },
     })
 
-    expect((await screen.findAllByText(/格式需为 PNG/)).length).toBeGreaterThan(0)
-    expect((await screen.findAllByText(/尺寸不匹配/)).length).toBeGreaterThan(0)
+    await waitFor(() => {
+      expect(screen.queryAllByText(/格式需为 PNG/).length).toBeGreaterThan(0)
+      expect(screen.queryAllByText(/尺寸不匹配/).length).toBeGreaterThan(0)
+    }, { timeout: 10000 })
+  })
+
+  it('refreshes uploaded frame validation when action frame dimensions change', async () => {
+    stubFileReaderDataUrls()
+    const setItem = vi.fn()
+    vi.stubGlobal('localStorage', {
+      setItem,
+      getItem: vi.fn(),
+      removeItem: vi.fn(),
+    })
+    class MockImage {
+      naturalWidth = 192
+      naturalHeight = 192
+      complete = true
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      set src(_value: string) {
+        setTimeout(() => this.onload?.(), 0)
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    render(<DeveloperAssetPanel onClose={() => undefined} />)
+
+    fireEvent.click(screen.getByTestId('asset-entity-dungeon-hellhound'))
+    fireEvent.click(screen.getByRole('button', { name: /idle 6/ }))
+    fireEvent.change(screen.getByLabelText('批量选择动作素材帧'), {
+      target: {
+        files: Array.from({ length: 6 }, (_, index) => (
+          new File([String(index)], `idle_${index + 1}.png`, { type: 'image/png' })
+        )),
+      },
+    })
+
+    await waitFor(() => {
+      expect(screen.queryAllByText('尺寸不匹配：需要 64x64，当前 192x192').length).toBeGreaterThan(0)
+    }, { timeout: 10000 })
+
+    fireEvent.change(screen.getByLabelText('帧宽'), { target: { value: '192' } })
+    fireEvent.change(screen.getByLabelText('帧高'), { target: { value: '192' } })
+
+    await waitFor(() => {
+      expect(screen.queryByText('尺寸不匹配：需要 64x64，当前 192x192')).toBeNull()
+    })
+
+    fireEvent.click(screen.getByTestId('asset-save-draft'))
+    await waitFor(() => {
+      expect(screen.getByTestId('asset-project-save-status').textContent).not.toContain('需要 64x64')
+      expect(setItem).toHaveBeenCalled()
+    })
+
+    const exported = JSON.parse((screen.getByTestId('asset-config-export') as HTMLTextAreaElement).value)
+    const idle = exported.entities[0].actions.find((action: { slot: string }) => action.slot === 'idle')
+    expect(idle.frameWidth).toBe(192)
+    expect(idle.frameHeight).toBe(192)
+    expect((screen.getByTestId('asset-config-export') as HTMLTextAreaElement).value).not.toContain('需要 64x64')
+
+    fireEvent.change(screen.getByLabelText('帧宽'), { target: { value: '64' } })
+    fireEvent.change(screen.getByLabelText('帧高'), { target: { value: '64' } })
+
+    await waitFor(() => {
+      expect(screen.queryAllByText('尺寸不匹配：需要 64x64，当前 192x192').length).toBeGreaterThan(0)
+    })
   })
 
   it('exports saved current entity config as the runtime source for later manifest commits', async () => {
@@ -381,7 +839,7 @@ describe('DeveloperAssetPanel', () => {
       },
     })
     await screen.findByText('需要 4 张；已选 4 张')
-    fireEvent.click(screen.getByRole('button', { name: '保存并应用到战斗' }))
+    fireEvent.click(screen.getByTestId('asset-save-draft'))
 
     const exported = exportRuntimeAssetDraftConfig()
     expect(exported.entities.some((entity) => entity.entityId === 'dungeon-skeleton-warrior')).toBe(true)
@@ -390,12 +848,29 @@ describe('DeveloperAssetPanel', () => {
     expect((screen.getByTestId('asset-config-export') as HTMLTextAreaElement).value).not.toContain('dungeon-hellhound')
   })
 
+  it('exports sheet manifest actions without inventing partial frame urls', () => {
+    render(<DeveloperAssetPanel onClose={() => undefined} />)
+
+    fireEvent.click(screen.getByTestId('asset-category-boss'))
+    fireEvent.click(screen.getByTestId('asset-entity-dungeon-skeleton-knight'))
+    fireEvent.click(screen.getByRole('button', { name: /attack 5/ }))
+    fireEvent.change(screen.getByLabelText('动作 FPS'), { target: { value: '9' } })
+    fireEvent.click(screen.getByTestId('asset-export-current-entity'))
+
+    const exported = JSON.parse((screen.getByTestId('asset-config-export') as HTMLTextAreaElement).value)
+    const attack = exported.entities[0].actions.find((action: { slot: string }) => action.slot === 'attack')
+    expect(attack.frameUrls).toEqual([])
+    expect(attack.assetPath).toContain('skeleton-knight-sheet.png')
+    expect(attack.guideFrame).toContain('skeleton-knight-preview.png')
+    expect(attack.fps).toBe(9)
+  })
+
   it('preserves hit frames through export/import draft config', () => {
     render(<DeveloperAssetPanel onClose={() => undefined} />)
 
     fireEvent.click(screen.getByRole('button', { name: /attack 4/ }))
     fireEvent.change(screen.getByLabelText('命中帧'), { target: { value: '1' } })
-    fireEvent.click(screen.getByRole('button', { name: '保存并应用到战斗' }))
+    fireEvent.click(screen.getByTestId('asset-save-draft'))
 
     const exported = exportRuntimeAssetDraftConfig()
     expect(exported.entities[0]?.actions.some((action) => action.hitFrameIndex === 1)).toBe(true)

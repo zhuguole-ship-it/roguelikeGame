@@ -50,6 +50,8 @@ import {
   getBossLegacyWeaponForCampaign,
   getEquipmentBonusSummary,
   getEquipmentDropChanceForTier,
+  getEquipmentReforgeCost,
+  getEquipmentReforgeGoldCost,
   getEquipmentUpgradeGoldCost,
   getLegendaryRateForDroppedEquipment,
   rollDroppedEquipmentRarity,
@@ -99,6 +101,8 @@ describe('game engine', () => {
     markStacks: overrides.markStacks ?? 0,
     darkTtl: overrides.darkTtl,
     darkDamageMultiplier: overrides.darkDamageMultiplier,
+    talentStates: overrides.talentStates,
+    lastTalentHitDamage: overrides.lastTalentHitDamage,
     stunTimer: overrides.stunTimer,
     bleedStacks: overrides.bleedStacks,
     infectionJumps: overrides.infectionJumps,
@@ -127,6 +131,7 @@ describe('game engine', () => {
 
   const makeEquipment = (overrides: Partial<EquipmentItem> = {}): EquipmentItem => ({
     id: overrides.id ?? 'equipment-1',
+    equipmentId: overrides.equipmentId,
     slot: overrides.slot ?? 'weapon',
     rarity: overrides.rarity ?? 'common',
     name: overrides.name ?? '制式契约弓',
@@ -142,7 +147,9 @@ describe('game engine', () => {
     acquiredLevel: overrides.acquiredLevel ?? 1,
     isNew: overrides.isNew ?? false,
     upgradeLevel: overrides.upgradeLevel ?? 0,
+    bossLegacyReforged: overrides.bossLegacyReforged,
     source: overrides.source,
+    rolls: overrides.rolls,
   })
 
   const makeProjectile = (overrides: Partial<Projectile> = {}): Projectile => ({
@@ -162,6 +169,10 @@ describe('game engine', () => {
     effectStrength: overrides.effectStrength ?? 0,
     sourceSkillId: overrides.sourceSkillId ?? 'pierce-arrow',
     hitEnemyIds: overrides.hitEnemyIds ?? [],
+    castId: overrides.castId,
+    sourceSlotIndex: overrides.sourceSlotIndex,
+    sourceBaseCooldown: overrides.sourceBaseCooldown,
+    talentCrystalOverload: overrides.talentCrystalOverload,
     modifiers: overrides.modifiers ?? [],
     skillLevel: overrides.skillLevel,
   })
@@ -667,6 +678,107 @@ describe('game engine', () => {
     expect(next.equipmentMaterials.ironScraps).toBeGreaterThan(snapshot.equipmentMaterials.ironScraps)
     expect(next.equipmentMaterials.crystalDust).toBeGreaterThan(snapshot.equipmentMaterials.crystalDust)
     expect(next.pickups.every((pickup) => !pickup.equipment || !['legacy', 'legendary'].includes(pickup.equipment.rarity))).toBe(true)
+  })
+
+  it('applies v2 material-drop only to the existing campaign material reward entry', () => {
+    const makeRun = (withTalent: boolean) => {
+      const snapshot = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), 7))
+      snapshot.level = (7 - 1) * FLOORS_PER_CAMPAIGN + 12
+      snapshot.levelTimer = 0
+      snapshot.spawnCooldown = 999
+      snapshot.remainingToSpawn = 1
+      snapshot.levelTargetKills = 99
+      snapshot.player.position = { x: 100, y: 100 }
+      snapshot.player.attackCooldown = 999
+      snapshot.unlockedMetaTalentIds = withTalent ? ['meta_campaign_07'] : []
+      snapshot.enemies = []
+      snapshot.enemyProjectiles = []
+      snapshot.battlefield.routeObjectives = [{
+        id: withTalent ? 'talented-relic-crate' : 'base-relic-crate',
+        kind: 'relic-crate',
+        position: { x: 440, y: 220 },
+        radius: 44,
+        ttl: 18,
+        rewardBudget: 50,
+        extraThreatBudget: 1,
+      }]
+      snapshot.projectiles = [makeProjectile({
+        id: withTalent ? 'talented-crate-breaker' : 'base-crate-breaker',
+        position: { x: 440, y: 220 },
+        origin: { x: 100, y: 100 },
+        velocity: { x: 0, y: 0 },
+        ttl: 1,
+        sourceSkillId: 'pierce-arrow',
+      })]
+      return snapshot
+    }
+
+    const base = advanceGame(makeRun(false), { up: false, down: false, left: false, right: false }, 0.016)
+    const talented = advanceGame(makeRun(true), { up: false, down: false, left: false, right: false }, 0.016)
+
+    expect(base.lastTalentMaterialDrop).toBeUndefined()
+    expect(talented.lastTalentMaterialDrop).toMatchObject({
+      source: 'route-objective',
+      targets: ['campaign-7'],
+      multiplier: 1.1,
+    })
+    expect(talented.equipmentMaterials.ironScraps).toBeGreaterThan(base.equipmentMaterials.ironScraps)
+    expect(talented.pickups.length).toBe(base.pickups.length)
+  })
+
+  it('applies v2 material-drop to hard and torment elite combat material rewards only', () => {
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.99)
+    const makeRun = (difficulty: 'hard' | 'nightmare', talentIds: string[]) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.selectedCampaignDifficulty = difficulty
+      snapshot.selectedDifficulty = difficulty
+      snapshot.runTalentState.selectedTalentIds = []
+      snapshot.unlockedMetaTalentIds = talentIds
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 999
+      snapshot.levelTargetKills = 99
+      snapshot.player.attackCooldown = 999
+      snapshot.mapObstacles = []
+      snapshot.pickups = []
+      const elite = makeEnemy({
+        id: `${difficulty}-material-elite`,
+        kind: 'elite',
+        grantsEliteReward: true,
+        hp: 1,
+        maxHp: 80,
+        position: { x: 300, y: 200 },
+      })
+      snapshot.enemies = [elite]
+      snapshot.projectiles = [makeProjectile({ id: `${difficulty}-elite-finisher`, position: elite.position, damage: 20 })]
+      return snapshot
+    }
+
+    try {
+      const hardBase = advanceGame(makeRun('hard', []), { up: false, down: false, left: false, right: false }, 0.016)
+      const hardTalented = advanceGame(makeRun('hard', ['meta_difficulty_07']), { up: false, down: false, left: false, right: false }, 0.016)
+      const tormentTalented = advanceGame(makeRun('nightmare', ['meta_difficulty_07', 'meta_difficulty_15']), { up: false, down: false, left: false, right: false }, 0.016)
+
+      expect(hardBase.equipmentMaterials.ironScraps).toBe(10)
+      expect(hardBase.lastTalentMaterialDrop).toBeUndefined()
+      expect(hardTalented.lastTalentMaterialDrop).toMatchObject({
+        source: 'elite',
+        targets: ['hard-elite'],
+        base: expect.objectContaining({ ironScraps: 10 }),
+        multiplier: 1.1,
+        final: expect.objectContaining({ ironScraps: 11 }),
+      })
+      expect(tormentTalented.lastTalentMaterialDrop).toMatchObject({
+        source: 'elite',
+        targets: ['hard-elite', 'nightmare-elite'],
+        multiplier: 1.25,
+        final: expect.objectContaining({ ironScraps: 12 }),
+      })
+      expect(hardTalented.pickups.every((pickup) => pickup.kind !== 'health-pack')).toBe(true)
+      expect(hardTalented.pickups.filter((pickup) => pickup.kind === 'soul-crystal')).toHaveLength(hardBase.pickups.filter((pickup) => pickup.kind === 'soul-crystal').length)
+      expect(hardTalented.pickups.filter((pickup) => pickup.kind === 'equipment')).toHaveLength(hardBase.pickups.filter((pickup) => pickup.kind === 'equipment').length)
+    } finally {
+      randomSpy.mockRestore()
+    }
   })
 
   it('keeps every campaign opening enemy within its constant move speed cap', () => {
@@ -1556,6 +1668,59 @@ describe('game engine', () => {
     expect(next.lastAutoDismantleSummary?.count).toBe(1)
   })
 
+  it('applies unlocked meta talent material bonuses to automatic below-epic dismantle results', () => {
+    const makeRun = (withTalent: boolean) => {
+      const snapshot = createInitialSnapshot('paused')
+      snapshot.level = 8
+      snapshot.kills = 26
+      snapshot.unlockedMetaTalentIds = withTalent ? ['meta_common_08'] : []
+      snapshot.equipmentInventory = Array.from({ length: 8 }, (_, index) => (
+        makeEquipment({
+          id: `temporary-rare-${index}`,
+          slot: 'weapon',
+          rarity: 'rare',
+          score: 96,
+          bonus: { attackDamage: 9 },
+          source: 'dungeon',
+        })
+      ))
+      return snapshot
+    }
+
+    const base = forfeitRunSnapshot(makeRun(false))
+    const talented = forfeitRunSnapshot(makeRun(true))
+
+    expect(talented.lastAutoDismantleSummary?.count).toBe(base.lastAutoDismantleSummary?.count)
+    expect(talented.lastAutoDismantleSummary?.materials.crystalDust ?? 0).toBeGreaterThan(base.lastAutoDismantleSummary?.materials.crystalDust ?? 0)
+    expect(talented.equipmentMaterials.crystalDust).toBe(talented.lastAutoDismantleSummary?.materials.crystalDust)
+  })
+
+  it('does not apply v2 material-drop bonuses to below-epic auto dismantle', () => {
+    const makeRun = (withMaterialDropTalents: boolean) => {
+      const snapshot = createInitialSnapshot('paused')
+      snapshot.level = 8
+      snapshot.kills = 26
+      snapshot.unlockedMetaTalentIds = withMaterialDropTalents ? ['meta_difficulty_07', 'meta_difficulty_15', 'meta_campaign_07'] : []
+      snapshot.equipmentInventory = Array.from({ length: 8 }, (_, index) => (
+        makeEquipment({
+          id: `material-drop-not-dismantle-${index}`,
+          slot: 'weapon',
+          rarity: 'rare',
+          score: 96,
+          bonus: { attackDamage: 9 },
+          source: 'dungeon',
+        })
+      ))
+      return snapshot
+    }
+
+    const base = forfeitRunSnapshot(makeRun(false))
+    const talented = forfeitRunSnapshot(makeRun(true))
+
+    expect(talented.lastAutoDismantleSummary?.materials).toEqual(base.lastAutoDismantleSummary?.materials)
+    expect(talented.equipmentMaterials).toEqual(base.equipmentMaterials)
+  })
+
   it('auto dismantles temporary dungeon equipment when a boss contract returns to village', () => {
     const snapshot = createInitialSnapshot('level-clear')
     const temporaryRare = makeEquipment({ id: 'boss-clear-rare', slot: 'weapon', rarity: 'rare', score: 96, bonus: { attackDamage: 10 }, source: 'dungeon' })
@@ -1648,61 +1813,199 @@ describe('game engine', () => {
     expect(upgraded.player.attackDamage).toBeGreaterThan(snapshot.player.attackDamage)
   })
 
-  it('locks equipment modifiers and preserves them during secondary reforge', () => {
+  it('reforges only secondary rolls while preserving identity, affixes, modifiers, and locks', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
     const snapshot = createInitialSnapshot('running')
     const preservedModifier = { type: 'pierce-echo' as const, skillIds: ['pierce-arrow'], everyHits: 3, damageMultiplier: 0.45, radius: 42 }
     const item = makeEquipment({
       id: 'reforge-epic',
+      equipmentId: 'epic-template',
+      slot: 'chest',
       rarity: 'epic',
+      name: '审判胸甲',
+      affix: '审判',
       buildTag: 'pierce',
+      setId: 'death-contract-executioner',
       modifiers: [
         preservedModifier,
         { type: 'projectile-count', buildTag: 'pierce', amount: 1 },
       ],
       score: 120,
-      bonus: { attackDamage: 8 },
+      bonus: { maxHp: 60, attackDamage: 11, skillDamageMultiplier: 0.26 },
+      rolls: { main: 1.2, secondary: 1.1, skillOrBuild: 1.3 },
+      locked: true,
+      isNew: true,
+      source: 'dungeon',
     })
     snapshot.equipmentInventory = [item]
-    snapshot.equippedItems = { weapon: item }
-    snapshot.equipmentMaterials.crystalDust = 200
-    snapshot.equipmentMaterials.refinedIron = 200
-    snapshot.equipmentMaterials.buildRune = 200
+    snapshot.equippedItems = { chest: item }
+    snapshot.currency = 1000
+    snapshot.equipmentMaterials = {
+      ...snapshot.equipmentMaterials,
+      refinedIron: 200,
+      crystalDust: 200,
+      buildRune: 200,
+    }
 
     const locked = toggleEquipmentModifierLockSnapshot(snapshot, 'reforge-epic', 0)
     const reforged = reforgeEquipmentSnapshot(locked, 'reforge-epic', 'secondary', 'spread')
     const reforgedItem = reforged.equipmentInventory.find((candidate) => candidate.id === 'reforge-epic')
 
+    expect(reforgedItem).toBeDefined()
+    expect(reforgedItem?.equipmentId).toBe('epic-template')
+    expect(reforgedItem?.name).toBe(item.name)
+    expect(reforgedItem?.affix).toBe(item.affix)
+    expect(reforgedItem?.buildTag).toBe(item.buildTag)
+    expect(reforgedItem?.setId).toBe(item.setId)
+    expect(reforgedItem?.rarity).toBe(item.rarity)
+    expect(reforgedItem?.slot).toBe(item.slot)
+    expect(reforgedItem?.level).toBe(item.level)
+    expect(reforgedItem?.upgradeLevel).toBe(item.upgradeLevel)
+    expect(reforgedItem?.locked).toBe(item.locked)
+    expect(reforgedItem?.source).toBe(item.source)
+    expect(reforgedItem?.isNew).toBe(false)
+    expect(reforgedItem?.rolls?.main).toBe(1.2)
+    expect(reforgedItem?.rolls?.skillOrBuild).toBe(1.3)
+    expect(reforgedItem?.rolls?.secondary).toBe(1.25)
+    expect(reforgedItem?.bonus.maxHp).toBe(item.bonus.maxHp)
+    expect(reforgedItem?.bonus.skillDamageMultiplier).toBe(item.bonus.skillDamageMultiplier)
+    expect(reforgedItem?.bonus.attackDamage).toBe(13)
     expect(reforgedItem?.lockedModifierIndexes).toContain(0)
-    expect(reforgedItem?.modifiers).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'pierce-echo' })]))
-    expect(reforgedItem?.buildTag).toBe('spread')
-    expect(reforged.equippedItems.weapon?.id).toBe('reforge-epic')
-    expect(reforged.equipmentMaterials.crystalDust).toBeLessThan(200)
+    expect(reforgedItem?.modifiers).toEqual(item.modifiers)
+    expect(reforged.equippedItems.chest?.bonus.attackDamage).toBe(13)
+    expect(reforged.player.attackDamage).toBeGreaterThan(snapshot.player.attackDamage)
+    expect(reforged.equipmentMaterials.refinedIron).toBe(194)
+    expect(reforged.equipmentMaterials.crystalDust).toBe(182)
+    expect(reforged.equipmentMaterials.buildRune).toBe(199)
+    expect(reforged.currency).toBe(700)
   })
 
-  it('reforges boss legacy equipment and unlocks sealed equipment slots with materials', () => {
+  it('reforges boss legacy equipment by changing only skill/build rolls and then unlocks sealed slots', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
     const snapshot = createInitialSnapshot('running')
     const legacy = makeEquipment({
       id: 'legacy-reforge',
+      equipmentId: 'boss-legacy-weapon-1',
       rarity: 'legacy',
       buildTag: 'pierce',
       score: 180,
+      bonus: { attackDamage: 12, maxHp: 24, skillDamageMultiplier: 0.24 },
+      rolls: { main: 1.3, secondary: 1.2, skillOrBuild: 1.2 },
       modifiers: [{ type: 'double-line', skillIds: ['sky-judgement'], cooldownMultiplier: 1.08 }],
     })
     snapshot.equipmentInventory = [legacy]
-    snapshot.equipmentMaterials.legacyEmber = 200
-    snapshot.equipmentMaterials.campaignSigil = 200
-    snapshot.equipmentMaterials.skillPage = 200
-    snapshot.equipmentMaterials.contractAsh = 200
-    snapshot.equipmentMaterials.crystalDust = 200
+    snapshot.currency = 2000
+    snapshot.equipmentMaterials = {
+      ...snapshot.equipmentMaterials,
+      legacyEmber: 200,
+      campaignSigil: 200,
+      skillPage: 200,
+      buildRune: 200,
+      contractAsh: 200,
+      crystalDust: 200,
+    }
 
     const reforged = reforgeEquipmentSnapshot(snapshot, 'legacy-reforge', 'boss-legacy', 'beast')
     expect(reforged.equipmentInventory[0].bossLegacyReforged).toBe(true)
-    expect(reforged.equipmentInventory[0].score).toBeGreaterThan(legacy.score)
-    expect(reforged.equipmentMaterials.legacyEmber).toBeLessThan(200)
+    expect(reforged.equipmentInventory[0].equipmentId).toBe(legacy.equipmentId)
+    expect(reforged.equipmentInventory[0].buildTag).toBe(legacy.buildTag)
+    expect(reforged.equipmentInventory[0].modifiers).toEqual(legacy.modifiers)
+    expect(reforged.equipmentInventory[0].rolls).toEqual({ main: 1.3, secondary: 1.2, skillOrBuild: 1.4 })
+    expect(reforged.equipmentInventory[0].bonus.attackDamage).toBe(legacy.bonus.attackDamage)
+    expect(reforged.equipmentInventory[0].bonus.maxHp).toBe(legacy.bonus.maxHp)
+    expect(reforged.equipmentInventory[0].bonus.skillDamageMultiplier).toBe(0.28)
+    expect(reforged.equipmentInventory[0].score).toBe(187)
+    expect(reforged.equipmentMaterials.buildRune).toBe(198)
+    expect(reforged.equipmentMaterials.skillPage).toBe(198)
+    expect(reforged.equipmentMaterials.legacyEmber).toBe(198)
+    expect(reforged.equipmentMaterials.campaignSigil).toBe(198)
+    expect(reforged.currency).toBe(1000)
 
     const unlocked = unlockEquipmentSlotSnapshot(reforged, 'necklace')
     expect(unlocked.unsealedEquipmentSlots).toContain('necklace')
     expect(unlocked.equipmentMaterials.campaignSigil).toBeLessThan(reforged.equipmentMaterials.campaignSigil)
+  })
+
+  it('does not change equipment or consume resources when reforge materials or gold are insufficient', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(1)
+    const snapshot = createInitialSnapshot('running')
+    const item = makeEquipment({
+      id: 'resource-gated-reforge',
+      rarity: 'legendary',
+      score: 240,
+      bonus: { attackDamage: 20, maxHp: 50, skillDamageMultiplier: 0.3 },
+      rolls: { main: 1.4, secondary: 1.35, skillOrBuild: 1.5 },
+    })
+    snapshot.equipmentInventory = [item]
+    snapshot.currency = 999
+    snapshot.equipmentMaterials = {
+      ...snapshot.equipmentMaterials,
+      refinedIron: 999,
+      crystalDust: 999,
+      buildRune: 999,
+      legacyEmber: 999,
+      legendaryCore: 999,
+    }
+
+    const noGold = reforgeEquipmentSnapshot(snapshot, 'resource-gated-reforge', 'secondary')
+    expect(noGold.equipmentInventory[0]).toEqual(item)
+    expect(noGold.currency).toBe(999)
+    expect(noGold.equipmentMaterials).toEqual(snapshot.equipmentMaterials)
+
+    const noMaterialsSnapshot = {
+      ...snapshot,
+      currency: 2000,
+      equipmentMaterials: {
+        ...snapshot.equipmentMaterials,
+        legendaryCore: 0,
+      },
+    }
+    const noMaterials = reforgeEquipmentSnapshot(noMaterialsSnapshot, 'resource-gated-reforge', 'secondary')
+    expect(noMaterials.equipmentInventory[0]).toEqual(item)
+    expect(noMaterials.currency).toBe(2000)
+    expect(noMaterials.equipmentMaterials).toEqual(noMaterialsSnapshot.equipmentMaterials)
+  })
+
+  it('uses documented costs and defaults missing rolls to 100 percent when reforging old equipment', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const snapshot = createInitialSnapshot('running')
+    const item = makeEquipment({
+      id: 'old-legacy-reforge',
+      rarity: 'legacy',
+      score: 100,
+      bonus: { attackDamage: 10, maxHp: 20, skillDamageMultiplier: 0.2 },
+    })
+    snapshot.equipmentInventory = [item]
+    snapshot.currency = 1000
+    snapshot.equipmentMaterials = {
+      ...snapshot.equipmentMaterials,
+      buildRune: 2,
+      skillPage: 2,
+      legacyEmber: 2,
+      campaignSigil: 2,
+    }
+
+    expect(getEquipmentReforgeCost(item, 'boss-legacy')).toEqual({
+      ironScraps: 0,
+      contractAsh: 0,
+      refinedIron: 0,
+      crystalDust: 0,
+      buildShard: 0,
+      buildRune: 2,
+      skillPage: 2,
+      legacyEmber: 2,
+      campaignSigil: 2,
+      legendaryCore: 0,
+    })
+    expect(getEquipmentReforgeGoldCost(item, 'boss-legacy')).toBe(1000)
+
+    const reforged = reforgeEquipmentSnapshot(snapshot, 'old-legacy-reforge', 'boss-legacy')
+    expect(reforged.equipmentInventory[0].rolls).toEqual({ main: 1, secondary: 1, skillOrBuild: 1.2 })
+    expect(reforged.equipmentInventory[0].bonus.attackDamage).toBe(10)
+    expect(reforged.equipmentInventory[0].bonus.maxHp).toBe(20)
+    expect(reforged.equipmentInventory[0].bonus.skillDamageMultiplier).toBe(0.24)
+    expect(reforged.equipmentInventory[0].score).toBe(105)
+    expect(reforged.currency).toBe(0)
   })
 
   it('biases equipment drops toward the current build when a preferred build tag is supplied', () => {
@@ -3011,6 +3314,315 @@ describe('game engine', () => {
     expect(next.pickups).toHaveLength(0)
   })
 
+  it('uses meta and in-run talent summaries to extend blue crystal pickup range only', () => {
+    const makeRun = (withTalents: boolean) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.enemies = []
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 999
+      snapshot.player.position = { x: 400, y: 300 }
+      snapshot.unlockedMetaTalentIds = withTalents ? ['meta_common_05'] : []
+      snapshot.inRunTalentIds = withTalents ? ['run_common_02'] : []
+      snapshot.runTalentState.selectedTalentIds = withTalents ? ['run_common_02'] : []
+      snapshot.pickups = [{
+        id: withTalents ? 'talented-crystal' : 'base-crystal',
+        kind: 'soul-crystal',
+        position: { x: 482, y: 300 },
+        radius: 8,
+        expValue: 10,
+      }, {
+        id: withTalents ? 'talented-health' : 'base-health',
+        kind: 'health-pack',
+        position: { x: 482, y: 340 },
+        radius: 8,
+        healAmount: 25,
+        ttl: 10,
+      }]
+      return snapshot
+    }
+
+    const base = advanceGame(makeRun(false), { up: false, down: false, left: false, right: false }, 0.05)
+    const talented = advanceGame(makeRun(true), { up: false, down: false, left: false, right: false }, 0.05)
+    const baseCrystal = base.pickups.find((pickup) => pickup.kind === 'soul-crystal')
+    const talentedCrystal = talented.pickups.find((pickup) => pickup.kind === 'soul-crystal')
+    const talentedHealth = talented.pickups.find((pickup) => pickup.kind === 'health-pack')
+
+    expect(baseCrystal?.magnetized).toBeUndefined()
+    expect(talentedCrystal?.magnetized).toBe(true)
+    expect(talentedCrystal?.position.x).toBeLessThan(482)
+    expect(talentedHealth?.magnetized).toBeUndefined()
+  })
+
+  it('consumes v2 cooldown refund only for effective Q/E/R hits once per cast', () => {
+    const makeRun = (projectile: Partial<Projectile>, enemies: Enemy[] = [makeEnemy({ id: 'refund-target', position: { x: 300, y: 200 }, hp: 120 })]) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.runTalentState.selectedTalentIds = ['run_common_04']
+      snapshot.inRunTalentIds = []
+      snapshot.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 10 }]
+      snapshot.player.attackCooldown = 999
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 999
+      snapshot.mapObstacles = []
+      snapshot.enemies = enemies
+      snapshot.projectiles = [makeProjectile({
+        id: 'refund-shot',
+        position: { x: 300, y: 200 },
+        damage: 1,
+        pierceRemaining: 3,
+        sourceSkillId: 'pierce-arrow',
+        castId: 'cast-q-1',
+        sourceSlotIndex: 0,
+        sourceBaseCooldown: 2,
+        ...projectile,
+      })]
+      return snapshot
+    }
+
+    const hitTwoTargets = advanceGame(makeRun({}, [
+      makeEnemy({ id: 'refund-a', position: { x: 300, y: 200 }, hp: 120 }),
+      makeEnemy({ id: 'refund-b', position: { x: 300, y: 200 }, hp: 120 }),
+    ]), { up: false, down: false, left: false, right: false }, 0.016)
+    expect(hitTwoTargets.lastTalentCooldownRefund).toMatchObject({ slotIndex: 0, castId: 'cast-q-1' })
+    expect(hitTwoTargets.activeSkills[0].cooldownRemaining).toBeCloseTo(10 - 0.016 - 0.16, 3)
+
+    const missed = advanceGame(makeRun({ position: { x: 900, y: 900 } }), { up: false, down: false, left: false, right: false }, 0.016)
+    expect(missed.lastTalentCooldownRefund).toBeUndefined()
+    expect(missed.activeSkills[0].cooldownRemaining).toBeCloseTo(10 - 0.016, 3)
+
+    const nonQer = advanceGame(makeRun({ sourceSlotIndex: 3 }), { up: false, down: false, left: false, right: false }, 0.016)
+    expect(nonQer.lastTalentCooldownRefund).toBeUndefined()
+    expect(nonQer.activeSkills[0].cooldownRemaining).toBeCloseTo(10 - 0.016, 3)
+  })
+
+  it('keeps v2 radius bonuses on whitelisted combat fields without changing pickup range', () => {
+    const makeRun = (withTalent: boolean) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 999
+      snapshot.mapObstacles = []
+      snapshot.player.position = { x: 300, y: 300 }
+      snapshot.aimPoint = { x: 360, y: 300 }
+      snapshot.runTalentState.selectedTalentIds = withTalent ? ['run_crystal_04'] : []
+      snapshot.inRunTalentIds = []
+      snapshot.activeSkills = [{ skillId: 'arrow-rain', level: 1, cooldownRemaining: 0 }]
+      snapshot.pickups = [{
+        id: withTalent ? 'radius-talented-crystal' : 'radius-base-crystal',
+        kind: 'soul-crystal',
+        position: { x: 482, y: 300 },
+        radius: 8,
+        expValue: 10,
+      }]
+      return snapshot
+    }
+
+    const baseCast = triggerActiveSkillSnapshot(makeRun(false), 0)
+    const talentedCast = triggerActiveSkillSnapshot(makeRun(true), 0)
+    expect(talentedCast.skillFields[0].radius).toBeGreaterThan(baseCast.skillFields[0].radius)
+
+    const talentedPickup = advanceGame(talentedCast, { up: false, down: false, left: false, right: false }, 0.05)
+    expect(talentedPickup.pickups.find((pickup) => pickup.kind === 'soul-crystal')?.magnetized).toBeUndefined()
+  })
+
+  it('applies v2 damage whitelist with boss cap and stable mechanic cleanup', () => {
+    const makeRun = (enemy: Enemy) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.runTalentState.selectedTalentIds = ['run_death_01', 'run_death_02', 'run_death_03']
+      snapshot.inRunTalentIds = []
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 999
+      snapshot.mapObstacles = []
+      snapshot.player.attackCooldown = 999
+      snapshot.enemies = [enemy]
+      return snapshot
+    }
+
+    const boss = makeEnemy({
+      id: 'talent-marked-boss',
+      kind: 'boss',
+      hp: 1000,
+      maxHp: 1000,
+      position: { x: 300, y: 200 },
+      talentStates: { deathMark: { ttl: 4, stacks: 1, source: 'test' } },
+    })
+    const bossRun = makeRun(boss)
+    bossRun.projectiles = [makeProjectile({ position: boss.position, damage: 100, sourceSkillId: 'pierce-arrow' })]
+    const bossHit = advanceGame(bossRun, { up: false, down: false, left: false, right: false }, 0.016)
+    expect(bossHit.enemies[0].hp).toBeCloseTo(894, 3)
+
+    const marked = makeEnemy({ id: 'talent-mark-state', hp: 500, maxHp: 500, position: { x: 300, y: 200 } })
+    const markRun = makeRun(marked)
+    markRun.projectiles = [makeProjectile({
+      position: marked.position,
+      damage: 1,
+      effect: 'mark',
+      sourceSkillId: 'armor-pin',
+    })]
+    const afterMark = advanceGame(markRun, { up: false, down: false, left: false, right: false }, 0.016)
+    expect(afterMark.enemies[0].talentStates?.deathMark?.ttl).toBeGreaterThan(0)
+
+    let afterExpiry = afterMark
+    afterExpiry.projectiles = []
+    for (let frame = 0; frame < 150; frame += 1) {
+      afterExpiry = advanceGame(afterExpiry, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+    expect(afterExpiry.enemies[0].talentStates?.deathMark).toBeUndefined()
+  })
+
+  it('consumes v2 executeLine, vulnerable, and armorBreak states with boss folding', () => {
+    const makeRun = (enemy: Enemy) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.runTalentState.selectedTalentIds = ['run_death_02']
+      snapshot.inRunTalentIds = []
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 999
+      snapshot.mapObstacles = []
+      snapshot.enemies = [enemy]
+      return snapshot
+    }
+
+    const lowHpMarked = makeEnemy({
+      id: 'execute-line-fodder',
+      hp: 20,
+      maxHp: 100,
+      position: { x: 300, y: 200 },
+      talentStates: { deathMark: { ttl: 4, stacks: 1, source: 'test' } },
+    })
+    const executed = makeRun(lowHpMarked)
+    executed.projectiles = [makeProjectile({ position: lowHpMarked.position, damage: 5 })]
+    const afterExecute = advanceGame(executed, { up: false, down: false, left: false, right: false }, 0.016)
+    expect(afterExecute.enemies.some((enemy) => enemy.id === 'execute-line-fodder')).toBe(false)
+
+    const elite = makeEnemy({
+      id: 'armor-broken-elite',
+      kind: 'elite',
+      hp: 500,
+      maxHp: 500,
+      position: { x: 300, y: 200 },
+      talentStates: {
+        armorBreak: { ttl: 5, stacks: 3, source: 'test' },
+        vulnerable: { ttl: 4, stacks: 1, source: 'test' },
+      },
+    })
+    const eliteRun = makeRun(elite)
+    eliteRun.projectiles = [makeProjectile({ position: elite.position, damage: 100 })]
+    const eliteHit = advanceGame(eliteRun, { up: false, down: false, left: false, right: false }, 0.016)
+    expect(eliteHit.enemies[0].hp).toBeCloseTo(500 - 100 * 1.24 * 1.1, 3)
+
+    const boss = makeEnemy({
+      id: 'folded-boss',
+      kind: 'boss',
+      hp: 1000,
+      maxHp: 1000,
+      position: { x: 300, y: 200 },
+      talentStates: {
+        executeLine: { ttl: 4, stacks: 1, source: 'test' },
+        armorBreak: { ttl: 5, stacks: 3, source: 'test' },
+        vulnerable: { ttl: 4, stacks: 1, source: 'test' },
+      },
+    })
+    const bossRun = makeRun(boss)
+    bossRun.projectiles = [makeProjectile({ position: boss.position, damage: 100 })]
+    const bossHit = advanceGame(bossRun, { up: false, down: false, left: false, right: false }, 0.016)
+    expect(bossHit.enemies[0].hp).toBeCloseTo(1000 - 100 * 1.06 * 1.04 * 1.06, 3)
+
+    let afterExpiry = bossHit
+    afterExpiry.projectiles = []
+    for (let frame = 0; frame < 120; frame += 1) {
+      afterExpiry = advanceGame(afterExpiry, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+    expect(afterExpiry.enemies[0].talentStates?.executeLine).toBeUndefined()
+    expect(afterExpiry.enemies[0].talentStates?.armorBreak).toBeUndefined()
+    expect(afterExpiry.enemies[0].talentStates?.vulnerable).toBeUndefined()
+  })
+
+  it('triggers v2 soulBurst from marked enemy deaths and applies break states to elite targets', () => {
+    const source = makeEnemy({
+      id: 'marked-soulburst-source',
+      hp: 1,
+      maxHp: 100,
+      position: { x: 300, y: 200 },
+      talentStates: {
+        deathMark: { ttl: 4, stacks: 1, source: 'test' },
+        soulBurst: { ttl: 1, stacks: 1, source: 'test' },
+      },
+      lastTalentHitDamage: 80,
+    })
+    const nearbyElite = makeEnemy({
+      id: 'soulburst-elite',
+      kind: 'elite',
+      hp: 200,
+      maxHp: 200,
+      position: { x: 344, y: 200 },
+      talentStates: { armorBreak: { ttl: 0.1, stacks: 0, source: 'test' } },
+    })
+    const snapshot = createInitialSnapshot('running')
+    snapshot.runTalentState.selectedTalentIds = ['run_death_05', 'run_death_07']
+    snapshot.inRunTalentIds = []
+    snapshot.remainingToSpawn = 1
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+    snapshot.mapObstacles = []
+    snapshot.enemies = [source, nearbyElite]
+    snapshot.projectiles = [makeProjectile({ id: 'soulburst-finisher', position: source.position, damage: 10 })]
+
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+    const elite = next.enemies.find((enemy) => enemy.id === 'soulburst-elite')
+
+    expect(elite?.hp).toBeLessThan(200)
+    expect(elite?.talentStates?.armorBreak?.ttl).toBeGreaterThan(0)
+    expect(next.bursts.some((burst) => burst.radius >= 86)).toBe(true)
+  })
+
+  it('charges blue crystal state from pickups and Q/E/R elite hits before consuming overload on the next cast', () => {
+    const crystalRun = createInitialSnapshot('running')
+    crystalRun.runTalentState.selectedTalentIds = ['run_crystal_01', 'run_crystal_05']
+    crystalRun.inRunTalentIds = []
+    crystalRun.remainingToSpawn = 1
+    crystalRun.spawnCooldown = 999
+    crystalRun.player.attackCooldown = 999
+    crystalRun.mapObstacles = []
+    crystalRun.player.position = { x: 300, y: 200 }
+    crystalRun.pickups = [{
+      id: 'charge-crystal',
+      kind: 'soul-crystal',
+      position: { x: 300, y: 200 },
+      radius: 8,
+      expValue: 1,
+    }]
+
+    const afterPickup = advanceGame(crystalRun, { up: false, down: false, left: false, right: false }, 0.016)
+    expect(afterPickup.talentCombatState?.crystalCharge?.stacks).toBe(1)
+
+    const elite = makeEnemy({ id: 'charge-elite', kind: 'elite', hp: 500, maxHp: 500, position: { x: 300, y: 200 } })
+    const chargeHit = createInitialSnapshot('running')
+    chargeHit.runTalentState.selectedTalentIds = ['run_crystal_01', 'run_crystal_05']
+    chargeHit.inRunTalentIds = []
+    chargeHit.remainingToSpawn = 1
+    chargeHit.spawnCooldown = 999
+    chargeHit.player.attackCooldown = 999
+    chargeHit.mapObstacles = []
+    chargeHit.talentCombatState = { crystalCharge: { stacks: 18, ttl: 999 } }
+    chargeHit.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 10 }]
+    chargeHit.enemies = [elite]
+    chargeHit.projectiles = [makeProjectile({
+      id: 'charge-hit',
+      position: elite.position,
+      damage: 1,
+      castId: 'crystal-charge-cast',
+      sourceSlotIndex: 0,
+      sourceBaseCooldown: 2,
+    })]
+    const afterEliteHit = advanceGame(chargeHit, { up: false, down: false, left: false, right: false }, 0.016)
+    expect(afterEliteHit.talentCombatState?.crystalOverload?.ttl).toBeGreaterThan(0)
+
+    afterEliteHit.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    afterEliteHit.aimPoint = { x: 420, y: 200 }
+    const afterCast = triggerActiveSkillSnapshot(afterEliteHit, 0)
+    expect(afterCast.projectiles.some((projectile) => projectile.talentCrystalOverload)).toBe(true)
+    expect(afterCast.talentCombatState?.crystalOverload).toBeUndefined()
+  })
+
   it('records talent points for death, forfeit, and campaign clear settlements', () => {
     const deathRun = createInitialSnapshot('running')
     deathRun.runExpGained = 320
@@ -3022,7 +3634,7 @@ describe('game engine', () => {
     const deathResult = advanceGame(deathRun, { up: false, down: false, left: false, right: false }, 0.016)
     expect(deathResult.phase).toBe('game-over')
     expect(deathResult.lastTalentPointRecord?.source).toBe('death')
-    expect(deathResult.lastTalentPointRecord?.points).toBeGreaterThan(0)
+    expect(deathResult.lastTalentPointRecord?.points).toBe(4)
     expect(deathResult.talentPoints).toBe(deathResult.lastTalentPointRecord?.points)
 
     const forfeitRun = createInitialSnapshot('running')
@@ -3031,7 +3643,7 @@ describe('game engine', () => {
     forfeitRun.runEliteKills = 1
     const forfeitResult = forfeitRunSnapshot(forfeitRun)
     expect(forfeitResult.lastTalentPointRecord?.source).toBe('forfeit')
-    expect(forfeitResult.talentPoints).toBeGreaterThan(0)
+    expect(forfeitResult.talentPoints).toBe(1)
 
     const clearRun = createInitialSnapshot('level-clear')
     clearRun.level = FLOORS_PER_CAMPAIGN
@@ -3046,7 +3658,31 @@ describe('game engine', () => {
     expect(clearResult.phase).toBe('game-over')
     expect(clearResult.lastTalentPointRecord?.source).toBe('campaign-clear')
     expect(clearResult.lastTalentPointRecord?.firstClear).toBe(true)
+    expect(clearResult.lastTalentPointRecord?.points).toBe(32)
     expect(clearResult.completedCampaigns).toContain(1)
+  })
+
+  it('consumes meta talent point summaries during settlement without changing run experience', () => {
+    const makeDeathRun = (withTalents: boolean) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.runExpGained = 1600
+      snapshot.runHighestContractLevel = 8
+      snapshot.runEliteKills = 3
+      snapshot.kills = 96
+      snapshot.player.hp = 0
+      snapshot.unlockedMetaTalentIds = withTalents ? ['meta_common_11', 'meta_difficulty_01'] : []
+      return snapshot
+    }
+
+    const base = advanceGame(makeDeathRun(false), { up: false, down: false, left: false, right: false }, 0.016)
+    const talented = advanceGame(makeDeathRun(true), { up: false, down: false, left: false, right: false }, 0.016)
+
+    expect(base.lastTalentPointRecord?.source).toBe('death')
+    expect(talented.lastTalentPointRecord?.source).toBe('death')
+    expect(base.lastTalentPointRecord?.points).toBe(14)
+    expect(talented.lastTalentPointRecord?.points).toBe(16)
+    expect(talented.runExpGained).toBe(1600)
+    expect(talented.exp).toBe(base.exp)
   })
 
   it('clears in-run experience and level after returning to the village and starting again', () => {

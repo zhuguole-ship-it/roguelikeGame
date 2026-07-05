@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { resetGameSoundRuntimeForTests, setGameSoundNowProviderForTests, setGameSoundTestPlayer } from '../game/audio'
 import { createInitialSnapshot } from '../game/engine'
+import { TALENT_SCHEMA_VERSION } from '../game/talents'
 import type { Enemy, EquipmentItem, Pickup, Projectile } from '../game/types'
 import { GAME_SAVE_STORAGE_KEY, extractPersistedGameState, getSimulationSoundEvents, restorePersistedGameState, useGameStore } from './useGameStore'
 
@@ -81,6 +82,29 @@ describe('game store persistence', () => {
       firstClear: false,
       points: 27,
     }]
+    running.talentPointLedger = [...running.talentPointRecords]
+    running.talentSchemaVersion = TALENT_SCHEMA_VERSION
+    running.unlockedMetaTalentIds = ['meta_common_01', 'meta_common_02']
+    running.unlockedTalentIds = ['meta_common_01', 'meta_common_02']
+    running.talentUnlockRecords = [{
+      id: 'unlock-1',
+      talentId: 'meta_common_01',
+      cost: 0,
+      unlockedAt: 123,
+    }]
+    running.runTalentState = {
+      selectedBuild: 'blood',
+      selectedTalentIds: ['run_blood_05'],
+      rerollsRemaining: 2,
+      rerollsUsed: 1,
+      guarantee: {
+        noMainBuildStreak: 1,
+        mainBuildOffersLv3To4: 2,
+        lv5GuaranteeConsumed: true,
+      },
+      lastOfferedCandidateIds: ['run_blood_05', 'run_common_01'],
+    }
+    running.inRunTalentIds = ['run_blood_05']
     running.runHistory = [{
       id: 'record-1',
       level: 44,
@@ -152,6 +176,12 @@ describe('game store persistence', () => {
     expect(restored.selectedCampaignDifficulty).toBe('hell')
     expect(restored.talentPoints).toBe(27)
     expect(restored.talentPointRecords[0].points).toBe(27)
+    expect(restored.talentPointLedger[0].points).toBe(27)
+    expect(restored.talentSchemaVersion).toBe(TALENT_SCHEMA_VERSION)
+    expect(restored.unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
+    expect(restored.talentUnlockRecords[0].talentId).toBe('meta_common_01')
+    expect(restored.runTalentState.selectedTalentIds).toEqual(['run_blood_05'])
+    expect(restored.inRunTalentIds).toEqual([])
     expect(restored.runHistory[0].level).toBe(44)
     expect(restored.enemies).toHaveLength(0)
     expect(restored.projectiles).toHaveLength(0)
@@ -234,6 +264,143 @@ describe('game store persistence', () => {
     useGameStore.getState().recordHighRarityEquipmentDiscovery('dragon-judgement-bow')
     useGameStore.getState().recordHighRarityEquipmentDiscovery('dragon-judgement-bow')
     expect(useGameStore.getState().discoveredHighRarityEquipmentIds).toEqual(['black-moon-bone-bow', 'dragon-judgement-bow'])
+  })
+
+  it('migrates legacy talent ids into meta talent fields and persists the ledger', () => {
+    const restored = restorePersistedGameState({
+      talentPoints: 5,
+      unlockedTalentIds: ['meta_common_01'],
+      talentPointRecords: [{
+        id: 'legacy-talent-record',
+        source: 'death',
+        campaign: 1,
+        reachedLevel: 12,
+        kills: 80,
+        cumulativeExp: 210,
+        highestContractLevel: 3,
+        eliteKills: 1,
+        bossKills: 0,
+        firstClear: false,
+        points: 5,
+      }],
+      runTalentState: {
+        selectedBuild: 'beast',
+        selectedTalentIds: ['run_beast_01'],
+        rerollsRemaining: 0,
+        rerollsUsed: 1,
+        guarantee: {
+          noMainBuildStreak: 2,
+        },
+        lastOfferedCandidateIds: ['run_beast_01'],
+      },
+    })
+
+    expect(restored.unlockedMetaTalentIds).toEqual(['meta_common_01'])
+    expect(restored.talentPointLedger[0].id).toBe('legacy-talent-record')
+    expect(restored.talentSchemaVersion).toBe(TALENT_SCHEMA_VERSION)
+    expect(restored.runTalentState.selectedBuild).toBe('beast')
+    expect(restored.runTalentState.selectedTalentIds).toEqual(['run_beast_01'])
+    expect(restored.runTalentState.guarantee.noMainBuildStreak).toBe(2)
+  })
+
+  it('exposes meta unlock and in-run candidate store actions without consuming combat effects', () => {
+    useGameStore.setState({
+      ...createInitialSnapshot('idle'),
+      talentPoints: 3,
+      contractLevel: 5,
+    })
+
+    useGameStore.getState().unlockMetaTalent('meta_common_01')
+    useGameStore.getState().unlockMetaTalent('meta_common_02')
+    expect(useGameStore.getState().talentPoints).toBe(0)
+    expect(useGameStore.getState().unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
+    expect(useGameStore.getState().unlockedTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
+    expect(useGameStore.getState().talentUnlockRecords.map((record) => record.talentId)).toEqual(['meta_common_02', 'meta_common_01'])
+
+    const candidates = useGameStore.getState().generateRunTalentCandidates('store-talent-test')
+    expect(candidates.some((candidate) => candidate.node.id === 'run_death_05' && candidate.guaranteed)).toBe(true)
+    useGameStore.getState().selectRunTalent('run_death_05')
+    expect(useGameStore.getState().runTalentState.selectedTalentIds).toEqual(['run_death_05'])
+    expect(useGameStore.getState().inRunTalentIds).toEqual(['run_death_05'])
+    expect(useGameStore.getState().message).toContain('战斗效果等待内核接入')
+  })
+
+  it('opens, rerolls and accepts the formal in-run upgrade reward without base stat choices', () => {
+    useGameStore.setState({
+      ...createInitialSnapshot('idle'),
+      contractLevel: 5,
+      phase: 'running',
+      phaseBeforePause: 'running',
+    })
+
+    useGameStore.getState().openRunTalentUpgradeReward('formal-upgrade-test')
+    const opened = useGameStore.getState()
+    expect(opened.phase).toBe('paused')
+    expect(opened.pendingSkillReward?.choices.length).toBeGreaterThanOrEqual(3)
+    expect(opened.pendingSkillReward?.choices.length).toBeLessThanOrEqual(4)
+    expect(opened.pendingSkillReward?.choices.some((choice) => choice.mode === 'in-run-talent')).toBe(true)
+    expect(opened.pendingSkillReward?.choices.some((choice) => /基础攻击|生命|攻速|移速/.test(`${choice.title}${choice.description}`))).toBe(false)
+    expect(opened.pendingSkillReward?.choices.some((choice) => choice.talentId === 'run_death_05')).toBe(true)
+
+    const beforeReroll = opened.pendingSkillReward!.choices.map((choice) => choice.choiceId)
+    useGameStore.getState().rerollPendingRunTalentReward('formal-upgrade-reroll')
+    const rerolled = useGameStore.getState()
+    expect(rerolled.runTalentState.rerollsUsed).toBe(1)
+    expect(rerolled.pendingSkillReward!.choices.map((choice) => choice.choiceId)).not.toEqual(beforeReroll)
+    expect(rerolled.pendingSkillReward?.choices.some((choice) => choice.talentId === 'run_death_05')).toBe(true)
+
+    const choice = rerolled.pendingSkillReward!.choices.find((item) => item.mode === 'in-run-talent')!
+    useGameStore.getState().acceptSkillReward(choice.choiceId)
+    expect(useGameStore.getState().pendingSkillReward).toBeNull()
+    expect(useGameStore.getState().runTalentState.selectedTalentIds).toContain(choice.talentId)
+
+    useGameStore.getState().returnToVillage()
+    expect(useGameStore.getState().runTalentState.selectedTalentIds).toEqual([])
+  })
+
+  it('resets meta talents with documented costs and preserves earned point records', () => {
+    const base = createInitialSnapshot('idle')
+    const record = {
+      id: 'earned-talent',
+      source: 'campaign-clear' as const,
+      campaign: 1,
+      difficulty: 'normal' as const,
+      reachedLevel: 22,
+      kills: 20,
+      cumulativeExp: 100,
+      highestContractLevel: 5,
+      eliteKills: 1,
+      bossKills: 1,
+      firstClear: true,
+      points: 3,
+    }
+    useGameStore.setState({
+      ...base,
+      currency: 200,
+      talentPoints: 0,
+      talentPointRecords: [record],
+      talentPointLedger: [record],
+      unlockedMetaTalentIds: ['meta_common_01', 'meta_common_02'],
+      unlockedTalentIds: ['meta_common_01', 'meta_common_02'],
+      equipmentMaterials: {
+        ...base.equipmentMaterials,
+        buildShard: 5,
+      },
+      runTalentState: {
+        ...base.runTalentState,
+        selectedTalentIds: ['run_death_05'],
+      },
+    })
+
+    useGameStore.getState().resetMetaTalentTree()
+    const reset = useGameStore.getState()
+    expect(reset.unlockedMetaTalentIds).toEqual([])
+    expect(reset.talentPoints).toBe(3)
+    expect(reset.currency).toBe(0)
+    expect(reset.equipmentMaterials.buildShard).toBe(0)
+    expect(reset.talentPointRecords).toEqual([record])
+    expect(reset.talentPointLedger[0]?.source).toBe('reset')
+    expect(reset.runTalentState.selectedTalentIds).toEqual(['run_death_05'])
   })
 })
 
@@ -445,6 +612,299 @@ describe('game store audio events', () => {
     const dismissed = harness!.dismissBossLoot()
     expect(dismissed.pendingBossLoot).toBe(0)
     expect(dismissed.levelClearConfirmed).toBe(true)
+  })
+
+  it('exposes a dev-only Boss fight harness without changing persisted save data', () => {
+    const harness = window.__ROGUELIKE_E2E__
+    expect(harness).toBeTruthy()
+    localStorage.setItem(GAME_SAVE_STORAGE_KEY, JSON.stringify({ state: { currency: 777 }, version: 1 }))
+
+    const boss = harness!.forceBossFight({ campaignId: 1, difficulty: 'normal' })
+
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(JSON.stringify({ state: { currency: 777 }, version: 1 }))
+    expect(boss.campaign).toBe(1)
+    expect(boss.difficulty).toBe('normal')
+    expect(boss.difficultyLabel).toBe('普通')
+    expect(boss.floor).toBe(22)
+    expect(boss.level).toBe(22)
+    expect(boss.bossName).toBeTruthy()
+    expect(boss.bossHp?.current).toBeGreaterThan(0)
+    expect(boss.bossHp?.max).toBeGreaterThan(0)
+    expect(boss.currentPhase).toBe('p1')
+    expect(boss.guards.cap).toBe(2)
+    expect(boss.playerDamage.lostHp).toBe(0)
+    expect(boss.pendingBossLoot).toBe(false)
+    expect(boss.settlementEntered).toBe(false)
+    expect(boss.returnedToVillage).toBe(false)
+    expect(boss.consoleErrors).toEqual([])
+    expect(useGameStore.getState().phase).toBe('running')
+    expect(useGameStore.getState().enemies.some((enemy) => enemy.kind === 'boss')).toBe(true)
+
+    const p2 = harness!.forceBossPhase('p2')
+    expect(p2.currentPhase).toBe('p2')
+    expect(p2.bossHp?.current).toBeLessThan(p2.bossHp?.max ?? 0)
+
+    const p3 = harness!.forceBossPhase('p3')
+    expect(p3.currentPhase).toBe('p3')
+    expect(p3.bossHp?.current).toBeGreaterThan(0)
+    expect(p3.playerDamage.maxHp).toBeGreaterThanOrEqual(600)
+
+    const killed = harness!.killBoss()
+    expect(killed.settlementEntered).toBe(true)
+    expect(killed.pendingBossLoot).toBe(true)
+
+    const dismissed = harness!.dismissBossLoot()
+    expect(dismissed.pendingBossLoot).toBe(0)
+    expect(harness!.bossSummary().pendingBossLoot).toBe(false)
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(JSON.stringify({ state: { currency: 777 }, version: 1 }))
+  })
+
+  it('settles campaign 2 Boss kills and reports the formal village settlement as returned', () => {
+    const harness = window.__ROGUELIKE_E2E__!
+
+    const boss = harness.forceBossFight({ campaignId: 2, difficulty: 'normal', floor: 22, playerPreset: 'standard' })
+    expect(boss.campaign).toBe(2)
+    expect(boss.bossHp?.current).toBeGreaterThan(0)
+
+    const killed = harness.killBoss()
+    expect(killed.settlementEntered).toBe(true)
+    expect(killed.pendingBossLoot).toBe(true)
+
+    harness.dismissBossLoot()
+    useGameStore.getState().tick(0.3, { up: false, down: false, left: false, right: false })
+    const settled = harness.bossSummary()
+    expect(settled.returnedToVillage).toBe(true)
+
+    useGameStore.getState().returnToVillage()
+    expect(harness.bossSummary().returnedToVillage).toBe(true)
+  })
+
+  it('keeps campaign 2 Boss loot settlement after a campaign 1 Boss run in the same E2E session', () => {
+    const harness = window.__ROGUELIKE_E2E__!
+
+    harness.forceBossFight({ campaignId: 1, difficulty: 'normal', floor: 22, playerPreset: 'standard' })
+    harness.forceBossPhase('p2')
+    harness.forceBossPhase('p3')
+    const campaign1Kill = harness.killBoss()
+    expect(campaign1Kill.pendingBossLoot).toBe(true)
+    expect(campaign1Kill.settlementEntered).toBe(true)
+    harness.dismissBossLoot()
+    useGameStore.getState().returnToVillage()
+
+    const campaign2Boss = harness.forceBossFight({ campaignId: 2, difficulty: 'normal', floor: 22, playerPreset: 'standard' })
+    expect(campaign2Boss.campaign).toBe(2)
+    expect(campaign2Boss.bossHp?.current).toBeGreaterThan(0)
+
+    const campaign2P2 = harness.forceBossPhase('p2')
+    expect(campaign2P2.currentPhase).toBe('p2')
+    const campaign2P3 = harness.forceBossPhase('p3')
+    expect(campaign2P3.currentPhase).toBe('p3')
+    expect(campaign2P3.playerDamage.lostHp).toBeGreaterThan(0)
+
+    const campaign2Kill = harness.killBoss()
+    expect(campaign2Kill.campaign).toBe(2)
+    expect(campaign2Kill.floor).toBe(22)
+    expect(campaign2Kill.pendingBossLoot).toBe(true)
+    expect(campaign2Kill.settlementEntered).toBe(true)
+    expect(campaign2Kill.returnedToVillage).toBe(false)
+    expect(campaign2Kill.playerDamage.lostHp).toBeGreaterThan(0)
+    expect(useGameStore.getState().phase).toBe('level-clear')
+    expect(useGameStore.getState().pendingBossLoot.length).toBeGreaterThan(0)
+  })
+
+  it('accepts torment as the public E2E difficulty while keeping internal compatibility hidden', () => {
+    const summary = window.__ROGUELIKE_E2E__!.forceBossFight({ campaignId: 'campaign-10', difficulty: 'torment', floor: 22, playerPreset: 'durable' })
+
+    expect(summary.campaign).toBe(10)
+    expect(summary.level).toBe(220)
+    expect(summary.floor).toBe(22)
+    expect(summary.difficulty).toBe('torment')
+    expect(summary.difficultyLabel).toBe('折磨')
+    expect(summary.playerDamage.currentHp).toBeGreaterThanOrEqual(600)
+    expect(useGameStore.getState().selectedCampaignDifficulty).toBe('nightmare')
+  })
+
+  it('keeps repeated clean Boss fight harness entries backed by a live boss enemy', () => {
+    const harness = window.__ROGUELIKE_E2E__!
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const summary = harness.forceBossFight({ campaignId: 1, difficulty: 'normal', floor: 22, playerPreset: 'standard' })
+      expect(summary.floor).toBe(22)
+      expect(summary.bossHp?.current).toBeGreaterThan(0)
+      expect(summary.currentPhase).toBe('p1')
+      expect(summary.guards.cap).toBe(2)
+      expect(useGameStore.getState().enemies.some((enemy) => enemy.kind === 'boss')).toBe(true)
+    }
+  })
+
+  it('rejects unsupported Boss fight harness options', () => {
+    const harness = window.__ROGUELIKE_E2E__!
+
+    expect(() => harness.forceBossFight({ campaignId: 11, difficulty: 'normal' })).toThrow(/campaign 1-10/)
+    expect(() => harness.forceBossFight({ campaignId: 1, difficulty: 'normal', floor: 21 as 22 })).toThrow(/floor must be 22/)
+    expect(() => harness.forceBossFight({ campaignId: 1, difficulty: 'normal', playerPreset: 'glass' as 'standard' })).toThrow(/playerPreset/)
+    expect(() => harness.forceBossPhase('p4' as 'p1')).toThrow(/p1, p2, or p3/)
+  })
+
+  it('exposes a dev-only Talent E2E bridge without polluting persisted save data', () => {
+    const harness = window.__ROGUELIKE_E2E__!
+    const baseline = createInitialSnapshot('idle')
+    baseline.talentPoints = 6
+    baseline.inRunTalentIds = []
+    baseline.runTalentState = {
+      ...baseline.runTalentState,
+      selectedTalentIds: [],
+    }
+    baseline.equipmentInventory = []
+    baseline.equippedItems = {}
+    useGameStore.setState(baseline)
+    localStorage.setItem(GAME_SAVE_STORAGE_KEY, JSON.stringify({ state: { currency: 555 }, version: 1 }))
+    const expectFormalStoreUnchanged = () => {
+      const state = useGameStore.getState()
+      expect(state.talentPoints).toBe(6)
+      expect(state.inRunTalentIds).toEqual([])
+      expect(state.runTalentState.selectedTalentIds).toEqual([])
+      expect(state.equipmentInventory.some((item) => item.name.includes('Talent E2E'))).toBe(false)
+    }
+
+    const fixture = harness.forceTalentFixture()
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(JSON.stringify({ state: { currency: 555 }, version: 1 }))
+    expect(fixture.storageGuard.preservedSave).toBe(true)
+    expect(fixture.talentPoints).toBe(20)
+    expect(fixture.talentPointSettlement.lastSource).toBe('campaign-clear')
+    expect(fixture.talentPointSettlement.lastPoints).toBe(12)
+    expect(fixture.pickupRange.healthPackUsesTalent).toBe(false)
+    expectFormalStoreUnchanged()
+
+    const unlocked01 = harness.unlockTalentForE2E('meta_common_01')
+    expect(unlocked01.unlockedMetaCount).toBe(1)
+    expect(unlocked01.talentPoints).toBe(20)
+    expectFormalStoreUnchanged()
+
+    const unlocked02 = harness.unlockTalentForE2E('meta_common_02')
+    expect(unlocked02.unlockedMetaCount).toBe(2)
+    expect(unlocked02.talentPoints).toBe(17)
+    expectFormalStoreUnchanged()
+
+    const candidates = harness.generateTalentCandidates('talent-e2e-test')
+    expect(candidates.runTalent.candidateIds).toContain('run_death_05')
+    expect(candidates.runTalent.guaranteedCandidateIds).toContain('run_death_05')
+
+    const rerolled = harness.rerollTalentCandidates('talent-e2e-reroll-test')
+    expect(rerolled.runTalent.candidateIds).not.toEqual(candidates.runTalent.candidateIds)
+    expect(rerolled.runTalent.guaranteedCandidateIds).toContain('run_death_05')
+    expect(rerolled.runTalent.rerollsUsed).toBe(1)
+
+    const selected = harness.selectRunTalentForE2E()
+    expect(selected.runTalent.selectedTalentIds.length).toBe(1)
+    expectFormalStoreUnchanged()
+
+    const consumption = harness.enableAutoDismantleTalentFixture()
+    expect(consumption.selectedMetaTalentIds).toContain('meta_common_08')
+    expect(consumption.materialDrops.map((item) => item.target)).toEqual(['hard-elite', 'nightmare-elite', 'campaign-7'])
+    expect(consumption.materialDrops.some((item) => item.multiplier > 1)).toBe(true)
+    expect(consumption.cooldownRefund.multiplier).toBeGreaterThan(1)
+    expect(consumption.radius.some((item) => item.multiplier > 1)).toBe(true)
+    expect(consumption.damage.some((item) => item.multiplier > 1)).toBe(true)
+    expect(consumption.mechanics.length).toBeGreaterThan(0)
+    expect(consumption.campaignTags).toContain('campaign-7')
+    expect(consumption.pickupRange.talentMultiplier).toBeGreaterThan(1)
+    expect(consumption.pickupRange.finalCrystalRange).toBe(140)
+    expect(consumption.pickupRange.cap).toBe(140)
+    expect(consumption.autoDismantle.temporaryItemCount).toBe(8)
+    expect(consumption.autoDismantle.talentMultiplier).toBeCloseTo(1.08)
+    expect(consumption.autoDismantle.finalMaterials.crystalDust).toBeGreaterThan(consumption.autoDismantle.baseMaterials.crystalDust)
+    expect(consumption.autoDismantle.finalMaterials.buildShard).toBeGreaterThan(consumption.autoDismantle.baseMaterials.buildShard)
+    expect(consumption.autoDismantle.affectedEquipmentDrop).toBe(false)
+    expect(consumption.autoDismantle.affectedCrystalDrop).toBe(false)
+    expect(consumption.storageGuard.preservedSave).toBe(true)
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(JSON.stringify({ state: { currency: 555 }, version: 1 }))
+    expectFormalStoreUnchanged()
+
+    const popup = harness.openTalentUpgradeRewardForE2E('talent-e2e-popup-test')
+    expect(popup.upgradeRewardPopup.visible).toBe(true)
+    expect(popup.upgradeRewardPopup.choiceCount).toBeGreaterThanOrEqual(3)
+    expect(popup.upgradeRewardPopup.containsBaseStat).toBe(false)
+    expectFormalStoreUnchanged()
+    const reset = harness.resetMetaTalentsForE2E()
+    expect(reset.reset.available).toBe(false)
+    expect(reset.storageGuard.preservedSave).toBe(true)
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(JSON.stringify({ state: { currency: 555 }, version: 1 }))
+    expectFormalStoreUnchanged()
+  })
+
+  it('cleans prior Talent E2E fixture artifacts before preserving the formal store', () => {
+    const harness = window.__ROGUELIKE_E2E__!
+    const pollutedEquipment: EquipmentItem = {
+      id: 'talent-e2e-rare-bow-legacy',
+      equipmentId: 'talent-e2e-rare-bow',
+      slot: 'weapon',
+      rarity: 'rare',
+      name: 'Talent E2E 稀有弓 旧污染',
+      affix: '拾取校准',
+      buildTag: 'control',
+      level: 18,
+      score: 88,
+      bonus: { pickupRange: 80 },
+      modifiers: [],
+      source: 'dungeon',
+      acquiredLevel: 18,
+    }
+    const pollutedRecord = {
+      id: 'talent-e2e-ledger-1',
+      source: 'campaign-clear' as const,
+      campaign: 1,
+      difficulty: 'normal' as const,
+      reachedLevel: 22,
+      kills: 120,
+      cumulativeExp: 640,
+      highestContractLevel: 5,
+      eliteKills: 2,
+      bossKills: 1,
+      firstClear: true,
+      points: 12,
+    }
+    const polluted = createInitialSnapshot('idle')
+    polluted.talentPoints = 60
+    polluted.equipmentInventory = [pollutedEquipment]
+    polluted.equippedItems = { weapon: pollutedEquipment }
+    polluted.inRunTalentIds = [
+      'run_common_02',
+      'run_common_04',
+      'run_death_01',
+      'run_death_02',
+      'run_death_05',
+      'run_blood_06',
+      'run_beast_02',
+      'run_crystal_03',
+      'run_crystal_04',
+      'run_crystal_05',
+    ]
+    polluted.runTalentState = {
+      ...polluted.runTalentState,
+      selectedTalentIds: polluted.inRunTalentIds,
+    }
+    polluted.talentPointRecords = [pollutedRecord]
+    polluted.talentPointLedger = [pollutedRecord]
+    polluted.lastTalentPointRecord = pollutedRecord
+    polluted.message = 'Talent E2E：旧夹具污染'
+    useGameStore.setState(polluted)
+    localStorage.setItem(GAME_SAVE_STORAGE_KEY, JSON.stringify({ state: extractPersistedGameState(polluted), version: 1 }))
+
+    const summary = harness.forceTalentFixture()
+
+    expect(summary.talentPoints).toBe(20)
+    expect(summary.storageGuard.preservedSave).toBe(true)
+    const state = useGameStore.getState()
+    expect(state.talentPoints).toBe(0)
+    expect(state.inRunTalentIds).toEqual([])
+    expect(state.runTalentState.selectedTalentIds).toEqual([])
+    expect(state.equipmentInventory.some((item) => item.name.includes('Talent E2E'))).toBe(false)
+    expect(Object.values(state.equippedItems).some((item) => item?.name.includes('Talent E2E'))).toBe(false)
+    const saved = localStorage.getItem(GAME_SAVE_STORAGE_KEY) ?? ''
+    expect(saved).not.toContain('Talent E2E')
+    expect(saved).not.toContain('talent-e2e')
+    expect(saved).not.toContain('"talentPoints":60')
   })
 
   it('plays reward confirmation sounds from reward harness actions', () => {

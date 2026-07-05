@@ -700,17 +700,20 @@ const hasAnchor = (action: DeveloperAssetAction, anchor: DeveloperAssetAnchorNam
 
 export const getDeveloperAssetStatus = (entity: DeveloperAssetEntity) => {
   const issues = validateDeveloperAssetEntity(entity)
+  if (issues.some((issue) => issue.message.includes('缺帧') || issue.message.includes('帧数量') || issue.message.includes('帧校验'))) {
+    return '缺帧'
+  }
   if (issues.some((issue) => issue.message.includes('资源'))) {
-    return '缺资源'
+    return '配置来源缺失'
   }
   if (issues.some((issue) => issue.message.includes('动作'))) {
     return '缺动作'
   }
   if (issues.some((issue) => issue.message.includes('锚点'))) {
-    return '缺锚点'
+    return '配置来源缺失'
   }
   if (issues.some((issue) => issue.severity === 'manual')) {
-    return '需人工 QA'
+    return '待人工验收'
   }
   return '完整'
 }
@@ -792,7 +795,7 @@ export const validateDeveloperAssetEntity = (entity: DeveloperAssetEntity): Deve
   })
 
   if (entity.qa.quadrupedSilhouette === 'manual') {
-    issues.push({ severity: 'manual', entityId: entity.id, message: '四足剪影需人工 QA' })
+    issues.push({ severity: 'manual', entityId: entity.id, message: '四足剪影待人工验收' })
   }
 
   return issues

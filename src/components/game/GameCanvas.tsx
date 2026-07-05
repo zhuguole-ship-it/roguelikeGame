@@ -11,8 +11,12 @@ import { GameOverlay } from './GameOverlay'
 import { GamePauseOverlay } from './GamePauseOverlay'
 import { GameStatusBar } from './GameStatusBar'
 
-function LocalTestControls() {
+function LocalTestControls({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
   const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    onOpenChange(open)
+  }, [onOpenChange, open])
 
   if (!isDeveloperAssetPanelVisible()) {
     return null
@@ -38,6 +42,7 @@ export function GameCanvas() {
   const latestState = useRef(useGameStore.getState())
   const cameraRef = useRef({ x: 0, y: 0 })
   const inputRef = useKeyboard()
+  const [developerPanelOpen, setDeveloperPanelOpen] = useState(false)
   const tick = useGameStore((state) => state.tick)
   const phase = useGameStore((state) => state.phase)
   const togglePause = useGameStore((state) => state.togglePause)
@@ -91,6 +96,10 @@ export function GameCanvas() {
   }, [phase])
 
   useGameLoop((delta) => {
+    if (developerPanelOpen) {
+      renderCurrentState()
+      return
+    }
     tick(delta, inputRef.current)
   })
 
@@ -146,9 +155,9 @@ export function GameCanvas() {
     >
       <canvas ref={canvasRef} className="m-auto h-auto max-h-screen w-full max-w-[calc(100vh*1.5)] object-contain" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} aria-label="游戏画布" />
       <GameStatusBar />
-      <LocalTestControls />
       <GameOverlay />
       <GamePauseOverlay />
+      <LocalTestControls onOpenChange={setDeveloperPanelOpen} />
     </div>
   )
 }

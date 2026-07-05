@@ -35,6 +35,7 @@ export type SkillBehaviorKind = 'projectile' | 'spread' | 'rain' | 'trap' | 'sto
 export type SkillEffectTag = 'none' | 'burn' | 'slow' | 'mark' | 'dark'
 export type SkillBuildTag = 'pierce' | 'spread' | 'control' | 'beast'
 export type ContractBoonTag = SkillBuildTag | 'general'
+export type TalentBuildTag = 'death' | 'blood' | 'beast' | 'crystal'
 export type BeastKind = 'hawk' | 'wolf' | 'boar' | 'bear' | 'snake' | 'deer'
 export type CampaignDifficulty = 'normal' | 'hard' | 'hell' | 'nightmare'
 export type RewardChoiceMode = 'new-active' | 'upgrade-active' | 'upgrade-passive' | 'in-run-talent'
@@ -299,6 +300,8 @@ export type ActiveSkillInstance = {
   level: number
   cooldownRemaining: number
   castCount?: number
+  lastTalentCooldownRefundAt?: number
+  talentRefundedCastIds?: string[]
 }
 
 export type SkillRewardChoice = {
@@ -375,6 +378,12 @@ export type Enemy = {
   slowTtl: number
   slowFactor: number
   markStacks: number
+  talentStates?: Partial<Record<'deathMark' | 'executeLine' | 'soulBurst' | 'bleed' | 'bloodRift' | 'beastCommand' | 'crystalCharge' | 'crystalOverload' | 'vulnerable' | 'armorBreak', {
+    ttl: number
+    stacks: number
+    source?: string
+  }>>
+  lastTalentHitDamage?: number
   darkTtl?: number
   darkDamageMultiplier?: number
   stunTimer?: number
@@ -430,6 +439,7 @@ export type RunRecord = {
 }
 
 export type TalentPointSettlementSource = 'death' | 'forfeit' | 'campaign-clear'
+export type TalentLedgerSource = TalentPointSettlementSource | 'reset'
 
 export type TalentPointRecord = {
   id: string
@@ -446,11 +456,36 @@ export type TalentPointRecord = {
   points: number
 }
 
+export type TalentResetLedgerEntry = {
+  id: string
+  source: 'reset'
+  points: number
+  refundedPoints: number
+  spentGold: number
+  spentMaterials: Partial<EquipmentMaterialInventory>
+  resetAt: number
+}
+
 export type TalentUnlockRecord = {
   id: string
   talentId: string
   cost: number
   unlockedAt: number
+}
+
+export type TalentPointLedgerEntry = TalentPointRecord | TalentResetLedgerEntry
+
+export type RunTalentState = {
+  selectedBuild: TalentBuildTag
+  selectedTalentIds: string[]
+  rerollsRemaining: number
+  rerollsUsed: number
+  guarantee: {
+    noMainBuildStreak: number
+    mainBuildOffersLv3To4: number
+    lv5GuaranteeConsumed: boolean
+  }
+  lastOfferedCandidateIds: string[]
 }
 
 export type Projectile = {
@@ -500,6 +535,10 @@ export type Projectile = {
     factor: number
     duration: number
   }
+  castId?: string
+  sourceSlotIndex?: number
+  sourceBaseCooldown?: number
+  talentCrystalOverload?: boolean
 }
 
 export type SkillField = {
@@ -525,6 +564,10 @@ export type SkillField = {
   centerStrikeCooldown?: number
   enteredEnemyIds?: string[]
   expired?: boolean
+  castId?: string
+  sourceSlotIndex?: number
+  sourceBaseCooldown?: number
+  talentCrystalOverload?: boolean
 }
 
 export type BeastCompanion = {
@@ -706,12 +749,15 @@ export type GameSnapshot = {
   completedCampaignDifficulties: Record<number, CampaignDifficulty[]>
   talentPoints: number
   talentPointRecords: TalentPointRecord[]
+  talentPointLedger: TalentPointLedgerEntry[]
   lastTalentPointRecord: TalentPointRecord | null
+  talentSchemaVersion: number
   unlockedCampaignDifficulties: Record<number, CampaignDifficulty[]>
   selectedCampaignDifficulty: CampaignDifficulty
   /** @deprecated Legacy save compatibility. Use selectedCampaignDifficulty. */
   selectedDifficulty?: CampaignDifficulty
   unlockedTalentIds: string[]
+  unlockedMetaTalentIds: string[]
   talentUnlockRecords: TalentUnlockRecord[]
   unlockedWeapons: WeaponId[]
   equippedWeaponId: WeaponId | null
@@ -757,6 +803,18 @@ export type GameSnapshot = {
   skillAllocations: SkillAllocations
   contractBoons: Record<ContractBoonTag, number>
   inRunTalentIds: string[]
+  runTalentState: RunTalentState
+  talentCombatState?: {
+    crystalCharge?: {
+      stacks: number
+      ttl: number
+    }
+    crystalOverload?: {
+      stacks: number
+      ttl: number
+      source?: string
+    }
+  }
   inRunRewardRerolls: number
   inRunRewardHistory: {
     noMainBuildStreak: number
@@ -782,4 +840,20 @@ export type GameSnapshot = {
   enemySkillEffects: EnemySkillEffect[]
   bursts: Burst[]
   floatingTexts: FloatingText[]
+  lastTalentCooldownRefund?: {
+    slotIndex: number
+    castId: string
+    skillId: string
+    baseCooldown: number
+    remainingBefore: number
+    refund: number
+    remainingAfter: number
+  }
+  lastTalentMaterialDrop?: {
+    source: 'elite' | 'route-objective'
+    targets: string[]
+    base: EquipmentMaterialInventory
+    multiplier: number
+    final: EquipmentMaterialInventory
+  }
 }
