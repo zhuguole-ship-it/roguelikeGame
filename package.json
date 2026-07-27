@@ -9,6 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run --no-file-parallelism --maxWorkers=1",
+    "sync:godot:homepage": "node scripts/sync_godot_homepage_layout.mjs",
+    "sync:godot:hellhound": "node scripts/sync_godot_hellhound_assets.mjs",
     "check": "pnpm run build && pnpm run test"
   },
   "dependencies": {

@@ -1,10 +1,178 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=5 format=3 uid="uid://1wr5wbg6xy8p"]
 
-[ext_resource type="Script" path="res://scripts/homepage_scene.gd" id="1_scene"]
-[ext_resource type="Script" path="res://scripts/homepage_ui.gd" id="2_ui"]
+[ext_resource type="Script" uid="uid://hjhb2mcidlw3" path="res://scripts/homepage_scene.gd" id="1_scene"]
+[ext_resource type="VideoStream" uid="uid://byqoetlg8oe65" path="res://assets/pixel_contract_hunter_start_screen_960x640.ogv" id="2_bqqt6"]
+[ext_resource type="Script" uid="uid://bmehuj7uwr6gh" path="res://scripts/homepage_ui.gd" id="2_ui"]
+[ext_resource type="Texture2D" uid="uid://cy177e2bi5m8b" path="res://assets/pixel_contract_hunter_start_screen_960x640_poster.png" id="3_poster"]
 
 [node name="MainMenu" type="Node2D"]
 script = ExtResource("1_scene")
 
+[node name="BackgroundVideo" type="VideoStreamPlayer" parent="."]
+offset_right = 960.0
+offset_bottom = 640.0
+stream = ExtResource("2_bqqt6")
+autoplay = true
+expand = true
+loop = true
+
+[node name="BackgroundPoster" type="TextureRect" parent="."]
+offset_right = 960.0
+offset_bottom = 640.0
+mouse_filter = 2
+texture = ExtResource("3_poster")
+
 [node name="UI" type="CanvasLayer" parent="."]
 script = ExtResource("2_ui")
+
+[node name="UIRoot" type="Control" parent="UI"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = -1.0
+offset_bottom = 4.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TitleLabel" type="Label" parent="UI/UIRoot"]
+visible = false
+layout_mode = 0
+offset_top = 22.0
+offset_right = 960.0
+offset_bottom = 82.0
+text = "像素地牢猎人"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SubtitleLabel" type="Label" parent="UI/UIRoot"]
+visible = false
+layout_mode = 0
+offset_top = 86.0
+offset_right = 960.0
+offset_bottom = 122.0
+text = "死亡契约 · 夜林村庄"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="MenuPanel" type="Panel" parent="UI/UIRoot"]
+modulate = Color(1, 1, 1, 0)
+layout_mode = 0
+offset_left = 397.0
+offset_top = 250.0
+offset_right = 555.0
+offset_bottom = 437.0
+
+[node name="StartButton" type="Button" parent="UI/UIRoot/MenuPanel"]
+layout_mode = 0
+offset_left = 7.0
+offset_top = 6.0
+offset_right = 163.0
+offset_bottom = 57.0
+tooltip_text = "开始本局冒险"
+text = "开始游戏"
+
+[node name="CharacterButton" type="Button" parent="UI/UIRoot/MenuPanel"]
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 0.308
+anchor_bottom = 0.308
+offset_left = 7.0
+offset_top = 0.083992
+offset_right = 161.0
+offset_bottom = 40.084
+tooltip_text = "打开角色选择"
+text = "角色选择"
+
+[node name="InventoryButton" type="Button" parent="UI/UIRoot/MenuPanel"]
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 0.546
+anchor_bottom = 0.546
+offset_left = 9.0
+offset_top = 0.0579987
+offset_right = 164.0
+offset_bottom = 49.058
+tooltip_text = "打开物品仓库"
+text = "物品仓库"
+
+[node name="SettingsButton" type="Button" parent="UI/UIRoot/MenuPanel"]
+layout_mode = 0
+offset_left = -3.0
+offset_top = 146.0
+offset_right = 161.0
+offset_bottom = 185.0
+tooltip_text = "打开设置"
+text = "设置"
+
+[node name="StatusPanel" type="Panel" parent="UI/UIRoot"]
+visible = false
+layout_mode = 0
+offset_left = 626.0
+offset_top = 442.0
+offset_right = 930.0
+offset_bottom = 604.0
+
+[node name="StatusTitleLabel" type="Label" parent="UI/UIRoot/StatusPanel"]
+layout_mode = 0
+offset_left = 18.0
+offset_top = 16.0
+offset_right = 286.0
+offset_bottom = 44.0
+text = "当前契约"
+
+[node name="StatusLabel" type="Label" parent="UI/UIRoot/StatusPanel"]
+layout_mode = 0
+offset_left = 18.0
+offset_top = 52.0
+offset_right = 286.0
+offset_bottom = 142.0
+text = "第 1 关 · 死契地牢
+武器：林地短弓
+目标：进入传送门"
+
+[node name="Hotspots" type="Control" parent="UI/UIRoot"]
+anchors_preset = 0
+offset_right = 960.0
+offset_bottom = 640.0
+mouse_filter = 2
+
+[node name="BlacksmithButton" type="Button" parent="UI/UIRoot/Hotspots"]
+self_modulate = Color(1, 1, 1, 0)
+layout_mode = 0
+offset_left = 135.0
+offset_top = 235.0
+offset_right = 263.0
+offset_bottom = 425.0
+tooltip_text = "打开铁匠铺"
+text = "铁匠铺"
+
+[node name="HunterHomeButton" type="Button" parent="UI/UIRoot/Hotspots"]
+self_modulate = Color(1, 1, 1, 0)
+layout_mode = 0
+offset_left = 598.0
+offset_top = 301.0
+offset_right = 751.0
+offset_bottom = 482.0
+tooltip_text = "打开猎手之家"
+text = "猎手之家"
+
+[node name="PortalButton" type="Button" parent="UI/UIRoot/Hotspots"]
+self_modulate = Color(1, 1, 1, 0)
+layout_mode = 0
+offset_left = 803.0
+offset_top = 348.0
+offset_right = 907.0
+offset_bottom = 545.0
+tooltip_text = "进入传送门"
+text = "传送门"
+
+[node name="NoticeBoardButton" type="Button" parent="UI/UIRoot/Hotspots"]
+self_modulate = Color(1, 1, 1, 0)
+layout_mode = 0
+offset_left = 34.0
+offset_top = 459.0
+offset_right = 168.0
+offset_bottom = 611.0
+tooltip_text = "打开告示牌"
+text = "告示牌"

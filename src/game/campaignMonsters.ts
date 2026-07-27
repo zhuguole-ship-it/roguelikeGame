@@ -1,4 +1,5 @@
 import { getCampaignIndex, getCampaignFloor, isBossLevel, isEliteLevel } from './config'
+import { getMonsterDataCard } from './monsterDataCards'
 import type { EnemyKind, EnemyMovementTrait, EnemySkillTrait, SkillBuildTag } from './types'
 
 export type CampaignEnemyArchetype = {
@@ -57,6 +58,35 @@ const enemy = (
   damageMultiplier,
 })
 
+const dataCardEnemy = (
+  id: string,
+  movementTrait: EnemyMovementTrait,
+  skillTrait: EnemySkillTrait,
+  weight: number,
+  tint: string,
+  hpMultiplier = 1,
+  speedMultiplier = 1,
+  damageMultiplier = 1,
+): CampaignEnemyArchetype => {
+  const monsterCard = getMonsterDataCard(id)
+  if (!monsterCard) {
+    throw new Error(`Missing monster data card for campaign archetype "${id}"`)
+  }
+
+  return enemy(
+    monsterCard.archetypeId,
+    monsterCard.name,
+    monsterCard.kind,
+    movementTrait,
+    skillTrait,
+    weight,
+    tint,
+    hpMultiplier,
+    speedMultiplier,
+    damageMultiplier,
+  )
+}
+
 export const CAMPAIGN_MONSTER_THEMES: CampaignMonsterTheme[] = [
   {
     campaign: 1,
@@ -64,7 +94,7 @@ export const CAMPAIGN_MONSTER_THEMES: CampaignMonsterTheme[] = [
     normalPool: [
       enemy('dungeon-skeleton-warrior', '骷髅战士', 'melee', 'direct', 'none', 28, '#c7b79b', 1.05),
       enemy('dungeon-skeleton-archer', '骷髅弓手', 'ranged', 'ranged', 'none', 18, '#9cc7ff', 0.88, 1.04),
-      enemy('dungeon-hellhound', '地狱犬', 'charger', 'charger', 'fire-breath', 16, '#fb7185', 1.08, 1.06),
+      enemy('dungeon-hellhound', '地狱犬', 'charger', 'charger', 'none', 16, '#fb7185', 1.08, 2.03),
       enemy('dungeon-splitting-ooze', '裂变软泥', 'splitter', 'flanker', 'pack-haste', 15, '#94a3b8', 0.78, 1.24),
       enemy('dungeon-explosive-fire-sac', '爆裂火囊怪', 'bomber', 'caster', 'hex-slow', 10, '#67e8f9', 0.95, 0.96),
     ],
@@ -73,17 +103,17 @@ export const CAMPAIGN_MONSTER_THEMES: CampaignMonsterTheme[] = [
       enemy('dungeon-jailer-chief', '腐化狱卒长', 'elite', 'caster', 'hex-slow', 4, '#a78bfa', 1.24, 0.92),
       enemy('dungeon-chain-wraith-elite', '铁链亡魂', 'elite', 'flanker', 'hex-slow', 3, '#67e8f9', 0.95, 1.14),
     ],
-    boss: enemy('dungeon-warden', '地牢典狱长', 'boss', 'charger', 'wall-charge', 1, '#f97316', 1.08, 1),
+    boss: enemy('dungeon-warden', '典狱长', 'boss', 'direct', 'none', 1, '#f97316', 1.08, 1),
   },
   {
     campaign: 2,
     name: '吸血鬼古堡',
     normalPool: [
-      enemy('vampire-servant', '吸血鬼仆从', 'melee', 'flanker', 'life-steal', 24, '#b91c1c', 0.95, 1.18),
-      enemy('blood-bat-swarm', '血蝠群', 'splitter', 'flanker', 'life-steal', 22, '#ef4444', 0.72, 1.34),
-      enemy('blood-swordsman', '血裔剑士', 'charger', 'charger', 'life-steal', 17, '#dc2626', 1.08, 1.08),
-      enemy('blood-mage', '血法师', 'ranged', 'caster', 'hex-slow', 16, '#f43f5e', 0.9, 0.94),
-      enemy('gargoyle', '石像鬼', 'bomber', 'heavy', 'shielded', 10, '#94a3b8', 1.25, 0.86),
+      dataCardEnemy('vampire-thrall', 'flanker', 'life-steal', 24, '#b91c1c', 0.95, 1.18),
+      dataCardEnemy('blood-bat-swarm', 'flanker', 'life-steal', 22, '#ef4444', 0.72, 1.34),
+      dataCardEnemy('bloodline-duelist', 'charger', 'life-steal', 17, '#dc2626', 1.08, 1.08),
+      dataCardEnemy('blood-mage', 'caster', 'hex-slow', 16, '#f43f5e', 0.9, 0.94),
+      dataCardEnemy('gargoyle', 'heavy', 'shielded', 10, '#94a3b8', 1.25, 0.86),
     ],
     elitePool: [
       enemy('blood-noble', '血宴贵族', 'elite', 'flanker', 'life-steal', 5, '#ef4444', 1.08, 1.16),
@@ -96,11 +126,11 @@ export const CAMPAIGN_MONSTER_THEMES: CampaignMonsterTheme[] = [
     campaign: 3,
     name: '狼人黑森林',
     normalPool: [
-      enemy('werewolf-scout', '狼人斥候', 'charger', 'charger', 'pack-haste', 24, '#64748b', 0.92, 1.24),
-      enemy('wolf-pack', '狼群', 'splitter', 'flanker', 'pack-haste', 22, '#94a3b8', 0.74, 1.36),
-      enemy('moonclaw-berserker', '月爪狂战士', 'melee', 'direct', 'pack-haste', 18, '#7c2d12', 1.18, 1.08),
-      enemy('forest-dryad', '森林树妖', 'ranged', 'caster', 'hex-slow', 14, '#84cc16', 1.05, 0.9),
-      enemy('bitten-hunter', '被咬伤的猎人', 'bomber', 'flanker', 'none', 10, '#a16207', 0.96, 1.1),
+      dataCardEnemy('werewolf-scout', 'charger', 'pack-haste', 24, '#64748b', 0.92, 1.24),
+      dataCardEnemy('wolf-pack', 'flanker', 'pack-haste', 22, '#94a3b8', 0.74, 1.36),
+      dataCardEnemy('moonclaw-berserker', 'direct', 'pack-haste', 18, '#7c2d12', 1.18, 1.08),
+      dataCardEnemy('forest-dryad', 'caster', 'hex-slow', 14, '#84cc16', 1.05, 0.9),
+      dataCardEnemy('bitten-hunter', 'flanker', 'none', 10, '#a16207', 0.96, 1.1),
     ],
     elitePool: [
       enemy('silverback-werewolf', '银背狼人', 'elite', 'charger', 'pack-haste', 5, '#93c5fd', 1.04, 1.22),
@@ -113,11 +143,11 @@ export const CAMPAIGN_MONSTER_THEMES: CampaignMonsterTheme[] = [
     campaign: 4,
     name: '女巫沼泽',
     normalPool: [
-      enemy('swamp-witch', '沼泽女巫', 'ranged', 'caster', 'hex-slow', 22, '#a855f7', 0.92, 0.9),
-      enemy('poison-frog', '毒蛙', 'charger', 'charger', 'hex-slow', 20, '#84cc16', 0.82, 1.2),
-      enemy('mud-golem', '烂泥傀儡', 'melee', 'heavy', 'shielded', 18, '#78716c', 1.38, 0.76),
-      enemy('cursed-crow', '诅咒乌鸦', 'splitter', 'flanker', 'hex-slow', 15, '#111827', 0.7, 1.36),
-      enemy('swamp-wraith', '沼泽亡魂', 'bomber', 'caster', 'hex-slow', 12, '#22c55e', 1, 0.92),
+      dataCardEnemy('swamp-witch', 'caster', 'hex-slow', 22, '#a855f7', 0.92, 0.9),
+      dataCardEnemy('poison-frog', 'charger', 'hex-slow', 20, '#84cc16', 0.82, 1.2),
+      dataCardEnemy('mud-golem', 'heavy', 'shielded', 18, '#78716c', 1.38, 0.76),
+      dataCardEnemy('curse-raven', 'flanker', 'hex-slow', 15, '#111827', 0.7, 1.36),
+      dataCardEnemy('swamp-wraith', 'caster', 'hex-slow', 12, '#22c55e', 1, 0.92),
     ],
     elitePool: [
       enemy('poison-mist-witch', '毒雾女巫', 'elite', 'caster', 'hex-slow', 5, '#a855f7', 1, 0.9),
@@ -130,11 +160,11 @@ export const CAMPAIGN_MONSTER_THEMES: CampaignMonsterTheme[] = [
     campaign: 5,
     name: '兽人战争营地',
     normalPool: [
-      enemy('orc-infantry', '兽人步兵', 'melee', 'direct', 'war-drum', 24, '#92400e', 1.14, 0.98),
-      enemy('orc-axe-thrower', '兽人投斧手', 'ranged', 'ranged', 'none', 18, '#d97706', 1, 0.98),
-      enemy('war-drum-shaman', '战鼓萨满', 'bomber', 'caster', 'war-drum', 14, '#f59e0b', 0.96, 0.88),
-      enemy('warg-rider', '座狼骑手', 'charger', 'charger', 'pack-haste', 18, '#78716c', 1.04, 1.2),
-      enemy('orc-shieldguard', '兽人盾卫', 'splitter', 'heavy', 'shielded', 12, '#6b7280', 1.3, 0.78),
+      dataCardEnemy('orc-infantry', 'direct', 'war-drum', 24, '#92400e', 1.14, 0.98),
+      dataCardEnemy('orc-axe-thrower', 'ranged', 'none', 18, '#d97706', 1, 0.98),
+      dataCardEnemy('war-drum-shaman', 'caster', 'war-drum', 14, '#f59e0b', 0.96, 0.88),
+      dataCardEnemy('warg-rider', 'charger', 'pack-haste', 18, '#78716c', 1.04, 1.2),
+      dataCardEnemy('orc-shieldguard', 'heavy', 'shielded', 12, '#6b7280', 1.3, 0.78),
     ],
     elitePool: [
       enemy('war-drum-chief', '战鼓萨满', 'elite', 'caster', 'war-drum', 5, '#f59e0b', 1.05, 0.9),
@@ -147,11 +177,11 @@ export const CAMPAIGN_MONSTER_THEMES: CampaignMonsterTheme[] = [
     campaign: 6,
     name: '精灵失落圣林',
     normalPool: [
-      enemy('fallen-elf-archer', '堕落精灵射手', 'ranged', 'ranged', 'none', 24, '#bef264', 0.82, 1.12),
-      enemy('elf-bladedancer', '精灵剑舞者', 'charger', 'flanker', 'none', 18, '#eab308', 0.9, 1.24),
-      enemy('treant-warden', '树灵守卫', 'melee', 'heavy', 'shielded', 17, '#65a30d', 1.42, 0.74),
-      enemy('starlight-priest', '星辉祭司', 'bomber', 'caster', 'healing', 14, '#fef3c7', 0.86, 0.9),
-      enemy('centaur-ranger', '半人马巡林者', 'splitter', 'ranged', 'none', 14, '#a3e635', 1, 1.08),
+      dataCardEnemy('fallen-elf-archer', 'ranged', 'none', 24, '#bef264', 0.82, 1.12),
+      dataCardEnemy('elf-bladedancer', 'flanker', 'none', 18, '#eab308', 0.9, 1.24),
+      dataCardEnemy('treant-guardian', 'heavy', 'shielded', 17, '#65a30d', 1.42, 0.74),
+      dataCardEnemy('starlight-priest', 'caster', 'healing', 14, '#fef3c7', 0.86, 0.9),
+      dataCardEnemy('centaur-ranger', 'ranged', 'none', 14, '#a3e635', 1, 1.08),
     ],
     elitePool: [
       enemy('elite-bladedancer', '剑舞精英', 'elite', 'flanker', 'none', 5, '#fde047', 0.94, 1.26),
@@ -164,11 +194,11 @@ export const CAMPAIGN_MONSTER_THEMES: CampaignMonsterTheme[] = [
     campaign: 7,
     name: '巨魔与地精矿坑',
     normalPool: [
-      enemy('goblin-demolitionist', '地精爆破手', 'bomber', 'flanker', 'minefield', 23, '#f97316', 0.78, 1.14),
-      enemy('goblin-bomber', '地精投弹兵', 'ranged', 'caster', 'minefield', 18, '#f59e0b', 0.82, 0.94),
-      enemy('troll-miner', '巨魔矿工', 'melee', 'heavy', 'shielded', 18, '#78716c', 1.42, 0.72),
-      enemy('troll-brute', '巨魔蛮兵', 'charger', 'heavy', 'shielded', 14, '#a16207', 1.32, 0.84),
-      enemy('runaway-minecart', '失控矿车', 'splitter', 'charger', 'none', 12, '#94a3b8', 1.06, 1.22),
+      dataCardEnemy('goblin-bomber', 'flanker', 'minefield', 23, '#f97316', 0.78, 1.14),
+      dataCardEnemy('goblin-grenadier', 'caster', 'minefield', 18, '#f59e0b', 0.82, 0.94),
+      dataCardEnemy('troll-miner', 'heavy', 'shielded', 18, '#78716c', 1.42, 0.72),
+      dataCardEnemy('troll-brute', 'heavy', 'shielded', 14, '#a16207', 1.32, 0.84),
+      dataCardEnemy('runaway-minecart', 'charger', 'none', 12, '#94a3b8', 1.06, 1.22),
     ],
     elitePool: [
       enemy('goblin-engineer', '地精工程师', 'elite', 'caster', 'minefield', 5, '#f97316', 0.96, 0.9),
@@ -181,11 +211,11 @@ export const CAMPAIGN_MONSTER_THEMES: CampaignMonsterTheme[] = [
     campaign: 8,
     name: '鱼人潮汐神殿',
     normalPool: [
-      enemy('murloc-warrior', '鱼人战士', 'melee', 'direct', 'none', 24, '#06b6d4', 1, 1.06),
-      enemy('murloc-spearthrower', '鱼人投矛手', 'ranged', 'ranged', 'none', 18, '#38bdf8', 0.88, 1.02),
-      enemy('tide-priest', '潮汐祭司', 'bomber', 'caster', 'hex-slow', 16, '#22d3ee', 0.92, 0.9),
-      enemy('deep-crab-guard', '深海蟹卫', 'splitter', 'heavy', 'shielded', 15, '#0f766e', 1.32, 0.78),
-      enemy('eel-beast', '电鳗怪', 'charger', 'flanker', 'chain-lightning', 12, '#67e8f9', 0.92, 1.2),
+      dataCardEnemy('murloc-warrior', 'direct', 'none', 24, '#06b6d4', 1, 1.06),
+      dataCardEnemy('murloc-spearthrower', 'ranged', 'none', 18, '#38bdf8', 0.88, 1.02),
+      dataCardEnemy('tide-priest', 'caster', 'hex-slow', 16, '#22d3ee', 0.92, 0.9),
+      dataCardEnemy('deep-crab-guard', 'heavy', 'shielded', 15, '#0f766e', 1.32, 0.78),
+      dataCardEnemy('electric-eel', 'flanker', 'chain-lightning', 12, '#67e8f9', 0.92, 1.2),
     ],
     elitePool: [
       enemy('tide-archpriest', '潮汐祭司长', 'elite', 'caster', 'hex-slow', 5, '#22d3ee', 1, 0.9),
@@ -198,11 +228,11 @@ export const CAMPAIGN_MONSTER_THEMES: CampaignMonsterTheme[] = [
     campaign: 9,
     name: '牛头人迷宫',
     normalPool: [
-      enemy('minotaur-charger', '牛头人冲锋兵', 'charger', 'charger', 'wall-charge', 24, '#b45309', 1.2, 1.04),
-      enemy('maze-axeguard', '迷宫斧卫', 'melee', 'heavy', 'shielded', 18, '#92400e', 1.32, 0.82),
-      enemy('centaur-raider', '半人马掠袭者', 'ranged', 'ranged', 'none', 17, '#a16207', 1, 1.08),
-      enemy('maze-priest', '迷宫祭司', 'bomber', 'caster', 'war-drum', 14, '#c084fc', 0.94, 0.9),
-      enemy('stone-guardian', '石像守卫', 'splitter', 'heavy', 'shielded', 12, '#94a3b8', 1.44, 0.68),
+      dataCardEnemy('minotaur-charger', 'charger', 'wall-charge', 24, '#b45309', 1.2, 1.04),
+      dataCardEnemy('maze-axeguard', 'heavy', 'shielded', 18, '#92400e', 1.32, 0.82),
+      dataCardEnemy('centaur-raider', 'ranged', 'none', 17, '#a16207', 1, 1.08),
+      dataCardEnemy('maze-priest', 'caster', 'war-drum', 14, '#c084fc', 0.94, 0.9),
+      dataCardEnemy('stone-guardian', 'heavy', 'shielded', 12, '#94a3b8', 1.44, 0.68),
     ],
     elitePool: [
       enemy('minotaur-gladiator', '牛头人角斗士', 'elite', 'charger', 'wall-charge', 5, '#ef4444', 1.18, 1.08),
@@ -215,11 +245,11 @@ export const CAMPAIGN_MONSTER_THEMES: CampaignMonsterTheme[] = [
     campaign: 10,
     name: '巨龙审判火山',
     normalPool: [
-      enemy('dragonkin-warrior', '龙裔战士', 'melee', 'direct', 'fire-breath', 22, '#f97316', 1.12, 1.04),
-      enemy('fire-whelp', '火焰小龙', 'charger', 'flanker', 'fire-breath', 18, '#fb923c', 0.86, 1.22),
-      enemy('dragonblood-priest', '龙血祭司', 'ranged', 'caster', 'healing', 16, '#f43f5e', 0.92, 0.92),
-      enemy('lava-troll', '熔岩巨魔', 'bomber', 'heavy', 'minefield', 16, '#ea580c', 1.38, 0.74),
-      enemy('enslaved-elite', '被奴役的各族精英', 'splitter', 'flanker', 'war-drum', 12, '#fbbf24', 1.12, 1.08),
+      dataCardEnemy('dragonkin-warrior', 'direct', 'fire-breath', 22, '#f97316', 1.12, 1.04),
+      dataCardEnemy('young-fire-drake', 'flanker', 'fire-breath', 18, '#fb923c', 0.86, 1.22),
+      dataCardEnemy('dragonblood-priest', 'caster', 'healing', 16, '#f43f5e', 0.92, 0.92),
+      dataCardEnemy('lava-troll', 'heavy', 'minefield', 16, '#ea580c', 1.38, 0.74),
+      dataCardEnemy('enslaved-elite', 'flanker', 'war-drum', 12, '#fbbf24', 1.12, 1.08),
     ],
     elitePool: [
       enemy('dragonkin-captain', '龙裔队长', 'elite', 'direct', 'fire-breath', 5, '#f97316', 1.12, 1.08),
@@ -237,8 +267,8 @@ export const CAMPAIGN_LOOT_PROFILES: CampaignLootProfile[] = [
     dropFocus: ['pierce'],
     primaryLootReason: '死契处刑者、穿透直线、基础武器/胸甲/鞋子/戒指',
     recommendedState: 'Lv1-Lv2 主动技能，灰白绿装即可尝试',
-    themeThreat: '史莱姆潮、骷髅队列、地狱犬火焰、骷髅骑士冲锋',
-    bossName: '地牢典狱长',
+    themeThreat: '史莱姆潮、骷髅队列、地狱犬高速撕咬、典狱长 P1/P2',
+    bossName: '典狱长',
     portalHint: '适合刷穿透基础件与死契处刑者套装。',
   },
   {

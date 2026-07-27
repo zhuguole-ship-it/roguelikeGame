@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "source": "godot_homepage/scenes/main_menu.tscn",
+  "generatedAt": "2026-07-10T09:49:38.966Z",
+  "canvas": {
+    "width": 960,
+    "height": 640
+  },
+  "backgroundMedia": {
+    "video": {
+      "source": "godot_homepage/assets/pixel_contract_hunter_start_screen_960x640.ogv",
+      "webSource": "godot_homepage/assets/pixel_contract_hunter_start_screen_960x640.webm",
+      "url": "assets/godot-ui/pixel_contract_hunter_start_screen_960x640.webm",
+      "node": "BackgroundVideo",
+      "autoplay": true,
+      "loop": true,
+      "expand": true
+    },
+    "poster": {
+      "source": "godot_homepage/assets/pixel_contract_hunter_start_screen_960x640_poster.png",
+      "url": "assets/godot-ui/pixel_contract_hunter_start_screen_960x640_poster.png",
+      "node": "BackgroundPoster"
+    }
+  },
+  "clickAreas": [
+    {
+      "id": "blacksmith",
+      "node": "BlacksmithButton",
+      "label": "铁匠铺",
+      "modal": "shop",
+      "zIndex": 10,
+      "rect": {
+        "leftPct": 14.063,
+        "topPct": 36.719,
+        "widthPct": 13.333,
+        "heightPct": 29.688
+      }
+    },
+    {
+      "id": "hunter-home",
+      "node": "HunterHomeButton",
+      "label": "猎手之家",
+      "modal": "hunter-home",
+      "zIndex": 10,
+      "rect": {
+        "leftPct": 62.292,
+        "topPct": 47.031,
+        "widthPct": 15.937,
+        "heightPct": 28.281
+      }
+    },
+    {
+      "id": "notice-board",
+      "node": "NoticeBoardButton",
+      "label": "告示牌",
+      "modal": "guide",
+      "zIndex": 10,
+      "rect": {
+        "leftPct": 3.542,
+        "topPct": 71.719,
+        "widthPct": 13.958,
+        "heightPct": 23.75
+      }
+    },
+    {
+      "id": "portal",
+      "node": "PortalButton",
+      "label": "传送门",
+      "modal": "campaign",
+      "zIndex": 10,
+      "rect": {
+        "leftPct": 83.646,
+        "topPct": 54.375,
+        "widthPct": 10.833,
+        "heightPct": 30.781
+      }
+    },
+    {
+      "id": "character",
+      "node": "CharacterButton",
+      "label": "角色选择",
+      "modal": "character",
+      "zIndex": 20,
+      "rect": {
+        "leftPct": 42.083,
+        "topPct": 48.075,
+        "widthPct": 16.042,
+        "heightPct": 6.25
+      }
+    },
+    {
+      "id": "inventory",
+      "node": "InventoryButton",
+      "label": "物品仓库",
+      "modal": "inventory",
+      "zIndex": 20,
+      "rect": {
+        "leftPct": 42.292,
+        "topPct": 55.025,
+        "widthPct": 16.146,
+        "heightPct": 7.656
+      }
+    },
+    {
+      "id": "settings",
+      "node": "SettingsButton",
+      "label": "设置",
+      "modal": "settings",
+      "zIndex": 20,
+      "rect": {
+        "leftPct": 41.042,
+        "topPct": 61.875,
+        "widthPct": 17.083,
+        "heightPct": 6.094
+      }
+    },
+    {
+      "id": "start",
+      "node": "StartButton",
+      "label": "开始游戏",
+      "modal": "campaign",
+      "zIndex": 20,
+      "rect": {
+        "leftPct": 42.083,
+        "topPct": 40,
+        "widthPct": 16.25,
+        "heightPct": 7.969
+      }
+    }
+  ]
+}

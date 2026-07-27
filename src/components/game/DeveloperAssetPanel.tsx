@@ -22,24 +22,14 @@ import {
   type RuntimeAssetActionOverride,
   type RuntimeAssetDraftConfig,
 } from '../../game/runtimeAssetOverrides'
+import { isLocalDevelopmentRuntime, type LocalRuntimeEnvironment } from '../../game/localRuntime'
 import type { EquipmentItem, EquipmentMaterialInventory } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
 
-type ImportMetaEnvLike = {
-  DEV?: boolean
-  PROD?: boolean
-  MODE?: string
-}
-
-export const isDeveloperAssetPanelVisible = (env: ImportMetaEnvLike = import.meta.env, hostname = typeof window === 'undefined' ? '' : window.location.hostname) => {
-  if (env.PROD) {
-    return false
-  }
-  if (env.DEV || env.MODE === 'test') {
-    return true
-  }
-  return ['localhost', '127.0.0.1', '::1'].includes(hostname)
-}
+export const isDeveloperAssetPanelVisible = (
+  env: LocalRuntimeEnvironment = import.meta.env,
+  hostname?: string,
+) => isLocalDevelopmentRuntime(env, hostname)
 
 const categoryLabels: Record<DeveloperAssetCategory, string> = {
   ordinary: '普通怪',
@@ -58,7 +48,7 @@ const categoryCoverageLabels: Record<DeveloperAssetCategory, string> = {
 const visibleSlotsByCategory: Record<DeveloperAssetCategory, DeveloperAssetSlot[]> = {
   ordinary: ['idle', 'move', 'attack', 'cast', 'skill_1', 'hit', 'death'],
   elite: ['idle', 'move', 'attack', 'cast', 'skill_1', 'skill_2', 'hit', 'death'],
-  boss: ['idle', 'move', 'attack', 'cast', 'skill_1', 'skill_2', 'hit', 'death'],
+  boss: ['idle', 'move', 'attack', 'cast', 'skill_1', 'skill_2', 'skill_3', 'skill_4', 'hit', 'death'],
   beast: ['idle', 'move', 'attack', 'skill_1', 'hit', 'death', 'downed', 'revive', 'leader'],
 }
 
@@ -69,12 +59,24 @@ const qaSlotOrder: DeveloperAssetSlot[] = [
   'cast',
   'skill_1',
   'skill_2',
+  'skill_3',
+  'skill_4',
   'hit',
   'death',
   'downed',
   'revive',
   'leader',
 ]
+
+const getVisibleSlotsForEntity = (entity: DeveloperAssetEntity): DeveloperAssetSlot[] => {
+  const baseSlots = visibleSlotsByCategory[entity.category]
+  const manifestSlots = entity.actions.map((action) => action.slot)
+  return qaSlotOrder.filter((slot) => baseSlots.includes(slot) || manifestSlots.includes(slot))
+}
+
+const isSlotDocumentedForEntity = (entity: DeveloperAssetEntity, slot: DeveloperAssetSlot): boolean => (
+  visibleSlotsByCategory[entity.category].includes(slot) || entity.actions.some((action) => action.slot === slot)
+)
 
 const anchorLabels: Record<DeveloperAssetAnchorName, string> = {
   body: 'body',
@@ -91,6 +93,8 @@ const slotLabels: Record<DeveloperAssetSlot, string> = {
   cast: '施法前摇',
   skill_1: '技能 1',
   skill_2: '技能 2',
+  skill_3: '技能 3',
+  skill_4: '技能 4',
   hit: '受击',
   death: '死亡',
   downed: '倒地',
@@ -501,7 +505,7 @@ const getActionSlotStatus = (
   action: DeveloperAssetAction | undefined,
   options: { dirty?: boolean; source?: AssetConfigSource } = {},
 ): ActionSlotStatus => {
-  const slotDocumented = visibleSlotsByCategory[entity.category].includes(slot)
+  const slotDocumented = isSlotDocumentedForEntity(entity, slot)
   if (!action) {
     return slotDocumented
       ? { label: '缺动作', tone: 'missing', reason: '未配置动作槽', documented: true }
@@ -518,7 +522,7 @@ const getActionSlotStatus = (
     return { label: '配置来源缺失', tone: 'missing', reason: '素材路径未接入', documented: slotDocumented }
   }
 
-  const validationError = action.frameValidation?.find((frame) => frame.errors.length > 0)
+  const validationError = action.frameValidation?.find((frame) => (frame?.errors?.length ?? 0) > 0)
   if (validationError) {
     return { label: '缺帧', tone: 'missing', reason: validationError.errors[0], documented: slotDocumented }
   }
@@ -651,7 +655,7 @@ const PreviewFigure = ({ action, tint, flipped }: { action: DeveloperAssetAction
             style={{ transform: shouldFlip ? 'scaleX(-1)' : undefined }}
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center font-pixel text-[9px] text-[#f4f0d7]" style={{ backgroundColor: tint }}>
+          <div className="flex h-full w-full items-center justify-center font-pixel text-sm text-[#f4f0d7]" style={{ backgroundColor: tint }}>
             预览
           </div>
         )}
@@ -672,7 +676,7 @@ const PreviewFigure = ({ action, tint, flipped }: { action: DeveloperAssetAction
           />
         ) : null)}
       </div>
-      <div className="absolute bottom-4 left-5 right-5 flex items-center justify-between font-pixel text-[9px] text-[#9dd5ac]">
+      <div className="absolute bottom-4 left-5 right-5 flex items-center justify-between font-pixel text-sm text-[#9dd5ac]">
         <span>战斗比例 {action?.combatScale ?? 1}x</span>
         <span>攻击距离线 / 技能范围线</span>
       </div>
@@ -689,13 +693,13 @@ const CombatSandbox = ({ entity, action, flipped }: { entity: DeveloperAssetEnti
 
   return (
     <div className="relative mt-4 h-44 overflow-hidden border border-[rgba(218,165,71,0.36)] bg-[rgba(4,9,7,0.8)]" data-testid="combat-sandbox-preview">
-      <div className="absolute left-3 top-3 z-10 border border-[rgba(250,204,21,0.35)] bg-[rgba(8,16,11,0.72)] px-2 py-1 font-pixel text-[8px] text-[#facc15]" data-testid="combat-preview-action">
+      <div className="absolute left-3 top-3 z-10 border border-[rgba(250,204,21,0.35)] bg-[rgba(8,16,11,0.72)] px-2 py-1 font-pixel text-xs text-[#facc15]" data-testid="combat-preview-action">
         播放：{action?.label ?? '未选择'}
       </div>
-      <div className="absolute left-1/2 top-1/2 h-14 w-10 -translate-x-1/2 -translate-y-1/2 border border-[#93c5fd] bg-[rgba(147,197,253,0.24)] font-pixel text-[8px] text-[#dbeafe]">
+      <div className="absolute left-1/2 top-1/2 h-14 w-10 -translate-x-1/2 -translate-y-1/2 border border-[#93c5fd] bg-[rgba(147,197,253,0.24)] font-pixel text-xs text-[#dbeafe]">
         玩家
       </div>
-      <div className="absolute left-[68%] top-1/2 h-12 w-8 -translate-y-1/2 border border-[#f87171] bg-[rgba(248,113,113,0.18)] font-pixel text-[8px] text-[#fecaca]">
+      <div className="absolute left-[68%] top-1/2 h-12 w-8 -translate-y-1/2 border border-[#f87171] bg-[rgba(248,113,113,0.18)] font-pixel text-xs text-[#fecaca]">
         目标
       </div>
       <div
@@ -705,7 +709,7 @@ const CombatSandbox = ({ entity, action, flipped }: { entity: DeveloperAssetEnti
         {action?.guideFrame ? <img src={action.guideFrame} alt={`${entity.name} 战斗预览`} className="h-full w-full object-contain [image-rendering:pixelated]" /> : null}
       </div>
       <div className="absolute left-[32%] top-1/2 h-[1px] w-[34%] bg-[#f59e0b]" />
-      <div className="absolute left-[32%] top-[calc(50%-2px)] font-pixel text-[8px] text-[#facc15]">攻击 {entity.attackRange}px</div>
+      <div className="absolute left-[32%] top-[calc(50%-2px)] font-pixel text-xs text-[#facc15]">攻击 {entity.attackRange}px</div>
       <div className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 border border-[#080b0a] bg-[#38bdf8]" style={{ left: projectileLeft, top: projectileTop }} data-testid="projectile-spawn-point" title="弹体出生点" />
       <div className="absolute left-[54%] top-[36%] h-[28%] w-[24%] rounded-none border border-dashed border-[rgba(56,189,248,0.7)]" data-testid="skill-range-preview" />
       {(Object.entries(anchors) as Array<[DeveloperAssetAnchorName, NonNullable<DeveloperAssetAction['anchors']>[DeveloperAssetAnchorName]]>).map(([name, anchor]) => anchor ? (
@@ -1128,7 +1132,7 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
     ? selectedAction.durationSeconds ?? Number((selectedAction.frameCount / Math.max(1, selectedAction.fps)).toFixed(2))
     : 0
   const isDirty = JSON.stringify(draftEntities.get(selectedEntity.id)) !== JSON.stringify(savedEntities.get(selectedEntity.id))
-  const visibleSlotOrder = visibleSlotsByCategory[selectedEntity.category]
+  const visibleSlotOrder = getVisibleSlotsForEntity(selectedEntity)
   const selectedSlotStatusRows = getEntitySlotStatusRows(selectedEntity, { dirty: isDirty, source: configSource })
   const assetQaRows = createAssetQaRows([selectedEntity], {
     selectedEntityId: selectedEntity.id,
@@ -1298,21 +1302,23 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
     }
     setSavedEntities(markSelectedActionSaved)
     setProjectSaveStatus('正在写入项目配置...')
-    void persistRuntimeAssetDraftConfigToProject(savedConfig).then((projectConfig) => {
-      if (!projectConfig) {
+    void persistRuntimeAssetDraftConfigToProject(savedConfig).then((projectResult) => {
+      if (!projectResult) {
         setProjectSaveStatus(otherBlockingIssues.length > 0
           ? `已保存当前动作；整实体仍有 ${otherBlockingIssues.length} 个缺口`
           : '已保存本地草稿，当前环境未写入项目文件')
         setConfigSource('draft')
         return
       }
+      const { config: projectConfig, backupPath } = projectResult
+      const backupNote = backupPath ? `；已备份 ${backupPath}` : ''
       saveRuntimeAssetDraftConfigToStorage()
       setSavedEntities((previous) => applyDraftConfigToEntityMap(previous, projectConfig))
       setDraftEntities((previous) => applyDraftConfigToEntityMap(previous, projectConfig))
       setExportText(JSON.stringify(projectConfig, null, 2))
       setProjectSaveStatus(otherBlockingIssues.length > 0
-        ? `已写入当前动作；整实体仍有 ${otherBlockingIssues.length} 个缺口`
-        : '已写入项目配置')
+        ? `已写入当前动作；整实体仍有 ${otherBlockingIssues.length} 个缺口${backupNote}`
+        : `已写入项目配置${backupNote}`)
       setConfigSource('project')
     }).catch(() => {
       setProjectSaveStatus(otherBlockingIssues.length > 0
@@ -1346,17 +1352,21 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
     })
   }
 
+  if (!isDeveloperAssetPanelVisible()) {
+    return null
+  }
+
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[rgba(2,6,4,0.78)] p-6" role="dialog" aria-label="开发者资产管理后台">
       <div className="h-[88vh] w-[min(1500px,96vw)] overflow-hidden border-2 border-[rgba(157,213,172,0.45)] bg-[rgba(9,22,15,0.98)] p-5 shadow-[0_0_0_1px_rgba(244,240,215,0.08),0_18px_0_rgba(0,0,0,0.3)]">
         <header className="flex items-start justify-between gap-4 border-b border-[rgba(157,213,172,0.22)] pb-4">
           <div>
-            <p className="font-pixel text-[8px] text-[#9dd5ac]">开发者后台</p>
+            <p className="font-pixel text-sm text-[#9dd5ac]">开发者后台</p>
             <h2 className="mt-2 font-pixel text-[18px] text-[#f4f0d7]">{panelTab === 'assets' ? '资产管理' : panelTab === 'boss-e2e' ? 'Boss E2E' : panelTab === 'reforge-qa' ? '重铸 QA' : 'Talent E2E'}</h2>
             <div className="mt-3 flex gap-2">
               <button
                 type="button"
-                className={`border px-3 py-2 font-pixel text-[8px] ${panelTab === 'assets' ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.24)] text-[#9dd5ac]'}`}
+                className={`border px-3 py-2 font-pixel text-sm ${panelTab === 'assets' ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.24)] text-[#9dd5ac]'}`}
                 data-testid="developer-tab-assets"
                 onClick={() => setPanelTab('assets')}
               >
@@ -1364,7 +1374,7 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
               </button>
               <button
                 type="button"
-                className={`border px-3 py-2 font-pixel text-[8px] ${panelTab === 'boss-e2e' ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.24)] text-[#9dd5ac]'}`}
+                className={`border px-3 py-2 font-pixel text-sm ${panelTab === 'boss-e2e' ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.24)] text-[#9dd5ac]'}`}
                 data-testid="developer-tab-boss-e2e"
                 onClick={() => setPanelTab('boss-e2e')}
               >
@@ -1372,7 +1382,7 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
               </button>
               <button
                 type="button"
-                className={`border px-3 py-2 font-pixel text-[8px] ${panelTab === 'reforge-qa' ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.24)] text-[#9dd5ac]'}`}
+                className={`border px-3 py-2 font-pixel text-sm ${panelTab === 'reforge-qa' ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.24)] text-[#9dd5ac]'}`}
                 data-testid="developer-tab-reforge-qa"
                 onClick={() => setPanelTab('reforge-qa')}
               >
@@ -1380,7 +1390,7 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
               </button>
               <button
                 type="button"
-                className={`border px-3 py-2 font-pixel text-[8px] ${panelTab === 'talent-e2e' ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.24)] text-[#9dd5ac]'}`}
+                className={`border px-3 py-2 font-pixel text-sm ${panelTab === 'talent-e2e' ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.24)] text-[#9dd5ac]'}`}
                 data-testid="developer-tab-talent-e2e"
                 onClick={() => setPanelTab('talent-e2e')}
               >
@@ -1389,7 +1399,7 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 font-pixel text-[9px] text-[#9dd5ac]">
+            <label className="flex items-center gap-2 font-pixel text-sm text-[#9dd5ac]">
               生命无限
               <input
                 type="checkbox"
@@ -1397,7 +1407,7 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
                 onChange={(event) => updateDebugControls({ infiniteHealth: event.currentTarget.checked })}
               />
             </label>
-            <label className="flex items-center gap-2 font-pixel text-[9px] text-[#9dd5ac]">
+            <label className="flex items-center gap-2 font-pixel text-sm text-[#9dd5ac]">
               不攻击
               <input
                 type="checkbox"
@@ -1405,7 +1415,7 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
                 onChange={(event) => updateDebugControls({ disableAttacks: event.currentTarget.checked })}
               />
             </label>
-            <button type="button" className="border-2 border-[#080b0a] bg-[#f59e0b] px-5 py-3 font-pixel text-[10px] text-[#231306]" onClick={onClose}>
+            <button type="button" className="border-2 border-[#080b0a] bg-[#f59e0b] px-5 py-3 font-pixel text-sm text-[#231306]" onClick={onClose}>
               关闭
             </button>
           </div>
@@ -1431,7 +1441,7 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
                 <button
                   key={key}
                   type="button"
-                  className={`border px-2 py-2 font-pixel text-[8px] ${category === key ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.2)] text-[#9dd5ac]'}`}
+                  className={`border px-2 py-2 font-pixel text-sm ${category === key ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.2)] text-[#9dd5ac]'}`}
                   data-testid={`asset-category-${key}`}
                   onClick={() => selectCategory(key)}
                 >
@@ -1439,7 +1449,7 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
                 </button>
               ))}
             </div>
-            <div className="mt-3 space-y-1 border border-[rgba(157,213,172,0.16)] p-2 font-pixel text-[7px] text-[#9dd5ac]" data-testid="asset-coverage-summary">
+            <div className="mt-3 space-y-1 border border-[rgba(157,213,172,0.16)] p-2 font-pixel text-xs leading-5 text-[#9dd5ac]" data-testid="asset-coverage-summary">
               {categoryCoverageCounts.map(({ category: key, count }) => (
                 <p key={key}>{categoryCoverageLabels[key]}：{count}</p>
               ))}
@@ -1456,9 +1466,9 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
                     setSelectedSlot(entity.actions[0]?.slot ?? 'idle')
                   }}
                 >
-                  <span className="block text-[10px] text-[#f4f0d7]">{entity.name}</span>
-                  <span className="mt-1 block text-[7px] text-[#93c5fd]">{entity.id}</span>
-                  <span className="mt-2 block text-[8px] text-[#9dd5ac]">状态：{getDeveloperAssetStatus(entity)}</span>
+                  <span className="block text-sm text-[#f4f0d7]">{entity.name}</span>
+                  <span className="mt-2 block break-words text-xs leading-5 text-[#93c5fd]">{entity.id}</span>
+                  <span className="mt-2 block text-xs leading-5 text-[#9dd5ac]">状态：{getDeveloperAssetStatus(entity)}</span>
                 </button>
               ))}
             </div>
@@ -1467,25 +1477,25 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
           <main className="min-w-0 overflow-y-auto border border-[rgba(157,213,172,0.2)] p-4">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="font-pixel text-[8px] text-[#9dd5ac]">{selectedEntity.categoryLabel}</p>
+                <p className="font-pixel text-sm text-[#9dd5ac]">{selectedEntity.categoryLabel}</p>
                 <h3 className="mt-2 font-pixel text-[18px] text-[#f4f0d7]">{selectedEntity.name}</h3>
-                <p className="mt-2 font-pixel text-[8px] text-[#93c5fd]" data-testid="asset-selected-identity">
+                <p className="mt-2 break-words font-pixel text-sm leading-6 text-[#93c5fd]" data-testid="asset-selected-identity">
                   ID：{selectedEntity.id} · 类型：{selectedEntity.categoryLabel} · 来源：{isDirty ? '草稿未保存' : configSourceLabels[configSource]}
                 </p>
-                <p className="mt-3 font-pixel text-[9px] leading-5 text-[#9dd5ac]">{selectedEntity.notes}</p>
+                <p className="mt-3 font-pixel text-sm leading-6 text-[#9dd5ac]">{selectedEntity.notes}</p>
               </div>
               <div className="flex gap-2">
-                <button type="button" className="border border-[rgba(218,165,71,0.55)] px-3 py-2 font-pixel text-[8px] text-[#facc15]" onClick={() => setFlipped((value) => !value)}>
+                <button type="button" className="border border-[rgba(218,165,71,0.55)] px-3 py-2 font-pixel text-sm text-[#facc15]" onClick={() => setFlipped((value) => !value)}>
                   {flipped ? '朝左' : '朝右'}
                 </button>
-                <button type="button" className="border border-[rgba(218,165,71,0.55)] px-3 py-2 font-pixel text-[8px] text-[#facc15]" onClick={() => setShowSandbox((value) => !value)}>
+                <button type="button" className="border border-[rgba(218,165,71,0.55)] px-3 py-2 font-pixel text-sm text-[#facc15]" onClick={() => setShowSandbox((value) => !value)}>
                   战斗实测预览
                 </button>
               </div>
             </div>
 
             <section className="mt-5">
-              <h4 className="font-pixel text-[11px] text-[#f4f0d7]">动作槽位</h4>
+              <h4 className="font-pixel text-base text-[#f4f0d7]">动作槽位</h4>
               <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-3">
                 {visibleSlotOrder.map((slot) => {
                   const action = selectedEntity.actions.find((item) => item.slot === slot)
@@ -1494,12 +1504,12 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
                     <button
                       key={slot}
                       type="button"
-                      className={`min-w-0 border px-3 py-2 text-left font-pixel text-[8px] ${selectedSlot === slot ? 'border-[#facc15] text-[#facc15]' : action ? 'border-[rgba(157,213,172,0.2)] text-[#9dd5ac]' : 'border-[rgba(157,213,172,0.16)] text-[rgba(157,213,172,0.58)]'}`}
+                      className={`min-w-0 border px-3 py-2 text-left font-pixel text-sm ${selectedSlot === slot ? 'border-[#facc15] text-[#facc15]' : action ? 'border-[rgba(157,213,172,0.2)] text-[#9dd5ac]' : 'border-[rgba(157,213,172,0.16)] text-[rgba(157,213,172,0.58)]'}`}
                       onClick={() => selectSlot(slot)}
                       data-testid={`asset-action-slot-${slot}`}
                     >
                       <span className="block">{slot} {action ? action.frameCount : '缺动作'}</span>
-                      <span className={`mt-1 block text-[7px] ${slotStatus.tone === 'complete' ? 'text-[#86efac]' : slotStatus.tone === 'manual' ? 'text-[#facc15]' : slotStatus.tone === 'draft' ? 'text-[#facc15]' : 'text-[#f87171]'}`}>
+                      <span className={`mt-2 block text-xs leading-5 ${slotStatus.tone === 'complete' ? 'text-[#86efac]' : slotStatus.tone === 'manual' ? 'text-[#facc15]' : slotStatus.tone === 'draft' ? 'text-[#facc15]' : 'text-[#f87171]'}`}>
                         {slotStatus.label} · {slotStatus.reason}
                       </span>
                     </button>
@@ -1508,7 +1518,7 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-3" data-testid="asset-slot-qa-state">
                 {selectedSlotStatusRows.map(({ slot, status }) => (
-                  <div key={`qa-${slot}`} className="border border-[rgba(157,213,172,0.18)] px-2 py-2 font-pixel text-[7px] text-[#9dd5ac]">
+                  <div key={`qa-${slot}`} className="border border-[rgba(157,213,172,0.18)] px-2 py-2 font-pixel text-xs leading-5 text-[#9dd5ac]">
                     <span className="block text-[#f4f0d7]">{slotLabels[slot]}</span>
                     <span className={status.tone === 'complete' ? 'text-[#86efac]' : status.documented ? status.tone === 'manual' ? 'text-[#facc15]' : 'text-[#f87171]' : 'text-[#93c5fd]'}>
                       {status.label}
@@ -1521,8 +1531,8 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
 
             <section className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_220px] 2xl:grid-cols-[minmax(0,1fr)_260px]">
               <div className="min-w-0 border border-[rgba(157,213,172,0.2)] p-4">
-                <h4 className="font-pixel text-[11px] text-[#f4f0d7]">{selectedAction?.label ?? '未选择动作'}</h4>
-                <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 font-pixel text-[8px] text-[#9dd5ac]">
+                <h4 className="font-pixel text-base text-[#f4f0d7]">{selectedAction?.label ?? '未选择动作'}</h4>
+                <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 font-pixel text-sm text-[#9dd5ac]">
                   <dt>动作名称</dt>
                   <dd>
                     <input
@@ -1559,13 +1569,13 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
                   <dd>
                     <input
                       aria-label="批量选择动作素材帧"
-                      className="w-full border border-[rgba(157,213,172,0.22)] bg-[#08100b] px-2 py-1 text-[#f4f0d7] file:mr-2 file:border-0 file:bg-[#f59e0b] file:px-2 file:py-1 file:font-pixel file:text-[8px] file:text-[#231306]"
+                      className="w-full border border-[rgba(157,213,172,0.22)] bg-[#08100b] px-2 py-1 text-[#f4f0d7] file:mr-2 file:border-0 file:bg-[#f59e0b] file:px-2 file:py-1 file:font-pixel file:text-xs file:text-[#231306]"
                       type="file"
                       accept="image/png,image/webp,image/jpeg"
                       multiple
                       onChange={(event) => importActionFrames(event.currentTarget.files)}
                     />
-                    <span className="mt-1 block text-[7px] text-[#9dd5ac]">
+                    <span className="mt-2 block text-xs leading-5 text-[#9dd5ac]">
                       需要 {selectedAction?.frameCount ?? 1} 张；已选 {selectedAction?.frameUrls?.filter(Boolean).length ?? 0} 张
                     </span>
                   </dd>
@@ -1577,15 +1587,15 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
                         <span className="flex items-center gap-2">
                           <input
                             aria-label={`替换第 ${index + 1} 帧`}
-                            className="min-w-0 flex-1 border border-[rgba(157,213,172,0.22)] bg-[#08100b] px-2 py-1 text-[#f4f0d7] file:mr-2 file:border-0 file:bg-[#f59e0b] file:px-2 file:py-1 file:font-pixel file:text-[8px] file:text-[#231306]"
+                            className="min-w-0 flex-1 border border-[rgba(157,213,172,0.22)] bg-[#08100b] px-2 py-1 text-[#f4f0d7] file:mr-2 file:border-0 file:bg-[#f59e0b] file:px-2 file:py-1 file:font-pixel file:text-xs file:text-[#231306]"
                             type="file"
                             accept="image/png,image/webp,image/jpeg"
                             onChange={(event) => importSingleActionFrame(index, event.currentTarget.files?.[0])}
                           />
-                          <span className="w-14 truncate text-[7px] text-[#facc15]">{frameUrl ? '已配置' : '缺帧'}</span>
+                          <span className="w-16 truncate text-xs text-[#facc15]">{frameUrl ? '已配置' : '缺帧'}</span>
                         </span>
                         {selectedAction?.frameValidation?.[index] ? (
-                          <span className={`col-span-2 text-[7px] ${selectedAction.frameValidation[index].errors.length ? 'text-[#f87171]' : 'text-[#9dd5ac]'}`}>
+                          <span className={`col-span-2 text-xs leading-5 ${selectedAction.frameValidation[index].errors.length ? 'text-[#f87171]' : 'text-[#9dd5ac]'}`}>
                             {selectedAction.frameValidation[index].errors[0] ?? selectedAction.frameValidation[index].warnings[0] ?? `${selectedAction.frameValidation[index].width ?? '?'}x${selectedAction.frameValidation[index].height ?? '?'}`}
                           </span>
                         ) : null}
@@ -1730,36 +1740,36 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
                   </dd>
                 </dl>
                 {actionDraftWarnings.length > 0 ? (
-                  <div className="mt-3 space-y-1 border border-[rgba(250,204,21,0.28)] p-2 font-pixel text-[8px] text-[#facc15]" data-testid="action-draft-warnings">
+                  <div className="mt-3 space-y-1 border border-[rgba(250,204,21,0.28)] p-2 font-pixel text-sm leading-6 text-[#facc15]" data-testid="action-draft-warnings">
                     {actionDraftWarnings.map((warning) => <p key={warning}>{warning}</p>)}
                   </div>
                 ) : null}
-                <p className="mt-3 font-pixel text-[8px] leading-4 text-[#9dd5ac]">
+                <p className="mt-3 font-pixel text-sm leading-6 text-[#9dd5ac]">
                   保存前会拦截 ERROR；MANUAL 待人工验收后再提交 review。
                 </p>
                 {projectSaveStatus ? (
-                  <p className="mt-2 font-pixel text-[8px] text-[#facc15]" data-testid="asset-project-save-status">{projectSaveStatus}</p>
+                  <p className="mt-2 font-pixel text-sm text-[#facc15]" data-testid="asset-project-save-status">{projectSaveStatus}</p>
                 ) : null}
                 {manualIssues.length > 0 ? (
-                  <p className="mt-2 font-pixel text-[8px] text-[#facc15]" data-testid="asset-manual-qa">
+                  <p className="mt-2 font-pixel text-sm text-[#facc15]" data-testid="asset-manual-qa">
                     待人工验收：{manualIssues.map((issue) => issue.message).join(' / ')}
                   </p>
                 ) : null}
                 <div className="mt-4 flex gap-2">
-                  <button type="button" className="border border-[#facc15] px-3 py-2 font-pixel text-[8px] text-[#facc15]" data-testid="asset-save-draft" onClick={saveDraft}>
+                  <button type="button" className="border border-[#facc15] px-3 py-2 font-pixel text-sm text-[#facc15]" data-testid="asset-save-draft" onClick={saveDraft}>
                     保存并应用到战斗
                   </button>
-                  <button type="button" className="border border-[rgba(157,213,172,0.3)] px-3 py-2 font-pixel text-[8px] text-[#9dd5ac]" data-testid="asset-rollback-draft" onClick={rollbackDraft}>
+                  <button type="button" className="border border-[rgba(157,213,172,0.3)] px-3 py-2 font-pixel text-sm text-[#9dd5ac]" data-testid="asset-rollback-draft" onClick={rollbackDraft}>
                     回滚
                   </button>
-                  <button type="button" className="border border-[rgba(157,213,172,0.3)] px-3 py-2 font-pixel text-[8px] text-[#9dd5ac]" data-testid="asset-export-current-entity" onClick={exportDraftConfig}>
+                  <button type="button" className="border border-[rgba(157,213,172,0.3)] px-3 py-2 font-pixel text-sm text-[#9dd5ac]" data-testid="asset-export-current-entity" onClick={exportDraftConfig}>
                     导出当前实体
                   </button>
-                  {isDirty ? <span className="font-pixel text-[8px] text-[#facc15]" data-testid="asset-draft-dirty">草稿未保存</span> : null}
+                  {isDirty ? <span className="font-pixel text-sm text-[#facc15]" data-testid="asset-draft-dirty">草稿未保存</span> : null}
                 </div>
                 {exportText ? (
                   <textarea
-                    className="mt-3 h-28 w-full border border-[rgba(157,213,172,0.22)] bg-[#08100b] p-2 font-mono text-[8px] text-[#9dd5ac]"
+                    className="mt-3 h-28 w-full border border-[rgba(157,213,172,0.22)] bg-[#08100b] p-2 font-mono text-xs leading-5 text-[#9dd5ac]"
                     data-testid="asset-config-export"
                     readOnly
                     value={exportText}
@@ -1773,35 +1783,35 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
           </main>
 
           <aside className="min-w-0 overflow-y-auto border border-[rgba(157,213,172,0.2)] p-4">
-            <h4 className="font-pixel text-[12px] text-[#f4f0d7]">配置状态</h4>
+            <h4 className="font-pixel text-base text-[#f4f0d7]">配置状态</h4>
             <div className="mt-3 space-y-2" data-testid="asset-config-state">
-              <div className="border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-[8px] text-[#9dd5ac]">
+              <div className="border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-sm leading-6 text-[#9dd5ac]">
                 来源：{configSourceLabels[configSource]}
               </div>
-              <div className="border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-[8px] text-[#9dd5ac]">
+              <div className="border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-sm leading-6 text-[#9dd5ac]">
                 实体：{isDirty ? '草稿未保存' : '已同步'}
               </div>
-              <div className="border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-[8px] text-[#9dd5ac]">
+              <div className="break-words border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-sm leading-6 text-[#9dd5ac]">
                 项目：{RUNTIME_ASSET_PROJECT_CONFIG_PATH}
               </div>
             </div>
-            <h4 className="font-pixel text-[12px] text-[#f4f0d7]">校验</h4>
+            <h4 className="font-pixel text-base text-[#f4f0d7]">校验</h4>
             <div className="mt-3 space-y-2">
               {issues.length > 0 ? issues.map((issue, index) => (
-                <div key={`${issue.message}-${index}`} className="border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-[8px] text-[#9dd5ac]">
+                <div key={`${issue.message}-${index}`} className="break-words border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-sm leading-6 text-[#9dd5ac]">
                   <span className={issue.severity === 'error' ? 'text-[#f87171]' : issue.severity === 'manual' ? 'text-[#facc15]' : 'text-[#93c5fd]'}>
                     {issue.severity === 'manual' ? '待人工验收' : issue.severity.toUpperCase()}
                   </span>
                   <span className="ml-2">{issue.actionSlot ? `${issue.actionSlot} · ` : ''}{issue.message}</span>
                 </div>
               )) : (
-                <div className="border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-[8px] text-[#9dd5ac]">校验通过</div>
+                <div className="border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-sm text-[#9dd5ac]">校验通过</div>
               )}
             </div>
-            <h4 className="mt-6 font-pixel text-[12px] text-[#f4f0d7]">缺帧 / 缺动作清单</h4>
+            <h4 className="mt-6 font-pixel text-base text-[#f4f0d7]">缺帧 / 缺动作清单</h4>
             <div className="mt-3 max-h-56 space-y-2 overflow-y-auto" data-testid="asset-gap-list">
               {assetQaRows.length > 0 ? assetQaRows.map((row) => (
-                <div key={`${row.entityId}-${row.slot}-${row.status.label}`} className="border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-[7px] leading-4 text-[#9dd5ac]" data-testid={`asset-gap-row-${row.entityId}-${row.slot}`}>
+                <div key={`${row.entityId}-${row.slot}-${row.status.label}`} className="break-words border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-xs leading-5 text-[#9dd5ac]" data-testid={`asset-gap-row-${row.entityId}-${row.slot}`}>
                   <div className="grid grid-cols-2 gap-2">
                     <AssetGapField row={row} field="entity-id" label="实体 ID" value={row.entityId} />
                     <AssetGapField row={row} field="entity-name" label="实体名称" value={row.entityName} />
@@ -1819,13 +1829,13 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
                   </div>
                 </div>
               )) : (
-                <div className="border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-[8px] text-[#9dd5ac]">当前筛选实体无缺帧 / 缺动作</div>
+                <div className="border border-[rgba(157,213,172,0.18)] p-3 font-pixel text-sm text-[#9dd5ac]">当前筛选实体无缺帧 / 缺动作</div>
               )}
             </div>
-            <h4 className="mt-6 font-pixel text-[12px] text-[#f4f0d7]">锚点</h4>
+            <h4 className="mt-6 font-pixel text-base text-[#f4f0d7]">锚点</h4>
             <div className="mt-3 grid grid-cols-1 gap-2">
               {(Object.entries(selectedAction?.anchors ?? {}) as Array<[DeveloperAssetAnchorName, NonNullable<DeveloperAssetAction['anchors']>[DeveloperAssetAnchorName]]>).map(([name, anchor]) => anchor ? (
-                <div key={name} className="border border-[rgba(157,213,172,0.18)] p-2 font-pixel text-[8px] text-[#9dd5ac]">
+                <div key={name} className="break-words border border-[rgba(157,213,172,0.18)] p-2 font-pixel text-sm leading-6 text-[#9dd5ac]">
                   {anchorLabels[name]} · {anchor.label} · {Math.round(anchor.x * 100)} / {Math.round(anchor.y * 100)}
                 </div>
               ) : null)}

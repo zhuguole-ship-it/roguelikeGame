@@ -3,25 +3,85 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CAMPAIGN_MONSTER_THEMES, getCampaignLootProfile } from '../../game/campaignMonsters'
 import { createInitialSnapshot } from '../../game/engine'
+import { developerAssetEntities } from '../../game/assetManifest'
+import {
+  C1_SLIME_VARIANT_ACTIONS,
+  getC1SlimeVariantFrameUrls,
+  type C1SlimeVariantAssetId,
+  type C1SlimeVariantActionSlot,
+} from '../../game/c1SlimeVariantAssetFrames'
+import { DUNGEON_WARDEN_ACTIONS, getDungeonWardenFrameUrls } from '../../game/dungeonWardenAssetFrames'
+import { CORROSIVE_SLIME_ACTIONS, getCorrosiveSlimeFrameUrls } from '../../game/corrosiveSlimeAssetFrames'
+import { getHellhoundImage2FrameUrls } from '../../game/hellhoundAssetFrames'
+import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
+import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
 import {
   MONSTER_SPRITE_ATLASES,
+  CORROSIVE_SLIME_SPRITE_ATLAS,
   SKELETON_ARCHER_SPRITE_ATLAS,
   SKELETON_WARRIOR_SPRITE_ATLAS,
   getMonsterSpriteAtlasForEnemy,
 } from '../../game/sprites'
-import { useGameStore } from '../../store/useGameStore'
+import { SKELETON_WARRIOR_PT_ACTIONS, getSkeletonWarriorPtFrameUrls } from '../../game/skeletonWarriorPtAssetFrames'
+import { RUN_TALENT_NODE_BY_ID } from '../../game/talents'
+import { restorePersistedGameState, useGameStore } from '../../store/useGameStore'
 import { GameOverlay } from './GameOverlay'
 
 afterEach(() => {
   vi.restoreAllMocks()
-  useGameStore.setState({ ...createInitialSnapshot() })
+  useGameStore.setState({ ...createInitialSnapshot(), metaTalentRanks: {} })
 })
 
 describe('GameOverlay', () => {
+  it('renders a non-formal test failure screen instead of the formal settlement overlay', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.localBattleTest = {
+      active: true,
+      status: 'failed',
+      monsterConfig: [{ entityId: 'dungeon-warden', count: 1 }],
+      spawnedEnemyIds: ['local-test-warden'],
+    }
+    snapshot.message = '本地战斗测试：玩家倒下，未产生收益；退出测试可回到首页'
+    useGameStore.setState(snapshot)
+
+    render(<GameOverlay />)
+
+    expect(screen.getByTestId('local-battle-failed')).toBeTruthy()
+    expect(screen.getByText('本地战斗测试结束')).toBeTruthy()
+    expect(screen.getByText(/未产生正式收益、掉落、天赋点或存档记录/)).toBeTruthy()
+    expect(screen.getByTestId('local-battle-exit-after-failure')).toBeTruthy()
+    expect(screen.queryByText('冒险结束')).toBeNull()
+    expect(screen.queryByText('对局结算')).toBeNull()
+    expect(screen.queryByText('历史排行')).toBeNull()
+    expect(screen.queryByText(/本局奖励/)).toBeNull()
+    expect(screen.queryByText(/天赋余额/)).toBeNull()
+
+    fireEvent.click(screen.getByTestId('local-battle-exit-after-failure'))
+
+    expect(useGameStore.getState().phase).toBe('idle')
+    expect(useGameStore.getState().localBattleTest).toBeUndefined()
+  })
+
+  it('keeps the formal settlement overlay for a normal game-over state', () => {
+    useGameStore.setState({ ...createInitialSnapshot('game-over'), message: '正式对局结束' })
+
+    render(<GameOverlay />)
+
+    expect(screen.getByText('冒险结束')).toBeTruthy()
+    expect(screen.getByText('对局结算')).toBeTruthy()
+    expect(screen.queryByTestId('local-battle-failed')).toBeNull()
+  })
+
   it('shows the village menu and opens click-based village interactions', () => {
     useGameStore.setState({ ...createInitialSnapshot('idle') })
 
     render(<GameOverlay />)
+
+    const defaultBackgroundVideo = screen.getByTestId('godot-village-background-video')
+    expect(defaultBackgroundVideo.getAttribute('src')).toContain('assets/godot-ui/pixel_contract_hunter_start_screen_960x640.webm')
+    expect(defaultBackgroundVideo.getAttribute('poster')).toContain('assets/godot-ui/pixel_contract_hunter_start_screen_960x640_poster.png')
+    expect(defaultBackgroundVideo.getAttribute('src')).not.toContain('assets/village-main-menu-concept-image2.png')
+    expect(defaultBackgroundVideo.getAttribute('poster')).not.toContain('assets/village-main-menu-concept-image2.png')
 
     expect(screen.getByRole('button', { name: '开始游戏' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '角色选择' })).toBeTruthy()
@@ -29,25 +89,105 @@ describe('GameOverlay', () => {
     expect(screen.getByRole('button', { name: '设置' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '猎手之家' })).toBeTruthy()
 
+    fireEvent.click(screen.getByRole('button', { name: '传送门' }))
+    expect(screen.getByTestId('campaign-modal-shell').className).toContain('h-[min(92vh,760px)]')
+    expect(screen.getByTestId('campaign-modal-header').className).toContain('shrink-0')
+    expect(screen.getByTestId('campaign-modal-header').className).toContain('bg-[#101913]')
+    expect(screen.getByTestId('campaign-modal-scroll').className).toContain('overflow-y-auto')
+    expect(screen.getByTestId('campaign-modal-scroll').className).toContain('flex-1')
+    expect(within(screen.getByTestId('campaign-modal-header')).getByText('关卡')).toBeTruthy()
+    expect(within(screen.getByTestId('campaign-modal-header')).getByRole('button', { name: '关闭' })).toBeTruthy()
+    const campaignShellClass = screen.getByTestId('campaign-modal-shell').className
+    fireEvent.click(within(screen.getByTestId('campaign-modal-header')).getByRole('button', { name: '关闭' }))
+    expect(screen.queryByTestId('campaign-modal-shell')).toBeNull()
+
     fireEvent.click(screen.getByRole('button', { name: '角色选择' }))
+    expect(screen.getByTestId('character-modal-shell').className).toBe(campaignShellClass)
+    expect(screen.getByTestId('character-modal-shell').className).toContain('h-[min(92vh,760px)]')
+    expect(screen.getByTestId('character-modal-header').className).toContain('shrink-0')
+    expect(screen.getByTestId('character-modal-header').className).toContain('bg-[#101913]')
+    expect(screen.getByTestId('character-modal-scroll').className).toContain('overflow-y-auto')
+    expect(screen.getByTestId('character-modal-scroll').className).toContain('flex-1')
+    expect(within(screen.getByTestId('character-modal-header')).getByText('角色选择')).toBeTruthy()
+    expect(within(screen.getByTestId('character-modal-header')).getByRole('button', { name: '关闭' })).toBeTruthy()
     expect(screen.getByText('当前职业：弓箭手')).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    const characterShellClass = screen.getByTestId('character-modal-shell').className
+    fireEvent.click(within(screen.getByTestId('character-modal-header')).getByRole('button', { name: '关闭' }))
     expect(screen.queryByText('当前职业：弓箭手')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
+    expect(screen.getByTestId('inventory-modal-shell').className).toBe(characterShellClass)
+    expect(screen.getByTestId('inventory-modal-shell').className).toContain('h-[min(92vh,760px)]')
+    expect(screen.getByTestId('inventory-modal-header').className).toContain('shrink-0')
+    expect(screen.getByTestId('inventory-modal-header').className).toContain('bg-[#101913]')
+    expect(within(screen.getByTestId('inventory-modal-header')).getByText('仓库')).toBeTruthy()
+    expect(within(screen.getByTestId('inventory-modal-header')).getByRole('button', { name: '关闭' })).toBeTruthy()
+    expect(screen.getByTestId('inventory-modal-scroll').className).toContain('overflow-y-auto')
+    expect(screen.getByTestId('inventory-modal-scroll').className).toContain('flex-1')
+    fireEvent.click(within(screen.getByTestId('inventory-modal-header')).getByRole('button', { name: '关闭' }))
+    expect(screen.queryByTestId('inventory-modal-shell')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
     expect(screen.getByText('图鉴')).toBeTruthy()
+    expect(screen.getByTestId('guide-modal-shell').className).toContain('h-[min(92vh,760px)]')
+    expect(screen.getByTestId('guide-modal-scroll').className).toContain('overflow-y-auto')
+    expect(screen.getByRole('button', { name: '关闭' }).className).toContain('text-sm')
     expect(screen.getByRole('tab', { name: '怪物' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('tab', { name: '怪物' }).className).toContain('text-sm')
     expect(screen.getByRole('tab', { name: '职业' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '技能' })).toBeTruthy()
+    expect(screen.queryByRole('tab', { name: '局内天赋' })).toBeNull()
     expect(screen.queryByText('鹰眼专注')).toBeNull()
     expect(screen.getByText('死契地牢')).toBeTruthy()
     expect(screen.queryByText(/弓箭手技能池/)).toBeNull()
+    expect(screen.queryByTestId('campaign-guide-detail')).toBeNull()
+    expect(screen.queryByRole('button', { name: '详情' })).toBeNull()
+    expect(screen.queryByText('精英 3/6/9/12/15/18/21')).toBeNull()
+    expect(screen.getByLabelText('骷髅战士立绘').querySelector('p')?.className).toContain('text-sm')
+    expect(screen.getByRole('tab', { name: '怪物' }).className).not.toContain('text-[9px]')
+    expect(screen.queryByText('近战 · 基础攻击')).toBeNull()
+
+    fireEvent.click(screen.getByRole('tab', { name: '职业' }))
+    expect(screen.getByRole('tab', { name: '职业' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByTestId('guide-modal-shell').className).toContain('h-[min(92vh,760px)]')
+    expect(screen.getByTestId('guide-modal-scroll').className).toContain('overflow-y-auto')
+    expect(screen.getByText('弓箭手是围绕走位、射程与 Q / E / R 主动技能槽构建的远程职业。')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('tab', { name: '技能' }))
-    expect(screen.getByText('鹰眼专注')).toBeTruthy()
+    expect(screen.getByTestId('guide-modal-shell').className).toContain('h-[min(92vh,760px)]')
+    expect(screen.getByTestId('guide-modal-scroll').className).toContain('overflow-y-auto')
     expect(screen.queryByText(/弓箭手技能池/)).toBeNull()
-    expect(screen.getByText('穿刺箭')).toBeTruthy()
+    const skillShelves = screen.getByTestId('skill-guide-icon-shelves')
+    expect(skillShelves.querySelectorAll('[data-testid^="skill-guide-icon-"]')).toHaveLength(56)
+    expect(screen.getByTestId('skill-guide-image-eagle-eye-focus').getAttribute('src')).toBe(getArcherSkillIconAssetUrl('eagle-eye-focus'))
+    const pierceIcon = screen.getByTestId('skill-guide-icon-pierce-arrow')
+    expect(screen.getByTestId('skill-guide-image-pierce-arrow').getAttribute('src')).toBe(getArcherSkillIconAssetUrl('pierce-arrow'))
+    const pierceTooltip = screen.getByTestId('skill-guide-tooltip-pierce-arrow')
+    expect(pierceTooltip.className).toContain('hidden')
+    expect(pierceTooltip.className).toContain('fixed')
+
+    fireEvent.mouseEnter(pierceIcon)
+    expect(pierceTooltip.className).toContain('block')
+    expect(pierceTooltip.textContent).toContain('穿刺箭')
+    expect(pierceTooltip.textContent).toContain('朝鼠标方向射出高穿透直线箭。')
+    expect(pierceTooltip.textContent).toContain('流派：穿透直线')
+    expect(pierceTooltip.textContent).toContain('Lv.1 伤害')
+    expect(pierceTooltip.textContent).toContain('Lv.5 伤害')
+    expect(pierceTooltip.textContent).toContain('冷却：')
+    fireEvent.mouseLeave(pierceIcon)
+    expect(pierceTooltip.className).toContain('hidden')
+
+    fireEvent.focus(pierceIcon)
+    expect(pierceTooltip.className).toContain('block')
+    fireEvent.blur(pierceIcon)
+    expect(pierceTooltip.className).toContain('hidden')
+
+    fireEvent.focus(pierceIcon)
+    fireEvent.click(pierceIcon)
+    expect(pierceTooltip.className).toContain('block')
+    fireEvent.click(pierceIcon)
+    expect(pierceTooltip.className).toContain('hidden')
 
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
     expect(screen.queryByText('按战役/层数查看')).toBeNull()
@@ -57,12 +197,13 @@ describe('GameOverlay', () => {
     expect(screen.getByText('吸血鬼古堡')).toBeTruthy()
     expect(screen.getByLabelText('骷髅战士立绘')).toBeTruthy()
     expect(screen.getByLabelText('地狱犬立绘')).toBeTruthy()
-    expect(screen.getByLabelText('地牢典狱长（骷髅骑士）立绘')).toBeTruthy()
+    expect(screen.getByLabelText('典狱长立绘')).toBeTruthy()
     expect(screen.queryByText('技能2')).toBeNull()
     expect(screen.queryByText('转阶段')).toBeNull()
-    expect(screen.getByTestId('campaign-guide-detail').textContent).toContain(getCampaignLootProfile(1).primaryLootReason)
-    expect(screen.getByTestId('campaign-guide-detail').textContent).toContain(getCampaignLootProfile(1).recommendedState)
-    expect(screen.getByTestId('campaign-guide-detail').textContent).toContain(getCampaignLootProfile(1).themeThreat)
+    expect(screen.queryByTestId('campaign-guide-detail')).toBeNull()
+    expect(screen.queryByText(getCampaignLootProfile(1).primaryLootReason)).toBeNull()
+    expect(screen.queryByText(getCampaignLootProfile(1).recommendedState)).toBeNull()
+    expect(screen.queryByText(getCampaignLootProfile(1).themeThreat)).toBeNull()
     expect(screen.getByTestId('campaign-guide-1').textContent).not.toContain(getCampaignLootProfile(1).primaryLootReason)
     expect(screen.queryByTestId('campaign-floor-row-1-22')).toBeNull()
 
@@ -82,14 +223,191 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByRole('button', { name: '关闭' }))
     fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
     expect(screen.getByText('历史冒险')).toBeTruthy()
+    expect(screen.queryByText('当前猎人')).toBeNull()
+    expect(screen.queryByText('当前成长')).toBeNull()
+    expect(screen.queryByText('长期成长')).toBeNull()
+    expect(screen.getByRole('tab', { name: '功能天赋' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('tab', { name: '功能天赋' }).className).toContain('text-sm')
+    expect(screen.getByRole('tab', { name: '战斗天赋' }).getAttribute('aria-selected')).toBe('false')
+    expect(screen.getByRole('tab', { name: '战斗天赋' }).className).toContain('text-sm')
+    expect(screen.getByRole('tab', { name: '历史冒险' }).getAttribute('aria-selected')).toBe('false')
+    expect(screen.getByRole('tab', { name: '历史冒险' }).className).toContain('text-sm')
+    expect(screen.getByTestId('hunter-home-talent-balance-label').className).toContain('text-xs')
+    expect(screen.getByTestId('hunter-home-meta-unlocked-label').className).toContain('text-xs')
     expect(screen.getByTestId('hunter-home-talent-balance').textContent).toBe('0')
     expect(screen.getByTestId('hunter-home-meta-unlocked-count').textContent).toBe('0/84')
-    expect(screen.getByTestId('hunter-home-meta-talent-tree').textContent).toContain('meta_common_01')
-    expect(screen.getByTestId('hunter-home-run-talent-panel').textContent).toContain('局内候选')
+    expect(screen.queryByTestId('hunter-home-meta-rerolls')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-run-talent-count')).toBeNull()
+    expect(screen.getByTestId('meta-talent-node-meta_common_01')).toBeTruthy()
+    expect(screen.queryByTestId('meta-talent-tree-tab-common')).toBeNull()
+    expect(screen.queryByTestId('meta-talent-core-tree')).toBeNull()
+    expect(screen.queryByTestId('meta-talent-detail-panel')).toBeNull()
+    expect(screen.getByTestId('meta-talent-shelf')).toBeTruthy()
+    expect(screen.getByTestId('meta-talent-row-common').textContent).toContain('通用')
+    expect(screen.getByTestId('meta-talent-row-death').textContent).toContain('死契处刑')
+    expect(screen.getByTestId('meta-talent-row-blood').textContent).toContain('血羽游侠')
+    expect(screen.getByTestId('meta-talent-row-beast').textContent).toContain('兽王赦令')
+    expect(screen.getByTestId('meta-talent-row-crystal').textContent).toContain('蓝晶契约')
+    expect(screen.getByTestId('meta-talent-row-difficulty').textContent).toContain('四难度')
+    expect(screen.getByTestId('meta-talent-row-campaign').textContent).toContain('关卡')
+    expect(screen.getByTestId('meta-talent-row-endgame').textContent).toContain('终局')
+    for (const rowId of ['common', 'death', 'blood', 'beast', 'crystal', 'difficulty', 'campaign', 'endgame']) {
+      const row = screen.getByTestId(`meta-talent-row-${rowId}`)
+      const header = screen.getByTestId(`meta-talent-row-header-${rowId}`)
+      const title = screen.getByTestId(`meta-talent-row-title-${rowId}`)
+      const progress = screen.getByTestId(`meta-talent-row-progress-${rowId}`)
+      expect(title.parentElement).toBe(progress.parentElement)
+      expect(progress.textContent).toMatch(/\d+\/\d+/)
+      expect(row.className).toContain('bg-transparent')
+      expect(row.className).not.toContain('bg-[rgba(')
+      expect(header.querySelector('[aria-hidden="true"]')).toBeNull()
+    }
+    const metaTalentShelf = screen.getByTestId('meta-talent-shelf')
+    const metaTalentSummaryBar = screen.getByTestId('hunter-home-talent-summary')
+    const firstMetaTalentRow = screen.getByTestId('meta-talent-row-common')
+    expect(metaTalentShelf.firstElementChild).toBe(metaTalentSummaryBar)
+    expect(metaTalentSummaryBar.compareDocumentPosition(firstMetaTalentRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getAllByTestId('hunter-home-talent-summary')).toHaveLength(1)
+    expect(screen.queryByTestId('hunter-home-meta-overview')).toBeNull()
+    expect(screen.queryByTestId('meta-talent-overview-progress')).toBeNull()
+    expect(screen.queryByTestId('meta-talent-overview-flow')).toBeNull()
+    expect(screen.queryByTestId('meta-talent-overview-summary')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-talent-unlock-records')).toBeNull()
+    expect(screen.getByTestId('hunter-home-talent-balance-label').parentElement).toBe(screen.getByTestId('hunter-home-talent-balance').parentElement)
+    expect(screen.getByTestId('hunter-home-meta-unlocked-label').parentElement).toBe(screen.getByTestId('hunter-home-meta-unlocked-count').parentElement)
+    expect(screen.getByTestId('meta-talent-group-common-base').textContent).toContain('契约记忆')
+    expect(screen.getByTestId('meta-talent-node-meta_common_01').getAttribute('data-state')).toBe('unlockable')
+    expect(screen.getByTestId('meta-talent-meta_common_01').textContent).toContain('0/1')
+    expect(screen.getByTestId('meta-talent-node-progress-meta_common_01').parentElement).toBe(screen.getByTestId('meta-talent-meta_common_01'))
+    expect(screen.getByTestId('meta-talent-node-progress-meta_common_01').parentElement).not.toBe(screen.getByTestId('meta-talent-node-meta_common_01'))
+    expect(screen.getByTestId('meta-talent-node-icon-meta_common_01').className).toContain('h-full')
+    expect(screen.getByTestId('meta-talent-node-icon-meta_common_01').className).toContain('w-full')
+    expect(screen.getByTestId('meta-talent-node-label-meta_common_01').className).toContain('hidden')
+    expect(screen.getByTestId('meta-talent-node-progress-meta_common_01').className).toContain('text-[11px]')
+    expect(screen.getByTestId('meta-talent-node-label-meta_common_01').className).not.toContain('text-[7px]')
+    expect(screen.getByTestId('meta-talent-node-progress-meta_common_01').className).not.toContain('text-[7px]')
+    expect(screen.getByTestId('meta-talent-tooltip-meta_common_01').className).toContain('hidden')
+    fireEvent.mouseEnter(screen.getByTestId('meta-talent-node-meta_common_01'))
+    expect(screen.getByTestId('meta-talent-tooltip-meta_common_01').className).toContain('block')
+    expect(screen.getByTestId('meta-talent-tooltip-name-meta_common_01').textContent).toContain('契约记忆')
+    expect(screen.getByTestId('meta-talent-tooltip-id-meta_common_01').textContent).toContain('meta_common_01')
+    expect(screen.getByTestId('meta-talent-tooltip-level-meta_common_01').textContent).toContain('0/1')
+    expect(screen.getByTestId('meta-talent-tooltip-cost-meta_common_01').textContent).toContain('消耗：0 天赋点')
+    expect(screen.getByTestId('meta-talent-tooltip-current-effect-meta_common_01').textContent).toContain('未解锁')
+    expect(screen.getByTestId('meta-talent-tooltip-next-effect-meta_common_01').textContent).toContain('解锁局外天赋系统和天赋点记录。')
+    expect(screen.getByTestId('meta-talent-tooltip-prerequisites-meta_common_01').textContent).toContain('前置条件：无')
+    expect(screen.getByTestId('meta-talent-tooltip-status-meta_common_01').textContent).toContain('可解锁')
+    expect(screen.getByTestId('meta-talent-tooltip-icon-meta_common_01').className).toContain('overflow-hidden')
+    expect(screen.getByTestId('meta-talent-tooltip-icon-meta_common_01').className).toContain('p-0')
+    expect(screen.getByTestId('meta-talent-tooltip-icon-image-meta_common_01').className).toContain('h-full')
+    expect(screen.getByTestId('meta-talent-tooltip-icon-image-meta_common_01').className).toContain('w-full')
+    expect(screen.getByTestId('meta-talent-tooltip-icon-image-meta_common_01').className).toContain('object-cover')
+    expect(screen.getByTestId('meta-talent-tooltip-meta_common_01').className).toContain('fixed')
+    fireEvent.mouseLeave(screen.getByTestId('meta-talent-node-meta_common_01'))
+    expect(screen.getByTestId('meta-talent-node-label-meta_common_01').textContent).not.toContain('meta_common_01')
+    expect(screen.queryByTestId('hunter-home-run-talent-panel')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-run-talent-generate')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-run-talent-reroll')).toBeNull()
     expect(screen.getByTestId('hunter-home-talent-summary').textContent).toContain('重置：200 金币 + 5 流派碎片')
+    expect(screen.queryByTestId('hunter-home-talent-record')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-talent-empty')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-meta-reset-hint')).toBeNull()
     expect(screen.queryByText('完整树与局内候选待确认')).toBeNull()
     expect(screen.queryByText('84 局外天赋待确认')).toBeNull()
     expect(screen.queryByText('40 局内候选待确认')).toBeNull()
+
+    fireEvent.click(screen.getByRole('tab', { name: '战斗天赋' }))
+    expect(screen.getByRole('tab', { name: '功能天赋' }).getAttribute('aria-selected')).toBe('false')
+    expect(screen.getByRole('tab', { name: '战斗天赋' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.queryByTestId('hunter-home-meta-talent-tree')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-talent-summary')).toBeNull()
+    expect(screen.getByTestId('hunter-home-run-talent-tree')).toBeTruthy()
+    expect(screen.getByTestId('run-talent-guide').textContent).toContain('契约定向')
+    const runTalentReadonlyNote = screen.getByText('战斗天赋只在冒险奖励中选择；这里仅作只读预览，不消耗天赋点，也不提供重置或解锁操作。')
+    expect(screen.getAllByText('战斗天赋只在冒险奖励中选择；这里仅作只读预览，不消耗天赋点，也不提供重置或解锁操作。')).toHaveLength(1)
+    expect(screen.getByTestId('run-talent-guide').contains(runTalentReadonlyNote)).toBe(true)
+    const commonRunTalentModule = screen.getByTestId('run-talent-guide-module-common')
+    expect(runTalentReadonlyNote.compareDocumentPosition(commonRunTalentModule) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(commonRunTalentModule.textContent).toContain('通用')
+    expect(screen.getByTestId('run-talent-guide-row-title-common').textContent).toBe('通用')
+    expect(screen.queryByTestId('run-talent-guide-row-progress-common')).toBeNull()
+    expect(screen.getByTestId('run-talent-guide-row-common').textContent).not.toMatch(/\d+\/8/)
+    expect(commonRunTalentModule.textContent).toContain('契约定向')
+    expect(commonRunTalentModule.className).toContain('bg-transparent')
+    expect(commonRunTalentModule.className).not.toContain('grid-cols-2')
+    for (const module of ['common', 'death', 'blood', 'beast', 'crystal']) {
+      expect(screen.queryByTestId(`run-talent-guide-row-progress-${module}`)).toBeNull()
+      expect(screen.getByTestId(`run-talent-guide-row-${module}`).textContent).not.toMatch(/\d+\/8/)
+    }
+    expect(screen.getByTestId('run-talent-guide-shelf-common')).toBeTruthy()
+    expect(screen.getByTestId('run-talent-guide-module-death').textContent).toContain('死契标记')
+    expect(screen.getByTestId('run-talent-guide-module-blood').textContent).toContain('血羽印记')
+    expect(screen.getByTestId('run-talent-guide-module-beast').textContent).toContain('主兽绑定')
+    expect(screen.getByTestId('run-talent-guide-module-crystal').textContent).toContain('蓝晶充能')
+    expect(screen.getByTestId('run-talent-guide-node-run_crystal_05').textContent).toContain('Lv.5')
+    expect(screen.getByTestId('run-talent-guide-icon-run_common_01')).toBeTruthy()
+    expect(screen.getByTestId('run-talent-guide-image-run_common_01').getAttribute('src')).toBe(
+      getRunTalentIconAssetUrl(RUN_TALENT_NODE_BY_ID.get('run_common_01')!),
+    )
+    expect(screen.getByTestId('run-talent-guide-image-run_blood_02').getAttribute('src')).toBe(
+      getRunTalentIconAssetUrl(RUN_TALENT_NODE_BY_ID.get('run_blood_02')!),
+    )
+    expect(screen.getByTestId('run-talent-guide-image-run_blood_02').getAttribute('src')).toContain(encodeURIComponent('流血箭簇.png'))
+    expect(screen.getByTestId('run-talent-guide-image-run_blood_02').getAttribute('src')).not.toContain(encodeURIComponent('流血箭族.png'))
+    expect(screen.queryByText('run_common_01')).toBeNull()
+    const commonRunTalentTooltip = screen.getByTestId('run-talent-guide-tooltip-run_common_01')
+    fireEvent.focus(screen.getByTestId('run-talent-guide-icon-run_common_01'))
+    expect(commonRunTalentTooltip.className).toContain('fixed')
+    expect(commonRunTalentTooltip.className).toContain('block')
+    expect(screen.getByTestId('run-talent-guide-tooltip-image-run_common_01').getAttribute('src')).toBe(
+      getRunTalentIconAssetUrl(RUN_TALENT_NODE_BY_ID.get('run_common_01')!),
+    )
+    expect(commonRunTalentTooltip.textContent).toContain('契约定向')
+    expect(commonRunTalentTooltip.textContent).toContain('等级：Lv.2 · 基础')
+    expect(commonRunTalentTooltip.textContent).toContain('本局后续奖励更容易出现当前流派相关技能 / 装备。')
+    expect(commonRunTalentTooltip.textContent).toContain('标签：流派权重')
+    expect(commonRunTalentTooltip.textContent).toContain('效果：')
+    expect(commonRunTalentTooltip.textContent).not.toContain('run_common_01')
+    expect(commonRunTalentTooltip.textContent).not.toContain('天赋点')
+    expect(commonRunTalentTooltip.textContent).not.toContain('前置条件')
+    expect(commonRunTalentTooltip.textContent).not.toContain('重置天赋')
+    expect(commonRunTalentTooltip.textContent).not.toContain('消耗：')
+    expect(screen.queryByTestId('hunter-home-meta-reset')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-run-talent-generate')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-run-talent-reroll')).toBeNull()
+    expect(screen.queryByRole('button', { name: '选择' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('tab', { name: '历史冒险' }))
+    expect(screen.getByRole('tab', { name: '功能天赋' }).getAttribute('aria-selected')).toBe('false')
+    expect(screen.getByRole('tab', { name: '战斗天赋' }).getAttribute('aria-selected')).toBe('false')
+    expect(screen.getByRole('tab', { name: '历史冒险' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.queryByTestId('hunter-home-meta-talent-tree')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-run-talent-tree')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-talent-summary')).toBeNull()
+    expect(screen.getByText('暂无记录。完成一次冒险后会显示层数与所用技能。')).toBeTruthy()
+  })
+
+  it('uses restored legacy meta talent unlocks for campaign mastery prerequisites', () => {
+    useGameStore.setState({
+      ...restorePersistedGameState({
+        talentPoints: 10,
+        completedCampaignDifficulties: { 1: ['normal'] },
+        unlockedTalentIds: ['meta_common_01'],
+        unlockedMetaTalentIds: [],
+      }),
+    })
+
+    render(<GameOverlay />)
+
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+
+    expect(screen.getByTestId('hunter-home-meta-unlocked-count').textContent).toBe('1/84')
+    expect(screen.getByTestId('meta-talent-node-meta_common_01').getAttribute('data-state')).toBe('full')
+    expect(screen.getByTestId('meta-talent-meta_common_01').textContent).toContain('1/1')
+    expect(screen.getByTestId('meta-talent-node-meta_campaign_01').getAttribute('data-state')).toBe('unlockable')
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_campaign_01'))
+    expect(screen.getByTestId('meta-talent-tooltip-status-meta_campaign_01').textContent).toContain('可解锁')
+    expect(screen.getByTestId('meta-talent-tooltip-status-meta_campaign_01').textContent).not.toContain('契约记忆')
   })
 
   it('shows only confirmed talent point balance and settlement records in hunter home', () => {
@@ -135,14 +453,21 @@ describe('GameOverlay', () => {
 
     expect(screen.getByTestId('hunter-home-talent-balance').textContent).toBe('12')
     expect(screen.getByTestId('hunter-home-meta-unlocked-count').textContent).toBe('0/84')
-    expect(screen.getByTestId('hunter-home-talent-record').textContent).toContain('+12')
-    expect(screen.getByTestId('hunter-home-talent-record').textContent).toContain('第 3 关')
-    expect(screen.getByTestId('hunter-home-talent-record').textContent).toContain('经验 980')
+    expect(screen.queryByTestId('hunter-home-talent-record')).toBeNull()
     expect(screen.getByTestId('hunter-home-meta-talent-tree').textContent).toContain('契约记忆')
-    expect(screen.getByTestId('hunter-home-run-talent-panel').textContent).toContain('死契处刑')
+    expect(screen.getByRole('tab', { name: '功能天赋' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '战斗天赋' })).toBeTruthy()
+    expect(screen.getByTestId('meta-talent-node-icon-meta_common_01').tagName).toBe('IMG')
+    expect(screen.getByTestId('meta-talent-node-icon-meta_common_01').getAttribute('src')).toContain(encodeURIComponent('契约记忆.png'))
+    expect(screen.getByTestId('meta-talent-node-icon-meta_common_02').getAttribute('src')).toContain(encodeURIComponent('初始重绑.png'))
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_common_01'))
+    expect(screen.getByTestId('meta-talent-tooltip-icon-image-meta_common_01').getAttribute('src')).toContain(encodeURIComponent('契约记忆.png'))
+    expect(screen.queryByTestId('hunter-home-run-talent-panel')).toBeNull()
+    expect(screen.getByTestId('meta-talent-row-death')).toBeTruthy()
+    expect(screen.getByTestId('meta-talent-node-meta_death_base_01')).toBeTruthy()
   })
 
-  it('unlocks confirmed meta talents and previews in-run talent candidates from hunter home', () => {
+  it('unlocks confirmed meta talents without exposing in-run talent selection in hunter home', () => {
     const base = createInitialSnapshot('idle')
     useGameStore.setState({
       ...base,
@@ -153,20 +478,124 @@ describe('GameOverlay', () => {
     render(<GameOverlay />)
 
     fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
-    fireEvent.click(within(screen.getByTestId('meta-talent-meta_common_01')).getByRole('button', { name: '解锁' }))
-    fireEvent.click(within(screen.getByTestId('meta-talent-meta_common_02')).getByRole('button', { name: '解锁' }))
+    fireEvent.click(screen.getByTestId('meta-talent-node-meta_common_01'))
+    fireEvent.click(screen.getByTestId('meta-talent-node-meta_common_02'))
 
     expect(screen.getByTestId('hunter-home-talent-balance').textContent).toBe('0')
     expect(screen.getByTestId('hunter-home-meta-unlocked-count').textContent).toBe('2/84')
     expect(useGameStore.getState().unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
     expect(useGameStore.getState().talentUnlockRecords).toHaveLength(2)
+    expect(screen.getByTestId('meta-talent-node-meta_common_01').getAttribute('data-state')).toBe('full')
+    expect(screen.getByTestId('meta-talent-meta_common_01').textContent).toContain('1/1')
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_common_02'))
+    expect(screen.getByTestId('meta-talent-node-meta_common_02').getAttribute('data-state')).toBe('unlocked')
+    expect(screen.getByTestId('meta-talent-meta_common_02').textContent).toContain('1/3')
+    expect(screen.getByTestId('meta-talent-tooltip-next-effect-meta_common_02').textContent).toContain('每局技能奖励可额外重掷 2 次。')
+    expect(screen.getByTestId('meta-talent-tooltip-current-effect-meta_common_02').textContent).toContain('每局技能奖励可额外重掷 1 次。')
+    expect(screen.getByTestId('meta-talent-tooltip-meta_common_02').textContent).not.toContain('reroll-bonus')
+    expect(screen.getByTestId('meta-talent-tooltip-meta_common_02').textContent).not.toContain('skill-reward')
+    expect(screen.queryByTestId('hunter-home-talent-unlock-records')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-run-talent-panel')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-run-talent-generate')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-run-talent-reroll')).toBeNull()
+    expect(screen.queryByTestId('hunter-home-run-talent-candidates')).toBeNull()
+    expect(useGameStore.getState().runTalentState.selectedTalentIds).toEqual([])
+  })
 
-    fireEvent.click(screen.getByTestId('hunter-home-run-talent-generate'))
+  it('shows and upgrades confirmed three-rank meta talents without inflating unlocked node totals', () => {
+    const base = createInitialSnapshot('idle')
+    useGameStore.setState({
+      ...base,
+      talentPoints: 9,
+      unlockedMetaTalentIds: ['meta_common_01'],
+      unlockedTalentIds: ['meta_common_01'],
+      metaTalentRanks: { meta_common_01: 1 },
+    })
 
-    expect(screen.getByTestId('hunter-home-run-talent-candidates').textContent).toContain('Lv5 魂爆初醒')
-    expect(screen.getByTestId('hunter-home-run-talent-candidates').textContent).toContain('保底')
-    fireEvent.click(within(screen.getByTestId('run-talent-candidate-run_death_05')).getByRole('button', { name: '选择' }))
-    expect(useGameStore.getState().runTalentState.selectedTalentIds).toContain('run_death_05')
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+
+    const rerollNode = screen.getByTestId('meta-talent-node-meta_common_02')
+    expect(rerollNode.getAttribute('data-rank')).toBe('0')
+    expect(rerollNode.getAttribute('data-max-rank')).toBe('3')
+    expect(screen.getByTestId('meta-talent-meta_common_02').textContent).toContain('0/3')
+    fireEvent.click(rerollNode)
+    fireEvent.click(rerollNode)
+    fireEvent.click(rerollNode)
+
+    expect(useGameStore.getState().metaTalentRanks).toEqual({ meta_common_01: 1, meta_common_02: 3 })
+    expect(useGameStore.getState().unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
+    expect(screen.getByTestId('hunter-home-meta-unlocked-count').textContent).toBe('2/84')
+    expect(rerollNode.getAttribute('data-state')).toBe('full')
+    expect(screen.getByTestId('meta-talent-meta_common_02').textContent).toContain('3/3')
+    fireEvent.focus(rerollNode)
+    expect(screen.getByTestId('meta-talent-tooltip-current-effect-meta_common_02').textContent).toContain('每局技能奖励可额外重掷 3 次。')
+    expect(screen.getByTestId('meta-talent-tooltip-next-effect-meta_common_02').textContent).toContain('无')
+  })
+
+  it('shows Chinese meta talent effect text without technical tooltip fields', () => {
+    const base = createInitialSnapshot('idle')
+    useGameStore.setState({
+      ...base,
+      unlockedMetaTalentIds: ['meta_common_01', 'meta_common_02', 'meta_common_03', 'meta_common_04'],
+      unlockedTalentIds: ['meta_common_01', 'meta_common_02', 'meta_common_03', 'meta_common_04'],
+    })
+
+    render(<GameOverlay />)
+
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_common_01'))
+    const systemTooltip = screen.getByTestId('meta-talent-tooltip-meta_common_01').textContent ?? ''
+    fireEvent.blur(screen.getByTestId('meta-talent-node-meta_common_01'))
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_common_02'))
+    const rerollTooltip = screen.getByTestId('meta-talent-tooltip-meta_common_02').textContent ?? ''
+    fireEvent.blur(screen.getByTestId('meta-talent-node-meta_common_02'))
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_common_04'))
+    const weightTooltip = screen.getByTestId('meta-talent-tooltip-meta_common_04').textContent ?? ''
+
+    expect(systemTooltip).toContain('解锁局外天赋系统和天赋点记录。')
+    expect(rerollTooltip).toContain('每局技能奖励可额外重掷 1 次。')
+    expect(weightTooltip).toContain('开局流派对应候选权重提高 15%。')
+    expect(`${systemTooltip}${rerollTooltip}${weightTooltip}`).not.toContain('unlock-system')
+    expect(`${systemTooltip}${rerollTooltip}${weightTooltip}`).not.toContain('reroll-bonus')
+    expect(`${systemTooltip}${rerollTooltip}${weightTooltip}`).not.toContain('candidate-weight')
+    expect(`${systemTooltip}${rerollTooltip}${weightTooltip}`).not.toContain('skill-reward')
+    expect(`${systemTooltip}${rerollTooltip}${weightTooltip}`).not.toContain('opening-build')
+    expect(screen.getByTestId('meta-talent-node-label-meta_common_04').textContent).not.toContain('meta_common_04')
+    expect(screen.getByTestId('meta-talent-node-meta_common_04').textContent).not.toContain('前置条件')
+    expect(screen.getByTestId('meta-talent-node-meta_common_04').textContent).not.toContain('锁定原因')
+    expect(screen.queryByTestId('meta-talent-detail-panel')).toBeNull()
+  })
+
+  it('shows every meta talent category row and explains locked icon nodes on focus', () => {
+    const base = createInitialSnapshot('idle')
+    useGameStore.setState({
+      ...base,
+      talentPoints: 12,
+    })
+
+    render(<GameOverlay />)
+
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+
+    expect(screen.getByTestId('meta-talent-row-death').textContent).toContain('死契处刑')
+    expect(screen.getByTestId('meta-talent-group-death-base').textContent).toContain('处刑入门')
+    expect(screen.getByTestId('meta-talent-node-meta_common_01')).toBeTruthy()
+    expect(screen.getByTestId('meta-talent-node-meta_death_base_01').getAttribute('data-state')).toBe('locked')
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_death_base_01'))
+    expect(screen.getByTestId('meta-talent-tooltip-status-meta_death_base_01').textContent).toContain('需要前置')
+    expect(screen.getByTestId('meta-talent-tooltip-prerequisites-meta_death_base_01').textContent).toContain('契约记忆')
+    expect(screen.getByTestId('meta-talent-node-meta_death_base_01').textContent).not.toContain('前置条件')
+    expect(screen.getByTestId('meta-talent-node-meta_death_base_01').textContent).not.toContain('锁定原因')
+
+    fireEvent.click(screen.getByTestId('meta-talent-node-meta_death_base_01'))
+    expect(useGameStore.getState().unlockedMetaTalentIds).toEqual([])
+
+    expect(screen.getByTestId('meta-talent-row-crystal').textContent).toContain('蓝晶契约')
+    expect(screen.getByTestId('meta-talent-group-crystal-base').textContent).toContain('蓝晶入门')
+    expect(screen.getByTestId('meta-talent-node-meta_death_base_01')).toBeTruthy()
+    expect(screen.getByTestId('hunter-home-meta-reset')).toBeTruthy()
   })
 
   it('resets meta talents from hunter home when gold and build shards are available', () => {
@@ -184,10 +613,10 @@ describe('GameOverlay', () => {
     render(<GameOverlay />)
 
     fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
-    fireEvent.click(within(screen.getByTestId('meta-talent-meta_common_01')).getByRole('button', { name: '解锁' }))
-    fireEvent.click(within(screen.getByTestId('meta-talent-meta_common_02')).getByRole('button', { name: '解锁' }))
+    fireEvent.click(screen.getByTestId('meta-talent-node-meta_common_01'))
+    fireEvent.click(screen.getByTestId('meta-talent-node-meta_common_02'))
 
-    expect(screen.getByTestId('hunter-home-meta-reset-hint').textContent).toContain('消耗 200 金币 + 5 流派碎片')
+    expect(screen.queryByTestId('hunter-home-meta-reset-hint')).toBeNull()
     fireEvent.click(screen.getByTestId('hunter-home-meta-reset'))
 
     const state = useGameStore.getState()
@@ -217,7 +646,7 @@ describe('GameOverlay', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
     expect((screen.getByTestId('hunter-home-meta-reset') as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByTestId('hunter-home-meta-reset-hint').textContent).toContain('不足')
+    expect(screen.queryByTestId('hunter-home-meta-reset-hint')).toBeNull()
   })
 
   it('lists every campaign without rendering per-floor monster rows in the notice board guide', () => {
@@ -312,7 +741,7 @@ describe('GameOverlay', () => {
     expect(screen.getByLabelText('血裔剑士立绘')).toBeTruthy()
   })
 
-  it('keeps compact elite and boss hints without the floor table', () => {
+  it('keeps campaign boss names while hiding elite cadence and detail controls', () => {
     useGameStore.setState({ ...createInitialSnapshot('idle') })
 
     render(<GameOverlay />)
@@ -321,7 +750,8 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     const campaignTwo = CAMPAIGN_MONSTER_THEMES[1]
-    expect(screen.getAllByText('精英 3/6/9/12/15/18/21').length).toBeGreaterThan(0)
+    expect(screen.queryByText('精英 3/6/9/12/15/18/21')).toBeNull()
+    expect(screen.queryByRole('button', { name: '详情' })).toBeNull()
     expect(screen.getByTestId('campaign-guide-2').textContent).toContain(campaignTwo.boss.name)
     campaignTwo.elitePool.forEach((elite) => {
       expect(screen.getByLabelText(`${elite.name}立绘`)).toBeTruthy()
@@ -330,7 +760,7 @@ describe('GameOverlay', () => {
     expect(screen.queryByTestId('campaign-floor-row-10-22')).toBeNull()
   })
 
-  it('uses the high density skeleton warrior atlas for the dungeon skeleton warrior guide entry', () => {
+  it('uses the project-local skeleton warrior PT frames for the dungeon skeleton warrior guide entry', () => {
     useGameStore.setState({ ...createInitialSnapshot('idle') })
 
     render(<GameOverlay />)
@@ -343,16 +773,43 @@ describe('GameOverlay', () => {
     expect(skeletonArt.getAttribute('data-preview-action')).toBe('move')
     expect(skeletonArt.querySelector('img')?.getAttribute('src')).toBe(SKELETON_WARRIOR_SPRITE_ATLAS.guidePreviewSrc)
     expect(skeletonArt.textContent).toContain('骷髅战士')
-    expect(skeletonArt.textContent).toContain('近战 · 基础攻击')
-    expect(SKELETON_WARRIOR_SPRITE_ATLAS.src).toContain('skeleton-warrior-image2/skeleton_warrior_sheet_4x3.png')
-    expect(SKELETON_WARRIOR_SPRITE_ATLAS.guidePreviewSrc).toContain('skeleton-warrior-image2/move_01.png')
-    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.idle?.count).toBe(4)
-    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.move?.count).toBe(4)
-    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.attack?.count).toBe(4)
+    expect(skeletonArt.textContent).not.toContain('近战 · 基础攻击')
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.src).toContain(getSkeletonWarriorPtFrameUrls('move')[0])
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.guidePreviewSrc).toContain(getSkeletonWarriorPtFrameUrls('move')[0])
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.src).not.toContain('skeleton-warrior-image2')
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.guidePreviewSrc).not.toContain('skeleton-warrior-image2')
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.idle?.count).toBe(SKELETON_WARRIOR_PT_ACTIONS.idle.frameCount)
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.move?.count).toBe(SKELETON_WARRIOR_PT_ACTIONS.move.frameCount)
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.attack?.count).toBe(SKELETON_WARRIOR_PT_ACTIONS.attack.frameCount)
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.skill?.count).toBe(SKELETON_WARRIOR_PT_ACTIONS.skill_1.frameCount)
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.skill2?.count).toBe(SKELETON_WARRIOR_PT_ACTIONS.skill_2.frameCount)
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'melee', archetypeId: 'dungeon-skeleton-warrior', displayName: '骷髅战士' })).toBe(SKELETON_WARRIOR_SPRITE_ATLAS)
-    expect(getMonsterSpriteAtlasForEnemy({ kind: 'melee', archetypeId: 'vampire-servant', displayName: '吸血鬼仆从' })).toBeUndefined()
+    expect(getMonsterSpriteAtlasForEnemy({ kind: 'melee', archetypeId: 'vampire-thrall', displayName: '吸血鬼仆从' })).toBeUndefined()
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'melee', archetypeId: 'orc-infantry', displayName: '兽人步兵' })).toBeUndefined()
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'melee', archetypeId: 'murloc-warrior', displayName: '鱼人战士' })).toBeUndefined()
+  })
+
+  it('uses the explicit corrosive slime frames for the monster guide without the legacy sheet', () => {
+    useGameStore.setState({ ...createInitialSnapshot('idle') })
+
+    render(<GameOverlay />)
+
+    fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
+    fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
+
+    const slimeEntries = screen.getAllByLabelText('腐蚀史莱姆立绘')
+    expect(slimeEntries).toHaveLength(CAMPAIGN_MONSTER_THEMES.length)
+    const slimeArt = slimeEntries[0]
+    expect(slimeArt.getAttribute('data-asset-src')).toBe(CORROSIVE_SLIME_SPRITE_ATLAS.src)
+    expect(slimeArt.getAttribute('data-preview-action')).toBe('idle')
+    expect(slimeArt.querySelector('img')?.getAttribute('src')).toBe(`/${getCorrosiveSlimeFrameUrls('idle')[0]}`)
+    expect(slimeArt.getAttribute('data-asset-src')).not.toContain('corrupt-green-slime-sheet.png')
+    expect(CORROSIVE_SLIME_SPRITE_ATLAS.actions.idle?.count).toBe(CORROSIVE_SLIME_ACTIONS.idle.frameCount)
+    expect(CORROSIVE_SLIME_SPRITE_ATLAS.actions.move?.count).toBe(CORROSIVE_SLIME_ACTIONS.move.frameCount)
+    expect(CORROSIVE_SLIME_SPRITE_ATLAS.actions.attack?.count).toBe(CORROSIVE_SLIME_ACTIONS.attack.frameCount)
+    expect(CORROSIVE_SLIME_SPRITE_ATLAS.actions.hit?.count).toBe(CORROSIVE_SLIME_ACTIONS.hit.frameCount)
+    expect(CORROSIVE_SLIME_SPRITE_ATLAS.actions.death?.count).toBe(CORROSIVE_SLIME_ACTIONS.death.frameCount)
+    expect(getMonsterSpriteAtlasForEnemy({ kind: 'melee', archetypeId: 'corrosive-slime', displayName: '腐蚀史莱姆' })).toBe(CORROSIVE_SLIME_SPRITE_ATLAS)
   })
 
   it('uses the new skeleton archer atlas and attack preview in the monster guide', () => {
@@ -367,6 +824,8 @@ describe('GameOverlay', () => {
     expect(archerArt.getAttribute('data-asset-src')).toBe(SKELETON_ARCHER_SPRITE_ATLAS.src)
     expect(archerArt.getAttribute('data-preview-action')).toBe('attack')
     expect(archerArt.querySelector('img')?.getAttribute('src')).toBe(SKELETON_ARCHER_SPRITE_ATLAS.guidePreviewSrc)
+    expect(archerArt.getAttribute('data-asset-src')).not.toContain('skeleton-archer-sheet.png')
+    expect(archerArt.querySelector('img')?.getAttribute('src')).not.toContain('skeleton-archer-preview.png')
     expect(SKELETON_ARCHER_SPRITE_ATLAS.src).toContain('skeleton-archer-image2/skeleton_archer_sheet_4x3.png')
     expect(SKELETON_ARCHER_SPRITE_ATLAS.guidePreviewSrc).toContain('skeleton-archer-image2/attack_01.png')
     expect(SKELETON_ARCHER_SPRITE_ATLAS.actions.idle?.count).toBe(4)
@@ -386,12 +845,15 @@ describe('GameOverlay', () => {
 
     const vampireArt = screen.getByLabelText('吸血鬼仆从立绘')
     expect(vampireArt.getAttribute('data-asset-src')).toBeNull()
-    expect(vampireArt.getAttribute('data-archetype-id')).toBe('vampire-servant')
+    expect(vampireArt.getAttribute('data-archetype-id')).toBe('vampire-thrall')
     expect(vampireArt.getAttribute('data-campaign-index')).toBe('2')
     expect(vampireArt.getAttribute('data-fallback-tint')).toBe('#b91c1c')
+    expect(vampireArt.getAttribute('data-basic-attack')).toBe('爪击')
+    expect(vampireArt.getAttribute('data-skill-label')).toBe('血影步')
+    expect(vampireArt.textContent).toContain('普攻：爪击 · 技能：血影步')
   })
 
-  it('uses the hellhound sprite atlas only for explicit hellhound charger entries', () => {
+  it('uses hellhound-image2 manifest frames for the hellhound guide portrait', () => {
     useGameStore.setState({ ...createInitialSnapshot('idle') })
 
     render(<GameOverlay />)
@@ -400,17 +862,14 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     const hellhoundArt = screen.getByLabelText('地狱犬立绘')
-    expect(hellhoundArt.getAttribute('data-asset-src')).toBe(MONSTER_SPRITE_ATLASES.charger?.src)
+    expect(hellhoundArt.getAttribute('data-asset-src')).toContain(getHellhoundImage2FrameUrls('idle')[0])
+    expect(hellhoundArt.querySelector('img')?.getAttribute('src')).toBe(`/${getHellhoundImage2FrameUrls('idle')[0]}`)
+    expect(hellhoundArt.getAttribute('data-preview-action')).toBe('idle')
     expect(hellhoundArt.textContent).toContain('地狱犬')
-    expect(hellhoundArt.textContent).toContain('冲锋 · 火焰吐息')
-    expect(MONSTER_SPRITE_ATLASES.charger?.actions.idle?.count).toBe(6)
-    expect(MONSTER_SPRITE_ATLASES.charger?.actions.move?.count).toBe(6)
-    expect(MONSTER_SPRITE_ATLASES.charger?.actions.attack?.count).toBe(6)
-    expect(MONSTER_SPRITE_ATLASES.charger?.actions.skill?.count).toBe(6)
-    expect(MONSTER_SPRITE_ATLASES.charger?.actions.hit?.count).toBe(5)
-    expect(MONSTER_SPRITE_ATLASES.charger?.actions.death?.count).toBe(5)
-    expect(getMonsterSpriteAtlasForEnemy({ kind: 'charger', archetypeId: 'dungeon-hellhound', displayName: '地狱犬' })).toBe(MONSTER_SPRITE_ATLASES.charger)
-    expect(getMonsterSpriteAtlasForEnemy({ kind: 'charger', archetypeId: 'blood-swordsman', displayName: '血裔剑士' })).toBeUndefined()
+    expect(hellhoundArt.textContent).not.toContain('冲锋 · 火焰吐息')
+    expect(MONSTER_SPRITE_ATLASES.charger).toBeUndefined()
+    expect(getMonsterSpriteAtlasForEnemy({ kind: 'charger', archetypeId: 'dungeon-hellhound', displayName: '地狱犬' })).toBeUndefined()
+    expect(getMonsterSpriteAtlasForEnemy({ kind: 'charger', archetypeId: 'bloodline-duelist', displayName: '血裔剑士' })).toBeUndefined()
   })
 
   it('keeps the skeleton warrior atlas linked for runtime dungeon enemies', () => {
@@ -422,15 +881,18 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.idle?.start).toBe(0)
-    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.move?.start).toBe(4)
-    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.attack?.start).toBe(8)
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.move?.start).toBe(0)
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.attack?.start).toBe(0)
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.skill?.count).toBe(SKELETON_WARRIOR_PT_ACTIONS.skill_1.frameCount)
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.skill2?.count).toBe(SKELETON_WARRIOR_PT_ACTIONS.skill_2.frameCount)
+    expect(SKELETON_WARRIOR_SPRITE_ATLAS.src).not.toContain('skeleton-warrior-image2')
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'melee', archetypeId: 'dungeon-skeleton-warrior', displayName: '骷髅战士' })).toBe(SKELETON_WARRIOR_SPRITE_ATLAS)
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'elite', archetypeId: 'dungeon-skeleton-warrior', displayName: '骷髅战士' })).toBe(SKELETON_WARRIOR_SPRITE_ATLAS)
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'elite', archetypeId: undefined, displayName: undefined })).toBeUndefined()
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'elite', archetypeId: 'blood-noble', displayName: '血宴贵族' })).toBeUndefined()
   })
 
-  it('uses the high density skeleton knight atlas only for explicit dungeon boss entries', () => {
+  it('uses the project-local dungeon warden frame mapping for the explicit dungeon boss entry', () => {
     useGameStore.setState({ ...createInitialSnapshot('idle') })
 
     render(<GameOverlay />)
@@ -438,25 +900,17 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
-    const knightArt = screen.getByLabelText('地牢典狱长（骷髅骑士）立绘')
-    expect(knightArt.getAttribute('data-asset-src')).toBe(MONSTER_SPRITE_ATLASES.boss?.src)
-    expect(MONSTER_SPRITE_ATLASES.boss?.src).toContain('skeleton-knight-sheet.png')
-    expect(MONSTER_SPRITE_ATLASES.boss?.frameSize).toBe(96)
-    expect(MONSTER_SPRITE_ATLASES.boss?.actions.idle?.count).toBe(6)
-    expect(MONSTER_SPRITE_ATLASES.boss?.actions.move?.count).toBe(6)
-    expect(MONSTER_SPRITE_ATLASES.boss?.actions.attack?.count).toBe(5)
-    expect(MONSTER_SPRITE_ATLASES.boss?.actions.skill?.count).toBe(6)
-    expect(MONSTER_SPRITE_ATLASES.boss?.actions.skill2?.count).toBe(5)
-    expect(MONSTER_SPRITE_ATLASES.boss?.actions.hit?.count).toBe(4)
-    expect(MONSTER_SPRITE_ATLASES.boss?.actions.phase?.count).toBe(4)
-    expect(MONSTER_SPRITE_ATLASES.boss?.actions.death?.count).toBe(6)
-    expect(getMonsterSpriteAtlasForEnemy({ kind: 'boss', archetypeId: 'dungeon-skeleton-knight', displayName: '骷髅骑士' })).toBe(MONSTER_SPRITE_ATLASES.boss)
-    expect(getMonsterSpriteAtlasForEnemy({ kind: 'boss', archetypeId: 'dungeon-warden', displayName: '地牢典狱长' })).toBe(MONSTER_SPRITE_ATLASES.boss)
+    const wardenArt = screen.getByLabelText('典狱长立绘')
+    expect(wardenArt.getAttribute('data-asset-src')).toContain('assets/monsters/dungeon-warden/Idle/Idle-1@3x.png')
+    expect(getDungeonWardenFrameUrls('idle')).toHaveLength(DUNGEON_WARDEN_ACTIONS.idle.frameCount)
+    expect(getDungeonWardenFrameUrls('skill_1')).toHaveLength(DUNGEON_WARDEN_ACTIONS.skill_1.frameCount)
+    expect(getDungeonWardenFrameUrls('skill_2')).toHaveLength(DUNGEON_WARDEN_ACTIONS.skill_2.frameCount)
+    expect(getMonsterSpriteAtlasForEnemy({ kind: 'boss', archetypeId: 'dungeon-warden', displayName: '典狱长' })).toBeUndefined()
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'boss', archetypeId: undefined, displayName: undefined })).toBeUndefined()
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'boss', archetypeId: 'blood-banquet-count', displayName: '血宴伯爵' })).toBeUndefined()
   })
 
-  it('uses dedicated high density atlases for splitter and bomber guide entries without replacing generic kinds', () => {
+  it('uses each splitter and bomber manifest guide frame without restoring their legacy sheets', () => {
     useGameStore.setState({ ...createInitialSnapshot('idle') })
 
     render(<GameOverlay />)
@@ -464,25 +918,36 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
-    const oozeArt = screen.getByLabelText('裂变软泥立绘')
-    expect(oozeArt.getAttribute('data-asset-src')).toBe(MONSTER_SPRITE_ATLASES.splitter?.src)
-    expect(MONSTER_SPRITE_ATLASES.splitter?.actions.idle?.count).toBe(5)
-    expect(MONSTER_SPRITE_ATLASES.splitter?.actions.move?.count).toBe(5)
-    expect(MONSTER_SPRITE_ATLASES.splitter?.actions.attack?.count).toBe(5)
-    expect(MONSTER_SPRITE_ATLASES.splitter?.actions.hit?.count).toBe(4)
-    expect(MONSTER_SPRITE_ATLASES.splitter?.actions.death?.count).toBe(5)
-    expect(getMonsterSpriteAtlasForEnemy({ kind: 'splitter', archetypeId: 'dungeon-splitting-ooze', displayName: '裂变软泥' })).toBe(MONSTER_SPRITE_ATLASES.splitter)
+    const variants: Array<{ entityId: C1SlimeVariantAssetId; name: string; legacySheet: string }> = [
+      { entityId: 'dungeon-splitting-ooze', name: '裂变软泥', legacySheet: 'splitting-ooze-sheet.png' },
+      { entityId: 'dungeon-explosive-fire-sac', name: '爆裂火囊怪', legacySheet: 'explosive-fire-sac-sheet.png' },
+    ]
+
+    for (const { entityId, name, legacySheet } of variants) {
+      const art = screen.getByLabelText(`${name}立绘`)
+      const entity = developerAssetEntities.find((candidate) => candidate.id === entityId)
+      const expectedGuidePath = getC1SlimeVariantFrameUrls(entityId, 'idle')[0]
+
+      expect(art.getAttribute('data-asset-src')).toContain(expectedGuidePath)
+      expect(art.querySelector('img')?.getAttribute('src')).toBe(`/${expectedGuidePath}`)
+      expect(art.getAttribute('data-asset-src')).not.toContain(legacySheet)
+      expect(entity?.actions.map((action) => action.slot)).toEqual(['idle', 'move', 'attack', 'hit', 'death'])
+      expect(entity?.actions.every((action) => action.assetPath?.includes(legacySheet) === false)).toBe(true)
+
+      for (const slot of Object.keys(C1_SLIME_VARIANT_ACTIONS) as C1SlimeVariantActionSlot[]) {
+        const action = entity?.actions.find((candidate) => candidate.slot === slot)
+        const expectedFrames = getC1SlimeVariantFrameUrls(entityId, slot)
+        expect(action?.guideFrame).toBe(`/${expectedFrames[0]}`)
+        expect(action?.frameUrls).toEqual(expectedFrames.map((frame) => `/${frame}`))
+        expect(action?.frameCount).toBe(C1_SLIME_VARIANT_ACTIONS[slot].frameCount)
+      }
+    }
+
+    expect(getMonsterSpriteAtlasForEnemy({ kind: 'splitter', archetypeId: 'dungeon-splitting-ooze', displayName: '裂变软泥' })).toBeUndefined()
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'splitter', archetypeId: undefined, displayName: undefined })).toBeUndefined()
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'splitter', archetypeId: 'blood-bat-swarm', displayName: '血蝠群' })).toBeUndefined()
 
-    const fireSacArt = screen.getByLabelText('爆裂火囊怪立绘')
-    expect(fireSacArt.getAttribute('data-asset-src')).toBe(MONSTER_SPRITE_ATLASES.bomber?.src)
-    expect(MONSTER_SPRITE_ATLASES.bomber?.actions.idle?.count).toBe(5)
-    expect(MONSTER_SPRITE_ATLASES.bomber?.actions.move?.count).toBe(5)
-    expect(MONSTER_SPRITE_ATLASES.bomber?.actions.attack?.count).toBe(5)
-    expect(MONSTER_SPRITE_ATLASES.bomber?.actions.hit?.count).toBe(4)
-    expect(MONSTER_SPRITE_ATLASES.bomber?.actions.death?.count).toBe(5)
-    expect(getMonsterSpriteAtlasForEnemy({ kind: 'bomber', archetypeId: 'dungeon-explosive-fire-sac', displayName: '爆裂火囊怪' })).toBe(MONSTER_SPRITE_ATLASES.bomber)
+    expect(getMonsterSpriteAtlasForEnemy({ kind: 'bomber', archetypeId: 'dungeon-explosive-fire-sac', displayName: '爆裂火囊怪' })).toBeUndefined()
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'bomber', archetypeId: undefined, displayName: undefined })).toBeUndefined()
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'bomber', archetypeId: 'goblin-sapper', displayName: '地精爆破手' })).toBeUndefined()
   })

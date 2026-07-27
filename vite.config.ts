@@ -6,8 +6,11 @@ import type { Plugin } from 'vite'
 
 const developerAssetOutputDir = path.resolve(process.cwd(), 'public/assets/developer-assets')
 const developerAssetConfigPath = path.join(developerAssetOutputDir, 'runtime-asset-overrides.json')
+const developerAssetBackupDir = path.join(developerAssetOutputDir, 'backups')
 
 const sanitizePathSegment = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'asset'
+
+const timestampPathSegment = () => new Date().toISOString().replace(/[:.]/g, '-')
 
 const extensionForMimeType = (mimeType: string) => {
   if (mimeType === 'image/webp') {
@@ -121,6 +124,19 @@ const persistDeveloperAssetConfig = async (rawConfig: any) => {
   }
 }
 
+const backupDeveloperAssetConfig = async () => {
+  try {
+    const existingConfig = await readFile(developerAssetConfigPath, 'utf8')
+    await mkdir(developerAssetBackupDir, { recursive: true })
+    const backupName = `runtime-asset-overrides.${timestampPathSegment()}.json`
+    const backupPath = path.join(developerAssetBackupDir, backupName)
+    await writeFile(backupPath, existingConfig)
+    return `assets/developer-assets/backups/${backupName}`
+  } catch {
+    return undefined
+  }
+}
+
 const developerAssetPersistencePlugin = (): Plugin => ({
   name: 'roguelike-developer-asset-persistence',
   apply: 'serve',
@@ -149,10 +165,11 @@ const developerAssetPersistencePlugin = (): Plugin => ({
         const body = await readRequestBody(request)
         const config = await persistDeveloperAssetConfig(JSON.parse(body))
         await mkdir(developerAssetOutputDir, { recursive: true })
+        const backupPath = await backupDeveloperAssetConfig()
         await writeFile(developerAssetConfigPath, `${JSON.stringify(config, null, 2)}\n`)
         response.statusCode = 200
         response.setHeader('Content-Type', 'application/json')
-        response.end(JSON.stringify({ config }))
+        response.end(JSON.stringify({ config, backupPath }))
       } catch (error) {
         response.statusCode = 500
         response.setHeader('Content-Type', 'application/json')

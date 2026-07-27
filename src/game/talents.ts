@@ -1,6 +1,6 @@
 import type { CampaignDifficulty, EquipmentMaterialInventory, SkillBuildTag } from './types'
 
-export const TALENT_SCHEMA_VERSION = 2
+export const TALENT_SCHEMA_VERSION = 3
 export const TALENT_RESET_GOLD_COST = 200
 export const TALENT_RESET_BUILD_SHARD_COST = 5
 
@@ -63,6 +63,16 @@ export type TalentEffect = {
   note?: string
 }
 
+export type MetaTalentRank = 0 | 1 | 2 | 3
+export type MetaTalentRanks = Partial<Record<string, MetaTalentRank>>
+
+export type ResolvedMetaTalentEffect = {
+  nodeId: string
+  rank: number
+  maxRank: number
+  effect: TalentEffect
+}
+
 export type MetaTalentNode = {
   id: string
   name: string
@@ -71,6 +81,7 @@ export type MetaTalentNode = {
   module: string
   order: number
   cost: number
+  maxRank: 1 | 3
   prerequisites: string[]
   build?: TalentBuild
   difficulty?: CampaignDifficulty
@@ -116,7 +127,7 @@ export type TalentMaterialDropTarget = typeof TALENT_MATERIAL_DROP_TARGETS[numbe
 export const TALENT_RADIUS_TARGETS = ['soulBurstRadius', 'bloodFeatherStormRadius', 'beastAuraRadius', 'crystalPulseRadius'] as const
 export type TalentRadiusTarget = typeof TALENT_RADIUS_TARGETS[number]
 
-export const TALENT_DAMAGE_TARGETS = ['death-marked', 'bleeding', 'beast-commanded', 'crystal-overloaded'] as const
+export const TALENT_DAMAGE_TARGETS = ['death-marked', 'bleeding', 'beast-commanded', 'crystal-overloaded', 'blood-rift'] as const
 export type TalentDamageTarget = typeof TALENT_DAMAGE_TARGETS[number]
 
 export const TALENT_MECHANIC_KEYS = [
@@ -178,6 +189,7 @@ export type RunTalentCandidateResult = {
 export type MetaTalentUnlockContext = {
   talentPoints: number
   unlockedMetaTalentIds: string[]
+  metaTalentRanks?: MetaTalentRanks
   unlockedCampaignDifficulties: Record<number, CampaignDifficulty[]>
   completedCampaignDifficulties: Record<number, CampaignDifficulty[]>
 }
@@ -202,6 +214,7 @@ export type MetaTalentBonusSummary = {
   reforgeLockedAffixEnabled: boolean
   resetAvailable: boolean
   ignoredEffects: string[]
+  resolvedEffects: ResolvedMetaTalentEffect[]
 }
 
 export type RunTalentBonusSummary = {
@@ -213,6 +226,12 @@ export type RunTalentBonusSummary = {
   cooldownRefundMultiplier: number
   radiusMultiplier: Partial<Record<TalentRadiusTarget, number>>
   damageMultipliers: Partial<Record<TalentDamageTarget, number>>
+  /** Every selected effect must name the real engine/reward consumer. */
+  consumedEffects: Array<{
+    nodeId: string
+    effect: TalentEffect
+    consumer: string
+  }>
   ignoredEffects: string[]
   notes: string[]
 }
@@ -222,6 +241,7 @@ export type MetaTalentResetContext = {
   equipmentMaterials: EquipmentMaterialInventory
   talentPoints: number
   unlockedMetaTalentIds: string[]
+  metaTalentRanks?: MetaTalentRanks
 }
 
 type MetaDraft = {
@@ -262,6 +282,21 @@ const difficultyGroups: CampaignDifficulty[] = ['normal', 'hard', 'hell', 'night
 
 const idAt = (prefix: string, index: number) => `${prefix}_${String(index + 1).padStart(2, '0')}`
 
+export const THREE_RANK_META_TALENT_IDS = [
+  'meta_common_02',
+  'meta_common_05',
+  ...(['death', 'blood', 'beast', 'crystal'] as TalentBuild[]).flatMap((build) => [
+    ...Array.from({ length: 6 }, (_, index) => idAt(`meta_${build}_base`, index)),
+    ...Array.from({ length: 4 }, (_, index) => idAt(`meta_${build}_advanced`, index)),
+  ]),
+] as const
+
+const threeRankMetaTalentIdSet = new Set<string>(THREE_RANK_META_TALENT_IDS)
+
+export const getMetaTalentMaxRank = (nodeId: string): 1 | 3 => (
+  threeRankMetaTalentIdSet.has(nodeId) ? 3 : 1
+)
+
 const createLinearPrerequisites = (prefix: string, count: number, firstPrerequisite?: string) => (
   Array.from({ length: count }, (_, index) => (
     index === 0 ? (firstPrerequisite ? [firstPrerequisite] : []) : [idAt(prefix, index - 1)]
@@ -290,7 +325,7 @@ const buildBaseDrafts: Record<TalentBuild, MetaDraft[]> = {
     { name: '魂火残响', description: '魂爆视觉和命中反馈增强，范围小幅提高。', effects: [{ type: 'radius', value: 8, unit: '%', target: 'soul-explosion' }] },
     { name: '穿透传承', description: '穿透类技能和装备更容易出现在奖励中。', effects: [{ type: 'candidate-weight', value: 12, unit: '%', target: 'pierce-skill-equipment' }] },
     { name: '精英破契术', description: '对精英的破防效率小幅提高。', effects: [{ type: 'elite-vulnerability', value: 2, unit: '%', target: 'death-break' }] },
-    { name: '处刑者传承', description: '死契处刑者套装件和专属武器掉落权重小幅提高。', effects: [{ type: 'candidate-weight', value: 10, unit: '%', target: 'death-set-weapon' }] },
+    { name: '处刑者传承', description: '死契处刑者套装件和专属武器掉落权重小幅提高。', effects: [{ type: 'candidate-weight', value: 5, unit: '%', target: 'death-set-weapon' }] },
   ],
   blood: [
     { name: '血羽入门', description: '血羽游侠相关局内节点出现权重提高。', effects: [{ type: 'candidate-weight', value: 18, unit: '%', target: 'blood-run-node' }] },
@@ -298,7 +333,7 @@ const buildBaseDrafts: Record<TalentBuild, MetaDraft[]> = {
     { name: '暴击感知', description: '暴击相关奖励权重提高。', effects: [{ type: 'candidate-weight', value: 12, unit: '%', target: 'critical' }] },
     { name: '流血熟练', description: '流血持续时间小幅提高。', effects: [{ type: 'bleed-duration', value: 12, unit: '%', target: 'bleed' }] },
     { name: '羽裂追踪', description: '血羽追踪半径小幅提高。', effects: [{ type: 'tracking-radius', value: 10, unit: '%', target: 'blood-feather' }] },
-    { name: '血羽传承', description: '血羽游侠套装件和血羽武器掉落权重小幅提高。', effects: [{ type: 'candidate-weight', value: 10, unit: '%', target: 'blood-set-weapon' }] },
+    { name: '血羽传承', description: '血羽游侠套装件和血羽武器掉落权重小幅提高。', effects: [{ type: 'candidate-weight', value: 5, unit: '%', target: 'blood-set-weapon' }] },
   ],
   beast: [
     { name: '兽语入门', description: '兽王赦令相关局内节点出现权重提高。', effects: [{ type: 'candidate-weight', value: 18, unit: '%', target: 'beast-run-node' }] },
@@ -306,7 +341,7 @@ const buildBaseDrafts: Record<TalentBuild, MetaDraft[]> = {
     { name: '护主训练', description: '野兽护主触发后的冷却略微缩短。', effects: [{ type: 'protect-cooldown', value: -10, unit: '%', target: 'beast-protect' }] },
     { name: '指令熟练', description: '野兽指令技能反馈更快，指令冷却小幅降低。', effects: [{ type: 'command-cooldown', value: -8, unit: '%', target: 'beast-command' }] },
     { name: '首领血脉', description: '首领化光环效果小幅提高。', effects: [{ type: 'aura-effect', value: 2, unit: '%', target: 'leader-beast' }] },
-    { name: '兽王传承', description: '兽王赦令套装件和野兽武器掉落权重小幅提高。', effects: [{ type: 'candidate-weight', value: 10, unit: '%', target: 'beast-set-weapon' }] },
+    { name: '兽王传承', description: '兽王赦令套装件和野兽武器掉落权重小幅提高。', effects: [{ type: 'candidate-weight', value: 5, unit: '%', target: 'beast-set-weapon' }] },
   ],
   crystal: [
     { name: '蓝晶入门', description: '蓝晶契约相关局内节点出现权重提高。', effects: [{ type: 'candidate-weight', value: 18, unit: '%', target: 'crystal-run-node' }] },
@@ -314,7 +349,7 @@ const buildBaseDrafts: Record<TalentBuild, MetaDraft[]> = {
     { name: '过载稳定', description: '过载技能的额外脉冲更稳定触发。', effects: [{ type: 'pulse-stability', value: 15, unit: '%', target: 'overload-pulse' }] },
     { name: '晶域维持', description: '蓝晶领域持续时间小幅提高。', effects: [{ type: 'field-duration', value: 12, unit: '%', target: 'crystal-field' }] },
     { name: '冷却研习', description: '技能命中返还冷却的上限小幅提高。', effects: [{ type: 'cooldown-refund-cap', value: 4, unit: '%', target: 'skill-hit' }] },
-    { name: '蓝晶传承', description: '蓝晶契约套装件和蓝晶武器掉落权重小幅提高。', effects: [{ type: 'candidate-weight', value: 10, unit: '%', target: 'crystal-set-weapon' }] },
+    { name: '蓝晶传承', description: '蓝晶契约套装件和蓝晶武器掉落权重小幅提高。', effects: [{ type: 'candidate-weight', value: 5, unit: '%', target: 'crystal-set-weapon' }] },
   ],
 }
 
@@ -406,6 +441,7 @@ const createMetaNodes = () => {
         module,
         order: index + 1,
         cost: costs[index] ?? 0,
+        maxRank: getMetaTalentMaxRank(idAt(prefix, index)),
         prerequisites: prerequisites[index] ?? [],
         effects: draft.effects,
         ...extra,
@@ -472,7 +508,7 @@ const runDrafts: Record<'common' | TalentBuild, RunDraft[]> = {
     { name: '血羽风暴', description: '命中数量达标后触发有冷却的血羽风暴。', tags: ['blood-feather', 'storm'], effects: [{ type: 'mechanic', value: 10, unit: 'count', target: 'blood-feather-storm' }] },
   ],
   beast: [
-    { name: '主兽绑定', description: 'Q / E / R 绑定主力野兽。', tags: ['beast'], effects: [{ type: 'mechanic', target: 'main-beast-bind' }] },
+    { name: '主兽绑定', description: '获得野兽伙伴技能后，Q / E / R 会分别指挥对应野兽；野兽跟随作战并响应你的手动指令。', tags: ['beast'], effects: [{ type: 'mechanic', target: 'main-beast-bind' }] },
     { name: '指令突袭', description: '手动释放技能时，野兽执行突袭。', tags: ['beast', 'command'], effects: [{ type: 'damage', value: 25, unit: '%', target: 'beast-command' }] },
     { name: '护主本能', description: '玩家低血时，最近野兽尝试护主。', tags: ['beast', 'survival'], effects: [{ type: 'mechanic', value: 35, unit: '%', target: 'beast-protect' }] },
     { name: '协同撕咬', description: '两只野兽攻击同一目标时触发协同伤害。', tags: ['beast', 'team'], effects: [{ type: 'damage', value: 40, unit: '%', target: 'beast-team-bite' }] },
@@ -530,7 +566,57 @@ export const getTalentCampaignTags = (campaignId: number): TalentCampaignTag[] =
   return [...TALENT_CAMPAIGN_TAGS[key]]
 }
 
-const normalizeSet = (values: readonly string[] | undefined) => new Set(values ?? [])
+const normalizeRankValue = (value: unknown, maxRank: number): MetaTalentRank => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(maxRank, Math.trunc(value))) as MetaTalentRank
+}
+
+export const getMetaTalentRank = (
+  nodeId: string,
+  metaTalentRanks?: MetaTalentRanks,
+  legacyUnlockedMetaTalentIds: readonly string[] = [],
+): MetaTalentRank => {
+  const maxRank = getMetaTalentMaxRank(nodeId)
+  const storedRank = normalizeRankValue(metaTalentRanks?.[nodeId], maxRank)
+  return Math.max(storedRank, legacyUnlockedMetaTalentIds.includes(nodeId) ? 1 : 0) as MetaTalentRank
+}
+
+export const normalizeMetaTalentRanks = (
+  rawRanks: unknown,
+  legacyUnlockedMetaTalentIds: readonly string[] = [],
+): MetaTalentRanks => {
+  const ranks = rawRanks && typeof rawRanks === 'object' && !Array.isArray(rawRanks)
+    ? rawRanks as Record<string, unknown>
+    : {}
+  const normalized: MetaTalentRanks = {}
+  META_TALENT_NODES.forEach((node) => {
+    const rank = getMetaTalentRank(
+      node.id,
+      ranks as MetaTalentRanks,
+      legacyUnlockedMetaTalentIds,
+    )
+    if (rank > 0) {
+      normalized[node.id] = rank
+    }
+  })
+  return normalized
+}
+
+export const getUnlockedMetaTalentIdsFromRanks = (
+  metaTalentRanks?: MetaTalentRanks,
+  legacyUnlockedMetaTalentIds: readonly string[] = [],
+) => META_TALENT_NODES
+  .filter((node) => getMetaTalentRank(node.id, metaTalentRanks, legacyUnlockedMetaTalentIds) >= 1)
+  .map((node) => node.id)
+
+export const getMetaTalentEffectsAtRank = (node: MetaTalentNode, rank: number): TalentEffect[] => {
+  const normalizedRank = Math.max(0, Math.min(node.maxRank, Math.trunc(rank)))
+  return node.effects.map((effect) => (
+    typeof effect.value === 'number'
+      ? { ...effect, value: effect.value * normalizedRank }
+      : { ...effect }
+  ))
+}
 
 const difficultyRank = (difficulty: CampaignDifficulty) => difficultyGroups.indexOf(difficulty)
 
@@ -550,10 +636,12 @@ const hasCompletedCampaignDifficulty = (
 export const getMetaTalentUnlockState = (nodeId: string, context: MetaTalentUnlockContext): MetaTalentUnlockResult => {
   const node = META_TALENT_NODE_BY_ID.get(nodeId)
   if (!node) return { canUnlock: false, reason: '未知天赋节点' }
-  if (context.unlockedMetaTalentIds.includes(nodeId)) return { canUnlock: false, reason: '已解锁' }
+  const rank = getMetaTalentRank(nodeId, context.metaTalentRanks, context.unlockedMetaTalentIds)
+  if (rank >= node.maxRank) return { canUnlock: false, reason: '已满级' }
   if (context.talentPoints < node.cost) return { canUnlock: false, reason: `需要 ${node.cost} 天赋点` }
-  const unlocked = normalizeSet(context.unlockedMetaTalentIds)
-  const missingPrerequisite = node.prerequisites.find((id) => !unlocked.has(id))
+  const missingPrerequisite = node.prerequisites.find((id) => (
+    getMetaTalentRank(id, context.metaTalentRanks, context.unlockedMetaTalentIds) < 1
+  ))
   if (missingPrerequisite) {
     return { canUnlock: false, reason: `需要前置：${META_TALENT_NODE_BY_ID.get(missingPrerequisite)?.name ?? missingPrerequisite}` }
   }
@@ -586,26 +674,40 @@ export const unlockMetaTalent = (nodeId: string, context: MetaTalentUnlockContex
   if (!state.canUnlock || !node) {
     return { ok: false as const, reason: state.reason ?? '无法解锁' }
   }
+  const currentRank = getMetaTalentRank(nodeId, context.metaTalentRanks, context.unlockedMetaTalentIds)
+  const nextRank = Math.min(node.maxRank, currentRank + 1) as MetaTalentRank
+  const nextMetaTalentRanks = normalizeMetaTalentRanks(context.metaTalentRanks, context.unlockedMetaTalentIds)
+  nextMetaTalentRanks[node.id] = nextRank
+  const nextUnlockedMetaTalentIds = getUnlockedMetaTalentIdsFromRanks(nextMetaTalentRanks)
   return {
     ok: true as const,
     node,
+    nextRank,
     nextTalentPoints: context.talentPoints - node.cost,
-    nextUnlockedMetaTalentIds: [...context.unlockedMetaTalentIds, node.id],
+    nextMetaTalentRanks,
+    nextUnlockedMetaTalentIds,
   }
 }
 
-const getSpentMetaTalentPoints = (unlockedMetaTalentIds: readonly string[]) => (
-  unlockedMetaTalentIds.reduce((sum, id) => sum + (META_TALENT_NODE_BY_ID.get(id)?.cost ?? 0), 0)
+const getSpentMetaTalentPoints = (
+  metaTalentRanks?: MetaTalentRanks,
+  unlockedMetaTalentIds: readonly string[] = [],
+) => (
+  META_TALENT_NODES.reduce((sum, node) => (
+    sum + node.cost * getMetaTalentRank(node.id, metaTalentRanks, unlockedMetaTalentIds)
+  ), 0)
 )
 
 export const resetMetaTalentTree = (context: MetaTalentResetContext) => {
-  if (context.unlockedMetaTalentIds.length === 0) {
+  const metaTalentRanks = normalizeMetaTalentRanks(context.metaTalentRanks, context.unlockedMetaTalentIds)
+  const unlockedMetaTalentIds = getUnlockedMetaTalentIdsFromRanks(metaTalentRanks)
+  if (unlockedMetaTalentIds.length === 0) {
     return { ok: false as const, reason: '没有已解锁天赋' }
   }
   if (context.currency < TALENT_RESET_GOLD_COST || (context.equipmentMaterials.buildShard ?? 0) < TALENT_RESET_BUILD_SHARD_COST) {
     return { ok: false as const, reason: '需要 200 金币 + 5 流派碎片' }
   }
-  const refundedPoints = getSpentMetaTalentPoints(context.unlockedMetaTalentIds)
+  const refundedPoints = getSpentMetaTalentPoints(metaTalentRanks)
   return {
     ok: true as const,
     refundedPoints,
@@ -616,6 +718,7 @@ export const resetMetaTalentTree = (context: MetaTalentResetContext) => {
       buildShard: Math.max(0, (context.equipmentMaterials.buildShard ?? 0) - TALENT_RESET_BUILD_SHARD_COST),
     },
     nextUnlockedMetaTalentIds: [],
+    nextMetaTalentRanks: {},
   }
 }
 
@@ -637,37 +740,61 @@ const isTalentMechanicKey = (target: string): target is TalentMechanicKey => (
 
 const radiusTargetAliases: Record<string, TalentRadiusTarget> = {
   'soul-explosion': 'soulBurstRadius',
-  'blood-feather-storm': 'bloodFeatherStormRadius',
   'leader-beast': 'beastAuraRadius',
   'field-skill': 'crystalPulseRadius',
-  'overload-skill': 'crystalPulseRadius',
-  'crystal-field': 'crystalPulseRadius',
 }
 
 const damageTargetAliases: Record<string, TalentDamageTarget> = {
-  'marked-low-hp': 'death-marked',
-  'soul-fire': 'death-marked',
-  'pierce-after-mark': 'death-marked',
-  'bleed-dot': 'bleeding',
-  'blood-rift': 'bleeding',
-  'beast-command': 'beast-commanded',
-  'beast-team-bite': 'beast-commanded',
-  'overload-skill': 'crystal-overloaded',
-  'elite-crystal-field': 'crystal-overloaded',
-  'crystal-wave': 'crystal-overloaded',
+  // These are retained only for canonical state-target effects.  Each
+  // original run-talent effect below is consumed by its own engine branch.
 }
 
 const mechanicTargetAliases: Record<string, TalentMechanicKey> = {
   'death-mark': 'deathMark',
-  'death-chain': 'deathMark',
-  'spread-multi-hit-feather': 'bleed',
-  'blood-rift': 'bloodRift',
-  'blood-feather-storm': 'bloodRift',
-  'beast-command': 'beastCommand',
-  'beast-surround': 'beastCommand',
   'crystal-charge': 'crystalCharge',
-  'overload-pulse': 'crystalOverload',
-  'crystal-field-chain': 'crystalOverload',
+}
+
+const RUN_TALENT_EFFECT_CONSUMERS: Record<string, string> = {
+  run_common_01: 'buildPendingReward',
+  run_common_02: 'getTalentCrystalPickupRangeMultiplier',
+  run_common_03: 'buildPendingReward',
+  run_common_04: 'tryRefundTalentSkillCooldown',
+  run_common_05: 'updateTalentCombatState',
+  run_common_06: 'applyEliteInsightOnSpawn',
+  run_common_07: 'createEquipmentDropsForEnemy',
+  run_common_08: 'registerOverloadTempoKill',
+  run_death_01: 'applyProjectileDamageToEnemy',
+  run_death_02: 'applyExecuteLineDamage',
+  run_death_03: 'triggerTalentSoulFire',
+  run_death_04: 'spreadDeathMark',
+  run_death_05: 'triggerTalentSoulBurst',
+  run_death_06: 'applyPierceJudgment',
+  run_death_07: 'triggerTalentSoulBurst',
+  run_death_08: 'triggerDeathContractChain',
+  run_blood_01: 'triggerBloodFeather',
+  run_blood_02: 'applyBleed',
+  run_blood_03: 'createSkillProjectile',
+  run_blood_04: 'triggerCriticalFeather',
+  run_blood_05: 'triggerSpreadMultiHitFeathers',
+  run_blood_06: 'triggerBloodRift',
+  run_blood_07: 'applyBleed',
+  run_blood_08: 'registerBloodFeatherStormHit',
+  run_beast_01: 'summonOrCommandBeast',
+  run_beast_02: 'commandBeastSpecial',
+  run_beast_03: 'applyBeastProtect',
+  run_beast_04: 'triggerBeastTeamBite',
+  run_beast_05: 'updateBeastCompanions',
+  run_beast_06: 'damageBeast',
+  run_beast_07: 'updateBeastCompanions',
+  run_beast_08: 'commandBeastSpecial',
+  run_crystal_01: 'addTalentCrystalCharge',
+  run_crystal_02: 'triggerCrystalPickupEcho',
+  run_crystal_03: 'applyCrystalChargeCooldownRefund',
+  run_crystal_04: 'createField',
+  run_crystal_05: 'createTalentCastContext',
+  run_crystal_06: 'createCrystalOverloadPulses',
+  run_crystal_07: 'updateSkillFields',
+  run_crystal_08: 'registerCrystalCastChain',
 }
 
 const mechanicDefaults: Record<TalentMechanicKey, TalentMechanicState> = {
@@ -717,9 +844,14 @@ const addSummaryValue = (summary: MetaTalentBonusSummary, effect: TalentEffect) 
   if (target === 'locked-modifier-reforge') summary.reforgeLockedAffixEnabled = true
 }
 
-export const getMetaTalentBonusSummary = (unlockedMetaTalentIds: readonly string[]): MetaTalentBonusSummary => {
+export const getMetaTalentBonusSummary = (
+  unlockedMetaTalentIds: readonly string[],
+  metaTalentRanks?: MetaTalentRanks,
+): MetaTalentBonusSummary => {
+  const normalizedRanks = normalizeMetaTalentRanks(metaTalentRanks, unlockedMetaTalentIds)
+  const synchronizedUnlockedIds = getUnlockedMetaTalentIdsFromRanks(normalizedRanks)
   const summary: MetaTalentBonusSummary = {
-    unlockedCount: unlockedMetaTalentIds.length,
+    unlockedCount: synchronizedUnlockedIds.length,
     extraSkillRerolls: 0,
     rewardBanCount: 0,
     extraCandidateCount: 0,
@@ -731,11 +863,18 @@ export const getMetaTalentBonusSummary = (unlockedMetaTalentIds: readonly string
     materialDropMultipliers: {},
     uiUnlocks: [],
     reforgeLockedAffixEnabled: false,
-    resetAvailable: unlockedMetaTalentIds.length > 0,
+    resetAvailable: synchronizedUnlockedIds.length > 0,
     ignoredEffects: [],
+    resolvedEffects: [],
   }
-  unlockedMetaTalentIds.forEach((id) => {
-    META_TALENT_NODE_BY_ID.get(id)?.effects.forEach((effect) => addSummaryValue(summary, effect))
+  synchronizedUnlockedIds.forEach((id) => {
+    const node = META_TALENT_NODE_BY_ID.get(id)
+    if (!node) return
+    const rank = getMetaTalentRank(id, normalizedRanks)
+    getMetaTalentEffectsAtRank(node, rank).forEach((effect) => {
+      summary.resolvedEffects.push({ nodeId: id, rank, maxRank: node.maxRank, effect })
+      addSummaryValue(summary, effect)
+    })
   })
   return summary
 }
@@ -750,20 +889,25 @@ export const getRunTalentBonusSummary = (selectedTalentIds: readonly string[]): 
     cooldownRefundMultiplier: 1,
     radiusMultiplier: {},
     damageMultipliers: {},
+    consumedEffects: [],
     ignoredEffects: [],
     notes: [],
   }
   selectedTalentIds.forEach((id) => {
     const node = RUN_TALENT_NODE_BY_ID.get(id)
     node?.effects.forEach((effect) => {
+      const consumer = RUN_TALENT_EFFECT_CONSUMERS[id]
+      if (consumer) {
+        summary.consumedEffects.push({ nodeId: id, effect, consumer })
+      } else {
+        addIgnoredEffect(summary.ignoredEffects, effect)
+      }
       const target = effect.target ?? effect.type
       const value = effect.value ?? 0
       if (effect.type === 'mechanic') {
         const mechanicKey = isTalentMechanicKey(target) ? target : mechanicTargetAliases[target]
         if (mechanicKey) {
           summary.mechanics[mechanicKey] = mechanicDefaults[mechanicKey]
-        } else {
-          addIgnoredEffect(summary.ignoredEffects, effect)
         }
       }
       if (effect.type === 'candidate-weight') summary.candidateWeights[target] = (summary.candidateWeights[target] ?? 0) + value
@@ -773,16 +917,12 @@ export const getRunTalentBonusSummary = (selectedTalentIds: readonly string[]): 
         const radiusTarget = isTalentRadiusTarget(target) ? target : radiusTargetAliases[target]
         if (radiusTarget) {
           summary.radiusMultiplier[radiusTarget] = Math.min(1.35, (summary.radiusMultiplier[radiusTarget] ?? 1) + value / 100)
-        } else {
-          addIgnoredEffect(summary.ignoredEffects, effect)
         }
       }
       if (effect.type === 'damage' || effect.type === 'elite-vulnerability') {
         const damageTarget = isTalentDamageTarget(target) ? target : damageTargetAliases[target]
         if (damageTarget) {
           summary.damageMultipliers[damageTarget] = Math.min(1.1, (summary.damageMultipliers[damageTarget] ?? 1) + value / 100)
-        } else {
-          addIgnoredEffect(summary.ignoredEffects, effect)
         }
       }
       if (effect.note) summary.notes.push(effect.note)
@@ -810,6 +950,8 @@ const seededRandom = (seed: string | number) => {
 }
 
 const normalizeTag = (tag: string) => tag === 'pierce' ? 'death' : tag === 'spread' ? 'blood' : tag === 'control' ? 'crystal' : tag
+
+const normalizeSet = (values: readonly string[] | undefined) => new Set(values ?? [])
 
 const hasTagOverlap = (node: RunTalentNode, tags: readonly string[]) => {
   const normalizedTags = new Set(tags.map(normalizeTag))

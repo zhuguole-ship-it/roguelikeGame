@@ -1,7 +1,53 @@
 import { CAMPAIGN_MONSTER_THEMES, CORROSIVE_SLIME_ARCHETYPE, type CampaignEnemyArchetype } from './campaignMonsters'
+import {
+  HELLHOUND_IMAGE2_ACTIONS,
+  HELLHOUND_IMAGE2_FRAME_SIZE,
+  getHellhoundImage2PublicFrameUrls,
+  type HellhoundImage2ActionSlot,
+} from './hellhoundAssetFrames'
+import {
+  SKELETON_ARCHER_IMAGE2_ACTIONS,
+  SKELETON_ARCHER_IMAGE2_COMBAT_SCALE,
+  SKELETON_ARCHER_IMAGE2_FRAME_SIZE,
+  getSkeletonArcherImage2PublicFrameUrls,
+  type SkeletonArcherImage2ActionSlot,
+} from './skeletonArcherAssetFrames'
+import {
+  SKELETON_WARRIOR_PT_ACTIONS,
+  SKELETON_WARRIOR_PT_COMBAT_SCALE,
+  SKELETON_WARRIOR_PT_FRAME_SIZE,
+  getSkeletonWarriorPtPublicFrameUrls,
+  type SkeletonWarriorPtActionSlot,
+} from './skeletonWarriorPtAssetFrames'
+import {
+  DUNGEON_WARDEN_ACTIONS,
+  DUNGEON_WARDEN_ANCHORS,
+  DUNGEON_WARDEN_FRAME_SIZE,
+  getDungeonWardenPublicFrameUrls,
+  type DungeonWardenActionSlot,
+} from './dungeonWardenAssetFrames'
+import {
+  CORROSIVE_SLIME_ACTIONS,
+  CORROSIVE_SLIME_FRAME_SIZE,
+  getCorrosiveSlimePublicFrameUrls,
+  type CorrosiveSlimeActionSlot,
+} from './corrosiveSlimeAssetFrames'
+import {
+  C1_SLIME_VARIANT_ACTIONS,
+  C1_SLIME_VARIANT_FRAME_SIZE,
+  getC1SlimeVariantPublicFrameUrls,
+  type C1SlimeVariantAssetId,
+  type C1SlimeVariantActionSlot,
+} from './c1SlimeVariantAssetFrames'
+import {
+  C1_DIRECT_DEATH_ASSETS,
+  getC1DirectDeathPublicFrameUrls,
+  getC1DirectDeathPublicGuideUrl,
+  getC1DirectDeathPublicSheetUrl,
+  type C1DirectDeathAssetId,
+} from './c1DeathAssetFrames'
+import { getRuntimeAssetActionOverride } from './runtimeAssetOverrides'
 import type { BeastKind, EnemyKind } from './types'
-
-const publicAsset = (path: string) => `${import.meta.env.BASE_URL}${path}`
 
 export type DeveloperAssetCategory = 'ordinary' | 'elite' | 'boss' | 'beast'
 
@@ -12,6 +58,8 @@ export type DeveloperAssetSlot =
   | 'cast'
   | 'skill_1'
   | 'skill_2'
+  | 'skill_3'
+  | 'skill_4'
   | 'hit'
   | 'death'
   | 'downed'
@@ -42,6 +90,7 @@ export type DeveloperAssetAction = {
   guideFrame?: string
   combatAction: string
   combatScale: number
+  sheetFrameStart?: number
   required?: boolean
   exists?: boolean
   anchors?: Partial<Record<DeveloperAssetAnchorName, DeveloperAssetAnchor>>
@@ -99,13 +148,6 @@ const hellhoundAnchors = {
   projectileSpawn: { x: 0.83, y: 0.33, label: '火焰' },
 } satisfies Partial<Record<DeveloperAssetAnchorName, DeveloperAssetAnchor>>
 
-const knightAnchors = {
-  body: { x: 0.52, y: 0.7, label: '身体' },
-  weapon: { x: 0.88, y: 0.34, label: '枪尖' },
-  cast: { x: 0.74, y: 0.42, label: '冲锋' },
-  projectileSpawn: { x: 0.88, y: 0.34, label: '枪尖' },
-} satisfies Partial<Record<DeveloperAssetAnchorName, DeveloperAssetAnchor>>
-
 const beastAnchors = {
   body: { x: 0.5, y: 0.7, label: '身体' },
   weapon: { x: 0.72, y: 0.54, label: '爪击' },
@@ -113,40 +155,159 @@ const beastAnchors = {
   projectileSpawn: { x: 0.7, y: 0.5, label: '突进点' },
 } satisfies Partial<Record<DeveloperAssetAnchorName, DeveloperAssetAnchor>>
 
-const createSheetAction = (
-  slot: DeveloperAssetSlot,
-  label: string,
-  folder: string,
-  filePrefix: string,
-  combatAction: string,
-  options: Partial<DeveloperAssetAction> = {},
-): DeveloperAssetAction => {
-  const frameCount = options.frameCount ?? 4
-  const defaultDuration = slot === 'move'
-    ? 0.65
-    : slot === 'attack' || slot === 'cast' || slot.startsWith('skill')
-      ? 0.55
-      : 1
-  const durationSeconds = options.durationSeconds ?? defaultDuration
-  const fps = options.fps ?? Number((frameCount / durationSeconds).toFixed(2))
+const corrosiveSlimeAnchors = {
+  body: { x: 0.5, y: 0.69, label: '身体' },
+  mouth: { x: 0.58, y: 0.60, label: '口部' },
+  cast: { x: 0.58, y: 0.60, label: '攻击起点' },
+} satisfies Partial<Record<DeveloperAssetAnchorName, DeveloperAssetAnchor>>
+
+const createHellhoundImage2Action = (slot: HellhoundImage2ActionSlot): DeveloperAssetAction => {
+  const meta = HELLHOUND_IMAGE2_ACTIONS[slot]
+  const frameUrls = getHellhoundImage2PublicFrameUrls(slot)
   return {
     slot,
-    label,
-    assetPath: publicAsset(`${folder}/${filePrefix}_01.png`),
-    guideFrame: publicAsset(`${folder}/${filePrefix}_01.png`),
-    frameWidth: 64,
-    frameHeight: 64,
-    frameCount,
-    fps,
-    durationSeconds,
-    loop: slot === 'move' || slot === 'idle',
-    hitFrameIndex: slot === 'attack' || slot === 'cast' || slot.startsWith('skill') ? 2 : undefined,
-    flipX: true,
-    combatAction,
+    label: meta.label,
+    assetPath: frameUrls.join(' / '),
+    guideFrame: frameUrls[0],
+    frameUrls,
+    frameWidth: HELLHOUND_IMAGE2_FRAME_SIZE,
+    frameHeight: HELLHOUND_IMAGE2_FRAME_SIZE,
+    frameCount: meta.frameCount,
+    fps: meta.fps,
+    durationSeconds: meta.durationSeconds,
+    loop: meta.loop,
+    hitFrameIndex: meta.hitFrameIndex,
+    flipX: false,
+    combatAction: meta.combatAction,
     combatScale: 1,
-    required: slot === 'idle' || slot === 'move' || slot === 'attack',
+    required: slot !== 'cast',
     exists: true,
-    ...options,
+    anchors: hellhoundAnchors,
+  }
+}
+
+const createSkeletonArcherImage2Action = (slot: SkeletonArcherImage2ActionSlot): DeveloperAssetAction => {
+  const meta = SKELETON_ARCHER_IMAGE2_ACTIONS[slot]
+  const frameUrls = getSkeletonArcherImage2PublicFrameUrls(slot)
+  return {
+    slot,
+    label: meta.label,
+    assetPath: frameUrls.join(' / '),
+    guideFrame: frameUrls[0],
+    frameUrls,
+    frameWidth: SKELETON_ARCHER_IMAGE2_FRAME_SIZE,
+    frameHeight: SKELETON_ARCHER_IMAGE2_FRAME_SIZE,
+    frameCount: meta.frameCount,
+    fps: meta.fps,
+    durationSeconds: meta.durationSeconds,
+    loop: meta.loop,
+    hitFrameIndex: meta.hitFrameIndex,
+    flipX: false,
+    combatAction: meta.combatAction,
+    combatScale: SKELETON_ARCHER_IMAGE2_COMBAT_SCALE,
+    required: true,
+    exists: true,
+    anchors: skeletonAnchors,
+  }
+}
+
+const createSkeletonWarriorPtAction = (slot: SkeletonWarriorPtActionSlot): DeveloperAssetAction => {
+  const meta = SKELETON_WARRIOR_PT_ACTIONS[slot]
+  const frameUrls = getSkeletonWarriorPtPublicFrameUrls(slot)
+  return {
+    slot,
+    label: meta.label,
+    assetPath: frameUrls.join(' / '),
+    guideFrame: frameUrls[0],
+    frameUrls,
+    frameWidth: SKELETON_WARRIOR_PT_FRAME_SIZE,
+    frameHeight: SKELETON_WARRIOR_PT_FRAME_SIZE,
+    frameCount: meta.frameCount,
+    fps: meta.fps,
+    durationSeconds: meta.durationSeconds,
+    loop: meta.loop,
+    hitFrameIndex: meta.hitFrameIndex,
+    flipX: false,
+    combatAction: meta.combatAction,
+    combatScale: SKELETON_WARRIOR_PT_COMBAT_SCALE,
+    required: true,
+    exists: true,
+    anchors: skeletonAnchors,
+  }
+}
+
+const createDungeonWardenAction = (slot: DungeonWardenActionSlot): DeveloperAssetAction => {
+  const meta = DUNGEON_WARDEN_ACTIONS[slot]
+  const frameUrls = getDungeonWardenPublicFrameUrls(slot)
+  return {
+    slot,
+    label: meta.label,
+    assetPath: frameUrls.join(' / '),
+    guideFrame: frameUrls[0],
+    frameUrls,
+    frameWidth: DUNGEON_WARDEN_FRAME_SIZE,
+    frameHeight: DUNGEON_WARDEN_FRAME_SIZE,
+    frameCount: meta.frameCount,
+    fps: meta.fps,
+    durationSeconds: meta.durationSeconds,
+    loop: meta.loop,
+    flipX: false,
+    combatAction: meta.combatAction,
+    combatScale: 1,
+    required: true,
+    exists: true,
+    anchors: DUNGEON_WARDEN_ANCHORS[slot],
+  }
+}
+
+const createCorrosiveSlimeAction = (slot: CorrosiveSlimeActionSlot): DeveloperAssetAction => {
+  const meta = CORROSIVE_SLIME_ACTIONS[slot]
+  const frameUrls = getCorrosiveSlimePublicFrameUrls(slot)
+  return {
+    slot,
+    label: meta.label,
+    assetPath: frameUrls.join(' / '),
+    guideFrame: frameUrls[0],
+    frameUrls,
+    frameWidth: CORROSIVE_SLIME_FRAME_SIZE,
+    frameHeight: CORROSIVE_SLIME_FRAME_SIZE,
+    frameCount: meta.frameCount,
+    fps: meta.fps,
+    durationSeconds: meta.durationSeconds,
+    loop: meta.loop,
+    flipX: false,
+    combatAction: meta.combatAction,
+    combatScale: 1,
+    required: true,
+    exists: true,
+    anchors: corrosiveSlimeAnchors,
+  }
+}
+
+const createC1SlimeVariantAction = (
+  entityId: C1SlimeVariantAssetId,
+  slot: C1SlimeVariantActionSlot,
+): DeveloperAssetAction => {
+  const meta = C1_SLIME_VARIANT_ACTIONS[slot]
+  const frameUrls = getC1SlimeVariantPublicFrameUrls(entityId, slot)
+  return {
+    slot,
+    label: meta.label,
+    assetPath: frameUrls.join(' / '),
+    guideFrame: frameUrls[0],
+    frameUrls,
+    frameWidth: C1_SLIME_VARIANT_FRAME_SIZE,
+    frameHeight: C1_SLIME_VARIANT_FRAME_SIZE,
+    frameCount: meta.frameCount,
+    fps: meta.fps,
+    durationSeconds: meta.durationSeconds,
+    loop: meta.loop,
+    flipX: false,
+    combatAction: meta.combatAction,
+    combatScale: 1,
+    required: true,
+    exists: true,
+    anchors: corrosiveSlimeAnchors,
   }
 }
 
@@ -290,7 +451,134 @@ const categoryLabelsByCategory: Record<DeveloperAssetCategory, string> = {
   beast: '野兽召唤物',
 }
 
+const createC1DirectDeathAction = (entityId: C1DirectDeathAssetId): Partial<DeveloperAssetAction> => {
+  const meta = C1_DIRECT_DEATH_ASSETS[entityId]
+  const frameUrls = getC1DirectDeathPublicFrameUrls(entityId)
+  const sheetUrl = getC1DirectDeathPublicSheetUrl(entityId)
+  const guideUrl = getC1DirectDeathPublicGuideUrl(entityId)
+  const assetPath = sheetUrl ?? frameUrls.join(' / ')
+
+  return {
+    assetPath,
+    guideFrame: guideUrl ?? frameUrls[0],
+    frameUrls: frameUrls.length > 0 ? frameUrls : undefined,
+    frameWidth: meta.frameWidth,
+    frameHeight: meta.frameHeight,
+    frameCount: meta.frameCount,
+    fps: meta.fps,
+    durationSeconds: meta.frameCount / meta.fps,
+    loop: false,
+    flipX: false,
+    combatAction: 'death',
+    combatScale: 1,
+    sheetFrameStart: meta.sheetFrameStart,
+    required: true,
+    exists: true,
+  }
+}
+
+const createC1DeathOnlyEntity = (archetypeId: C1DirectDeathAssetId, notes: string): DeveloperAssetEntity => {
+  const archetype = CAMPAIGN_MONSTER_THEMES
+    .flatMap((theme) => [...theme.normalPool, ...theme.elitePool, theme.boss])
+    .find((candidate) => candidate.id === archetypeId)
+
+  if (!archetype) {
+    throw new Error(`Missing formal C1 archetype for direct death asset: ${archetypeId}`)
+  }
+
+  const category = enemyCategoryByKind(archetype.kind)
+  const frameSize = enemyFrameSizeByKind(archetype.kind)
+  const actions = completeActionSlots(frameSize, fallbackAnchorsForArchetype(archetype), {
+    death: createC1DirectDeathAction(archetypeId),
+  })
+
+  return {
+    id: archetype.id,
+    name: archetype.name,
+    category,
+    categoryLabel: categoryLabelsByCategory[category],
+    kind: archetype.kind,
+    assetStatus: 'missing-resource',
+    previewTint: archetype.tint,
+    combatSize: frameSize,
+    attackRange: category === 'elite' ? 112 : 92,
+    skillRange: category === 'elite' ? 210 : 150,
+    notes,
+    qa: { quadrupedSilhouette: 'not-applicable' },
+    actions,
+  }
+}
+
+const createC1SlimeVariantEntity = (
+  archetypeId: C1SlimeVariantAssetId,
+  notes: string,
+): DeveloperAssetEntity => {
+  const archetype = CAMPAIGN_MONSTER_THEMES
+    .flatMap((theme) => [...theme.normalPool, ...theme.elitePool, theme.boss])
+    .find((candidate) => candidate.id === archetypeId)
+
+  if (!archetype) {
+    throw new Error(`Missing formal C1 slime variant archetype: ${archetypeId}`)
+  }
+
+  const category = enemyCategoryByKind(archetype.kind)
+  return {
+    id: archetype.id,
+    name: archetype.name,
+    category,
+    categoryLabel: categoryLabelsByCategory[category],
+    kind: archetype.kind,
+    assetStatus: 'complete',
+    previewTint: archetype.tint,
+    combatSize: enemyFrameSizeByKind(archetype.kind),
+    attackRange: 92,
+    skillRange: 150,
+    notes,
+    qa: { quadrupedSilhouette: 'not-applicable' },
+    actions: [
+      createC1SlimeVariantAction(archetypeId, 'idle'),
+      createC1SlimeVariantAction(archetypeId, 'move'),
+      createC1SlimeVariantAction(archetypeId, 'attack'),
+      createC1SlimeVariantAction(archetypeId, 'hit'),
+      createC1SlimeVariantAction(archetypeId, 'death'),
+    ],
+  }
+}
+
 export const monsterAssetManifest: DeveloperAssetEntity[] = [
+  createC1SlimeVariantEntity(
+    'dungeon-splitting-ooze',
+    '项目内绿色 192x192 RGBA 派生帧已覆盖待机、移动、攻击、受击和死亡；与图鉴和资产后台共用同一动作配置。',
+  ),
+  createC1SlimeVariantEntity(
+    'dungeon-explosive-fire-sac',
+    '项目内橙色 192x192 RGBA 派生帧已覆盖待机、移动、攻击、受击和死亡；与图鉴和资产后台共用同一动作配置。',
+  ),
+  createC1DeathOnlyEntity(
+    'dungeon-jailer-chief',
+    '项目内已同步专属 8 帧死亡动作；其他动作尚未在正式 manifest 中确认，实体保持缺资源状态。',
+  ),
+  {
+    id: 'corrosive-slime',
+    name: '腐蚀史莱姆',
+    category: 'ordinary',
+    categoryLabel: '普通怪',
+    kind: 'melee',
+    assetStatus: 'complete',
+    previewTint: '#7dd3a4',
+    combatSize: 64,
+    attackRange: 92,
+    skillRange: 150,
+    notes: '项目内 192x192 RGBA 逐帧素材已接入；待机、移动、普通攻击、受击和死亡与战斗、图鉴、资产后台共用同一配置。',
+    qa: { quadrupedSilhouette: 'not-applicable' },
+    actions: [
+      createCorrosiveSlimeAction('idle'),
+      createCorrosiveSlimeAction('move'),
+      createCorrosiveSlimeAction('attack'),
+      createCorrosiveSlimeAction('hit'),
+      createCorrosiveSlimeAction('death'),
+    ],
+  },
   {
     id: 'dungeon-skeleton-warrior',
     name: '骷髅战士',
@@ -302,14 +590,16 @@ export const monsterAssetManifest: DeveloperAssetEntity[] = [
     combatSize: 64,
     attackRange: 92,
     skillRange: 118,
-    notes: '第 1 关近战基础单位，普通攻击使用锁位挥剑。',
+    notes: '第 1 关近战基础单位，项目内 PT 切图已接入；防御期间消费 Protect 帧。',
     qa: { quadrupedSilhouette: 'not-applicable' },
     actions: [
-      createSheetAction('idle', '待机/受击', 'assets/monsters/skeleton-warrior-image2', 'idle', 'hit', { anchors: skeletonAnchors }),
-      createSheetAction('move', '移动', 'assets/monsters/skeleton-warrior-image2', 'move', 'move', { fps: 6, anchors: skeletonAnchors }),
-      createSheetAction('attack', '普通攻击', 'assets/monsters/skeleton-warrior-image2', 'attack', 'attack', { fps: 8, loop: false, anchors: skeletonAnchors }),
-      createSheetAction('hit', '受击', 'assets/monsters/skeleton-warrior-image2', 'idle', 'hit', { required: false, anchors: skeletonAnchors }),
-      createSheetAction('death', '死亡', 'assets/monsters/skeleton-warrior-image2', 'idle', 'death', { required: false, loop: false, anchors: skeletonAnchors }),
+      createSkeletonWarriorPtAction('idle'),
+      createSkeletonWarriorPtAction('move'),
+      createSkeletonWarriorPtAction('attack'),
+      createSkeletonWarriorPtAction('hit'),
+      createSkeletonWarriorPtAction('death'),
+      createSkeletonWarriorPtAction('skill_1'),
+      createSkeletonWarriorPtAction('skill_2'),
     ],
   },
   {
@@ -320,19 +610,17 @@ export const monsterAssetManifest: DeveloperAssetEntity[] = [
     kind: 'ranged',
     assetStatus: 'complete',
     previewTint: '#9cc7ff',
-    combatSize: 64,
+    combatSize: 72,
     attackRange: 168,
     skillRange: 220,
-    notes: '第 1 关远程基础单位，移动、瞄准和放箭分离。',
+    notes: '第 1 关远程基础单位，普通攻击播放三支箭动作；不再拆分瞄准前摇和箭矢动作。',
     qa: { quadrupedSilhouette: 'not-applicable' },
     actions: [
-      createSheetAction('idle', '待机/受击', 'assets/monsters/skeleton-archer-image2', 'idle', 'hit', { anchors: skeletonAnchors }),
-      createSheetAction('move', '移动', 'assets/monsters/skeleton-archer-image2', 'move', 'move', { fps: 7, anchors: skeletonAnchors }),
-      createSheetAction('attack', '普通攻击', 'assets/monsters/skeleton-archer-image2', 'attack', 'attack', { fps: 8, loop: false, anchors: skeletonAnchors }),
-      createSheetAction('cast', '瞄准前摇', 'assets/monsters/skeleton-archer-image2', 'attack', 'cast', { fps: 7, loop: false, required: true, anchors: skeletonAnchors }),
-      createSheetAction('skill_1', '箭矢射击', 'assets/monsters/skeleton-archer-image2', 'attack', 'skill', { fps: 8, loop: false, required: false, anchors: skeletonAnchors }),
-      createSheetAction('hit', '受击', 'assets/monsters/skeleton-archer-image2', 'idle', 'hit', { required: true, anchors: skeletonAnchors }),
-      createSheetAction('death', '死亡', 'assets/monsters/skeleton-archer-image2', 'idle', 'death', { required: true, loop: false, anchors: skeletonAnchors }),
+      createSkeletonArcherImage2Action('idle'),
+      createSkeletonArcherImage2Action('move'),
+      createSkeletonArcherImage2Action('attack'),
+      createSkeletonArcherImage2Action('hit'),
+      createSkeletonArcherImage2Action('death'),
     ],
   },
   {
@@ -349,266 +637,38 @@ export const monsterAssetManifest: DeveloperAssetEntity[] = [
     notes: '火焰吐息需要 mouth / cast / projectileSpawn 锚点。',
     qa: { quadrupedSilhouette: 'manual' },
     actions: [
-      {
-        slot: 'idle',
-        label: '待机',
-        assetPath: publicAsset('assets/monsters/hellhound-sheet.png'),
-        guideFrame: publicAsset('assets/monsters/hellhound-preview.png'),
-        frameWidth: 64,
-        frameHeight: 64,
-        frameCount: 6,
-        fps: 4,
-        loop: true,
-        flipX: true,
-        combatAction: 'idle',
-        combatScale: 1,
-        required: true,
-        exists: true,
-        anchors: hellhoundAnchors,
-      },
-      {
-        slot: 'move',
-        label: '移动',
-        assetPath: publicAsset('assets/monsters/hellhound-sheet.png'),
-        guideFrame: publicAsset('assets/monsters/hellhound-preview.png'),
-        frameWidth: 64,
-        frameHeight: 64,
-        frameCount: 6,
-        fps: 7,
-        loop: true,
-        flipX: true,
-        combatAction: 'move',
-        combatScale: 1,
-        required: true,
-        exists: true,
-        anchors: hellhoundAnchors,
-      },
-      {
-        slot: 'attack',
-        label: '普通攻击',
-        assetPath: publicAsset('assets/monsters/hellhound-sheet.png'),
-        guideFrame: publicAsset('assets/monsters/hellhound-preview.png'),
-        frameWidth: 64,
-        frameHeight: 64,
-        frameCount: 6,
-        fps: 8,
-        loop: false,
-        flipX: true,
-        combatAction: 'attack',
-        combatScale: 1,
-        required: true,
-        exists: true,
-        anchors: hellhoundAnchors,
-      },
-      {
-        slot: 'skill_1',
-        label: '火焰吐息',
-        assetPath: publicAsset('assets/monsters/hellhound-sheet.png'),
-        guideFrame: publicAsset('assets/monsters/hellhound-preview.png'),
-        frameWidth: 64,
-        frameHeight: 64,
-        frameCount: 6,
-        fps: 7,
-        loop: false,
-        flipX: true,
-        combatAction: 'skill',
-        combatScale: 1,
-        required: true,
-        exists: true,
-        anchors: hellhoundAnchors,
-      },
-      {
-        slot: 'hit',
-        label: '受击',
-        assetPath: publicAsset('assets/monsters/hellhound-sheet.png'),
-        guideFrame: publicAsset('assets/monsters/hellhound-preview.png'),
-        frameWidth: 64,
-        frameHeight: 64,
-        frameCount: 5,
-        fps: 6,
-        loop: false,
-        flipX: true,
-        combatAction: 'hit',
-        combatScale: 1,
-        required: true,
-        exists: true,
-        anchors: hellhoundAnchors,
-      },
-      {
-        slot: 'death',
-        label: '死亡',
-        assetPath: publicAsset('assets/monsters/hellhound-sheet.png'),
-        guideFrame: publicAsset('assets/monsters/hellhound-preview.png'),
-        frameWidth: 64,
-        frameHeight: 64,
-        frameCount: 5,
-        fps: 5,
-        loop: false,
-        flipX: true,
-        combatAction: 'death',
-        combatScale: 1,
-        required: true,
-        exists: true,
-        anchors: hellhoundAnchors,
-      },
+      createHellhoundImage2Action('idle'),
+      createHellhoundImage2Action('move'),
+      createHellhoundImage2Action('attack'),
+      createHellhoundImage2Action('cast'),
+      createHellhoundImage2Action('skill_1'),
+      createHellhoundImage2Action('hit'),
+      createHellhoundImage2Action('death'),
     ],
   },
   {
-    id: 'dungeon-broken-chain-captain',
-    name: '断链骷髅队长',
-    category: 'elite',
-    categoryLabel: '精英怪',
-    kind: 'elite',
-    assetStatus: 'complete',
-    previewTint: '#c4b5fd',
-    combatSize: 68,
-    attackRange: 112,
-    skillRange: 150,
-    notes: '第 1 关精英模板，普通攻击与技能前摇共享剑刃锚点。',
-    qa: { quadrupedSilhouette: 'not-applicable' },
-    actions: [
-      createSheetAction('idle', '待机/受击', 'assets/monsters/skeleton-warrior-image2', 'idle', 'hit', { anchors: skeletonAnchors }),
-      createSheetAction('move', '移动', 'assets/monsters/skeleton-warrior-image2', 'move', 'move', { fps: 5.8, anchors: skeletonAnchors }),
-      createSheetAction('attack', '普通攻击', 'assets/monsters/skeleton-warrior-image2', 'attack', 'attack', { loop: false, anchors: skeletonAnchors }),
-      createSheetAction('cast', '技能前摇', 'assets/monsters/skeleton-warrior-image2', 'attack', 'cast', { loop: false, required: true, anchors: skeletonAnchors }),
-      createSheetAction('skill_1', '精英挥击', 'assets/monsters/skeleton-warrior-image2', 'attack', 'skill', { loop: false, required: true, anchors: skeletonAnchors }),
-      createSheetAction('hit', '受击', 'assets/monsters/skeleton-warrior-image2', 'idle', 'hit', { required: true, anchors: skeletonAnchors }),
-      createSheetAction('death', '死亡', 'assets/monsters/skeleton-warrior-image2', 'idle', 'death', { required: true, loop: false, anchors: skeletonAnchors }),
-    ],
-  },
-  {
-    id: 'dungeon-skeleton-knight',
-    name: '骷髅骑士 / Boss',
+    id: 'dungeon-warden',
+    name: '典狱长',
     category: 'boss',
     categoryLabel: 'Boss',
     kind: 'boss',
     assetStatus: 'complete',
-    previewTint: '#c4b5fd',
+    previewTint: '#f97316',
     combatSize: 96,
     attackRange: 132,
     skillRange: 260,
-    notes: 'Boss 普攻、冲锋和格挡共用骑士 atlas。',
+    notes: '项目内 192x192 RGBA 帧与动作槽已同步；各动作首帧的 weapon/mouth/cast/projectileSpawn 预览锚点已按可见像素配置。碰撞、受击框、阴影和精确缩放仍不在资产锚点配置内。',
     qa: { quadrupedSilhouette: 'not-applicable' },
     actions: [
-      {
-        slot: 'idle',
-        label: '待机',
-        assetPath: publicAsset('assets/monsters/skeleton-knight-sheet.png'),
-        guideFrame: publicAsset('assets/monsters/skeleton-knight-preview.png'),
-        frameWidth: 96,
-        frameHeight: 96,
-        frameCount: 6,
-        fps: 4,
-        loop: true,
-        flipX: true,
-        combatAction: 'idle',
-        combatScale: 1,
-        required: true,
-        exists: true,
-        anchors: knightAnchors,
-      },
-      {
-        slot: 'move',
-        label: '移动',
-        assetPath: publicAsset('assets/monsters/skeleton-knight-sheet.png'),
-        guideFrame: publicAsset('assets/monsters/skeleton-knight-preview.png'),
-        frameWidth: 96,
-        frameHeight: 96,
-        frameCount: 6,
-        fps: 5,
-        loop: true,
-        flipX: true,
-        combatAction: 'move',
-        combatScale: 1,
-        required: true,
-        exists: true,
-        anchors: knightAnchors,
-      },
-      {
-        slot: 'attack',
-        label: '戳刺',
-        assetPath: publicAsset('assets/monsters/skeleton-knight-sheet.png'),
-        guideFrame: publicAsset('assets/monsters/skeleton-knight-preview.png'),
-        frameWidth: 96,
-        frameHeight: 96,
-        frameCount: 5,
-        fps: 7,
-        loop: false,
-        flipX: true,
-        combatAction: 'attack',
-        combatScale: 1,
-        required: true,
-        exists: true,
-        anchors: knightAnchors,
-      },
-      {
-        slot: 'skill_1',
-        label: '冲锋',
-        assetPath: publicAsset('assets/monsters/skeleton-knight-sheet.png'),
-        guideFrame: publicAsset('assets/monsters/skeleton-knight-preview.png'),
-        frameWidth: 96,
-        frameHeight: 96,
-        frameCount: 6,
-        fps: 7,
-        loop: false,
-        flipX: true,
-        combatAction: 'skill',
-        combatScale: 1,
-        required: true,
-        exists: true,
-        anchors: knightAnchors,
-      },
-      {
-        slot: 'skill_2',
-        label: '格挡',
-        assetPath: publicAsset('assets/monsters/skeleton-knight-sheet.png'),
-        guideFrame: publicAsset('assets/monsters/skeleton-knight-preview.png'),
-        frameWidth: 96,
-        frameHeight: 96,
-        frameCount: 5,
-        fps: 5,
-        loop: false,
-        flipX: true,
-        combatAction: 'skill2',
-        combatScale: 1,
-        required: true,
-        exists: true,
-        anchors: knightAnchors,
-      },
-      {
-        slot: 'hit',
-        label: '受击',
-        assetPath: publicAsset('assets/monsters/skeleton-knight-sheet.png'),
-        guideFrame: publicAsset('assets/monsters/skeleton-knight-preview.png'),
-        frameWidth: 96,
-        frameHeight: 96,
-        frameCount: 4,
-        fps: 5,
-        loop: false,
-        flipX: true,
-        combatAction: 'hit',
-        combatScale: 1,
-        required: true,
-        exists: true,
-        anchors: knightAnchors,
-      },
-      {
-        slot: 'death',
-        label: '死亡',
-        assetPath: publicAsset('assets/monsters/skeleton-knight-sheet.png'),
-        guideFrame: publicAsset('assets/monsters/skeleton-knight-preview.png'),
-        frameWidth: 96,
-        frameHeight: 96,
-        frameCount: 6,
-        fps: 4,
-        loop: false,
-        flipX: true,
-        combatAction: 'death',
-        combatScale: 1,
-        required: true,
-        exists: true,
-        anchors: knightAnchors,
-      },
+      createDungeonWardenAction('idle'),
+      createDungeonWardenAction('move'),
+      createDungeonWardenAction('attack'),
+      createDungeonWardenAction('hit'),
+      createDungeonWardenAction('death'),
+      createDungeonWardenAction('skill_1'),
+      createDungeonWardenAction('skill_2'),
+      createDungeonWardenAction('skill_3'),
+      createDungeonWardenAction('skill_4'),
     ],
   },
 ]
@@ -675,6 +735,94 @@ export const campaignFallbackAssetManifest: DeveloperAssetEntity[] = CAMPAIGN_MO
 
 export const developerAssetEntities = [...monsterAssetManifest, ...campaignFallbackAssetManifest, ...beastAssetManifest]
 
+export type EnemyDeathAnimationTiming = {
+  frameCount: number
+  fps: number
+  durationSeconds: number
+}
+
+type EnemyDeathAnimationKind = EnemyKind | BeastKind | undefined
+
+const DEATH_PRESENTATION_DURATION_SECONDS = 3
+
+const isEntityKindMatch = (entity: DeveloperAssetEntity, kind: EnemyDeathAnimationKind) => (
+  kind === undefined || entity.kind === kind || entity.beastKind === kind
+)
+
+const getPositiveDeathTiming = (
+  frameCount: number,
+  fps: number,
+): EnemyDeathAnimationTiming | undefined => {
+  const normalizedFrameCount = Math.floor(frameCount)
+  const normalizedFps = Number(fps)
+
+  if (normalizedFrameCount <= 0 || !Number.isFinite(normalizedFps) || normalizedFps <= 0) {
+    return undefined
+  }
+
+  return {
+    frameCount: normalizedFrameCount,
+    fps: normalizedFps,
+    durationSeconds: DEATH_PRESENTATION_DURATION_SECONDS,
+  }
+}
+
+const isCompleteDirectDeathOverride = (override: ReturnType<typeof getRuntimeAssetActionOverride>) => (
+  Boolean(override)
+  && override?.loop === false
+  && override.frameUrls.filter(Boolean).length === Math.floor(override.frameCount)
+)
+
+const isCompleteDirectManifestDeathAction = (
+  action: DeveloperAssetAction | undefined,
+): action is DeveloperAssetAction => {
+  if (!action) {
+    return false
+  }
+
+  return action.slot === 'death'
+    && action.combatAction === 'death'
+    && action.loop === false
+    && action.exists !== false
+    && Boolean(action.assetPath)
+    && ((action.frameUrls?.length ?? 0) === 0 || action.frameUrls?.filter(Boolean).length === Math.floor(action.frameCount))
+}
+
+/**
+ * Returns the exact, direct death-slot timing for an already registered entity.
+ * A malformed direct override is intentionally not replaced by another action or
+ * the manifest: the caller must surface the missing death asset instead.
+ */
+export const getEnemyDeathAnimationTiming = (
+  entityId: string | undefined,
+  kind: EnemyDeathAnimationKind,
+): EnemyDeathAnimationTiming | undefined => {
+  const entity = developerAssetEntities.find((candidate) => candidate.id === entityId && isEntityKindMatch(candidate, kind))
+  if (!entity) {
+    return undefined
+  }
+
+  const runtimeDeathOverride = getRuntimeAssetActionOverride(entity.id, 'death')
+  if (runtimeDeathOverride) {
+    if (!isCompleteDirectDeathOverride(runtimeDeathOverride)) {
+      return undefined
+    }
+    return getPositiveDeathTiming(
+      runtimeDeathOverride.frameCount,
+      runtimeDeathOverride.fps,
+    )
+  }
+
+  const manifestDeathAction = entity.actions.find((action) => action.slot === 'death')
+  if (!isCompleteDirectManifestDeathAction(manifestDeathAction)) {
+    return undefined
+  }
+  return getPositiveDeathTiming(
+    manifestDeathAction.frameCount,
+    manifestDeathAction.fps,
+  )
+}
+
 export const cloneDeveloperAssetEntity = (entity: DeveloperAssetEntity): DeveloperAssetEntity => ({
   ...entity,
   actions: entity.actions.map((action) => ({
@@ -692,7 +840,7 @@ export const cloneDeveloperAssetEntity = (entity: DeveloperAssetEntity): Develop
 const requiredSlotsByCategory: Record<DeveloperAssetCategory, DeveloperAssetSlot[]> = {
   ordinary: ['idle', 'move', 'attack', 'hit', 'death'],
   elite: ['idle', 'move', 'attack', 'cast', 'skill_1', 'hit', 'death'],
-  boss: ['idle', 'move', 'attack', 'skill_1', 'skill_2', 'hit', 'death'],
+  boss: ['idle', 'move', 'attack', 'skill_1', 'skill_2', 'skill_3', 'skill_4', 'hit', 'death'],
   beast: ['idle', 'move', 'attack', 'skill_1', 'downed', 'revive'],
 }
 

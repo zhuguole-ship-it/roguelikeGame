@@ -2,6 +2,7 @@ import type { AudioSettings } from './types'
 
 export type GameSoundId =
   | 'button'
+  | 'basic-attack'
   | 'crystal-pickup'
   | 'equipment-drop'
   | 'equipment-pickup'
@@ -26,6 +27,7 @@ const lastPlayedAt: Partial<Record<GameSoundId, number>> = {}
 
 const SOUND_FREQUENCIES: Record<GameSoundId, [number, number]> = {
   button: [220, 330],
+  'basic-attack': [720, 420],
   'crystal-pickup': [520, 780],
   'equipment-drop': [280, 560],
   'equipment-pickup': [330, 660],
@@ -37,6 +39,12 @@ const SOUND_FREQUENCIES: Record<GameSoundId, [number, number]> = {
   'level-settle': [392, 588],
   'reward-confirm': [660, 880],
 }
+
+const SOUND_ASSET_PATHS: Partial<Record<GameSoundId, string>> = {
+  'basic-attack': 'assets/audio/archer-basic-attack.wav',
+  'skill-cast': 'assets/audio/archer-basic-attack.wav',
+}
+const audioAssetCache = new Map<string, HTMLAudioElement>()
 
 const SOUND_THROTTLE_MS: Partial<Record<GameSoundId, number>> = {
   button: 35,
@@ -75,6 +83,7 @@ export const resetGameSoundRuntimeForTests = () => {
   Object.keys(lastPlayedAt).forEach((key) => {
     delete lastPlayedAt[key as GameSoundId]
   })
+  audioAssetCache.clear()
   testPlayer = null
   setGameSoundNowProviderForTests(null)
 }
@@ -93,6 +102,25 @@ const getAudioContext = () => {
   return audioContext
 }
 
+const getPublicAssetUrl = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, '')}`
+
+const playAudioAsset = (path: string, volume: number) => {
+  if (typeof Audio === 'undefined') {
+    return false
+  }
+
+  const url = getPublicAssetUrl(path)
+  if (!audioAssetCache.has(url)) {
+    const template = new Audio(url)
+    template.preload = 'auto'
+    audioAssetCache.set(url, template)
+  }
+  const audio = audioAssetCache.get(url)!.cloneNode(true) as HTMLAudioElement
+  audio.volume = volume
+  void audio.play().catch(() => undefined)
+  return true
+}
+
 export const playGameSound = (id: GameSoundId, settings: AudioSettings) => {
   const volume = Math.max(0, Math.min(1, (settings.masterVolume / 100) * (settings.effectsVolume / 100)))
   if (settings.muted || volume <= 0) {
@@ -105,6 +133,11 @@ export const playGameSound = (id: GameSoundId, settings: AudioSettings) => {
 
   if (testPlayer) {
     testPlayer(id, volume)
+    return true
+  }
+
+  const assetPath = SOUND_ASSET_PATHS[id]
+  if (assetPath && playAudioAsset(assetPath, volume)) {
     return true
   }
 

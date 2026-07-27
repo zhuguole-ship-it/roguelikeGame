@@ -23,3 +23,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Godot editor caches and generated sidecars
+godot_homepage/.godot/
+godot_homepage/**/*.import
+godot_homepage/**/*.uid
+godot_asset_tools/.godot/
+godot_asset_tools/**/*.import
+godot_asset_tools/**/*.uid

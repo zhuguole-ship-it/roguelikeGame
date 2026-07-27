@@ -2,41 +2,61 @@ extends Node2D
 
 const VIEW_SIZE := Vector2(960, 640)
 
+@onready var background_video := get_node_or_null("BackgroundVideo") as VideoStreamPlayer
+@onready var background_poster := get_node_or_null("BackgroundPoster") as TextureRect
+
 var elapsed := 0.0
-var menu_background: Texture2D
+#var menu_background: Texture2D
 
 func _ready() -> void:
-	var image_path := ProjectSettings.globalize_path("res://assets/village-main-menu-background.png")
-	var image := Image.load_from_file(image_path)
-	if image:
-		menu_background = ImageTexture.create_from_image(image)
+	if background_poster:
+		background_poster.visible = false
+	if background_video:
+		background_video.position = Vector2.ZERO
+		background_video.size = VIEW_SIZE
+		background_video.expand = true
+		background_video.loop = true
+		if not background_video.finished.is_connected(_restart_background_video):
+			background_video.finished.connect(_restart_background_video)
+		background_video.play()
 
-func _process(delta: float) -> void:
-	elapsed += delta
-	queue_redraw()
+#	var image_path := ProjectSettings.globalize_path("res://assets/village-main-menu-concept-image2.png")
+#	var image := Image.load_from_file(image_path)
+#	if image:
+#		menu_background = ImageTexture.create_from_image(image)
 
-func _draw() -> void:
-	if menu_background:
-		draw_texture_rect_region(
-			menu_background,
-			Rect2(Vector2.ZERO, VIEW_SIZE),
-			Rect2(Vector2.ZERO, menu_background.get_size())
-		)
-		_draw_vignette()
+func _restart_background_video() -> void:
+	if not background_video:
 		return
+	background_video.stop()
+	background_video.play()
 
-	_draw_sky()
-	_draw_far_forest()
-	_draw_castle()
-	_draw_village_ground()
-	_draw_stone_paths()
-	_draw_blacksmith()
-	_draw_hunter_home()
-	_draw_portal()
-	_draw_notice_board()
-	_draw_campfire()
-	_draw_foreground_trees()
-	_draw_vignette()
+#func _process(delta: float) -> void:
+	#elapsed += delta
+	#queue_redraw()
+
+#func _draw() -> void:
+	#if menu_background:
+	#	draw_texture_rect_region(
+	#		menu_background,
+	#		Rect2(Vector2.ZERO, VIEW_SIZE),
+	#		Rect2(Vector2.ZERO, menu_background.get_size())
+	#	)
+	#	_draw_vignette()
+	#	return
+
+	#_draw_sky()
+	#_draw_far_forest()
+	#_draw_castle()
+	#_draw_village_ground()
+	#_draw_stone_paths()
+	#_draw_blacksmith()
+	#_draw_hunter_home()
+	#_draw_portal()
+	#_draw_notice_board()
+	#_draw_campfire()
+	#_draw_foreground_trees()
+	#_draw_vignette()
 
 func rect(x: float, y: float, w: float, h: float, color: Color) -> void:
 	draw_rect(Rect2(Vector2(round(x), round(y)), Vector2(round(w), round(h))), color)

@@ -39,6 +39,7 @@ export type TalentBuildTag = 'death' | 'blood' | 'beast' | 'crystal'
 export type BeastKind = 'hawk' | 'wolf' | 'boar' | 'bear' | 'snake' | 'deer'
 export type CampaignDifficulty = 'normal' | 'hard' | 'hell' | 'nightmare'
 export type RewardChoiceMode = 'new-active' | 'upgrade-active' | 'upgrade-passive' | 'in-run-talent'
+export type RewardPoolKind = 'skill' | 'run-talent'
 export type ObstacleKind = 'pillar' | 'crate' | 'wagon' | 'ruin'
 export type PickupKind = 'health-pack' | 'soul-crystal' | 'equipment'
 export type EquipmentSlot = 'weapon' | 'helmet' | 'chest' | 'shoulders' | 'wrists' | 'hands' | 'legs' | 'boots' | 'ring1' | 'ring2' | 'cloak' | 'necklace'
@@ -80,6 +81,12 @@ export type WeaponId =
 export type Vector2 = {
   x: number
   y: number
+}
+
+export type FloorTransitionState = {
+  nextLevel: number
+  timer: number
+  awaitingReward: boolean
 }
 
 export type SkillAllocations = {
@@ -299,6 +306,8 @@ export type ActiveSkillInstance = {
   skillId: string
   level: number
   cooldownRemaining: number
+  /** Actual total duration written by the most recent successful cast. */
+  cooldownDuration?: number
   castCount?: number
   lastTalentCooldownRefundAt?: number
   talentRefundedCastIds?: string[]
@@ -315,9 +324,11 @@ export type SkillRewardChoice = {
   levelText: string
   tacticalText: string
   talentId?: string
+  talentSourceIds?: string[]
 }
 
 export type PendingSkillReward = {
+  poolKind: RewardPoolKind
   choices: SkillRewardChoice[]
   replacementSkillId?: string
   source?: 'level-clear' | 'elite'
@@ -335,6 +346,8 @@ export type Player = {
   size: number
   attackCooldown: number
   hurtCooldown: number
+  /** Runtime-only damage shield. Only damage that reaches hp enters the combat log. */
+  shield?: number
   stunTimer?: number
   dashCooldown: number
   dashTimer: number
@@ -355,6 +368,11 @@ export type Enemy = {
   size: number
   tint: string
   archetypeId?: string
+  /** Presentation-only parent size for a one-generation C1 splitting-ooze child. */
+  c1SlimeVariantParentSize?: number
+  /** Fixed when an entity with a verified direct death slot first reaches zero HP. */
+  deathAnimationElapsed?: number
+  deathAnimationDuration?: number
   displayName?: string
   campaignIndex?: number
   role?: 'fodder' | 'theme' | 'high-threat' | 'elite' | 'boss' | 'guard'
@@ -375,6 +393,7 @@ export type Enemy = {
   lastPosition: Vector2
   burnTtl: number
   burnDamagePerSecond: number
+  burnSource?: { sourceId: string; sourceName: string }
   slowTtl: number
   slowFactor: number
   markStacks: number
@@ -386,16 +405,23 @@ export type Enemy = {
   lastTalentHitDamage?: number
   darkTtl?: number
   darkDamageMultiplier?: number
+  darkSource?: { sourceId: string; sourceName: string }
   stunTimer?: number
   bleedStacks?: Array<{
     ttl: number
     damagePerSecond: number
+    sourceId?: string
+    sourceName?: string
   }>
   infectionJumps?: number
   revivesRemaining?: number
   reviveCount?: number
   blockCooldown?: number
   blockTimer?: number
+  skeletonWarriorDefenseCooldown?: number
+  skeletonWarriorDefenseTimer?: number
+  skeletonWarriorDefenseDirection?: Vector2
+  skeletonWarriorDefensePosition?: Vector2
   breathTimer?: number
   breathDirection?: Vector2
   breathTickCooldown?: number
@@ -426,6 +452,13 @@ export type Enemy = {
   bossTransitionTimer?: number
   bossPendingPhase?: 2 | 3
   bossPhaseHpFloor?: number
+  wardenBloodthirstTimer?: number
+  wardenBloodthirstCooldown?: number
+  wardenRageTimer?: number
+  wardenRageCooldown?: number
+  wardenActionSlot?: 'skill_1' | 'skill_2' | 'skill_3' | 'skill_4'
+  wardenActionTimer?: number
+  wardenLastAttackCrit?: boolean
 }
 
 export type RunRecord = {
@@ -470,6 +503,8 @@ export type TalentUnlockRecord = {
   id: string
   talentId: string
   cost: number
+  /** The purchased rank; absent records were created before ranked meta talents. */
+  rank?: number
   unlockedAt: number
 }
 
@@ -488,10 +523,64 @@ export type RunTalentState = {
   lastOfferedCandidateIds: string[]
 }
 
+/**
+ * A finalized life-loss event for the combat HUD.  The engine owns these
+ * values: consumers must format them, never reconstruct them from effects or
+ * floating text.
+ */
+export type CombatDamageLogEvent = {
+  id: string
+  occurredAt: number
+  side: 'player' | 'enemy'
+  attackerId: string
+  attackerName: string
+  sourceId: string
+  sourceName: string
+  targetId: string
+  targetName: string
+  damage: number
+  mergeKey: string
+}
+
+export type TalentCombatState = {
+  crystalCharge?: { stacks: number; ttl: number }
+  crystalOverload?: { stacks: number; ttl: number; source?: string }
+  // `pending` arms `pendingSlotIndex`; `refund` belongs to the cast that consumed
+  // that arm. The latest completed refund is published through GameSnapshot.
+  cooldownEcho?: { pending?: boolean; lastSlotIndex?: number; pendingSlotIndex?: number; refund?: number }
+  emergencyDodge?: { shield: number; cooldown: number }
+  eliteInsight?: Record<string, { ttl: number }>
+  lootPremonition?: { pending: boolean }
+  overloadTempo?: { kills: number; ready: boolean }
+  deathChain?: Record<string, { count: number; ttl: number }>
+  soulFireCooldowns?: Record<string, number>
+  bloodFeather?: {
+    lastBaseAt?: number
+    lastCriticalAt?: number
+    spreadCastTargets?: Record<string, string[]>
+    stormHits?: number
+    stormWindowTtl?: number
+    stormCooldown?: number
+  }
+  beast?: {
+    protectCooldown?: number
+    surroundCooldown?: number
+    leaderBeastId?: string
+    teamBiteCooldowns?: Record<string, number>
+  }
+  crystal?: {
+    chargeMilestone?: number
+    castCount?: number
+    chainCooldown?: number
+    pulseCastIds?: Record<string, true>
+  }
+}
+
 export type Projectile = {
   id: string
   owner: ProjectileOwner
   position: Vector2
+  previousPosition?: Vector2
   origin?: Vector2
   velocity: Vector2
   damage: number
@@ -504,8 +593,13 @@ export type Projectile = {
   effect: SkillEffectTag
   effectStrength: number
   sourceSkillId: string
+  attackerId?: string
+  attackerName?: string
+  sourceName?: string
   ricochetRemaining?: number
   hitEnemyIds?: string[]
+  curveReturnOutboundHitEnemyIds?: string[]
+  curveReturnReturnHitEnemyIds?: string[]
   returnAfter?: number
   hasReturned?: boolean
   modifiers?: EquipmentSkillModifier[]
@@ -535,10 +629,19 @@ export type Projectile = {
     factor: number
     duration: number
   }
+  distanceDamageBonusMax?: number
+  distanceDamageRange?: number
+  homingRange?: number
+  homingStrength?: number
+  linePullMaxDistance?: number
+  linePullEliteMultiplier?: number
   castId?: string
   sourceSlotIndex?: number
   sourceBaseCooldown?: number
   talentCrystalOverload?: boolean
+  talentOverloadTempo?: boolean
+  talentPierceJudgmentReady?: boolean
+  talentCooldownEcho?: boolean
 }
 
 export type SkillField = {
@@ -558,6 +661,9 @@ export type SkillField = {
   spread: number
   projectileSpeed: number
   sourceSkillId: string
+  sourceEnemyId?: string
+  sourceEnemyName?: string
+  sourceName?: string
   modifiers?: EquipmentSkillModifier[]
   skillLevel?: number
   reactionCooldown?: number
@@ -568,6 +674,8 @@ export type SkillField = {
   sourceSlotIndex?: number
   sourceBaseCooldown?: number
   talentCrystalOverload?: boolean
+  talentOverloadTempo?: boolean
+  talentCooldownEcho?: boolean
 }
 
 export type BeastCompanion = {
@@ -595,6 +703,7 @@ export type BeastCompanion = {
   isAlpha?: boolean
   shieldPulseCooldown?: number
   poisonStacks?: Record<string, number>
+  lastAttackTargetId?: string
 }
 
 export type Burst = {
@@ -620,6 +729,17 @@ export type MapObstacle = {
   position: Vector2
   width: number
   height: number
+  collisionWidth?: number
+  collisionHeight?: number
+  assetId?: string
+}
+
+export type MapDecoration = {
+  id: string
+  position: Vector2
+  width: number
+  height: number
+  assetId: string
 }
 
 export type BattlefieldMode = 'village' | 'infinite' | 'boss-arena'
@@ -631,6 +751,7 @@ export type BattlefieldChunk = {
   floorVariant: number
   detailSeed: number
   obstacles: MapObstacle[]
+  decorations: MapDecoration[]
   spawnPoints: Vector2[]
   hazardPoints: Vector2[]
 }
@@ -684,6 +805,13 @@ export type BattlefieldState = {
   rift?: ContractRift
   bossArenaRadius?: number
   bossArenaWarningTimer?: number
+  wardenArena?: {
+    center: Vector2
+    elapsed: number
+    duration: number
+    startRadius: number
+    minRadius: number
+  }
   debug: BattlefieldDebug
 }
 
@@ -710,6 +838,8 @@ export type EnemySkillEffect = {
     | 'skeleton-knight-charge'
     | 'skeleton-knight-stab'
     | 'skeleton-knight-block'
+    | 'dungeon-warden-slash'
+    | 'dungeon-warden-crit'
     | 'ooze-split'
     | 'fire-sac-explosion'
   position: Vector2
@@ -722,6 +852,7 @@ export type EnemySkillEffect = {
   fadeOut?: number
   range?: number
   halfAngle?: number
+  sourceEnemySize?: number
 }
 
 export type InputState = {
@@ -736,9 +867,41 @@ export type DebugControlState = {
   disableAttacks: boolean
 }
 
+export type LocalBattleTestMonsterGroup = 'ordinary' | 'elite' | 'boss'
+
+export type LocalBattleTestMonsterConfig = {
+  entityId: string
+  count: number
+}
+
+export type LocalBattleTestSpawnOption = {
+  entityId: string
+  name: string
+  group: LocalBattleTestMonsterGroup
+  enabled: boolean
+  disabledReason?: string
+  maxCount: number
+}
+
+export type LocalBattleTestApplyResult = {
+  ok: boolean
+  spawned: number
+  errors: string[]
+}
+
+export type LocalBattleTestState = {
+  active: boolean
+  /** Runtime-only outcome; failed sessions never enter formal settlement. */
+  status?: 'active' | 'failed'
+  monsterConfig: LocalBattleTestMonsterConfig[]
+  spawnedEnemyIds: string[]
+  lastApplyResult?: LocalBattleTestApplyResult
+}
+
 export type GameSnapshot = {
   phase: GamePhase
   phaseBeforePause: Exclude<GamePhase, 'paused'>
+  pauseMenuOpen: boolean
   professionId: ProfessionId
   currency: number
   earnedGold: number
@@ -758,6 +921,8 @@ export type GameSnapshot = {
   selectedDifficulty?: CampaignDifficulty
   unlockedTalentIds: string[]
   unlockedMetaTalentIds: string[]
+  /** Canonical meta-talent rank state; rank >= 1 mirrors unlockedMetaTalentIds. */
+  metaTalentRanks?: Partial<Record<string, 0 | 1 | 2 | 3>>
   talentUnlockRecords: TalentUnlockRecord[]
   unlockedWeapons: WeaponId[]
   equippedWeaponId: WeaponId | null
@@ -795,6 +960,8 @@ export type GameSnapshot = {
   levelTargetKills: number
   remainingToSpawn: number
   eliteSpawnedThisLevel: boolean
+  /** Formal Boss-layer evidence; only the real Boss death pipeline may set this. */
+  bossDefeatedThisLevel?: boolean
   spawnCooldown: number
   levelTimer: number
   elapsedTime: number
@@ -804,17 +971,7 @@ export type GameSnapshot = {
   contractBoons: Record<ContractBoonTag, number>
   inRunTalentIds: string[]
   runTalentState: RunTalentState
-  talentCombatState?: {
-    crystalCharge?: {
-      stacks: number
-      ttl: number
-    }
-    crystalOverload?: {
-      stacks: number
-      ttl: number
-      source?: string
-    }
-  }
+  talentCombatState?: TalentCombatState
   inRunRewardRerolls: number
   inRunRewardHistory: {
     noMainBuildStreak: number
@@ -823,14 +980,17 @@ export type GameSnapshot = {
   /** @deprecated Legacy save compatibility only. Runtime combat now follows aimPoint/crosshair direction. */
   targetPriority: TargetPriority
   debugControls: DebugControlState
+  localBattleTest?: LocalBattleTestState
   fixedPassiveLevel: number
   activeSkills: ActiveSkillInstance[]
   pendingSkillReward: PendingSkillReward | null
+  floorTransition?: FloorTransitionState
   levelClearConfirmed: boolean
   aimPoint: Vector2
   player: Player
   battlefield: BattlefieldState
   mapObstacles: MapObstacle[]
+  mapDecorations: MapDecoration[]
   pickups: Pickup[]
   enemies: Enemy[]
   projectiles: Projectile[]
@@ -840,6 +1000,8 @@ export type GameSnapshot = {
   enemySkillEffects: EnemySkillEffect[]
   bursts: Burst[]
   floatingTexts: FloatingText[]
+  combatDamageLog: CombatDamageLogEvent[]
+  lastBasicAttackId?: string
   lastTalentCooldownRefund?: {
     slotIndex: number
     castId: string
@@ -848,6 +1010,9 @@ export type GameSnapshot = {
     remainingBefore: number
     refund: number
     remainingAfter: number
+    sourceId?: string
+    sourceName?: string
+    occurredAt?: number
   }
   lastTalentMaterialDrop?: {
     source: 'elite' | 'route-objective'

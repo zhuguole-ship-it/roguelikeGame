@@ -3,15 +3,18 @@ import { describe, expect, it } from 'vitest'
 import {
   META_TALENT_NODES,
   RUN_TALENT_NODES,
+  THREE_RANK_META_TALENT_IDS,
   generateRunTalentCandidates,
   getDefaultRunTalentGuaranteeState,
   getTalentCampaignTags,
   getMetaTalentBonusSummary,
+  getMetaTalentRank,
   getMetaTalentUnlockState,
   getRunTalentBonusSummary,
   rerollRunTalentCandidates,
   resetMetaTalentTree,
   unlockMetaTalent,
+  type MetaTalentRanks,
   type MetaTalentUnlockContext,
 } from './talents'
 
@@ -37,6 +40,9 @@ describe('talent data definitions', () => {
     expect(RUN_TALENT_NODES.filter((node) => node.id.startsWith('run_blood_'))).toHaveLength(8)
     expect(RUN_TALENT_NODES.filter((node) => node.id.startsWith('run_beast_'))).toHaveLength(8)
     expect(RUN_TALENT_NODES.filter((node) => node.id.startsWith('run_crystal_'))).toHaveLength(8)
+    expect(THREE_RANK_META_TALENT_IDS).toHaveLength(42)
+    expect(new Set(META_TALENT_NODES.filter((node) => node.maxRank === 3).map((node) => node.id))).toEqual(new Set(THREE_RANK_META_TALENT_IDS))
+    expect(META_TALENT_NODES.filter((node) => node.maxRank === 1)).toHaveLength(42)
   })
 
   it('enforces meta talent costs, prerequisites, campaign clears and difficulty gates', () => {
@@ -88,6 +94,99 @@ describe('talent data definitions', () => {
     expect(runSummary.cooldownRefundMultiplier).toBeCloseTo(1.12)
   })
 
+  it('audits every original run talent against a named runtime consumer without generic aliases', () => {
+    const summary = getRunTalentBonusSummary(RUN_TALENT_NODES.map((node) => node.id))
+    const consumedById = new Map(summary.consumedEffects.map((entry) => [entry.nodeId, entry.consumer]))
+
+    expect(summary.ignoredEffects).toEqual([])
+    expect(new Set(consumedById.keys())).toEqual(new Set(RUN_TALENT_NODES.map((node) => node.id)))
+    expect(consumedById.get('run_common_04')).toBe('tryRefundTalentSkillCooldown')
+    expect(consumedById.get('run_death_03')).toBe('triggerTalentSoulFire')
+    expect(consumedById.get('run_blood_06')).toBe('triggerBloodRift')
+    expect(consumedById.get('run_beast_04')).toBe('triggerBeastTeamBite')
+    expect(consumedById.get('run_crystal_06')).toBe('createCrystalOverloadPulses')
+    expect(summary.damageMultipliers).toEqual({ 'blood-rift': 1.1 })
+    expect(summary.consumedEffects.find((entry) => entry.nodeId === 'run_blood_06')?.effect.value).toBe(45)
+  })
+
+  it('scales every confirmed three-rank meta effect and keeps inheritance at 5/10/15', () => {
+    const ranks = Object.fromEntries(THREE_RANK_META_TALENT_IDS.map((id) => [id, 3])) as MetaTalentRanks
+    ranks.meta_common_05 = 2
+    const summary = getMetaTalentBonusSummary(THREE_RANK_META_TALENT_IDS, ranks)
+
+    expect(summary.extraSkillRerolls).toBe(3)
+    expect(summary.pickupRangeMultiplier).toBeCloseTo(1.2)
+    expect(summary.candidateWeights['death-set-weapon']).toBe(15)
+    expect(summary.candidateWeights['blood-set-weapon']).toBe(15)
+    expect(summary.candidateWeights['beast-set-weapon']).toBe(15)
+    expect(summary.candidateWeights['crystal-set-weapon']).toBe(15)
+    expect(new Set(summary.resolvedEffects.map((entry) => entry.nodeId))).toEqual(new Set(THREE_RANK_META_TALENT_IDS))
+    expect(summary.resolvedEffects).toHaveLength(42)
+    expect(summary.resolvedEffects.every((entry) => entry.rank === (entry.nodeId === 'meta_common_05' ? 2 : 3))).toBe(true)
+    expect(summary.ignoredEffects).toEqual([])
+  })
+
+  it('charges, unlocks, resets and checks prerequisites by rank instead of boolean ids', () => {
+    const baseContext: MetaTalentUnlockContext = {
+      ...emptyUnlockContext,
+      talentPoints: 9,
+      unlockedMetaTalentIds: ['meta_common_01'],
+      metaTalentRanks: { meta_common_01: 1 },
+    }
+    const rankOne = unlockMetaTalent('meta_common_02', baseContext)
+    expect(rankOne).toMatchObject({ ok: true, nextRank: 1, nextTalentPoints: 6 })
+    if (!rankOne.ok) return
+    const rankTwo = unlockMetaTalent('meta_common_02', {
+      ...baseContext,
+      talentPoints: rankOne.nextTalentPoints,
+      unlockedMetaTalentIds: rankOne.nextUnlockedMetaTalentIds,
+      metaTalentRanks: rankOne.nextMetaTalentRanks,
+    })
+    expect(rankTwo).toMatchObject({ ok: true, nextRank: 2, nextTalentPoints: 3 })
+    if (!rankTwo.ok) return
+    const rankThree = unlockMetaTalent('meta_common_02', {
+      ...baseContext,
+      talentPoints: rankTwo.nextTalentPoints,
+      unlockedMetaTalentIds: rankTwo.nextUnlockedMetaTalentIds,
+      metaTalentRanks: rankTwo.nextMetaTalentRanks,
+    })
+    expect(rankThree).toMatchObject({ ok: true, nextRank: 3, nextTalentPoints: 0 })
+    if (!rankThree.ok) return
+    expect(getMetaTalentUnlockState('meta_common_02', {
+      ...baseContext,
+      talentPoints: 3,
+      unlockedMetaTalentIds: rankThree.nextUnlockedMetaTalentIds,
+      metaTalentRanks: rankThree.nextMetaTalentRanks,
+    })).toEqual({ canUnlock: false, reason: '已满级' })
+    expect(getMetaTalentRank('meta_common_02', rankThree.nextMetaTalentRanks)).toBe(3)
+    expect(getMetaTalentUnlockState('meta_death_base_01', {
+      ...baseContext,
+      talentPoints: 3,
+      unlockedMetaTalentIds: ['meta_common_01'],
+      metaTalentRanks: { meta_common_01: 1 },
+    })).toEqual({ canUnlock: true })
+
+    const reset = resetMetaTalentTree({
+      currency: 200,
+      equipmentMaterials: {
+        ironScraps: 0,
+        contractAsh: 0,
+        refinedIron: 0,
+        crystalDust: 0,
+        buildShard: 5,
+        buildRune: 0,
+        skillPage: 0,
+        legacyEmber: 0,
+        campaignSigil: 0,
+        legendaryCore: 0,
+      },
+      talentPoints: 0,
+      unlockedMetaTalentIds: rankThree.nextUnlockedMetaTalentIds,
+      metaTalentRanks: rankThree.nextMetaTalentRanks,
+    })
+    expect(reset).toMatchObject({ ok: true, refundedPoints: 9, nextTalentPoints: 9, nextMetaTalentRanks: {} })
+  })
+
   it('exposes v2 whitelisted campaign tags, targets and reset costs', () => {
     expect(getTalentCampaignTags(7)).toEqual(['ruins', 'campaign-7', 'material'])
     expect(getTalentCampaignTags(10)).toContain('nightmare-elite')
@@ -110,12 +209,17 @@ describe('talent data definitions', () => {
       'run_crystal_05',
     ])
     expect(runSummary.mechanics.deathMark?.refreshRule).toContain('Boss')
-    expect(runSummary.mechanics.bloodRift?.maxStacks).toBe(1)
     expect(runSummary.radiusMultiplier.beastAuraRadius).toBeGreaterThan(1)
     expect(runSummary.radiusMultiplier.crystalPulseRadius).toBeGreaterThan(1)
-    expect(runSummary.damageMultipliers['death-marked']).toBeLessThanOrEqual(1.1)
-    expect(runSummary.damageMultipliers['beast-commanded']).toBeLessThanOrEqual(1.1)
-    expect(runSummary.ignoredEffects.some((effect) => effect.includes('range:spread-angle'))).toBe(false)
+    expect(runSummary.consumedEffects.map((entry) => entry.nodeId)).toEqual(expect.arrayContaining([
+      'run_death_02',
+      'run_blood_06',
+      'run_blood_08',
+      'run_beast_02',
+      'run_beast_07',
+      'run_crystal_05',
+    ]))
+    expect(runSummary.ignoredEffects).toEqual([])
 
     const reset = resetMetaTalentTree({
       currency: 200,

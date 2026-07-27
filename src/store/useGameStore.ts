@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
+import type { PersistStorage } from 'zustand/middleware'
 
 import { playGameSound } from '../game/audio'
 import type { GameSoundId } from '../game/audio'
@@ -7,20 +8,25 @@ import { ARCHER_ACTIVE_SKILL_MAP } from '../game/archerSkills'
 import {
   acceptSkillRewardSnapshot,
   advanceGame,
+  applyLocalBattleTestMonsterConfigSnapshot,
   batchDismantleEquipmentSnapshot,
   buildPendingReward,
+  clearLocalBattleTestMonstersSnapshot,
   confirmLevelClearSnapshot,
   createInitialSnapshot,
   declineSkillRewardSnapshot,
   dismissBossLootSnapshot,
   dismantleEquipmentSnapshot,
   equipEquipmentSnapshot,
+  exitLocalBattleTestSnapshot,
   forfeitRunSnapshot,
+  getLocalBattleTestSpawnOptions as getEngineLocalBattleTestSpawnOptions,
   migrateLegacyWeaponsToEquipment,
   reforgeEquipmentSnapshot,
   restartRunSnapshot,
   selectCampaignDifficultySnapshot,
   selectCampaignSnapshot,
+  startLocalBattleTestSnapshot,
   triggerActiveSkillSnapshot,
   returnToVillageSnapshot,
   startRunSnapshot,
@@ -40,6 +46,7 @@ import {
   normalizeCampaignDifficultyCompletions,
   normalizeCampaignDifficultyUnlocks,
 } from '../game/difficulty'
+import { isLocalDevelopmentRuntime, type LocalRuntimeEnvironment } from '../game/localRuntime'
 import {
   BOSS_ARENA_RADIUS,
   FLOORS_PER_CAMPAIGN,
@@ -63,6 +70,8 @@ import {
 import { createEmptyEquipmentMaterials, getEquipmentBonusSummary, getEquipmentDismantlePreview } from '../game/equipment'
 import {
   TALENT_SCHEMA_VERSION,
+  META_TALENT_NODES,
+  META_TALENT_NODE_BY_ID,
   RUN_TALENT_NODE_BY_ID,
   TALENT_MATERIAL_DROP_TARGETS,
   TALENT_RADIUS_TARGETS,
@@ -73,14 +82,16 @@ import {
   generateRunTalentCandidates,
   getTalentCampaignTags,
   getMetaTalentBonusSummary,
+  getUnlockedMetaTalentIdsFromRanks,
   getRunTalentBonusSummary,
+  normalizeMetaTalentRanks,
   rerollRunTalentCandidates,
   unlockMetaTalent,
   resetMetaTalentTree,
   type RunTalentCandidate,
   type RunTalentBuild,
 } from '../game/talents'
-import type { AudioSettings, CampaignDifficulty, DebugControlState, EquipmentDismantleCategory, EquipmentItem, EquipmentReforgeMode, EquipmentSlot, GameSnapshot, InputState, SkillBuildTag, SkillRewardChoice, TalentPointLedgerEntry, Vector2, WeaponId } from '../game/types'
+import type { AudioSettings, CampaignDifficulty, DebugControlState, EquipmentDismantleCategory, EquipmentItem, EquipmentReforgeMode, EquipmentSlot, GameSnapshot, InputState, LocalBattleTestApplyResult, LocalBattleTestMonsterConfig, LocalBattleTestSpawnOption, SkillBuildTag, SkillRewardChoice, TalentPointLedgerEntry, Vector2, WeaponId } from '../game/types'
 
 type GameStore = GameSnapshot & {
   startGame: () => void
@@ -89,6 +100,11 @@ type GameStore = GameSnapshot & {
   restart: () => void
   forfeitRun: () => void
   returnToVillage: () => void
+  startLocalBattleTest: () => LocalBattleTestApplyResult
+  applyLocalBattleTestMonsterConfig: (config: LocalBattleTestMonsterConfig[]) => LocalBattleTestApplyResult
+  clearLocalBattleTestMonsters: () => LocalBattleTestApplyResult
+  exitLocalBattleTest: () => void
+  getLocalBattleTestSpawnOptions: () => LocalBattleTestSpawnOption[]
   tick: (delta: number, input: InputState) => void
   toggleTargetPriority: () => void
   togglePause: () => void
@@ -142,6 +158,7 @@ type PersistedGameState = Pick<
   | 'talentSchemaVersion'
   | 'unlockedTalentIds'
   | 'unlockedMetaTalentIds'
+  | 'metaTalentRanks'
   | 'talentUnlockRecords'
   | 'runTalentState'
   | 'equipmentInventory'
@@ -184,6 +201,7 @@ export const extractPersistedGameState = (state: GameSnapshot): PersistedGameSta
   talentSchemaVersion: state.talentSchemaVersion,
   unlockedTalentIds: clonePersistedValue(state.unlockedTalentIds),
   unlockedMetaTalentIds: clonePersistedValue(state.unlockedMetaTalentIds),
+  metaTalentRanks: clonePersistedValue(state.metaTalentRanks ?? {}),
   talentUnlockRecords: clonePersistedValue(state.talentUnlockRecords),
   runTalentState: clonePersistedValue(state.runTalentState),
   equipmentInventory: clonePersistedValue(state.equipmentInventory),
@@ -195,12 +213,163 @@ export const extractPersistedGameState = (state: GameSnapshot): PersistedGameSta
   selectedCampaign: state.selectedCampaign,
 })
 
+const serializeSignatureValue = (value: unknown) => JSON.stringify(value)
+
+const createPersistedGameStateSignature = (state: GameSnapshot) => [
+  state.currency,
+  state.earnedGold,
+  state.bestLevel,
+  state.selectedCampaign,
+  state.selectedCampaignDifficulty,
+  state.talentPoints,
+  state.talentSchemaVersion,
+  serializeSignatureValue(state.runHistory),
+  serializeSignatureValue(state.achievedMilestones),
+  serializeSignatureValue(state.completedCampaigns),
+  serializeSignatureValue(state.completedCampaignDifficulties),
+  serializeSignatureValue(state.unlockedCampaignDifficulties),
+  serializeSignatureValue(state.talentPointRecords),
+  serializeSignatureValue(state.talentPointLedger),
+  serializeSignatureValue(state.unlockedTalentIds),
+  serializeSignatureValue(state.unlockedMetaTalentIds),
+  serializeSignatureValue(state.metaTalentRanks ?? {}),
+  serializeSignatureValue(state.talentUnlockRecords),
+  serializeSignatureValue(state.runTalentState),
+  serializeSignatureValue(state.equipmentInventory),
+  serializeSignatureValue(state.equippedItems),
+  serializeSignatureValue(state.discoveredHighRarityEquipmentIds),
+  serializeSignatureValue(state.equipmentMaterials),
+  serializeSignatureValue(state.unsealedEquipmentSlots),
+  serializeSignatureValue(state.audioSettings),
+].join('|')
+
+const createMemoizedPersistedGameStateExtractor = () => {
+  let lastSignature = ''
+  let lastPersistedState: PersistedGameState | null = null
+
+  return (state: GameSnapshot): PersistedGameState => {
+    const signature = createPersistedGameStateSignature(state)
+    if (lastPersistedState && signature === lastSignature) {
+      return lastPersistedState
+    }
+
+    lastSignature = signature
+    lastPersistedState = extractPersistedGameState(state)
+    return lastPersistedState
+  }
+}
+
+const memoizedExtractPersistedGameState = createMemoizedPersistedGameStateExtractor()
+
+let localBattlePersistWriteSuppressionDepth = 0
+
+const createCachedPersistStorage = (): PersistStorage<Partial<PersistedGameState>> | undefined => {
+  const storage = createJSONStorage<Partial<PersistedGameState>>(() => localStorage)
+  if (!storage) return undefined
+
+  let lastState: Partial<PersistedGameState> | null = null
+  let lastVersion: number | undefined
+
+  return {
+    getItem: storage.getItem,
+    setItem: (name, value) => {
+      if (localBattlePersistWriteSuppressionDepth > 0) {
+        return undefined
+      }
+      if (value.state === lastState && value.version === lastVersion) {
+        try {
+          if (localStorage.getItem(name) !== null) {
+            return undefined
+          }
+        } catch {
+          return undefined
+        }
+      }
+
+      lastState = value.state
+      lastVersion = value.version
+      return storage.setItem(name, value)
+    },
+    removeItem: (name) => {
+      lastState = null
+      lastVersion = undefined
+      return storage.removeItem(name)
+    },
+  }
+}
+
+export const isLocalBattleTestRuntimeAllowed = (
+  env: LocalRuntimeEnvironment = import.meta.env,
+  hostname?: string,
+) => isLocalDevelopmentRuntime(env, hostname)
+
+export const shouldInstallLocalE2EHarness = (
+  env: LocalRuntimeEnvironment = import.meta.env,
+  hostname?: string,
+) => isLocalDevelopmentRuntime(env, hostname)
+
+const localBattleTestBlockedResult = (reason = '本地战斗测试仅允许在本地运行时使用'): LocalBattleTestApplyResult => ({
+  ok: false,
+  spawned: 0,
+  errors: [reason],
+})
+
+const runWithPreservedGameSaveStorage = <T>(action: () => T): T => {
+  if (typeof localStorage === 'undefined') {
+    return action()
+  }
+
+  let previousValue: string | null = null
+  try {
+    previousValue = localStorage.getItem(GAME_SAVE_STORAGE_KEY)
+  } catch {
+    return action()
+  }
+
+  try {
+    localBattlePersistWriteSuppressionDepth += 1
+    return action()
+  } finally {
+    localBattlePersistWriteSuppressionDepth = Math.max(0, localBattlePersistWriteSuppressionDepth - 1)
+    try {
+      const currentValue = localStorage.getItem(GAME_SAVE_STORAGE_KEY)
+      if (currentValue !== previousValue) {
+        if (previousValue === null) {
+          localStorage.removeItem(GAME_SAVE_STORAGE_KEY)
+        } else {
+          localStorage.setItem(GAME_SAVE_STORAGE_KEY, previousValue)
+        }
+      }
+    } catch {
+      // Local battle test state is runtime-only; storage restore best effort is enough here.
+    }
+  }
+}
+
 const sanitizePersistedState = (value: unknown): Partial<PersistedGameState> => {
   if (!isRecord(value)) {
     return {}
   }
 
   return value as Partial<PersistedGameState>
+}
+
+const normalizePersistedMetaTalentIds = (...sources: unknown[]) => {
+  const unlocked = new Set<string>()
+  sources.forEach((source) => {
+    if (!Array.isArray(source)) {
+      return
+    }
+    source.forEach((id) => {
+      if (typeof id === 'string' && META_TALENT_NODE_BY_ID.has(id)) {
+        unlocked.add(id)
+      }
+    })
+  })
+
+  return META_TALENT_NODES
+    .filter((node) => unlocked.has(node.id))
+    .map((node) => node.id)
 }
 
 export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot => {
@@ -217,11 +386,13 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
     ? Math.min(10, Math.max(1, Math.round(persisted.selectedCampaign)))
     : fallback.selectedCampaign
   const selectedCampaignDifficulty = normalizeCampaignDifficulty(persisted.selectedCampaignDifficulty)
-  const unlockedMetaTalentIds = Array.isArray(persisted.unlockedMetaTalentIds)
-    ? clonePersistedValue(persisted.unlockedMetaTalentIds)
-    : Array.isArray(persisted.unlockedTalentIds)
-      ? clonePersistedValue(persisted.unlockedTalentIds)
-      : fallback.unlockedMetaTalentIds
+  const legacyUnlockedMetaTalentIds = normalizePersistedMetaTalentIds(
+    persisted.unlockedTalentIds,
+    persisted.unlockedMetaTalentIds,
+    fallback.unlockedMetaTalentIds,
+  )
+  const metaTalentRanks = normalizeMetaTalentRanks(persisted.metaTalentRanks, legacyUnlockedMetaTalentIds)
+  const unlockedMetaTalentIds = getUnlockedMetaTalentIdsFromRanks(metaTalentRanks)
   const talentPointRecords = Array.isArray(persisted.talentPointRecords) ? clonePersistedValue(persisted.talentPointRecords).slice(0, 10) : fallback.talentPointRecords
   const restored: GameSnapshot = {
     ...fallback,
@@ -242,9 +413,10 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
     talentPoints: typeof persisted.talentPoints === 'number' ? Math.max(0, Math.round(persisted.talentPoints)) : fallback.talentPoints,
     talentPointRecords,
     talentPointLedger: Array.isArray(persisted.talentPointLedger) ? clonePersistedValue(persisted.talentPointLedger).slice(0, 10) : talentPointRecords,
-    talentSchemaVersion: typeof persisted.talentSchemaVersion === 'number' ? persisted.talentSchemaVersion : TALENT_SCHEMA_VERSION,
+    talentSchemaVersion: TALENT_SCHEMA_VERSION,
     unlockedTalentIds: unlockedMetaTalentIds,
     unlockedMetaTalentIds,
+    metaTalentRanks,
     talentUnlockRecords: Array.isArray(persisted.talentUnlockRecords) ? clonePersistedValue(persisted.talentUnlockRecords).slice(0, 50) : fallback.talentUnlockRecords,
     runTalentState: isRecord(persisted.runTalentState)
       ? {
@@ -280,13 +452,17 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
     selectedCampaign,
     phase: 'idle',
     phaseBeforePause: 'idle',
+    pauseMenuOpen: false,
     message: '村庄篝火旁苏醒，长期成长已恢复',
   }
 
   return migrateLegacyWeaponsToEquipment(restored)
 }
 
-const initialState = createInitialSnapshot()
+const initialState: GameSnapshot = {
+  ...createInitialSnapshot(),
+  metaTalentRanks: {},
+}
 
 const playSnapshotSound = (state: GameSnapshot, id: Parameters<typeof playGameSound>[0]) => {
   playGameSound(id, state.audioSettings)
@@ -298,6 +474,9 @@ const enemyHpTotal = (state: GameSnapshot) => state.enemies.reduce((sum, enemy) 
 
 export const getSimulationSoundEvents = (previous: GameSnapshot, next: GameSnapshot): GameSoundId[] => {
   const events: GameSoundId[] = []
+  if (next.lastBasicAttackId && next.lastBasicAttackId !== previous.lastBasicAttackId) {
+    events.push('basic-attack')
+  }
   if (next.exp !== previous.exp || next.contractLevel !== previous.contractLevel) {
     events.push('crystal-pickup')
   }
@@ -314,8 +493,13 @@ export const getSimulationSoundEvents = (previous: GameSnapshot, next: GameSnaps
     events.push('boss-entry')
   }
   if (enemyHpTotal(next) < enemyHpTotal(previous)) {
-    const hasSkillProjectile = previous.projectiles.some((projectile) => projectile.sourceSkillId)
-    events.push(hasSkillProjectile ? 'skill-hit' : 'basic-hit')
+    const hasSkillProjectile = previous.projectiles.some((projectile) => projectile.sourceSkillId && projectile.sourceSkillId !== 'basic-arrow')
+    const hasBasicProjectile = previous.projectiles.some((projectile) => projectile.sourceSkillId === 'basic-arrow')
+    if (hasSkillProjectile) {
+      events.push('skill-hit')
+    } else if (!hasBasicProjectile) {
+      events.push('basic-hit')
+    }
   }
   if (previous.phase === 'running' && next.phase === 'level-clear') {
     events.push('level-settle')
@@ -341,7 +525,7 @@ const createRunTalentContext = (state: GameSnapshot, seed: string | number) => (
   rerollsUsed: state.runTalentState.rerollsUsed,
   guaranteeState: state.runTalentState.guarantee,
   seed,
-  candidateCount: (getMetaTalentBonusSummary(state.unlockedMetaTalentIds).extraCandidateCount > 0 ? 4 : 3) as 3 | 4,
+  candidateCount: (getMetaTalentBonusSummary(state.unlockedMetaTalentIds, state.metaTalentRanks).extraCandidateCount > 0 ? 4 : 3) as 3 | 4,
 })
 
 const runTalentBuildToSkillBuildTag = (build: RunTalentBuild | undefined): SkillBuildTag | 'general' => {
@@ -365,27 +549,91 @@ const createRunTalentRewardChoice = (candidate: RunTalentCandidate): SkillReward
   tacticalText: candidate.reasons.join(' / ') || '局内天赋',
 })
 
+const getRewardChoiceStableKey = (choice: SkillRewardChoice) => [
+  choice.mode,
+  choice.skillId,
+  choice.talentId ?? '',
+  choice.title,
+  choice.description,
+  choice.buildTag,
+  choice.levelText,
+  choice.tacticalText,
+  choice.tacticalTags.join(','),
+].join('|')
+
+const getRewardChoiceSetSignature = (choices: readonly SkillRewardChoice[]) => choices
+  .map(getRewardChoiceStableKey)
+  .sort()
+  .join('||')
+
+const hasReplacementCandidate = (previous: readonly SkillRewardChoice[], next: readonly SkillRewardChoice[]) => {
+  if (previous.length !== next.length) {
+    return true
+  }
+  return getRewardChoiceSetSignature(previous) !== getRewardChoiceSetSignature(next)
+}
+
+const rerollSkillRewardSnapshot = (state: GameSnapshot): GameSnapshot => {
+  if (state.runTalentState.rerollsRemaining <= 0) {
+    return { ...state, message: '本局重掷次数不足' }
+  }
+  if (state.pendingSkillReward?.replacementSkillId) {
+    return { ...state, message: '当前替换候选不足以重掷' }
+  }
+
+  const previousReward = state.pendingSkillReward
+  if (!previousReward || previousReward.poolKind !== 'skill') {
+    return state
+  }
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const nextReward = buildPendingReward(state)
+    const nextChoices = nextReward.choices.filter((choice) => choice.mode !== 'in-run-talent')
+    if (nextChoices.length === 0) {
+      continue
+    }
+    if (!hasReplacementCandidate(previousReward.choices, nextChoices)) {
+      continue
+    }
+
+    playSnapshotSound(state, 'button')
+    return {
+      ...state,
+      pendingSkillReward: {
+        ...previousReward,
+        poolKind: 'skill',
+        choices: nextChoices,
+        source: previousReward.source,
+      },
+      runTalentState: {
+        ...state.runTalentState,
+        rerollsRemaining: Math.max(0, state.runTalentState.rerollsRemaining - 1),
+        rerollsUsed: state.runTalentState.rerollsUsed + 1,
+      },
+      message: '已重掷当前技能奖励',
+    }
+  }
+
+  return { ...state, message: '当前技能奖励候选不足以重掷' }
+}
+
 const createRunTalentUpgradeRewardSnapshot = (state: GameSnapshot, seed: string | number): GameSnapshot => {
   if (state.pendingSkillReward) {
     return state
   }
   const result = generateRunTalentCandidates(createRunTalentContext(state, seed))
-  const targetCount = getMetaTalentBonusSummary(state.unlockedMetaTalentIds).extraCandidateCount > 0 ? 4 : 3
-  const skillChoices = buildPendingReward(state).choices
-    .filter((choice) => choice.mode !== 'upgrade-passive' || !['生命', '攻击', '攻速', '移速'].some((label) => choice.title.includes(label)))
-    .slice(0, Math.max(0, targetCount - Math.min(1, result.candidates.length)))
   const runChoices = result.candidates.map(createRunTalentRewardChoice)
-  const choices = [...runChoices.slice(0, Math.max(1, targetCount - skillChoices.length)), ...skillChoices]
-    .slice(0, targetCount)
-  if (choices.length === 0) {
+  if (runChoices.length === 0) {
     return state
   }
   return {
     ...state,
     phaseBeforePause: state.phase === 'paused' ? state.phaseBeforePause : state.phase,
     phase: state.phase === 'level-clear' ? 'level-clear' : 'paused',
+    pauseMenuOpen: false,
     pendingSkillReward: {
-      choices,
+      poolKind: 'run-talent',
+      choices: runChoices,
       source: state.phase === 'level-clear' ? 'level-clear' : 'elite',
     },
     runTalentState: {
@@ -397,15 +645,36 @@ const createRunTalentUpgradeRewardSnapshot = (state: GameSnapshot, seed: string 
   }
 }
 
+const getStateAfterRunTalentReward = (state: GameSnapshot) => {
+  const source = state.pendingSkillReward?.source
+  const resumesElitePause = source === 'elite' && state.phase === 'paused'
+  const resumesFloorTransition = source === 'level-clear' && Boolean(state.floorTransition)
+
+  return {
+    phase: resumesElitePause || resumesFloorTransition ? 'running' : state.phase,
+    phaseBeforePause: resumesElitePause || resumesFloorTransition ? 'running' : state.phaseBeforePause,
+    pauseMenuOpen: false,
+    levelClearConfirmed: source === 'level-clear' ? true : state.levelClearConfirmed,
+    floorTransition: resumesFloorTransition && state.floorTransition
+      ? { ...state.floorTransition, awaitingReward: false }
+      : state.floorTransition,
+  } satisfies Pick<GameSnapshot, 'phase' | 'phaseBeforePause' | 'pauseMenuOpen' | 'levelClearConfirmed' | 'floorTransition'>
+}
+
 const acceptRunTalentRewardChoiceSnapshot = (state: GameSnapshot, choice: SkillRewardChoice): GameSnapshot => {
+  const resumedState = getStateAfterRunTalentReward(state)
   if (!choice.talentId || state.runTalentState.selectedTalentIds.includes(choice.talentId)) {
-    return { ...state, pendingSkillReward: null, message: '该局内天赋本局已选择' }
+    return {
+      ...state,
+      ...resumedState,
+      pendingSkillReward: null,
+      message: '该局内天赋本局已选择',
+    }
   }
   const selectedTalentIds = [...state.runTalentState.selectedTalentIds, choice.talentId]
   return {
     ...state,
-    phase: state.pendingSkillReward?.source === 'elite' && state.phase === 'paused' ? state.phaseBeforePause : state.phase,
-    phaseBeforePause: state.pendingSkillReward?.source === 'elite' && state.phase === 'paused' ? state.phaseBeforePause : state.phaseBeforePause,
+    ...resumedState,
     pendingSkillReward: null,
     inRunTalentIds: selectedTalentIds,
     runTalentState: {
@@ -413,7 +682,6 @@ const acceptRunTalentRewardChoiceSnapshot = (state: GameSnapshot, choice: SkillR
       selectedTalentIds,
       lastOfferedCandidateIds: [],
     },
-    levelClearConfirmed: state.pendingSkillReward?.source === 'level-clear' ? true : state.levelClearConfirmed,
     message: `已选择局内天赋：${RUN_TALENT_NODE_BY_ID.get(choice.talentId)?.name ?? choice.talentId}`,
   }
 }
@@ -446,15 +714,75 @@ export const useGameStore = create<GameStore>()(
       returnToVillage: () => {
         set((state) => returnToVillageSnapshot(state))
       },
-      tick: (delta, input) => {
-        set((state) => {
-          const next = advanceGame(state, input, delta)
-          playSimulationSounds(state, next)
-          if (next.phase === 'running' && next.contractLevel > state.contractLevel && !next.pendingSkillReward) {
-            return createRunTalentUpgradeRewardSnapshot(next, `level-up-${next.level}-${next.contractLevel}-${next.elapsedTime}`)
-          }
-          return next
+      startLocalBattleTest: () => {
+        if (!isLocalBattleTestRuntimeAllowed()) {
+          return localBattleTestBlockedResult()
+        }
+        let result: LocalBattleTestApplyResult = { ok: true, spawned: 0, errors: [] }
+        runWithPreservedGameSaveStorage(() => {
+          set((state) => {
+            const next = startLocalBattleTestSnapshot(state)
+            result = next.localBattleTest?.lastApplyResult ?? result
+            return next
+          })
         })
+        return result
+      },
+      applyLocalBattleTestMonsterConfig: (config) => {
+        if (!isLocalBattleTestRuntimeAllowed()) {
+          return localBattleTestBlockedResult()
+        }
+        let result: LocalBattleTestApplyResult = { ok: false, spawned: 0, errors: ['本地战斗测试尚未启动'] }
+        runWithPreservedGameSaveStorage(() => {
+          set((state) => {
+            const next = applyLocalBattleTestMonsterConfigSnapshot(state, config)
+            result = next.localBattleTest?.lastApplyResult ?? result
+            return next
+          })
+        })
+        return result
+      },
+      clearLocalBattleTestMonsters: () => {
+        if (!isLocalBattleTestRuntimeAllowed()) {
+          return localBattleTestBlockedResult()
+        }
+        let result: LocalBattleTestApplyResult = { ok: false, spawned: 0, errors: ['本地战斗测试尚未启动'] }
+        runWithPreservedGameSaveStorage(() => {
+          set((state) => {
+            const next = clearLocalBattleTestMonstersSnapshot(state)
+            result = next.localBattleTest?.lastApplyResult ?? result
+            return next
+          })
+        })
+        return result
+      },
+      exitLocalBattleTest: () => {
+        if (!isLocalBattleTestRuntimeAllowed()) {
+          return
+        }
+        runWithPreservedGameSaveStorage(() => {
+          set((state) => exitLocalBattleTestSnapshot(state))
+        })
+      },
+      getLocalBattleTestSpawnOptions: () => (
+        isLocalBattleTestRuntimeAllowed() ? getEngineLocalBattleTestSpawnOptions() : []
+      ),
+      tick: (delta, input) => {
+        const executeTick = () => {
+          set((state) => {
+            const next = advanceGame(state, input, delta)
+            playSimulationSounds(state, next)
+            if (!next.localBattleTest?.active && next.phase === 'running' && next.contractLevel > state.contractLevel && !next.pendingSkillReward) {
+              return createRunTalentUpgradeRewardSnapshot(next, `level-up-${next.level}-${next.contractLevel}-${next.elapsedTime}`)
+            }
+            return next
+          })
+        }
+        if (get().localBattleTest?.active) {
+          runWithPreservedGameSaveStorage(executeTick)
+          return
+        }
+        executeTick()
       },
       toggleTargetPriority: () => {
         // Legacy no-op: skills now follow the mouse/crosshair direction instead of Tab target modes.
@@ -569,6 +897,7 @@ export const useGameStore = create<GameStore>()(
           const result = unlockMetaTalent(nodeId, {
             talentPoints: state.talentPoints,
             unlockedMetaTalentIds: state.unlockedMetaTalentIds,
+            metaTalentRanks: state.metaTalentRanks,
             unlockedCampaignDifficulties: state.unlockedCampaignDifficulties,
             completedCampaignDifficulties: state.completedCampaignDifficulties,
           })
@@ -580,6 +909,7 @@ export const useGameStore = create<GameStore>()(
             id: `meta-talent-${Date.now()}-${result.node.id}`,
             talentId: result.node.id,
             cost: result.node.cost,
+            rank: result.nextRank,
             unlockedAt: Date.now(),
           }
           return {
@@ -587,8 +917,9 @@ export const useGameStore = create<GameStore>()(
             talentPoints: result.nextTalentPoints,
             unlockedTalentIds: result.nextUnlockedMetaTalentIds,
             unlockedMetaTalentIds: result.nextUnlockedMetaTalentIds,
+            metaTalentRanks: result.nextMetaTalentRanks,
             talentUnlockRecords: [record, ...state.talentUnlockRecords].slice(0, 50),
-            message: `已解锁天赋：${result.node.name}`,
+            message: `${result.nextRank > 1 ? '已升级天赋' : '已解锁天赋'}：${result.node.name} ${result.nextRank}/${result.node.maxRank}`,
           }
         })
       },
@@ -599,6 +930,7 @@ export const useGameStore = create<GameStore>()(
             equipmentMaterials: state.equipmentMaterials,
             talentPoints: state.talentPoints,
             unlockedMetaTalentIds: state.unlockedMetaTalentIds,
+            metaTalentRanks: state.metaTalentRanks,
           })
           if (!result.ok) {
             return { ...state, message: result.reason }
@@ -620,6 +952,7 @@ export const useGameStore = create<GameStore>()(
             talentPoints: result.nextTalentPoints,
             unlockedTalentIds: result.nextUnlockedMetaTalentIds,
             unlockedMetaTalentIds: result.nextUnlockedMetaTalentIds,
+            metaTalentRanks: result.nextMetaTalentRanks,
             talentPointLedger: [resetEntry, ...state.talentPointLedger].slice(0, 20),
             message: `已重置局外天赋，返还 ${result.refundedPoints} 点`,
           }
@@ -659,11 +992,16 @@ export const useGameStore = create<GameStore>()(
       },
       rerollPendingRunTalentReward: (seed = Date.now()) => {
         set((state) => {
-          if (!state.pendingSkillReward || state.runTalentState.rerollsRemaining <= 0) {
+          if (!state.pendingSkillReward) {
+            return { ...state, message: '当前没有可重掷的局内天赋奖励' }
+          }
+          if (state.pendingSkillReward.poolKind !== 'run-talent') {
+            return rerollSkillRewardSnapshot(state)
+          }
+          if (state.runTalentState.rerollsRemaining <= 0) {
             return { ...state, message: '本局重掷次数不足' }
           }
-          const previousRunChoices = state.pendingSkillReward.choices.filter((choice) => choice.mode === 'in-run-talent')
-          const previousCandidates = previousRunChoices
+          const previousCandidates = state.pendingSkillReward.choices
             .map((choice) => RUN_TALENT_NODE_BY_ID.get(choice.talentId ?? ''))
             .filter(Boolean)
             .map((node) => ({ node: node!, weight: 100, reasons: ['当前奖励'] }))
@@ -671,16 +1009,13 @@ export const useGameStore = create<GameStore>()(
           if (result.rerollBlockedReason) {
             return { ...state, message: result.rerollBlockedReason }
           }
-          const nonRunChoices = state.pendingSkillReward.choices.filter((choice) => choice.mode !== 'in-run-talent')
-          const targetCount = state.pendingSkillReward.choices.length <= 3 ? 3 : 4
           const nextRunChoices = result.candidates.map(createRunTalentRewardChoice)
-          const nextChoices = [...nextRunChoices, ...nonRunChoices].slice(0, targetCount)
           playSnapshotSound(state, 'button')
           return {
             ...state,
             pendingSkillReward: {
               ...state.pendingSkillReward,
-              choices: nextChoices,
+              choices: nextRunChoices,
             },
             runTalentState: {
               ...state.runTalentState,
@@ -745,6 +1080,9 @@ export const useGameStore = create<GameStore>()(
         }))
       },
       updateDebugControls: (settings) => {
+        if (!isLocalBattleTestRuntimeAllowed()) {
+          return
+        }
         set((state) => ({
           ...state,
           debugControls: {
@@ -770,8 +1108,8 @@ export const useGameStore = create<GameStore>()(
     {
       name: GAME_SAVE_STORAGE_KEY,
       version: GAME_SAVE_VERSION,
-      storage: createJSONStorage(() => localStorage),
-      partialize: (state) => extractPersistedGameState(state),
+      storage: createCachedPersistStorage(),
+      partialize: (state) => memoizedExtractPersistedGameState(state),
       migrate: (persistedState) => sanitizePersistedState(persistedState),
       merge: (persistedState, currentState) => ({
         ...currentState,
@@ -786,6 +1124,7 @@ type RoguelikeE2ESummary = {
   level: number
   rewardKind?: NonNullable<GameSnapshot['lastLevelSettlement']>['rewardKind']
   pendingSkillReward: boolean
+  poolKind: NonNullable<GameSnapshot['pendingSkillReward']>['poolKind'] | null
   pendingBossLoot: number
   levelClearConfirmed: boolean
 }
@@ -921,6 +1260,7 @@ type RoguelikeE2ETalentSummary = {
   }
   upgradeRewardPopup: {
     visible: boolean
+    poolKind: string | null
     choiceCount: number
     modes: string[]
     containsBaseStat: boolean
@@ -967,6 +1307,7 @@ const createE2ESummary = () => {
     level: state.level,
     rewardKind: state.lastLevelSettlement?.rewardKind,
     pendingSkillReward: Boolean(state.pendingSkillReward),
+    poolKind: state.pendingSkillReward?.poolKind ?? null,
     pendingBossLoot: state.pendingBossLoot.length,
     levelClearConfirmed: state.levelClearConfirmed,
   }
@@ -1108,6 +1449,7 @@ const createBossFightHarnessSnapshot = (options: RoguelikeE2EBossOptions) => {
   snapshot.aimPoint = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT * 0.22 }
   snapshot.battlefield = createE2EBattlefield(snapshot.battlefield.seed)
   snapshot.mapObstacles = []
+  snapshot.mapDecorations = []
   snapshot.enemies = []
   snapshot.projectiles = []
   snapshot.enemyProjectiles = []
@@ -1300,6 +1642,7 @@ const sanitizeTalentE2EArtifacts = (state: GameSnapshot): GameSnapshot => {
     lastTalentPointRecord: state.lastTalentPointRecord?.id.startsWith('talent-e2e-') ? null : state.lastTalentPointRecord,
     unlockedTalentIds: [],
     unlockedMetaTalentIds: [],
+    metaTalentRanks: {},
     talentUnlockRecords: [],
     runTalentState: initial.runTalentState,
     inRunTalentIds: [],
@@ -1408,6 +1751,7 @@ const createTalentFixtureSnapshot = () => {
   snapshot.talentSchemaVersion = TALENT_SCHEMA_VERSION
   snapshot.unlockedTalentIds = []
   snapshot.unlockedMetaTalentIds = []
+  snapshot.metaTalentRanks = {}
   snapshot.talentUnlockRecords = []
   snapshot.contractLevel = 5
   snapshot.selectedCampaign = 7
@@ -1493,7 +1837,7 @@ const scaleE2EMaterials = (materials: ReturnType<typeof createEmptyEquipmentMate
 
 const createE2ETalentCombatSummary = (): RoguelikeE2ETalentSummary => {
   const state = useGameStore.getState()
-  const metaSummary = getMetaTalentBonusSummary(state.unlockedMetaTalentIds)
+  const metaSummary = getMetaTalentBonusSummary(state.unlockedMetaTalentIds, state.metaTalentRanks)
   const runSummary = getRunTalentBonusSummary(state.runTalentState.selectedTalentIds)
   const equipmentBonus = getEquipmentBonusSummary(state.equippedItems)
   const talentMultiplier = metaSummary.pickupRangeMultiplier * runSummary.pickupRangeMultiplier
@@ -1601,6 +1945,7 @@ const createE2ETalentCombatSummary = (): RoguelikeE2ETalentSummary => {
     },
     upgradeRewardPopup: {
       visible: Boolean(state.pendingSkillReward),
+      poolKind: state.pendingSkillReward?.poolKind ?? null,
       choiceCount: state.pendingSkillReward?.choices.length ?? 0,
       modes: state.pendingSkillReward?.choices.map((choice) => choice.mode) ?? [],
       containsBaseStat: Boolean(state.pendingSkillReward?.choices.some((choice) => /攻击|生命|攻速|移速/.test(`${choice.title}${choice.description}`))),
@@ -1777,9 +2122,32 @@ const createRewardHarnessSnapshot = (kind: 'light' | 'elite' | 'prelude' | 'boss
   return snapshot
 }
 
-if (typeof window !== 'undefined' && !import.meta.env.PROD) {
+const guardLocalE2EHarness = (harness: NonNullable<Window['__ROGUELIKE_E2E__']>): NonNullable<Window['__ROGUELIKE_E2E__']> => {
+  const guarded = Object.fromEntries(Object.entries(harness).map(([name, action]) => [
+    name,
+    (...args: unknown[]) => {
+      if (!shouldInstallLocalE2EHarness()) {
+        throw new Error('E2E helper 仅允许在本地运行时调用')
+      }
+      return (action as (...actionArgs: unknown[]) => unknown)(...args)
+    },
+  ]))
+
+  return guarded as NonNullable<Window['__ROGUELIKE_E2E__']>
+}
+
+export const installLocalE2EHarness = (
+  target: Pick<Window, '__ROGUELIKE_E2E__'>,
+  env: LocalRuntimeEnvironment = import.meta.env,
+  hostname?: string,
+) => {
+  if (!shouldInstallLocalE2EHarness(env, hostname)) {
+    delete target.__ROGUELIKE_E2E__
+    return false
+  }
+
   installE2EConsoleCapture()
-  window.__ROGUELIKE_E2E__ = {
+  target.__ROGUELIKE_E2E__ = guardLocalE2EHarness({
     forceRewardScreen: (kind) => {
       withPreservedE2ESave(() => {
         useGameStore.setState(createRewardHarnessSnapshot(kind))
@@ -1872,5 +2240,10 @@ if (typeof window !== 'undefined' && !import.meta.env.PROD) {
     enableAutoDismantleTalentFixture,
     talentCombatSummary: createTalentE2ESandboxSummary,
     summary: createE2ESummary,
-  }
+  })
+  return true
+}
+
+if (typeof window !== 'undefined') {
+  installLocalE2EHarness(window)
 }

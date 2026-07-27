@@ -1,6 +1,6 @@
 import { WORLD_HEIGHT, WORLD_WIDTH } from './config'
 
-const VILLAGE_MENU_BACKGROUND_SRC = `${import.meta.env.BASE_URL}assets/village-main-menu-concept-image2.png`
+const VILLAGE_MENU_BACKGROUND_SRC = `${import.meta.env.BASE_URL}assets/godot-ui/pixel_contract_hunter_start_screen_960x640_poster.png`
 
 const villageMenuBackground =
   typeof Image === 'undefined'

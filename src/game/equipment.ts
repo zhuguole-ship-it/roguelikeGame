@@ -809,18 +809,20 @@ export const createHighRarityEquipmentCandidatePool = (
   slots: EquipmentSlot[],
   preferredBuildTag?: SkillBuildTag,
   discoveredEquipmentIds: readonly string[] = [],
+  talentBuildWeightBonuses: Partial<Record<SkillBuildTag, number>> = {},
 ): HighRarityEquipmentCandidate[] => {
   const candidates = slots.flatMap((slot) => HIGH_RARITY_BUILD_TAGS.flatMap((buildTag) => {
     const affixes = BUILD_AFFIXES[buildTag][rarity] ?? BUILD_AFFIXES.general[rarity] ?? ['契约']
     const baseNames = SLOT_BASE_NAMES[slot]
     const buildWeight = preferredBuildTag && buildTag === preferredBuildTag ? 1.62 : buildTag === 'general' ? 0.65 : 1
+    const talentWeightMultiplier = buildTag === 'general' ? 1 : 1 + Math.max(0, talentBuildWeightBonuses[buildTag] ?? 0) / 100
     return affixes.flatMap((affix) => baseNames.map((baseName) => ({
       equipmentId: `equipment-${rarity}-${slot}-${buildTag}-${affix}-${baseName}`,
       slot,
       buildTag,
       affix,
       baseName,
-      weight: buildWeight,
+      weight: buildWeight * talentWeightMultiplier,
     })))
   }))
 
@@ -904,11 +906,11 @@ const createBonus = (slot: EquipmentSlot, rarity: EquipmentRarity, buildTag: Ski
 export const SKILL_EQUIPMENT_LINKS: Record<SkillBuildTag, EquipmentSkillModifier[]> = {
   pierce: [
     { type: 'projectile-count', skillIds: ['pierce-arrow', 'double-star', 'sky-judgement'], amount: 1 },
-    { type: 'pierce-echo', skillIds: ['heavy-snipe', 'sun-piercer', 'wind-cut'], everyHits: 2, damageMultiplier: 0.5, radius: 48 },
+    { type: 'pierce-echo', skillIds: ['heavy-snipe', 'sun-piercer', 'wind-cut', 'dawn-bolt'], everyHits: 2, damageMultiplier: 0.5, radius: 48 },
     { type: 'ricochet-bounces', skillIds: ['ricochet-feather'], amount: 2 },
     { type: 'double-line', skillIds: ['curve-return', 'dawn-bolt', 'weakness-trace'], cooldownMultiplier: 1.04 },
     { type: 'projectile-count', skillIds: ['fire-feather', 'shadow-erosion', 'celestial-feather'], amount: 1 },
-    { type: 'spread-slow', skillIds: ['armor-pin', 'frost-bite', 'thunder-chain', 'shock-bolt', 'hunter-mark'], slowFactor: 0.18, duration: 0.85 },
+    { type: 'spread-slow', skillIds: ['armor-pin', 'frost-bite', 'thunder-chain', 'shock-bolt', 'hunter-mark', 'double-star'], slowFactor: 0.18, duration: 0.85 },
   ],
   spread: [
     { type: 'spread-speed', skillIds: ['quick-triple', 'gale-barrage', 'final-hunt'], multiplier: 1.18 },
@@ -964,15 +966,15 @@ const createSkillModifiers = (
     ]
 
     if (affix.includes('贯通') || rarity === 'epic') {
-      modifiers.push({ type: 'pierce-echo', skillIds: ['pierce-arrow', 'heavy-snipe', 'sun-piercer'], everyHits: 3, damageMultiplier: 0.45, radius: 42 })
+      modifiers.push({ type: 'pierce-echo', skillIds: ['pierce-arrow', 'heavy-snipe', 'sun-piercer', 'dawn-bolt', 'wind-cut'], everyHits: 3, damageMultiplier: 0.45, radius: 42 })
     }
 
     if (affix.includes('处刑') || rarity === 'legacy') {
-      modifiers.push({ type: 'elite-parallel-line', skillIds: ['pierce-arrow', 'heavy-snipe', 'wind-cut'], damageMultiplier: 0.55 })
+      modifiers.push({ type: 'elite-parallel-line', skillIds: ['pierce-arrow', 'heavy-snipe', 'wind-cut', 'sun-piercer'], damageMultiplier: 0.55 })
     }
 
     if (affix.includes('审判') || rarity === 'legendary') {
-      modifiers.push({ type: 'double-line', skillIds: ['pierce-arrow', 'heavy-snipe', 'wind-cut', 'sun-piercer', 'sky-judgement'], cooldownMultiplier: 1.08 })
+      modifiers.push({ type: 'double-line', skillIds: ['pierce-arrow', 'heavy-snipe', 'wind-cut', 'sun-piercer', 'sky-judgement', 'dawn-bolt', 'double-star'], cooldownMultiplier: 1.08 })
     }
 
     return appendSkillSpecificModifier(modifiers, rarity, 'pierce')
@@ -1331,6 +1333,8 @@ export const createEquipmentDrop = (
     difficulty?: CampaignDifficulty
     dropTier?: EquipmentDropTier
     discoveredHighRarityEquipmentIds?: readonly string[]
+    talentBuildWeightBonuses?: Partial<Record<SkillBuildTag, number>>
+    talentLegacyWeaponWeightBonuses?: Partial<Record<SkillBuildTag, number>>
   } = {},
 ): EquipmentItem | null => {
   const rarity = options.forceDrop
@@ -1346,10 +1350,14 @@ export const createEquipmentDrop = (
 
   if (source === 'boss-legacy') {
     const campaign = getCampaignIndex(level)
+    const legacyWeaponBuildTag = getBossLegacyWeaponForCampaign(campaign).buildTag
+    const legacyWeaponTalentWeight = legacyWeaponBuildTag === 'general'
+      ? 0
+      : Math.max(0, options.talentLegacyWeaponWeightBonuses?.[legacyWeaponBuildTag] ?? 0)
     const weaponCandidate = {
       kind: 'weapon' as const,
       equipmentId: `boss-legacy-weapon-${campaign}`,
-      weight: 38,
+      weight: 38 * (1 + legacyWeaponTalentWeight / 100),
     }
     const genericCandidate = {
       kind: 'generic' as const,
@@ -1373,6 +1381,7 @@ export const createEquipmentDrop = (
         unlockedSlots.length ? unlockedSlots : ['weapon'],
         options.preferredBuildTag,
         options.discoveredHighRarityEquipmentIds,
+        options.talentBuildWeightBonuses,
       ).map((candidate) => [candidate, candidate.weight] as [HighRarityEquipmentCandidate, number]),
     )
     : null

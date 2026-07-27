@@ -10,11 +10,23 @@ import {
 } from './bossStages'
 
 describe('boss combat stage tables', () => {
-  it('defines the documented three hp phases, transition duration, and guard caps for every campaign boss', () => {
+  it('defines the documented two-bar override for the campaign one dungeon warden', () => {
+    const table = getBossCombatTable(1)
+
+    expect(table.name).toBe('典狱长')
+    expect(table.phases[1].skills.map((skill) => skill.id)).toEqual(['contempt'])
+    expect(table.phases[2].skills.map((skill) => skill.id)).toEqual(['bloodthirst'])
+    expect(table.phases[3].skills).toHaveLength(0)
+    expect(table.phases[1].guardCap).toBe(0)
+    expect(table.phases[2].guardCap).toBe(0)
+    expect(table.phases[3].guardCap).toBe(0)
+  })
+
+  it('defines the documented three hp phases, transition duration, and guard caps for campaign bosses 2-10', () => {
     expect(BOSS_PHASE_TRANSITION_DURATION).toBe(1.5)
     expect(BOSS_PHASE_THRESHOLDS).toEqual({ 2: 0.7, 3: 0.35 })
 
-    for (let campaign = 1; campaign <= 10; campaign += 1) {
+    for (let campaign = 2; campaign <= 10; campaign += 1) {
       const table = getBossCombatTable(campaign)
       expect(table.campaign).toBe(campaign)
       expect(table.normalAttack).toMatchObject({
@@ -47,7 +59,7 @@ describe('boss combat stage tables', () => {
 
   it('routes all ten documented boss names to distinct combat tables', () => {
     expect(Object.values(BOSS_COMBAT_TABLES).map((table) => table.name)).toEqual([
-      '地牢典狱长',
+      '典狱长',
       '血宴伯爵',
       '黑月狼王',
       '三相女巫',

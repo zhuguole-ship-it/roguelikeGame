@@ -109,15 +109,31 @@ const phases = (
 export const BOSS_COMBAT_TABLES: Record<number, BossCombatTable> = {
   1: {
     campaign: 1,
-    name: '地牢典狱长',
-    normalAttack: baseNormalAttack('铁钩挥击', 72),
-    phases: phases(
-      [primary('chain-sweep', '铁链横扫', { angle: 110, range: 150 }), summon('bone-guard', '牢骨召唤')],
-      [control('cage-root', '牢笼禁锢', { duration: 0.8, damageMultiplier: 0.8 }), primary('chain-line', '铁链残留', { duration: 1.5 })],
-      [finisher('execution-charge', '处刑冲锋', { range: 420, width: 56, safetyWindow: '横向走位' })],
-      ['骷髅战士', '骷髅弓手'],
-      '吃满处刑冲锋可能死亡',
-    ),
+    name: '典狱长',
+    normalAttack: baseNormalAttack('普通攻击', 72),
+    phases: {
+      1: {
+        hpRange: [1, 0],
+        skills: [control('contempt', '轻视', { cooldown: 0, warning: 0, damageMultiplier: 0 })],
+        guardCap: 0,
+        guards: [],
+        failurePenalty: 'P1 轻视允许移动攻击',
+      },
+      2: {
+        hpRange: [1, 0],
+        skills: [control('bloodthirst', '嗜血', { cooldown: 5, warning: 0, duration: 3, damageMultiplier: 0 })],
+        guardCap: 0,
+        guards: [],
+        failurePenalty: '圈外停留会持续失血',
+      },
+      3: {
+        hpRange: [0, 0],
+        skills: [],
+        guardCap: 0,
+        guards: [],
+        failurePenalty: '典狱长无 P3',
+      },
+    },
   },
   2: {
     campaign: 2,

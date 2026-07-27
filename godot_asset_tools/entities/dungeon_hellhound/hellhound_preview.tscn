@@ -1,0 +1,87 @@
+[gd_scene load_steps=3 format=3 uid="uid://f0ps84mohvo"]
+
+[ext_resource type="Script" uid="uid://c5avhu2aa6d84" path="res://scripts/hellhound_preview.gd" id="1_preview"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_hurtbox"]
+size = Vector2(30, 32)
+
+[node name="HellhoundPreview" type="Node2D"]
+script = ExtResource("1_preview")
+
+[node name="Background" type="ColorRect" parent="."]
+offset_left = -480.0
+offset_top = -320.0
+offset_right = 480.0
+offset_bottom = 320.0
+color = Color(0.0352941, 0.0509804, 0.0431373, 1)
+
+[node name="Grid" type="Node2D" parent="."]
+
+[node name="GroundLine" type="Line2D" parent="Grid"]
+points = PackedVector2Array(-192, 28, 192, 28)
+width = 2.0
+default_color = Color(0.615686, 0.835294, 0.67451, 0.35)
+
+[node name="FrameBox" type="Line2D" parent="Grid"]
+points = PackedVector2Array(-32, -32, 32, -32, 32, 32, -32, 32, -32, -32)
+width = 1.0
+default_color = Color(0.960784, 0.784314, 0.435294, 0.45)
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+position = Vector2(0, 0)
+scale = Vector2(4, 4)
+centered = true
+
+[node name="Anchors" type="Node2D" parent="."]
+
+[node name="Body" type="Marker2D" parent="Anchors"]
+position = Vector2(0, 11.52)
+gizmo_extents = 8.0
+
+[node name="Mouth" type="Marker2D" parent="Anchors"]
+position = Vector2(20.48, -11.52)
+gizmo_extents = 8.0
+
+[node name="Cast" type="Marker2D" parent="Anchors"]
+position = Vector2(14.72, -6.4)
+gizmo_extents = 8.0
+
+[node name="ProjectileSpawn" type="Marker2D" parent="Anchors"]
+position = Vector2(21.12, -10.88)
+gizmo_extents = 8.0
+
+[node name="CollisionPreview" type="Area2D" parent="."]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="CollisionPreview"]
+position = Vector2(0, 8)
+shape = SubResource("RectangleShape2D_hurtbox")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="Panel" type="PanelContainer" parent="CanvasLayer"]
+offset_left = 18.0
+offset_top = 18.0
+offset_right = 326.0
+offset_bottom = 168.0
+
+[node name="Margin" type="MarginContainer" parent="CanvasLayer/Panel"]
+layout_mode = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 12
+
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/Panel/Margin"]
+layout_mode = 2
+
+[node name="TitleLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox"]
+layout_mode = 2
+text = "dungeon-hellhound 资产预览"
+
+[node name="ActionLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox"]
+layout_mode = 2
+text = "动作：idle"
+
+[node name="AnchorLabel" type="Label" parent="CanvasLayer/Panel/Margin/VBox"]
+layout_mode = 2
+text = "body (0.50, 0.68)"

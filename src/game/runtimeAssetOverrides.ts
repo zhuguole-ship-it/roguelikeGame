@@ -34,6 +34,15 @@ export type RuntimeAssetDraftConfig = {
   }>
 }
 
+export type RuntimeAssetProjectPersistResult = {
+  config: RuntimeAssetDraftConfig
+  backupPath?: string
+}
+
+export const cloneRuntimeAssetDraftConfig = (config: RuntimeAssetDraftConfig): RuntimeAssetDraftConfig => (
+  JSON.parse(JSON.stringify(config)) as RuntimeAssetDraftConfig
+)
+
 const normalizeCombatAction = (action: string) => {
   if (action === 'skill_1') {
     return 'skill'
@@ -50,7 +59,60 @@ const hasTemporaryBlobUrl = (config: RuntimeAssetDraftConfig) => config.entities
   ))
 ))
 
+const isLegacyHellhoundAssetUrl = (url: string | undefined) => {
+  if (!url) {
+    return false
+  }
+
+  return url.includes('assets/developer-assets/dungeon-hellhound/') ||
+    url.includes('assets/monsters/hellhound-sheet.png') ||
+    url.includes('assets/monsters/hellhound-preview.png') ||
+    /assets\/monsters\/hellhound-image2\/(?:attack|idle|move)_\d+\.png/i.test(url)
+}
+
+const shouldIgnoreLegacyHellhoundAction = (entityId: string, action: RuntimeAssetActionOverride) => {
+  if (entityId !== 'dungeon-hellhound') {
+    return false
+  }
+
+  return action.frameUrls.some(isLegacyHellhoundAssetUrl) ||
+    isLegacyHellhoundAssetUrl(action.guideFrame) ||
+    isLegacyHellhoundAssetUrl(action.assetPath)
+}
+
+const isLegacySkeletonWarriorAssetUrl = (url: string | undefined) => {
+  if (!url) {
+    return false
+  }
+
+  return url.includes('assets/monsters/skeleton-warrior-image2') ||
+    url.includes('assets/monsters/skeleton-warrior-sheet.png') ||
+    url.includes('assets/monsters/skeleton-warrior-preview.png') ||
+    url.includes('assets/monsters/skeleton-warrior-hq') ||
+    url.includes('assets/developer-assets/dungeon-skeleton-warrior/') ||
+    url.includes('/Users/')
+}
+
+const shouldIgnoreLegacySkeletonWarriorAction = (entityId: string, action: RuntimeAssetActionOverride) => {
+  if (entityId !== 'dungeon-skeleton-warrior') {
+    return false
+  }
+
+  return action.frameUrls.some(isLegacySkeletonWarriorAssetUrl) ||
+    isLegacySkeletonWarriorAssetUrl(action.guideFrame) ||
+    isLegacySkeletonWarriorAssetUrl(action.assetPath)
+}
+
+const shouldIgnoreLegacyRuntimeAssetAction = (entityId: string, action: RuntimeAssetActionOverride) => (
+  shouldIgnoreLegacyHellhoundAction(entityId, action) ||
+  shouldIgnoreLegacySkeletonWarriorAction(entityId, action)
+)
+
 export const setRuntimeAssetActionOverride = (override: RuntimeAssetActionOverride) => {
+  if (shouldIgnoreLegacySkeletonWarriorAction(override.entityId, override)) {
+    return
+  }
+
   const entityOverrides = runtimeAssetOverrides.get(override.entityId) ?? new Map<string, RuntimeAssetActionOverride>()
   const normalized = normalizeCombatAction(override.combatAction || override.slot)
   const frameCount = Math.max(1, Math.floor(override.frameCount || override.frameUrls.length || 1))
@@ -135,14 +197,27 @@ export const exportRuntimeAssetDraftConfig = (): RuntimeAssetDraftConfig => ({
   })),
 })
 
+export const restoreRuntimeAssetOverrideSnapshot = (snapshot: RuntimeAssetDraftConfig | undefined) => {
+  if (!snapshot) {
+    clearRuntimeAssetOverrides()
+    return
+  }
+  importRuntimeAssetDraftConfig(cloneRuntimeAssetDraftConfig(snapshot))
+}
+
 export const importRuntimeAssetDraftConfig = (config: RuntimeAssetDraftConfig) => {
   runtimeAssetOverrides.clear()
   config.entities.forEach((entity) => {
-    entity.actions.forEach((action) => setRuntimeAssetActionOverride({
-      ...action,
-      entityId: entity.entityId,
-      assetRevision: action.assetRevision ?? config.generatedAt,
-    }))
+    entity.actions.forEach((action) => {
+      if (shouldIgnoreLegacyRuntimeAssetAction(entity.entityId, action)) {
+        return
+      }
+      setRuntimeAssetActionOverride({
+        ...action,
+        entityId: entity.entityId,
+        assetRevision: action.assetRevision ?? config.generatedAt,
+      })
+    })
   })
 }
 
@@ -213,10 +288,13 @@ export const persistRuntimeAssetDraftConfigToProject = async (
   if (!response.ok) {
     return undefined
   }
-  const payload = await response.json() as { config?: RuntimeAssetDraftConfig }
+  const payload = await response.json() as { config?: RuntimeAssetDraftConfig; backupPath?: string }
   if (!payload.config) {
     return undefined
   }
   importRuntimeAssetDraftConfig(payload.config)
-  return payload.config
+  return {
+    config: payload.config,
+    backupPath: payload.backupPath,
+  } satisfies RuntimeAssetProjectPersistResult
 }

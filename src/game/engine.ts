@@ -4,8 +4,6 @@ import {
   FLOORS_PER_CAMPAIGN,
   BOSS_ARENA_RADIUS,
   BOSS_ARENA_SOFT_MARGIN,
-  CONTRACT_RIFT_AUTO_SETTLE_TIME,
-  CONTRACT_RIFT_RADIUS,
   ENEMY_PROJECTILE_SIZE,
   ENEMY_PROJECTILE_SPEED,
   ENEMY_PROJECTILE_TTL,
@@ -59,7 +57,7 @@ import {
   isEliteLevel,
 } from './config'
 import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, ARCHER_FIXED_PASSIVE_LEVELS, LV5_QUALITATIVE_TEXT, SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from './archerSkills'
-import { CORROSIVE_SLIME_ARCHETYPE, getCampaignEnemyArchetype, getCampaignEnemyKind, getCampaignFloorEnemyPool, getCampaignGuardEnemyKind, getCampaignLootProfile, getCampaignMonsterTheme, getCampaignOpeningEnemyKind, type CampaignEnemyArchetype } from './campaignMonsters'
+import { CAMPAIGN_MONSTER_THEMES, CORROSIVE_SLIME_ARCHETYPE, getCampaignEnemyArchetype, getCampaignEnemyKind, getCampaignFloorEnemyPool, getCampaignGuardEnemyKind, getCampaignLootProfile, getCampaignMonsterTheme, getCampaignOpeningEnemyKind, type CampaignEnemyArchetype } from './campaignMonsters'
 import {
   canAffordEquipmentMaterials,
   canDismantleEquipmentItem,
@@ -115,6 +113,7 @@ import {
   type BossPhase,
 } from './bossStages'
 import { getMonsterDropProfile } from './monsterDataCards'
+import { developerAssetEntities, getEnemyDeathAnimationTiming, validateDeveloperAssetEntity } from './assetManifest'
 import type {
   ActiveSkillDefinition,
   ActiveSkillInstance,
@@ -137,8 +136,12 @@ import type {
   GamePhase,
   GameSnapshot,
   InputState,
+  LocalBattleTestMonsterConfig,
+  LocalBattleTestSpawnOption,
+  MapDecoration,
   MapObstacle,
   PendingSkillReward,
+  Player,
   Projectile,
   RewardChoiceMode,
   RouteObjective,
@@ -157,12 +160,17 @@ import {
   getDefaultRunTalentGuaranteeState,
   getMetaTalentBonusSummary,
   getRunTalentBonusSummary,
+  type TalentEffect,
+  type TalentEffectType,
 } from './talents'
 import { MONSTER_FRAME_SPECS, MONSTER_SKILL_ANCHORS, type MonsterFrameAction } from './sprites'
+import { CAMPAIGN_ONE_DECORATION_ASSETS, CAMPAIGN_ONE_OBSTACLE_ASSETS, type TerrainAssetDefinition, type TerrainObstacleAssetDefinition } from './terrainAssets'
 import { clamp, distance, dominantFacing, normalize, rotate } from '../utils/math'
 import { randomBetween, sample } from '../utils/random'
 
 const createId = () => Math.random().toString(16).slice(2)
+const COMBAT_DAMAGE_LOG_MERGE_WINDOW = 0.5
+const COMBAT_DAMAGE_LOG_CAPACITY = 120
 const PLAYER_DASH_DURATION = 0.16
 const PLAYER_DASH_COOLDOWN = 1.1
 const PLAYER_DASH_SPEED = 480
@@ -174,14 +182,13 @@ const CRYSTAL_PICKUP_NORMAL_RANGE_CAP = 140
 const TALENT_POINT_BONUS_CAP = 0.25
 const TALENT_MATERIAL_MULTIPLIER_CAP = 1.25
 const TALENT_MATERIAL_DROP_MULTIPLIER_CAP = 1.25
-const TALENT_COOLDOWN_REFUND_CAP = 0.25
 const TALENT_COOLDOWN_REFUND_SLOT_INTERVAL = 0.35
 const TALENT_RADIUS_MULTIPLIER_CAP = 1.35
 const TALENT_DAMAGE_MULTIPLIER_CAP = 1.1
 const TALENT_BOSS_PERSISTENT_DAMAGE_MULTIPLIER_CAP = 1.06
 const BEAST_TEMPORARY_EQUIPMENT_SUMMON_CAP = 3
 export const HEALTH_PACK_DROP_CHANCE = 0.22
-export const HEALTH_PACK_FINAL_DROP_MULTIPLIER = 0.5
+export const HEALTH_PACK_FINAL_DROP_MULTIPLIER = 0.25
 const HEALTH_PACK_HEAL = 25
 const HEALTH_PACK_MIN_TTL = 8
 const HEALTH_PACK_MAX_TTL = 12
@@ -189,12 +196,24 @@ const ENEMY_CONTACT_DAMAGE = 16
 const DAMAGE_TEXT_TTL = 0.65
 const BOMBER_EXPLOSION_DAMAGE = 26
 const BOMBER_EXPLOSION_RADIUS = 46
+const C1_SLIME_VARIANT_ARCHETYPE_IDS = new Set([
+  'dungeon-splitting-ooze',
+  'dungeon-explosive-fire-sac',
+])
 const SKELETON_WARRIOR_REVIVES = 2
 const SKELETON_WARRIOR_MAX_HP_DECAY = 0.7
 const SKELETON_WARRIOR_REVIVE_SPEED_BONUS = 1.22
+const FIRST_CAMPAIGN_SINGLE_LIFE_ELITE_ARCHETYPE_IDS = new Set([
+  'dungeon-chain-captain',
+  'dungeon-jailer-chief',
+  'dungeon-chain-wraith-elite',
+])
 const SKELETON_KNIGHT_BLOCK_COOLDOWN = 3.2
 const SKELETON_KNIGHT_BLOCK_DURATION = 0.85
 const SKELETON_KNIGHT_BLOCK_REDUCTION = 0.82
+const SKELETON_WARRIOR_DEFENSE_COOLDOWN = 5
+const SKELETON_WARRIOR_DEFENSE_DURATION = 3
+const SKELETON_WARRIOR_FRONTAL_DAMAGE_MULTIPLIER = 0.3
 const HELLHOUND_BREATH_COOLDOWN = 1.5
 const HELLHOUND_BREATH_DURATION = 3
 const HELLHOUND_BREATH_RANGE = 84
@@ -220,6 +239,15 @@ const BASIC_MELEE_ATTACK_RANGE_MULTIPLIER = 2
 const BASIC_MELEE_ATTACK_WINDUP = 0.36
 const BASIC_MELEE_ATTACK_IMPACT_DELAY = 0.08
 const BASIC_MELEE_ATTACK_COOLDOWN = 0.9
+const DUNGEON_WARDEN_BLOODTHIRST_INTERVAL = 5
+const DUNGEON_WARDEN_BLOODTHIRST_DURATION = 3
+const DUNGEON_WARDEN_RAGE_CHANCE = 0.1
+const DUNGEON_WARDEN_RAGE_DURATION = 3
+const DUNGEON_WARDEN_RAGE_DEDUPE_WINDOW = TALENT_COOLDOWN_REFUND_SLOT_INTERVAL
+const DUNGEON_WARDEN_HUMANOID_CRIT_BONUS = 0.4
+const DUNGEON_WARDEN_SHRINK_DURATION = 15
+const DUNGEON_WARDEN_ARENA_MIN_RADIUS = 160
+const DUNGEON_WARDEN_OUTSIDE_DAMAGE_PER_SECOND = 0.1
 const SKELETON_KNIGHT_CHARGE_STUN = 1.5
 const RUN_RECORD_LIMIT = 5
 const MILESTONE_LEVELS = [10, 20, 50, 100, 200]
@@ -259,6 +287,8 @@ const getEnemySkillVisualAnchor = (
 }
 const REWARD_CHOICE_COUNT = 5
 const CRYSTAL_PICKUP_BASE_RANGE = 64
+const OFFSCREEN_PROJECTILE_CLEANUP_DISTANCE = INFINITE_ENEMY_RECYCLE_DISTANCE * 1.15
+const OFFSCREEN_LOW_VALUE_PICKUP_CLEANUP_DISTANCE = INFINITE_ENEMY_RECYCLE_DISTANCE * 1.35
 const CONTRACT_BOON_INTERVAL = 5
 const EQUIPMENT_INVENTORY_LIMIT = 48
 const BEAST_DEFEND_RADIUS = 280
@@ -268,6 +298,7 @@ const BEAST_COMMAND_TTL = 1.15
 const BEAST_BASE_DURATION = 9
 const BEAST_PERSISTENT_DURATION = 9999
 const getCampaignStartLevel = (campaign: number) => (clamp(Math.round(campaign), 1, 10) - 1) * FLOORS_PER_CAMPAIGN + 1
+const getTerrainGenerationLevel = (level: number) => getCampaignStartLevel(getCampaignIndex(level))
 
 const BEAST_SKILL_KIND: Partial<Record<string, BeastKind | 'pack'>> = {
   'raptor-dive': 'hawk',
@@ -341,12 +372,45 @@ const createEmptyContractBoons = () => ({
   general: 0,
 })
 
-const obstacleTemplates: Array<Pick<MapObstacle, 'kind' | 'width' | 'height'>> = [
+const obstacleTemplates: Array<Pick<MapObstacle, 'kind' | 'width' | 'height' | 'collisionWidth' | 'collisionHeight' | 'assetId'>> = [
   { kind: 'pillar', width: 32, height: 32 },
   { kind: 'crate', width: 34, height: 28 },
   { kind: 'wagon', width: 44, height: 28 },
   { kind: 'ruin', width: 52, height: 36 },
 ]
+
+const getTerrainAssetIndex = (length: number, ...seedValues: number[]) => {
+  if (length <= 0) {
+    return 0
+  }
+
+  return Math.min(length - 1, Math.floor(seededUnit(...seedValues) * length))
+}
+
+const isCampaignOneTerrainLevel = (level: number) => getCampaignIndex(level) === 1
+
+const getCampaignOneObstacleTemplate = (
+  asset: TerrainObstacleAssetDefinition,
+): Pick<MapObstacle, 'kind' | 'width' | 'height' | 'collisionWidth' | 'collisionHeight' | 'assetId'> => ({
+  kind: asset.kind,
+  width: asset.width,
+  height: asset.height,
+  collisionWidth: asset.collisionWidth,
+  collisionHeight: asset.collisionHeight,
+  assetId: asset.id,
+})
+
+const getCampaignOneDecoration = (
+  asset: TerrainAssetDefinition,
+  id: string,
+  position: Vector2,
+): MapDecoration => ({
+  id,
+  assetId: asset.id,
+  width: asset.width,
+  height: asset.height,
+  position,
+})
 
 const hashNumber = (...values: number[]) => {
   let hash = 2166136261
@@ -441,6 +505,10 @@ const cloneBattlefieldState = (battlefield: BattlefieldState): BattlefieldState 
       ...obstacle,
       position: { ...obstacle.position },
     })),
+    decorations: (chunk.decorations ?? []).map((decoration) => ({
+      ...decoration,
+      position: { ...decoration.position },
+    })),
     spawnPoints: chunk.spawnPoints.map((point) => ({ ...point })),
     hazardPoints: chunk.hazardPoints.map((point) => ({ ...point })),
   })),
@@ -457,10 +525,43 @@ const cloneBattlefieldState = (battlefield: BattlefieldState): BattlefieldState 
   routeObjectiveSkillBoost: battlefield.routeObjectiveSkillBoost
     ? { ...battlefield.routeObjectiveSkillBoost }
     : undefined,
+  wardenArena: battlefield.wardenArena
+    ? {
+        ...battlefield.wardenArena,
+        center: { ...battlefield.wardenArena.center },
+      }
+    : undefined,
   debug: { ...battlefield.debug },
 })
 
 const getFlattenedChunkObstacles = (battlefield: BattlefieldState) => battlefield.activeChunks.flatMap((chunk) => chunk.obstacles)
+const getFlattenedChunkDecorations = (battlefield: BattlefieldState) => battlefield.activeChunks.flatMap((chunk) => chunk.decorations ?? [])
+
+const shouldPreserveFloorTerrain = (previous: GameSnapshot, nextLevel: number) => {
+  return previous.battlefield.mode === 'infinite' &&
+    getBattlefieldMode('running', nextLevel) === 'infinite' &&
+    getCampaignIndex(previous.level) === getCampaignIndex(nextLevel)
+}
+
+const resetPreservedFloorBattlefieldState = (preserved: BattlefieldState): BattlefieldState => {
+  preserved.mode = 'infinite'
+  preserved.recycledChunkCount = 0
+  preserved.recycledEnemyCount = 0
+  preserved.noKillTimer = 0
+  preserved.escapePressure = 0
+  preserved.routeObjectives = []
+  preserved.routeObjectiveSkillBoost = undefined
+  preserved.rift = undefined
+  preserved.bossArenaRadius = undefined
+  preserved.bossArenaWarningTimer = 0
+  preserved.wardenArena = undefined
+  preserved.debug = {
+    ...createBattlefieldDebug(),
+    activeChunkCount: preserved.activeChunks.length,
+    obstacleCount: preserved.activeChunks.reduce((sum, chunk) => sum + chunk.obstacles.length, 0),
+  }
+  return preserved
+}
 
 const getBattlefieldObstacles = (battlefield: BattlefieldState, level: number) => (
   battlefield.mode === 'village'
@@ -468,6 +569,18 @@ const getBattlefieldObstacles = (battlefield: BattlefieldState, level: number) =
     : battlefield.mode === 'infinite'
       ? getFlattenedChunkObstacles(battlefield)
       : createLevelObstacles(level)
+)
+
+const getBattlefieldDecorations = (
+  battlefield: BattlefieldState,
+  level: number,
+  obstacles: MapObstacle[],
+) => (
+  battlefield.mode === 'village'
+    ? []
+    : battlefield.mode === 'infinite'
+      ? getFlattenedChunkDecorations(battlefield)
+      : createLevelDecorations(level, obstacles)
 )
 
 const getChunkCoordinate = (value: number, chunkSize: number) => Math.floor(value / chunkSize)
@@ -497,9 +610,40 @@ const isInsideForwardCorridor = (point: Vector2, playerPosition: Vector2, forwar
   return side < 92
 }
 
-const getChunkObstacleTemplate = (level: number, index: number) => {
+const getChunkObstacleTemplate = (level: number, index: number, seed: number, cx: number, cy: number) => {
+  if (isCampaignOneTerrainLevel(level)) {
+    const terrainLevel = getTerrainGenerationLevel(level)
+    const asset = CAMPAIGN_ONE_OBSTACLE_ASSETS[getTerrainAssetIndex(
+      CAMPAIGN_ONE_OBSTACLE_ASSETS.length,
+      seed,
+      terrainLevel,
+      cx,
+      cy,
+      index,
+      101,
+    )]
+    return getCampaignOneObstacleTemplate(asset)
+  }
+
   const campaign = getCampaignIndex(level)
   return obstacleTemplates[(campaign + index) % obstacleTemplates.length]
+}
+
+const terrainRectsOverlap = (
+  first: { position: Vector2; width: number; height: number },
+  second: { position: Vector2; width: number; height: number },
+  padding = 0,
+) => (
+  Math.abs(first.position.x - second.position.x) < (first.width + second.width) / 2 + padding &&
+  Math.abs(first.position.y - second.position.y) < (first.height + second.height) / 2 + padding
+)
+
+const getChunkDecorationTarget = (level: number, seed: number, terrainLevel: number, cx: number, cy: number) => {
+  if (!isCampaignOneTerrainLevel(level)) {
+    return 0
+  }
+
+  return 1 + (Math.abs(hashNumber(seed, terrainLevel, cx, cy, 173)) % 2)
 }
 
 const createBattlefieldChunk = (
@@ -514,10 +658,12 @@ const createBattlefieldChunk = (
   const chunkSize = INFINITE_CHUNK_SIZE
   const baseX = cx * chunkSize
   const baseY = cy * chunkSize
-  const obstacleTarget = getObstacleDensityForLevel(level)
-  const floorVariant = Math.floor(seededRange(0, 8, seed, level, cx, cy, 13))
-  const detailSeed = hashNumber(seed, level, cx, cy, 97)
+  const terrainLevel = getTerrainGenerationLevel(level)
+  const obstacleTarget = getObstacleDensityForLevel(isCampaignOneTerrainLevel(level) ? terrainLevel : level)
+  const floorVariant = Math.floor(seededRange(0, 8, seed, terrainLevel, cx, cy, 13))
+  const detailSeed = hashNumber(seed, terrainLevel, cx, cy, 97)
   const obstacles: MapObstacle[] = []
+  const decorations: MapDecoration[] = []
   const spawnPoints: Vector2[] = []
   const hazardPoints: Vector2[] = []
   let attempts = 0
@@ -538,15 +684,19 @@ const createBattlefieldChunk = (
 
   while (obstacles.length < obstacleTarget && attempts < obstacleTarget * 24) {
     attempts += 1
-    const template = getChunkObstacleTemplate(level, attempts)
+    const template = getChunkObstacleTemplate(level, attempts, seed, cx, cy)
+    const usesExactAssetSize = Boolean(template.assetId)
     const obstacle: MapObstacle = {
-      id: `chunk-${level}-${cx}-${cy}-${attempts}-${template.kind}`,
+      id: `chunk-${terrainLevel}-${cx}-${cy}-${attempts}-${template.kind}`,
       kind: template.kind,
-      width: template.width + (attempts % 3 === 0 ? 18 : 0),
-      height: template.height + (attempts % 4 === 0 ? 12 : 0),
+      width: template.width + (!usesExactAssetSize && attempts % 3 === 0 ? 18 : 0),
+      height: template.height + (!usesExactAssetSize && attempts % 4 === 0 ? 12 : 0),
+      collisionWidth: template.collisionWidth,
+      collisionHeight: template.collisionHeight,
+      assetId: template.assetId,
       position: {
-        x: baseX + seededRange(76, chunkSize - 76, seed, level, cx, cy, attempts, 1),
-        y: baseY + seededRange(76, chunkSize - 76, seed, level, cx, cy, attempts, 2),
+        x: baseX + seededRange(76, chunkSize - 76, seed, terrainLevel, cx, cy, attempts, 1),
+        y: baseY + seededRange(76, chunkSize - 76, seed, terrainLevel, cx, cy, attempts, 2),
       },
     }
 
@@ -564,13 +714,43 @@ const createBattlefieldChunk = (
     obstacles.push(obstacle)
   }
 
+  const decorationTarget = getChunkDecorationTarget(level, seed, terrainLevel, cx, cy)
+  let decorationAttempts = 0
+  while (decorations.length < decorationTarget && decorationAttempts < decorationTarget * 18) {
+    decorationAttempts += 1
+    const asset = CAMPAIGN_ONE_DECORATION_ASSETS[getTerrainAssetIndex(
+      CAMPAIGN_ONE_DECORATION_ASSETS.length,
+      seed,
+      terrainLevel,
+      cx,
+      cy,
+      decorationAttempts,
+      211,
+    )]
+    const decoration = getCampaignOneDecoration(asset, `chunk-decor-${terrainLevel}-${cx}-${cy}-${decorationAttempts}-${asset.id}`, {
+      x: baseX + seededRange(72, chunkSize - 72, seed, terrainLevel, cx, cy, decorationAttempts, 41),
+      y: baseY + seededRange(72, chunkSize - 72, seed, terrainLevel, cx, cy, decorationAttempts, 42),
+    })
+
+    const tooCloseToPlayer = distance(decoration.position, playerPosition) < 70
+    const overlapsObstacle = [...existingObstacles, ...obstacles].some((obstacle) => terrainRectsOverlap(decoration, obstacle, 6))
+    const overlapsDecoration = decorations.some((current) => terrainRectsOverlap(decoration, current, 4))
+
+    if (tooCloseToPlayer || overlapsObstacle || overlapsDecoration) {
+      continue
+    }
+
+    decorations.push(decoration)
+  }
+
   return {
-    id: `${level}:${cx}:${cy}`,
+    id: `${terrainLevel}:${cx}:${cy}`,
     cx,
     cy,
     floorVariant,
     detailSeed,
     obstacles,
+    decorations,
     spawnPoints,
     hazardPoints,
   }
@@ -592,12 +772,13 @@ function refreshBattlefieldChunks(
   const chunkSize = battlefield.chunkSize
   const centerX = getChunkCoordinate(playerPosition.x, chunkSize)
   const centerY = getChunkCoordinate(playerPosition.y, chunkSize)
+  const terrainLevel = getTerrainGenerationLevel(level)
   const existing = new Map(battlefield.activeChunks.map((chunk) => [chunk.id, chunk]))
   const nextChunks: BattlefieldChunk[] = []
 
   for (let cy = centerY - INFINITE_ACTIVE_CHUNK_RADIUS; cy <= centerY + INFINITE_ACTIVE_CHUNK_RADIUS; cy += 1) {
     for (let cx = centerX - INFINITE_ACTIVE_CHUNK_RADIUS; cx <= centerX + INFINITE_ACTIVE_CHUNK_RADIUS; cx += 1) {
-      const id = `${level}:${cx}:${cy}`
+      const id = `${terrainLevel}:${cx}:${cy}`
       const existingChunk = existing.get(id)
       if (existingChunk) {
         nextChunks.push(existingChunk)
@@ -625,8 +806,8 @@ function refreshBattlefieldChunks(
 }
 
 const intersectsObstacle = (position: Vector2, radius: number, obstacle: MapObstacle) => {
-  const halfW = obstacle.width / 2
-  const halfH = obstacle.height / 2
+  const halfW = (obstacle.collisionWidth ?? obstacle.width) / 2
+  const halfH = (obstacle.collisionHeight ?? obstacle.height) / 2
   const nearestX = clamp(position.x, obstacle.position.x - halfW, obstacle.position.x + halfW)
   const nearestY = clamp(position.y, obstacle.position.y - halfH, obstacle.position.y + halfH)
   return distance(position, { x: nearestX, y: nearestY }) < radius
@@ -634,6 +815,111 @@ const intersectsObstacle = (position: Vector2, radius: number, obstacle: MapObst
 
 const isBlockedByObstacle = (position: Vector2, radius: number, obstacles: MapObstacle[]) => {
   return obstacles.some((obstacle) => intersectsObstacle(position, radius, obstacle))
+}
+
+const segmentIntersectsObstacle = (start: Vector2, end: Vector2, obstacle: MapObstacle, padding = 0) => {
+  const halfW = (obstacle.collisionWidth ?? obstacle.width) / 2 + padding
+  const halfH = (obstacle.collisionHeight ?? obstacle.height) / 2 + padding
+  const minX = obstacle.position.x - halfW
+  const maxX = obstacle.position.x + halfW
+  const minY = obstacle.position.y - halfH
+  const maxY = obstacle.position.y + halfH
+
+  if (
+    (start.x >= minX && start.x <= maxX && start.y >= minY && start.y <= maxY) ||
+    (end.x >= minX && end.x <= maxX && end.y >= minY && end.y <= maxY)
+  ) {
+    return true
+  }
+
+  const deltaX = end.x - start.x
+  const deltaY = end.y - start.y
+  let entry = 0
+  let exit = 1
+
+  const updateRange = (origin: number, delta: number, min: number, max: number) => {
+    if (Math.abs(delta) < 0.0001) {
+      return origin >= min && origin <= max
+    }
+    const first = (min - origin) / delta
+    const second = (max - origin) / delta
+    const near = Math.min(first, second)
+    const far = Math.max(first, second)
+    entry = Math.max(entry, near)
+    exit = Math.min(exit, far)
+    return entry <= exit
+  }
+
+  return updateRange(start.x, deltaX, minX, maxX) &&
+    updateRange(start.y, deltaY, minY, maxY) &&
+    exit >= 0 &&
+    entry <= 1
+}
+
+const getEnemyObstacleDetourTarget = (
+  position: Vector2,
+  target: Vector2,
+  radius: number,
+  obstacles: MapObstacle[],
+  preferredSide = 0,
+) => {
+  const targetOffset = { x: target.x - position.x, y: target.y - position.y }
+  const targetDistance = Math.hypot(targetOffset.x, targetOffset.y)
+  if (targetDistance <= 0.001) {
+    return target
+  }
+  const direction = normalize(targetOffset)
+  const blockingObstacle = obstacles
+    .map((obstacle) => ({
+      obstacle,
+      projection: (obstacle.position.x - position.x) * direction.x + (obstacle.position.y - position.y) * direction.y,
+    }))
+    .filter(({ obstacle, projection }) => (
+      projection > radius * 0.5 &&
+      projection < targetDistance + radius &&
+      segmentIntersectsObstacle(position, target, obstacle, radius + 6)
+    ))
+    .sort((a, b) => a.projection - b.projection)[0]?.obstacle
+
+  if (!blockingObstacle) {
+    return target
+  }
+
+  const halfW = (blockingObstacle.collisionWidth ?? blockingObstacle.width) / 2
+  const halfH = (blockingObstacle.collisionHeight ?? blockingObstacle.height) / 2
+  const clearance = radius + 34
+  const perpendicular = { x: -direction.y, y: direction.x }
+  const side = preferredSide < 0 ? -1 : 1
+  const targetSideX = Math.sign(target.x - blockingObstacle.position.x)
+  const targetSideY = Math.sign(target.y - blockingObstacle.position.y)
+  const outsideVerticalBand = position.y < blockingObstacle.position.y - halfH - radius ||
+    position.y > blockingObstacle.position.y + halfH + radius
+  const outsideHorizontalBand = position.x < blockingObstacle.position.x - halfW - radius ||
+    position.x > blockingObstacle.position.x + halfW + radius
+  const candidates: Vector2[] = [
+    { x: blockingObstacle.position.x - halfW - clearance, y: blockingObstacle.position.y - halfH - clearance },
+    { x: blockingObstacle.position.x + halfW + clearance, y: blockingObstacle.position.y - halfH - clearance },
+    { x: blockingObstacle.position.x - halfW - clearance, y: blockingObstacle.position.y + halfH + clearance },
+    { x: blockingObstacle.position.x + halfW + clearance, y: blockingObstacle.position.y + halfH + clearance },
+  ]
+
+  const scored = candidates
+    .filter((candidate) => !isBlockedByObstacle(candidate, radius, obstacles))
+    .map((candidate) => {
+      const candidateSide = Math.sign((candidate.x - blockingObstacle.position.x) * perpendicular.x + (candidate.y - blockingObstacle.position.y) * perpendicular.y)
+      const segmentPenalty = segmentIntersectsObstacle(position, candidate, blockingObstacle, radius * 0.35) ? 260 : 0
+      const sidePenalty = candidateSide !== 0 && candidateSide !== side ? 18 : 0
+      const targetSidePenalty =
+        (outsideVerticalBand && targetSideX !== 0 && Math.sign(candidate.x - blockingObstacle.position.x) !== targetSideX ? 180 : 0) +
+        (outsideHorizontalBand && targetSideY !== 0 && Math.sign(candidate.y - blockingObstacle.position.y) !== targetSideY ? 180 : 0)
+      return {
+        candidate,
+        score: distance(position, candidate) + distance(candidate, target) + segmentPenalty + sidePenalty + targetSidePenalty,
+      }
+    })
+    .sort((a, b) => a.score - b.score)
+
+  return scored[0]?.candidate ?? target
 }
 
 const moveWithObstacleCollision = (
@@ -746,12 +1032,20 @@ const movePlayerWithObstacleSlide = (position: Vector2, radius: number, movement
 }
 
 const createLevelObstacles = (level: number): MapObstacle[] => {
+  const terrainLevel = getTerrainGenerationLevel(level)
   if (isBossLevel(level)) {
-    return obstacleTemplates.slice(0, 2).map((template, index) => ({
+    const bossTemplates = isCampaignOneTerrainLevel(level)
+      ? CAMPAIGN_ONE_OBSTACLE_ASSETS.slice(0, 2).map(getCampaignOneObstacleTemplate)
+      : obstacleTemplates.slice(0, 2)
+
+    return bossTemplates.map((template, index) => ({
       id: `${level}-boss-${template.kind}`,
       kind: template.kind,
       width: template.width,
       height: template.height,
+      collisionWidth: template.collisionWidth,
+      collisionHeight: template.collisionHeight,
+      assetId: template.assetId,
       position: {
         x: WORLD_WIDTH / 2 + (index === 0 ? -170 : 170),
         y: WORLD_HEIGHT / 2 + 105,
@@ -759,21 +1053,37 @@ const createLevelObstacles = (level: number): MapObstacle[] => {
     }))
   }
 
-  const obstacleCount = isEliteLevel(level) ? 3 : 4 + Math.min(6, Math.floor(level * 0.8))
+  const obstacleCount = isCampaignOneTerrainLevel(level)
+    ? getObstacleDensityForLevel(terrainLevel)
+    : isEliteLevel(level) ? 3 : 4 + Math.min(6, Math.floor(level * 0.8))
   const obstacles: MapObstacle[] = []
   let attempts = 0
 
   while (obstacles.length < obstacleCount && attempts < obstacleCount * 20) {
     attempts += 1
-    const template = sample(obstacleTemplates)
+    const template = isCampaignOneTerrainLevel(level)
+      ? getCampaignOneObstacleTemplate(CAMPAIGN_ONE_OBSTACLE_ASSETS[getTerrainAssetIndex(
+        CAMPAIGN_ONE_OBSTACLE_ASSETS.length,
+        terrainLevel,
+        attempts,
+        311,
+      )])
+      : sample(obstacleTemplates)
     const obstacle: MapObstacle = {
       id: `${level}-${attempts}-${template.kind}`,
       kind: template.kind,
       width: template.width,
       height: template.height,
+      collisionWidth: template.collisionWidth,
+      collisionHeight: template.collisionHeight,
+      assetId: template.assetId,
       position: {
-        x: randomBetween(ROOM_PADDING + 100, WORLD_WIDTH - ROOM_PADDING - 100),
-        y: randomBetween(ROOM_PADDING + 90, WORLD_HEIGHT - ROOM_PADDING - 90),
+        x: isCampaignOneTerrainLevel(level)
+          ? seededRange(ROOM_PADDING + 100, WORLD_WIDTH - ROOM_PADDING - 100, terrainLevel, attempts, 321)
+          : randomBetween(ROOM_PADDING + 100, WORLD_WIDTH - ROOM_PADDING - 100),
+        y: isCampaignOneTerrainLevel(level)
+          ? seededRange(ROOM_PADDING + 90, WORLD_HEIGHT - ROOM_PADDING - 90, terrainLevel, attempts, 322)
+          : randomBetween(ROOM_PADDING + 90, WORLD_HEIGHT - ROOM_PADDING - 90),
       },
     }
 
@@ -791,6 +1101,55 @@ const createLevelObstacles = (level: number): MapObstacle[] => {
   }
 
   return obstacles
+}
+
+const getLevelDecorationTarget = (level: number) => {
+  if (!isCampaignOneTerrainLevel(level)) {
+    return 0
+  }
+
+  const baseTarget = isBossLevel(level)
+    ? 6
+    : isEliteLevel(level)
+      ? 4
+      : 6 + Math.min(6, Math.floor(getCampaignFloor(level) / 3))
+  return Math.max(1, Math.floor(baseTarget * 0.5))
+}
+
+const createLevelDecorations = (level: number, obstacles: MapObstacle[]): MapDecoration[] => {
+  const decorationCount = getLevelDecorationTarget(level)
+  if (decorationCount <= 0) {
+    return []
+  }
+
+  const terrainLevel = getTerrainGenerationLevel(level)
+  const decorations: MapDecoration[] = []
+  let attempts = 0
+
+  while (decorations.length < decorationCount && attempts < decorationCount * 24) {
+    attempts += 1
+    const asset = CAMPAIGN_ONE_DECORATION_ASSETS[getTerrainAssetIndex(
+      CAMPAIGN_ONE_DECORATION_ASSETS.length,
+      terrainLevel,
+      attempts,
+      411,
+    )]
+    const decoration = getCampaignOneDecoration(asset, `${level}-decor-${attempts}-${asset.id}`, {
+      x: seededRange(ROOM_PADDING + 72, WORLD_WIDTH - ROOM_PADDING - 72, terrainLevel, attempts, 421),
+      y: seededRange(ROOM_PADDING + 70, WORLD_HEIGHT - ROOM_PADDING - 70, terrainLevel, attempts, 422),
+    })
+    const tooCloseToPlayer = distance(decoration.position, { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }) < 74
+    const overlapsObstacle = obstacles.some((obstacle) => terrainRectsOverlap(decoration, obstacle, 6))
+    const overlapsDecoration = decorations.some((current) => terrainRectsOverlap(decoration, current, 4))
+
+    if (tooCloseToPlayer || overlapsObstacle || overlapsDecoration) {
+      continue
+    }
+
+    decorations.push(decoration)
+  }
+
+  return decorations
 }
 
 const createVillageObstacles = (): MapObstacle[] => [
@@ -967,7 +1326,7 @@ const getLevelIntroMessage = (level: number, targetKills: number) => {
   }
 
   if (floor >= 3) {
-    return `${prefix}，地狱犬加入，观察蓄力和火焰吐息`
+    return `${prefix}，地狱犬加入，注意高速近身撕咬`
   }
 
   return `${prefix} 开始，清除 ${targetKills} 只怪物`
@@ -1036,6 +1395,12 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
   const isVillagePhase = phase === 'idle' || phase === 'game-over'
   const playerPosition = isVillagePhase ? VILLAGE_POINTS.campfire : { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }
   const battlefield = createBattlefieldState(getBattlefieldMode(phase, level), level, playerPosition)
+  const mapObstacles = isVillagePhase
+    ? createVillageObstacles()
+    : battlefield.mode === 'infinite'
+      ? getFlattenedChunkObstacles(battlefield)
+      : createLevelObstacles(level)
+  const mapDecorations = getBattlefieldDecorations(battlefield, level, mapObstacles)
   const starterWeapon = createStarterWeaponEquipment()
   const initialEquippedItems: Partial<Record<EquipmentSlot, EquipmentItem>> = starterWeapon ? { weapon: starterWeapon } : {}
   const initialEquipmentInventory = starterWeapon ? [starterWeapon] : []
@@ -1043,6 +1408,7 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
   return {
     phase,
     phaseBeforePause: phase === 'paused' ? 'running' : phase,
+    pauseMenuOpen: phase === 'paused',
     professionId: 'archer',
     currency: 0,
     earnedGold: 0,
@@ -1089,13 +1455,15 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
     levelTargetKills: targetKills,
     remainingToSpawn: targetKills,
     eliteSpawnedThisLevel: false,
+    bossDefeatedThisLevel: false,
     spawnCooldown: 0.15,
     levelTimer: 0,
     elapsedTime: 0,
     message: isVillagePhase ? '村庄篝火旁苏醒，寻找传送门进入地下城' : getLevelIntroMessage(level, targetKills),
     skillPoints: 0,
     skillAllocations,
-    contractBoons: createEmptyContractBoons(),
+  contractBoons: createEmptyContractBoons(),
+  combatDamageLog: [],
   inRunTalentIds: [],
   runTalentState: {
     selectedBuild: 'death',
@@ -1119,11 +1487,13 @@ const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
     fixedPassiveLevel,
     activeSkills: [],
     pendingSkillReward: null,
+    floorTransition: undefined,
     levelClearConfirmed: false,
     aimPoint: { x: WORLD_WIDTH * 0.68, y: WORLD_HEIGHT / 2 },
     player: createPlayer(skillAllocations, fixedPassiveLevel, null, initialEquippedItems, undefined, playerPosition),
     battlefield,
-    mapObstacles: isVillagePhase ? createVillageObstacles() : battlefield.mode === 'infinite' ? getFlattenedChunkObstacles(battlefield) : createLevelObstacles(level),
+    mapObstacles,
+    mapDecorations,
     pickups: [],
     enemies: [],
     projectiles: [],
@@ -1176,6 +1546,166 @@ const getPlayerArrowCriticalChance = (snapshot: GameSnapshot) => hasEagleEyeCrit
 
 const isEliteOrBoss = (enemy: Enemy) => enemy.kind === 'elite' || enemy.kind === 'boss'
 
+const isDungeonWardenBoss = (enemy: Pick<Enemy, 'kind'> & Partial<Pick<Enemy, 'archetypeId' | 'displayName'>>) => {
+  if (enemy.kind !== 'boss') {
+    return false
+  }
+  const identity = `${enemy.archetypeId ?? ''} ${enemy.displayName ?? ''}`.toLowerCase()
+  return enemy.archetypeId === 'dungeon-warden' || identity.includes('dungeon-warden') || identity.includes('典狱长')
+}
+
+const isDungeonWardenBloodthirstActive = (enemy: Enemy) => isDungeonWardenBoss(enemy) && (enemy.wardenBloodthirstTimer ?? 0) > 0
+const isDungeonWardenRageActive = (enemy: Enemy) => isDungeonWardenBoss(enemy) && (enemy.wardenRageTimer ?? 0) > 0
+const isDungeonWardenP1ContemptActive = (enemy: Enemy) => isDungeonWardenBoss(enemy) && getBossPhase(enemy) === 1
+const isLocalBattleTestActive = (snapshot: Pick<GameSnapshot, 'localBattleTest'>) => Boolean(snapshot.localBattleTest?.active)
+const isLocalBattleTestFailed = (snapshot: Pick<GameSnapshot, 'localBattleTest'>) => snapshot.localBattleTest?.active === true && snapshot.localBattleTest.status === 'failed'
+
+const getDungeonWardenMoveMultiplier = (enemy: Enemy) => {
+  if (!isDungeonWardenBoss(enemy)) {
+    return 1
+  }
+  return 2 * (isDungeonWardenBloodthirstActive(enemy) ? 2 : 1) * (isDungeonWardenRageActive(enemy) ? 1.1 : 1)
+}
+
+const getDungeonWardenAttackDamageMultiplier = (enemy: Enemy) => (
+  isDungeonWardenBloodthirstActive(enemy) ? 2 : 1
+)
+
+const getDungeonWardenAttackCooldown = (enemy: Enemy) => {
+  let speedMultiplier = 1
+  if (isDungeonWardenBloodthirstActive(enemy)) {
+    speedMultiplier *= 2
+  }
+  if (isDungeonWardenRageActive(enemy)) {
+    speedMultiplier *= 1.1
+  }
+  return BASIC_MELEE_ATTACK_COOLDOWN / speedMultiplier
+}
+
+export const getDungeonWardenCritChance = (enemy: Enemy, target: Player | Enemy) => {
+  if (!isDungeonWardenBoss(enemy)) {
+    return 0
+  }
+  // The live attack path targets the player, while enemy targets use the existing Enemy type.
+  // Keep the documented humanoid exception tied to that runtime target classification.
+  const humanoidTargetBonus = 'kind' in target ? 0 : DUNGEON_WARDEN_HUMANOID_CRIT_BONUS
+  const ragePenalty = isDungeonWardenRageActive(enemy) ? 0.1 : 0
+  return clamp(humanoidTargetBonus - ragePenalty, 0, 1)
+}
+
+const getDungeonWardenDamageTakenMultiplier = (enemy: Enemy) => {
+  if (!isDungeonWardenBoss(enemy) || getBossPhase(enemy) !== 2) {
+    return 1
+  }
+  return 0.5 * (isDungeonWardenBloodthirstActive(enemy) ? 0.5 : 1)
+}
+
+export const getDungeonWardenArenaRadius = (arena: {
+  elapsed: number
+  duration: number
+  startRadius: number
+  minRadius: number
+}) => {
+  const progress = arena.duration > 0 ? clamp(arena.elapsed / arena.duration, 0, 1) : 1
+  return Math.max(arena.minRadius, arena.startRadius - (arena.startRadius - arena.minRadius) * progress)
+}
+
+const clearDungeonWardenArenaState = (snapshot: GameSnapshot) => {
+  snapshot.battlefield.wardenArena = undefined
+  snapshot.battlefield.bossArenaRadius = undefined
+  snapshot.battlefield.bossArenaWarningTimer = 0
+}
+
+const startDungeonWardenP2 = (snapshot: GameSnapshot, enemy: Enemy) => {
+  enemy.bossPhase = 2
+  enemy.bossPendingPhase = undefined
+  enemy.bossTransitionTimer = 0
+  enemy.bossPhaseHpFloor = undefined
+  enemy.bossSkillIndex = 0
+  enemy.hp = enemy.maxHp
+  enemy.wardenBloodthirstCooldown = 0
+  enemy.wardenBloodthirstTimer = 0
+  enemy.wardenRageTimer = 0
+  enemy.wardenRageCooldown = Math.max(enemy.wardenRageCooldown ?? 0, DUNGEON_WARDEN_RAGE_DEDUPE_WINDOW)
+  enemy.wardenActionSlot = 'skill_2'
+  enemy.wardenActionTimer = DUNGEON_WARDEN_BLOODTHIRST_DURATION
+  enemy.meleeAttackReady = false
+  enemy.meleeAttackWindup = 0
+  enemy.meleeAttackImpactDelay = 0
+  enemy.meleeAttackOrigin = undefined
+  enemy.meleeAttackDirection = undefined
+  snapshot.battlefield.bossArenaRadius = BOSS_ARENA_RADIUS
+  snapshot.battlefield.wardenArena = {
+    center: { ...enemy.position },
+    elapsed: 0,
+    duration: DUNGEON_WARDEN_SHRINK_DURATION,
+    startRadius: BOSS_ARENA_RADIUS,
+    minRadius: DUNGEON_WARDEN_ARENA_MIN_RADIUS,
+  }
+  snapshot.message = '典狱长第一条血量耗尽，进入 P2：嗜血与缩圈开始'
+}
+
+const tryResolveDungeonWardenHealthGate = (snapshot: GameSnapshot, enemy: Enemy) => {
+  if (!isDungeonWardenBoss(enemy) || getBossPhase(enemy) !== 1 || enemy.hp > 0) {
+    return false
+  }
+  startDungeonWardenP2(snapshot, enemy)
+  return true
+}
+
+const tryTriggerDungeonWardenRage = (snapshot: GameSnapshot, enemy: Enemy, appliedDamage: number) => {
+  if (!isDungeonWardenBoss(enemy) || appliedDamage <= 0 || (enemy.wardenRageTimer ?? 0) > 0 || (enemy.wardenRageCooldown ?? 0) > 0) {
+    return false
+  }
+  const normalAttackRange = getBasicMeleeAttackRange(enemy, snapshot.player.size)
+  if (distance(enemy.position, snapshot.player.position) <= normalAttackRange) {
+    return false
+  }
+  if (Math.random() >= DUNGEON_WARDEN_RAGE_CHANCE) {
+    enemy.wardenRageCooldown = DUNGEON_WARDEN_RAGE_DEDUPE_WINDOW
+    return false
+  }
+
+  enemy.wardenRageTimer = DUNGEON_WARDEN_RAGE_DURATION
+  enemy.wardenRageCooldown = DUNGEON_WARDEN_RAGE_DEDUPE_WINDOW
+  enemy.wardenActionSlot = 'skill_3'
+  enemy.wardenActionTimer = Math.max(enemy.wardenActionTimer ?? 0, DUNGEON_WARDEN_RAGE_DURATION)
+  snapshot.message = '典狱长被远距离命中，触发激怒'
+  snapshot.floatingTexts.push(createFloatingText(enemy.position, '激怒', '#f97316'))
+  return true
+}
+
+const updateDungeonWardenState = (snapshot: GameSnapshot, enemy: Enemy, delta: number) => {
+  if (!isDungeonWardenBoss(enemy)) {
+    return
+  }
+
+  enemy.wardenRageCooldown = Math.max(0, (enemy.wardenRageCooldown ?? 0) - delta)
+  enemy.wardenRageTimer = Math.max(0, (enemy.wardenRageTimer ?? 0) - delta)
+  enemy.wardenActionTimer = Math.max(0, (enemy.wardenActionTimer ?? 0) - delta)
+  if ((enemy.wardenActionTimer ?? 0) <= 0) {
+    enemy.wardenActionSlot = undefined
+  }
+
+  if (getBossPhase(enemy) !== 2) {
+    enemy.wardenBloodthirstTimer = 0
+    enemy.wardenBloodthirstCooldown = 0
+    return
+  }
+
+  const previousBloodthirst = enemy.wardenBloodthirstTimer ?? 0
+  enemy.wardenBloodthirstTimer = Math.max(0, previousBloodthirst - delta)
+  enemy.wardenBloodthirstCooldown = Math.max(0, (enemy.wardenBloodthirstCooldown ?? 0) - delta)
+  if ((enemy.wardenBloodthirstTimer ?? 0) <= 0 && (enemy.wardenBloodthirstCooldown ?? 0) <= 0) {
+    enemy.wardenBloodthirstTimer = DUNGEON_WARDEN_BLOODTHIRST_DURATION
+    enemy.wardenBloodthirstCooldown = DUNGEON_WARDEN_BLOODTHIRST_INTERVAL
+    enemy.wardenActionSlot = 'skill_2'
+    enemy.wardenActionTimer = Math.max(enemy.wardenActionTimer ?? 0, DUNGEON_WARDEN_BLOODTHIRST_DURATION)
+    enemy.bossLastSkillId = 'bloodthirst'
+    snapshot.message = '典狱长释放嗜血，攻防与速度短暂翻倍'
+  }
+}
+
 const applyStun = (snapshot: GameSnapshot, enemy: Enemy, duration: number) => {
   const appliedDuration = duration * (isEliteOrBoss(enemy) ? 0.35 : 1)
   enemy.stunTimer = Math.max(enemy.stunTimer ?? 0, appliedDuration)
@@ -1183,13 +1713,23 @@ const applyStun = (snapshot: GameSnapshot, enemy: Enemy, duration: number) => {
   snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(253, 230, 138, ALPHA)', enemy.size * 0.8))
 }
 
-const applyBleed = (snapshot: GameSnapshot, enemy: Enemy, hitDamage: number) => {
-  const bleedMechanic = getTalentMechanic(snapshot, 'bleed')
-  const maxStacks = bleedMechanic?.active ? Math.max(MAX_BLEED_STACKS, bleedMechanic.maxStacks) : MAX_BLEED_STACKS
-  applyTalentEnemyState(snapshot, enemy, 'bleed')
+const applyBleed = (snapshot: GameSnapshot, enemy: Enemy, hitDamage: number, sourceId = 'run_blood_02', sourceName = '流血箭簇') => {
+  const hasTalentBleed = hasSelectedRunTalent(snapshot, 'run_blood_02')
+  const maxStacks = hasTalentBleed ? 5 : MAX_BLEED_STACKS
+  if (hasTalentBleed) {
+    applyDirectTalentEnemyState(snapshot, enemy, 'bleed', 4, 5, 1, 'run_blood_02')
+  }
+  const eliteDurationMultiplier = hasSelectedRunTalent(snapshot, 'run_blood_07') && (enemy.grantsEliteReward || enemy.kind === 'elite')
+    ? 1.35
+    : hasSelectedRunTalent(snapshot, 'run_blood_07') && enemy.kind === 'boss'
+      ? 1.15
+      : 1
+  const bleedDurationMultiplier = 1 + getMetaTalentRuntimeEffectValue(snapshot, 'bleed-duration', 'bleed') / 100
   const stack = {
-    ttl: bleedMechanic?.active ? Math.max(4, bleedMechanic.durationSeconds) : 4,
-    damagePerSecond: Math.max(0.1, hitDamage * 0.45 / 4),
+    ttl: 4 * eliteDurationMultiplier * bleedDurationMultiplier,
+    damagePerSecond: Math.max(0.1, hitDamage * (hasTalentBleed ? 0.08 * (hasSelectedRunTalent(snapshot, 'run_blood_07') && (enemy.grantsEliteReward || enemy.kind === 'elite') ? 1.12 : 1) : 0.45 / 4)),
+    sourceId,
+    sourceName,
   }
   const stacks = [...(enemy.bleedStacks ?? []), stack]
     .sort((a, b) => b.damagePerSecond - a.damagePerSecond)
@@ -1197,26 +1737,18 @@ const applyBleed = (snapshot: GameSnapshot, enemy: Enemy, hitDamage: number) => 
   enemy.bleedStacks = stacks
   snapshot.floatingTexts.push(createFloatingText(enemy.position, `流血 x${stacks.length}`, '#fb7185'))
   snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(251, 113, 133, ALPHA)', enemy.size * 0.75))
-  if (getTalentMechanic(snapshot, 'bloodRift')?.active && stacks.length >= Math.min(5, maxStacks) && !enemy.talentStates?.bloodRift) {
-    applyTalentEnemyState(snapshot, enemy, 'bloodRift')
-    const radius = 42 * getTalentRadiusMultiplier(snapshot, 'bloodFeatherStormRadius')
-    snapshot.enemies.forEach((nearby) => {
-      if (nearby.id !== enemy.id && nearby.hp > 0 && distance(nearby.position, enemy.position) <= radius) {
-        damageEnemy(snapshot, nearby, scaleTalentDamageForTarget(snapshot, nearby, hitDamage * 0.28, 'bleeding'), '#fb7185', getIncomingDirection(enemy.position, nearby.position))
-      }
-    })
-    snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(251, 113, 133, ALPHA)', radius))
-  }
 }
 
 const applyDarkErosion = (snapshot: GameSnapshot, enemy: Enemy, strength: number) => {
   enemy.darkTtl = Math.max(enemy.darkTtl ?? 0, 2.4 + strength * 0.2)
   enemy.darkDamageMultiplier = Math.max(enemy.darkDamageMultiplier ?? 0, Math.max(0.08, strength * 0.02))
+  enemy.darkSource = { sourceId: 'shadow-erosion', sourceName: ARCHER_ACTIVE_SKILL_MAP['shadow-erosion']?.name ?? '暗蚀箭' }
   snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(192, 132, 252, ALPHA)', enemy.size * 0.85))
 }
 
-const markEnemyAsInfectious = (enemy: Enemy, jumps = 2) => {
-  enemy.infectionJumps = Math.max(enemy.infectionJumps ?? 0, jumps)
+const markEnemyAsInfectious = (snapshot: GameSnapshot, enemy: Enemy, jumps = 2) => {
+  const extraJumps = getMetaTalentRuntimeEffectValue(snapshot, 'mechanic', 'death-chain-limit', 'count')
+  enemy.infectionJumps = Math.max(enemy.infectionJumps ?? 0, jumps + extraJumps)
 }
 
 const spreadDeathInfection = (snapshot: GameSnapshot, source: Enemy) => {
@@ -1261,11 +1793,243 @@ const spreadDeathInfection = (snapshot: GameSnapshot, source: Enemy) => {
   })
 }
 
-const damageEnemy = (snapshot: GameSnapshot, enemy: Enemy, damage: number, color = '#fef08a', incomingDirection?: Vector2) => {
-  let appliedDamage = Math.max(0, scaleExecuteLineDamage(enemy, damage) * getTalentStateDamageMultiplier(enemy))
+type CombatDamageAttribution = {
+  side: 'player' | 'enemy'
+  attackerId: string
+  attackerName: string
+  sourceId: string
+  sourceName: string
+  /** Only real player projectile impacts can start skeleton-warrior defense. */
+  playerProjectile?: boolean
+}
+
+type EnemyDamageSource = 'generic' | 'player-projectile' | CombatDamageAttribution
+
+const getEnemyDisplayName = (enemy: Enemy) => enemy.displayName ?? getEnemyKindLabel(enemy.kind)
+
+const getPlayerDamageAttribution = (sourceId = 'player-basic-attack', sourceName = '普通攻击', playerProjectile = false): CombatDamageAttribution => ({
+  side: 'player',
+  attackerId: 'player',
+  attackerName: '玩家',
+  sourceId,
+  sourceName,
+  playerProjectile,
+})
+
+const getEnemyDamageAttribution = (enemy: Enemy, sourceId = 'enemy-basic-attack', sourceName = '普通攻击'): CombatDamageAttribution => ({
+  side: 'enemy',
+  attackerId: enemy.id,
+  attackerName: getEnemyDisplayName(enemy),
+  sourceId,
+  sourceName,
+})
+
+const getEnemyFieldDamageAttribution = (snapshot: GameSnapshot, field: SkillField): CombatDamageAttribution | undefined => {
+  const owner = field.sourceEnemyId
+    ? snapshot.enemies.find((enemy) => enemy.id === field.sourceEnemyId)
+    : snapshot.enemies
+      .filter((enemy) => enemy.hp > 0)
+      .sort((left, right) => distance(left.position, field.position) - distance(right.position, field.position))[0]
+  if (!owner) {
+    return undefined
+  }
+  return getEnemyDamageAttribution(owner, field.sourceSkillId || 'enemy-field', field.sourceName ?? '怪物技能')
+}
+
+const getPlayerSkillDamageAttribution = (skillId: string, playerProjectile = false, sourceName?: string): CombatDamageAttribution => {
+  const definition = ARCHER_ACTIVE_SKILL_MAP[skillId]
+  return getPlayerDamageAttribution(
+    skillId || 'player-basic-attack',
+    sourceName ?? definition?.name ?? (skillId === 'basic-arrow' ? '普通攻击' : '普通攻击'),
+    playerProjectile,
+  )
+}
+
+const getBeastDamageAttribution = (beast: BeastCompanion, sourceId: string, sourceName: string): CombatDamageAttribution => ({
+  side: 'player',
+  attackerId: beast.id,
+  attackerName: BEAST_STATS[beast.kind].label,
+  sourceId,
+  sourceName,
+})
+
+const recordCombatDamage = (
+  snapshot: GameSnapshot,
+  attribution: CombatDamageAttribution,
+  targetId: string,
+  targetName: string,
+  actualDamage: number,
+) => {
+  if (actualDamage <= 0) {
+    return
+  }
+
+  const mergeKey = `${attribution.side}:${attribution.attackerId}:${attribution.sourceId}:${targetId}`
+  const latest = [...snapshot.combatDamageLog].reverse().find((event) => event.mergeKey === mergeKey)
+  if (latest && latest.mergeKey === mergeKey && snapshot.elapsedTime - latest.occurredAt <= COMBAT_DAMAGE_LOG_MERGE_WINDOW) {
+    latest.damage += actualDamage
+    return
+  }
+
+  snapshot.combatDamageLog.push({
+    id: `combat-damage-${createId()}`,
+    occurredAt: snapshot.elapsedTime,
+    side: attribution.side,
+    attackerId: attribution.attackerId,
+    attackerName: attribution.attackerName,
+    sourceId: attribution.sourceId,
+    sourceName: attribution.sourceName,
+    targetId,
+    targetName,
+    damage: actualDamage,
+    mergeKey,
+  })
+  if (snapshot.combatDamageLog.length > COMBAT_DAMAGE_LOG_CAPACITY) {
+    snapshot.combatDamageLog.splice(0, snapshot.combatDamageLog.length - COMBAT_DAMAGE_LOG_CAPACITY)
+  }
+}
+
+const resolveEnemyDamageAttribution = (source: EnemyDamageSource): CombatDamageAttribution => {
+  if (typeof source === 'object') {
+    return source
+  }
+  return getPlayerDamageAttribution(
+    source === 'player-projectile' ? 'player-projectile' : 'player-basic-attack',
+    '普通攻击',
+    source === 'player-projectile',
+  )
+}
+
+const damagePlayer = (
+  snapshot: GameSnapshot,
+  damage: number,
+  attribution: CombatDamageAttribution,
+) => {
+  const incoming = Math.max(0, damage)
+  if (incoming <= 0 || snapshot.player.hp <= 0) {
+    return 0
+  }
+
+  let remaining = incoming
+  if (hasSelectedRunTalent(snapshot, 'run_beast_03') && snapshot.player.hp / Math.max(1, snapshot.player.maxHp) < 0.3) {
+    const state = getTalentCombatState(snapshot)
+    if ((state.beast?.protectCooldown ?? 0) <= 0) {
+      const protector = snapshot.beastCompanions
+        .filter((beast) => beast.reviveTimer <= 0 && beast.hp > 0)
+        .sort((left, right) => distance(left.position, snapshot.player.position) - distance(right.position, snapshot.player.position))[0]
+      if (protector) {
+        const redirected = remaining * 0.35
+        damageBeast(snapshot, protector, redirected, attribution)
+        state.beast = { ...(state.beast ?? {}), protectCooldown: 30 }
+        remaining -= redirected
+        snapshot.enemySkillEffects.push({
+          id: `beast-protect-${protector.id}-${createId()}`,
+          kind: 'ricochet-link',
+          position: { ...protector.position },
+          targetPosition: { ...snapshot.player.position },
+          color: '#bef264',
+          age: 0,
+          ttl: 0.28,
+        })
+      }
+    }
+  }
+  if ((snapshot.player.shield ?? 0) > 0) {
+    const absorbed = Math.min(snapshot.player.shield ?? 0, remaining)
+    snapshot.player.shield = Math.max(0, (snapshot.player.shield ?? 0) - absorbed)
+    remaining -= absorbed
+  }
+  if (remaining <= 0) {
+    return 0
+  }
+
+  const beforeHp = snapshot.player.hp
+  snapshot.player.hp = Math.max(0, beforeHp - remaining)
+  const actualDamage = Math.max(0, beforeHp - snapshot.player.hp)
+  recordCombatDamage(snapshot, attribution, 'player', '玩家', actualDamage)
+  return actualDamage
+}
+
+const isSkeletonWarriorDefenseTarget = (enemy: Enemy) => enemy.archetypeId === 'dungeon-skeleton-warrior'
+
+const clearSkeletonWarriorDefenseLock = (enemy: Enemy) => {
+  enemy.skeletonWarriorDefenseDirection = undefined
+  enemy.skeletonWarriorDefensePosition = undefined
+}
+
+const cancelSkeletonWarriorDefenseLockedActions = (enemy: Enemy) => {
+  enemy.behaviorTimer = 0
+  enemy.meleeAttackWindup = 0
+  enemy.meleeAttackReady = false
+  enemy.meleeAttackImpactDelay = 0
+  enemy.meleeAttackOrigin = undefined
+  enemy.meleeAttackDirection = undefined
+  enemy.walkTimer = 0
+}
+
+const lockSkeletonWarriorDefenseState = (enemy: Enemy) => {
+  const facing = getSkeletonWarriorDefenseFacing(enemy)
+  enemy.facingDirection = facing
+  enemy.behaviorDirection = facing
+  cancelSkeletonWarriorDefenseLockedActions(enemy)
+}
+
+const getSkeletonWarriorDefenseFacing = (enemy: Enemy) => normalize(
+  enemy.skeletonWarriorDefenseDirection ?? enemy.facingDirection ?? enemy.behaviorDirection ?? { x: 0, y: 1 },
+)
+
+const isSkeletonWarriorFrontalDefense = (enemy: Enemy, incomingDirection: Vector2) => {
+  if (!isSkeletonWarriorDefenseTarget(enemy) || (enemy.skeletonWarriorDefenseTimer ?? 0) <= 0) {
+    return false
+  }
+
+  const incoming = normalize(incomingDirection)
+  const facing = getSkeletonWarriorDefenseFacing(enemy)
+  if ((incoming.x === 0 && incoming.y === 0) || (facing.x === 0 && facing.y === 0)) {
+    return false
+  }
+
+  return incoming.x * facing.x + incoming.y * facing.y < 0
+}
+
+const primeSkeletonWarriorDefense = (snapshot: GameSnapshot, enemy: Enemy) => {
+  if (!isSkeletonWarriorDefenseTarget(enemy) || (enemy.skeletonWarriorDefenseCooldown ?? 0) > 0) {
+    return false
+  }
+
+  const facing = normalize(enemy.facingDirection ?? enemy.behaviorDirection ?? { x: 0, y: 1 })
+  enemy.skeletonWarriorDefenseDirection = facing.x === 0 && facing.y === 0 ? { x: 0, y: 1 } : facing
+  enemy.skeletonWarriorDefensePosition = undefined
+  enemy.skeletonWarriorDefenseTimer = SKELETON_WARRIOR_DEFENSE_DURATION
+  enemy.skeletonWarriorDefenseCooldown = SKELETON_WARRIOR_DEFENSE_COOLDOWN
+  lockSkeletonWarriorDefenseState(enemy)
+  snapshot.message = '骷髅战士进入防御姿态，绕到背面可造成完整伤害'
+  snapshot.floatingTexts.push(createFloatingText(enemy.position, '防御', '#bfdbfe'))
+  snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(191, 219, 254, ALPHA)', enemy.size * 0.8))
+  return true
+}
+
+const damageEnemy = (
+  snapshot: GameSnapshot,
+  enemy: Enemy,
+  damage: number,
+  color = '#fef08a',
+  incomingDirection?: Vector2,
+  source: EnemyDamageSource = 'generic',
+) => {
+  const attribution = resolveEnemyDamageAttribution(source)
+  let appliedDamage = Math.max(0, scaleExecuteLineDamage(damage) * getTalentStateDamageMultiplier(snapshot, enemy))
 
   if (incomingDirection) {
     primeSkeletonKnightBlock(snapshot, enemy, incomingDirection)
+  }
+
+  if (attribution.playerProjectile && incomingDirection) {
+    primeSkeletonWarriorDefense(snapshot, enemy)
+    if (isSkeletonWarriorFrontalDefense(enemy, incomingDirection)) {
+      appliedDamage *= SKELETON_WARRIOR_FRONTAL_DAMAGE_MULTIPLIER
+      snapshot.floatingTexts.push(createFloatingText(enemy.position, '正面防御', '#bfdbfe'))
+    }
   }
 
   if (canUseSkeletonKnightSkill(enemy) && enemy.blockTimer && enemy.blockTimer > 0) {
@@ -1278,11 +2042,43 @@ const damageEnemy = (snapshot: GameSnapshot, enemy: Enemy, damage: number, color
     appliedDamage *= 0.86
   }
 
+  appliedDamage *= getDungeonWardenDamageTakenMultiplier(enemy)
+  const beforeHp = enemy.hp
   enemy.hp -= appliedDamage
   enemy.lastTalentHitDamage = appliedDamage
-  applyBossPhaseDamageLock(snapshot, enemy)
+  if (!tryResolveDungeonWardenHealthGate(snapshot, enemy)) {
+    applyBossPhaseDamageLock(snapshot, enemy)
+  }
+  tryTriggerDungeonWardenRage(snapshot, enemy, appliedDamage)
+  const actualDamage = Math.max(0, beforeHp - Math.max(0, enemy.hp))
+  recordCombatDamage(snapshot, attribution, enemy.id, getEnemyDisplayName(enemy), actualDamage)
   enemy.hitFlash = Math.max(enemy.hitFlash, 0.12)
-  snapshot.floatingTexts.push(createFloatingText(enemy.position, formatDamage(appliedDamage), color))
+  if (actualDamage > 0) {
+    snapshot.floatingTexts.push(createFloatingText(enemy.position, formatDamage(actualDamage), color))
+  }
+}
+
+const spreadDeathMark = (snapshot: GameSnapshot, source: Enemy, radius = 72, maxTargets = 3) => {
+  if (!hasSelectedRunTalent(snapshot, 'run_death_04')) {
+    return 0
+  }
+  const targets = snapshot.enemies
+    .filter((enemy) => enemy.id !== source.id && enemy.hp > 0 && distance(enemy.position, source.position) <= radius)
+    .sort((left, right) => distance(left.position, source.position) - distance(right.position, source.position))
+    .slice(0, maxTargets)
+  targets.forEach((target) => {
+    applyDirectTalentEnemyState(snapshot, target, 'deathMark', 4, 1, 1, 'run_death_04')
+    snapshot.enemySkillEffects.push({
+      id: `death-mark-spread-${source.id}-${target.id}-${createId()}`,
+      kind: 'ricochet-link',
+      position: { ...source.position },
+      targetPosition: { ...target.position },
+      color: '#d8b4fe',
+      age: 0,
+      ttl: 0.24,
+    })
+  })
+  return targets.length
 }
 
 const triggerTalentSoulBurst = (snapshot: GameSnapshot, source: Enemy) => {
@@ -1297,18 +2093,25 @@ const triggerTalentSoulBurst = (snapshot: GameSnapshot, source: Enemy) => {
     if (enemy.id === source.id || enemy.hp <= 0 || distance(enemy.position, source.position) > radius) {
       return
     }
-    damageEnemy(snapshot, enemy, baseDamage, '#d8b4fe', getIncomingDirection(source.position, enemy.position))
+    damageEnemy(snapshot, enemy, baseDamage, '#d8b4fe', getIncomingDirection(source.position, enemy.position), getPlayerDamageAttribution('run_death_05', '魂爆初醒'))
     if (hasSelectedRunTalent(snapshot, 'run_death_07') && (enemy.grantsEliteReward || enemy.kind === 'elite')) {
-      applyDirectTalentEnemyState(enemy, 'armorBreak', 4, 3, 1, 'soulBurst')
+      applyDirectTalentEnemyState(snapshot, enemy, 'armorBreak', 4, 3, 1, 'soulBurst')
     }
     if (hasSelectedRunTalent(snapshot, 'run_death_07') && enemy.kind === 'boss') {
-      applyDirectTalentEnemyState(enemy, 'armorBreak', 4, 1, 1, 'soulBurst')
-      applyDirectTalentEnemyState(enemy, 'vulnerable', 4, 1, 1, 'soulBurst')
+      applyDirectTalentEnemyState(snapshot, enemy, 'vulnerable', 4, 1, 1, 'soulBurst')
+    }
+    if (hasSelectedRunTalent(snapshot, 'run_death_08') && enemy.kind !== 'elite' && enemy.kind !== 'boss' && enemy.hp <= 0) {
+      const state = getTalentCombatState(snapshot)
+      const chain = state.deathChain?.[source.id] ?? { count: 0, ttl: 0.2 }
+      if (chain.count < 2 && Math.random() < 0.3) {
+        state.deathChain = { ...(state.deathChain ?? {}), [source.id]: { count: chain.count + 1, ttl: 0.2 } }
+        spreadDeathMark(snapshot, enemy)
+      }
     }
     hitCount += 1
   })
   if (hitCount > 0) {
-    snapshot.bursts.push(createBurst({ ...source.position }, 'rgba(216, 180, 254, ALPHA)', radius))
+    snapshot.bursts.push(createBurst({ ...source.position }, 'rgba(216, 180, 254, ALPHA)', radius / 3))
     snapshot.floatingTexts.push(createFloatingText(source.position, '魂爆', '#d8b4fe'))
   }
   return hitCount > 0
@@ -1328,7 +2131,7 @@ const beginBossPhaseTransition = (snapshot: GameSnapshot, enemy: Enemy, nextPhas
 }
 
 const applyBossPhaseDamageLock = (snapshot: GameSnapshot, enemy: Enemy) => {
-  if (enemy.kind !== 'boss' || enemy.hp <= 0) {
+  if (enemy.kind !== 'boss' || enemy.hp <= 0 || isDungeonWardenBoss(enemy)) {
     return
   }
 
@@ -1349,7 +2152,7 @@ const applyBossPhaseDamageLock = (snapshot: GameSnapshot, enemy: Enemy) => {
 }
 
 const updateBossPhaseTransition = (snapshot: GameSnapshot, enemy: Enemy, delta: number) => {
-  if (enemy.kind !== 'boss' || (enemy.bossTransitionTimer ?? 0) <= 0) {
+  if (enemy.kind !== 'boss' || isDungeonWardenBoss(enemy) || (enemy.bossTransitionTimer ?? 0) <= 0) {
     return false
   }
 
@@ -1373,6 +2176,21 @@ const updateBossPhaseTransition = (snapshot: GameSnapshot, enemy: Enemy, delta: 
 }
 
 const getIncomingDirection = (from: Vector2, to: Vector2) => normalize({ x: to.x - from.x, y: to.y - from.y })
+
+const distanceToSegment = (point: Vector2, start: Vector2, end: Vector2) => {
+  const segmentX = end.x - start.x
+  const segmentY = end.y - start.y
+  const lengthSquared = segmentX * segmentX + segmentY * segmentY
+  if (lengthSquared <= 0) {
+    return distance(point, end)
+  }
+
+  const projected = clamp(((point.x - start.x) * segmentX + (point.y - start.y) * segmentY) / lengthSquared, 0, 1)
+  return distance(point, {
+    x: start.x + segmentX * projected,
+    y: start.y + segmentY * projected,
+  })
+}
 
 const canSkeletonKnightBlock = (enemy: Enemy, incomingDirection: Vector2) => {
   if (!canUseSkeletonKnightSkill(enemy)) {
@@ -1431,7 +2249,7 @@ const isPointInCone = (origin: Vector2, direction: Vector2, point: Vector2, rang
   return direction.x * toPoint.x + direction.y * toPoint.y >= Math.cos(halfAngle)
 }
 
-const updateHellhoundBreath = (snapshot: GameSnapshot, enemy: Enemy, delta: number, direction: Vector2, gap: number) => {
+const updateHellhoundBreath = (snapshot: GameSnapshot, enemy: Enemy, delta: number, direction: Vector2, gap: number, canStart = true) => {
   enemy.attackCooldown = Math.max(0, enemy.attackCooldown - delta)
   enemy.breathTimer = Math.max(0, (enemy.breathTimer ?? 0) - delta)
   enemy.breathTickCooldown = Math.max(0, (enemy.breathTickCooldown ?? 0) - delta)
@@ -1447,9 +2265,9 @@ const updateHellhoundBreath = (snapshot: GameSnapshot, enemy: Enemy, delta: numb
       isPointInCone(enemy.position, breathDirection, snapshot.player.position, HELLHOUND_BREATH_RANGE, HELLHOUND_BREATH_HALF_ANGLE)
     ) {
       if (snapshot.player.dashTimer <= 0 && snapshot.player.hurtCooldown <= 0) {
-        snapshot.player.hp -= HELLHOUND_BREATH_DAMAGE
+        damagePlayer(snapshot, HELLHOUND_BREATH_DAMAGE, getEnemyDamageAttribution(enemy, 'hellhound-breath', '喷吐火焰'))
         snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, PLAYER_HURT_COOLDOWN * 0.45)
-        snapshot.message = '地狱犬正在原地喷吐扇形火焰，绕侧面躲开'
+        snapshot.message = '敌人正在原地喷吐扇形火焰，绕侧面躲开'
       }
       enemy.breathTickCooldown = HELLHOUND_BREATH_TICK_INTERVAL
     }
@@ -1466,7 +2284,7 @@ const updateHellhoundBreath = (snapshot: GameSnapshot, enemy: Enemy, delta: numb
     return true
   }
 
-  if (enemy.attackCooldown <= 0 && gap <= HELLHOUND_BREATH_RANGE) {
+  if (canStart && enemy.attackCooldown <= 0 && gap <= HELLHOUND_BREATH_RANGE) {
     const breathDirection = direction.x === 0 && direction.y === 0 ? enemy.facingDirection ?? { x: 1, y: 0 } : direction
     enemy.breathDirection = breathDirection
     enemy.facingDirection = breathDirection
@@ -1475,7 +2293,7 @@ const updateHellhoundBreath = (snapshot: GameSnapshot, enemy: Enemy, delta: numb
     enemy.attackCooldown = HELLHOUND_BREATH_DURATION + HELLHOUND_BREATH_COOLDOWN
     enemy.behaviorTimer = 0
     enemy.behaviorCooldown = Math.max(enemy.behaviorCooldown, HELLHOUND_BREATH_DURATION + 0.25)
-    snapshot.message = '地狱犬原地引导火焰吐息'
+    snapshot.message = '敌人原地引导火焰吐息'
     snapshot.enemySkillEffects.push({
       id: `hellhound-breath-${enemy.id}-${createId()}`,
       kind: 'hellhound-breath',
@@ -1546,14 +2364,24 @@ const createBeastSpawnPoint = (snapshot: GameSnapshot, index: number, total: num
   }, 18)
 }
 
-const damageBeast = (snapshot: GameSnapshot, beast: BeastCompanion, damage: number) => {
+const damageBeast = (
+  snapshot: GameSnapshot,
+  beast: BeastCompanion,
+  damage: number,
+  attribution?: CombatDamageAttribution,
+) => {
   if (beast.reviveTimer > 0 || beast.hurtCooldown > 0) {
-    return
+    return 0
   }
 
-  beast.hp -= damage
+  const beforeHp = beast.hp
+  beast.hp = Math.max(0, beast.hp - damage)
+  const actualDamage = Math.max(0, beforeHp - beast.hp)
+  if (attribution) {
+    recordCombatDamage(snapshot, attribution, beast.id, BEAST_STATS[beast.kind].label, actualDamage)
+  }
   beast.hurtCooldown = 0.45
-  snapshot.floatingTexts.push(createFloatingText(beast.position, `-${formatDamage(damage)}`, '#93c5fd'))
+  snapshot.floatingTexts.push(createFloatingText(beast.position, `-${formatDamage(actualDamage)}`, '#93c5fd'))
   snapshot.bursts.push(createBurst({ ...beast.position }, 'rgba(147, 197, 253, ALPHA)', 9))
 
   if (beast.hp <= 0) {
@@ -1566,16 +2394,25 @@ const damageBeast = (snapshot: GameSnapshot, beast: BeastCompanion, damage: numb
       snapshot.player.hp = Math.min(snapshot.player.maxHp, snapshot.player.hp + modifier.shieldAmount)
       snapshot.enemies.forEach((enemy) => {
         if (enemy.hp > 0 && distance(enemy.position, beast.position) <= modifier.burstRadius) {
-          damageEnemy(snapshot, enemy, modifier.burstDamage, beast.tint, getIncomingDirection(beast.position, enemy.position))
+          damageEnemy(
+            snapshot,
+            enemy,
+            modifier.burstDamage,
+            beast.tint,
+            getIncomingDirection(beast.position, enemy.position),
+            getBeastDamageAttribution(beast, 'beast-death-trigger', `${BEAST_STATS[beast.kind].label}遗志爆发`),
+          )
         }
       })
       snapshot.bursts.push(createBurst({ ...beast.position }, 'rgba(132, 204, 22, ALPHA)', modifier.burstRadius))
     })
     beast.hp = 0
-    beast.reviveTimer = BEAST_REVIVE_DELAY
+    const reviveMultiplier = (1 + getMetaTalentRuntimeEffectValue(snapshot, 'revive-time', 'beast') / 100) * (hasSelectedRunTalent(snapshot, 'run_beast_06') ? 0.8 : 1)
+    beast.reviveTimer = Math.max(0.5, BEAST_REVIVE_DELAY * reviveMultiplier)
     beast.commandTtl = 0
     snapshot.message = `${BEAST_STATS[beast.kind].label}倒下了，正在回到你身边`
   }
+  return actualDamage
 }
 
 const findNearbyEnemyForBeast = (snapshot: GameSnapshot, beast: BeastCompanion) => {
@@ -1600,6 +2437,7 @@ const damageEnemiesInLine = (
   color: string,
   effect?: (enemy: Enemy) => void,
   damageForEnemy?: (enemy: Enemy, baseDamage: number) => number,
+  attribution: EnemyDamageSource = 'generic',
 ) => {
   snapshot.enemies.forEach((enemy) => {
     const toEnemy = { x: enemy.position.x - origin.x, y: enemy.position.y - origin.y }
@@ -1612,13 +2450,40 @@ const damageEnemiesInLine = (
       return
     }
 
-    damageEnemy(snapshot, enemy, damageForEnemy ? damageForEnemy(enemy, damage) : damage, color, direction)
+    damageEnemy(snapshot, enemy, damageForEnemy ? damageForEnemy(enemy, damage) : damage, color, direction, attribution)
     effect?.(enemy)
   })
 }
 
 const markBeastCommandHit = (snapshot: GameSnapshot, enemy: Enemy, cast?: TalentCastContext) => {
   applyTalentEnemyState(snapshot, enemy, 'beastCommand')
+  if (hasSelectedRunTalent(snapshot, 'run_beast_02') && (enemy.grantsEliteReward || enemy.kind === 'elite')) {
+    enemy.stunTimer = Math.max(enemy.stunTimer ?? 0, 0.4)
+  }
+  if (hasSelectedRunTalent(snapshot, 'run_beast_08')) {
+    const state = getTalentCombatState(snapshot)
+    const living = snapshot.beastCompanions.filter((beast) => beast.reviveTimer <= 0 && beast.hp > 0)
+    if (living.length >= 3 && (state.beast?.surroundCooldown ?? 0) <= 0) {
+      state.beast = { ...(state.beast ?? {}), surroundCooldown: 12 }
+      if (enemy.kind === 'boss') {
+        enemy.slowTtl = Math.max(enemy.slowTtl, 1)
+        enemy.slowFactor = Math.max(enemy.slowFactor, 0.25)
+      } else {
+        enemy.stunTimer = Math.max(enemy.stunTimer ?? 0, 1)
+      }
+      living.slice(0, 3).forEach((beast) => {
+        snapshot.enemySkillEffects.push({
+          id: `beast-surround-${beast.id}-${createId()}`,
+          kind: 'ricochet-link',
+          position: { ...beast.position },
+          targetPosition: { ...enemy.position },
+          color: '#bef264',
+          age: 0,
+          ttl: 0.28,
+        })
+      })
+    }
+  }
   tryRefundTalentSkillCooldown(snapshot, cast)
 }
 
@@ -1633,14 +2498,14 @@ const commandBeastSpecial = (snapshot: GameSnapshot, beast: BeastCompanion, conf
     y: beast.commandPoint.y - beast.position.y,
   })
   const commandDirection = direction.x === 0 && direction.y === 0 ? getAimDirection(snapshot) : direction
-  const specialDamage = scaleActiveSkillDamage(config.damage + BEAST_STATS[beast.kind].damage) * (1 + getBuildDamageBonus(snapshot, 'beast')) * getBeastDualBondDamageMultiplier(snapshot, beast.skillId)
+  const commandTalentActive = hasSelectedRunTalent(snapshot, 'run_beast_02')
+  const specialDamage = scaleActiveSkillDamage(config.damage + BEAST_STATS[beast.kind].damage) * (1 + getBuildDamageBonus(snapshot, 'beast')) * getBeastDualBondDamageMultiplier(snapshot, beast.skillId) * (commandTalentActive ? 1.25 : 1)
+  const commandAttribution = getPlayerDamageAttribution(commandTalentActive ? 'run_beast_02' : beast.skillId, commandTalentActive ? '指令突袭' : ARCHER_ACTIVE_SKILL_MAP[beast.skillId]?.name ?? BEAST_STATS[beast.kind].label)
 
   if (beast.kind === 'hawk') {
     damageEnemiesInLine(snapshot, beast.position, commandDirection, Math.max(220, config.range), 18, specialDamage * 1.25, '#fbbf24', (enemy) => {
       markBeastCommandHit(snapshot, enemy, cast)
-    }, (enemy, baseDamage) => {
-      return scaleTalentDamageForTarget(snapshot, enemy, baseDamage, 'beast-commanded')
-    })
+    }, undefined, commandAttribution)
     beast.position = keepInsideCombatArea(snapshot, {
       x: beast.position.x + commandDirection.x * 92,
       y: beast.position.y + commandDirection.y * 92,
@@ -1653,7 +2518,7 @@ const commandBeastSpecial = (snapshot: GameSnapshot, beast: BeastCompanion, conf
     beast.position = keepInsideCombatArea(snapshot, { ...beast.commandPoint }, beast.size * 0.5)
     snapshot.enemies.forEach((enemy) => {
       if (distance(enemy.position, beast.position) <= 76) {
-        damageEnemy(snapshot, enemy, scaleTalentDamageForTarget(snapshot, enemy, specialDamage, 'beast-commanded'), '#93c5fd', getIncomingDirection(beast.position, enemy.position))
+        damageEnemy(snapshot, enemy, specialDamage, '#93c5fd', getIncomingDirection(beast.position, enemy.position), commandAttribution)
         markBeastCommandHit(snapshot, enemy, cast)
         enemy.slowTtl = Math.max(enemy.slowTtl, 2)
         enemy.slowFactor = Math.max(enemy.slowFactor, 0.36)
@@ -1671,9 +2536,7 @@ const commandBeastSpecial = (snapshot: GameSnapshot, beast: BeastCompanion, conf
       if (beast.isAlpha) {
         enemy.markStacks = Math.min(5, enemy.markStacks + 2)
       }
-    }, (enemy, baseDamage) => {
-      return scaleTalentDamageForTarget(snapshot, enemy, baseDamage, 'beast-commanded')
-    })
+    }, undefined, commandAttribution)
     beast.position = keepInsideCombatArea(snapshot, {
       x: beast.position.x + commandDirection.x * 120,
       y: beast.position.y + commandDirection.y * 120,
@@ -1689,7 +2552,7 @@ const commandBeastSpecial = (snapshot: GameSnapshot, beast: BeastCompanion, conf
     }, beast.size * 0.5)
     snapshot.enemies.forEach((enemy) => {
       if (distance(enemy.position, beast.position) <= 88) {
-        damageEnemy(snapshot, enemy, scaleTalentDamageForTarget(snapshot, enemy, specialDamage * 0.9, 'beast-commanded'), '#bef264', getIncomingDirection(beast.position, enemy.position))
+        damageEnemy(snapshot, enemy, specialDamage * 0.9, '#bef264', getIncomingDirection(beast.position, enemy.position), commandAttribution)
         markBeastCommandHit(snapshot, enemy, cast)
         enemy.slowTtl = Math.max(enemy.slowTtl, 1.1)
         enemy.slowFactor = Math.max(enemy.slowFactor, 0.18)
@@ -1708,7 +2571,7 @@ const commandBeastSpecial = (snapshot: GameSnapshot, beast: BeastCompanion, conf
     beast.position = keepInsideCombatArea(snapshot, { ...beast.commandPoint }, beast.size * 0.5)
     snapshot.enemies.forEach((enemy) => {
       if (distance(enemy.position, beast.position) <= 82) {
-        damageEnemy(snapshot, enemy, scaleTalentDamageForTarget(snapshot, enemy, specialDamage * 0.75, 'beast-commanded'), '#84cc16', getIncomingDirection(beast.position, enemy.position))
+        damageEnemy(snapshot, enemy, specialDamage * 0.75, '#84cc16', getIncomingDirection(beast.position, enemy.position), commandAttribution)
         markBeastCommandHit(snapshot, enemy, cast)
         enemy.burnTtl = Math.max(enemy.burnTtl, 2.4)
         enemy.burnDamagePerSecond = Math.max(enemy.burnDamagePerSecond, specialDamage * 0.22)
@@ -1724,7 +2587,7 @@ const commandBeastSpecial = (snapshot: GameSnapshot, beast: BeastCompanion, conf
   snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, 0.85)
   snapshot.enemies.forEach((enemy) => {
     if (distance(enemy.position, snapshot.player.position) <= 76) {
-      damageEnemy(snapshot, enemy, scaleTalentDamageForTarget(snapshot, enemy, specialDamage * 0.45, 'beast-commanded'), '#f7e8bf', getIncomingDirection(snapshot.player.position, enemy.position))
+      damageEnemy(snapshot, enemy, specialDamage * 0.45, '#f7e8bf', getIncomingDirection(snapshot.player.position, enemy.position), commandAttribution)
       markBeastCommandHit(snapshot, enemy, cast)
     }
   })
@@ -1771,6 +2634,10 @@ const summonOrCommandBeast = (
   beast.commandPoint = commandPoint
   beast.commandTtl = BEAST_COMMAND_TTL
   beast.specialCooldown = 0.25
+  if (hasSelectedRunTalent(snapshot, 'run_beast_01')) {
+    const state = getTalentCombatState(snapshot)
+    state.beast = { ...(state.beast ?? {}), leaderBeastId: state.beast?.leaderBeastId ?? beast.id }
+  }
 
   beastModifiers.forEach((modifier) => {
     if (modifier.type === 'beast-taunt') {
@@ -1999,6 +2866,54 @@ const resetDeathContractPierceCooldown = (snapshot: GameSnapshot) => {
   snapshot.bursts.push(createBurst({ ...snapshot.player.position }, 'rgba(249, 115, 22, ALPHA)', 34))
 }
 
+const triggerBloodFeather = (
+  snapshot: GameSnapshot,
+  origin: Vector2,
+  sourceId: 'run_blood_01' | 'run_blood_04' | 'run_blood_05' | 'run_blood_08',
+  sourceName: '血羽印记' | '暴击羽裂' | '血羽连射' | '血羽风暴',
+  count = 1,
+) => {
+  const targets = snapshot.enemies
+    .filter((enemy) => enemy.hp > 0)
+    .sort((left, right) => distance(left.position, origin) - distance(right.position, origin))
+  for (let index = 0; index < count; index += 1) {
+    const target = targets[index % Math.max(1, targets.length)]
+    if (!target) break
+    const direction = normalize({ x: target.position.x - origin.x, y: target.position.y - origin.y })
+    snapshot.projectiles.push(createProjectile({
+      origin,
+      velocity: { x: direction.x * PROJECTILE_SPEED * 1.18, y: direction.y * PROJECTILE_SPEED * 1.18 },
+      owner: 'player',
+      damage: snapshot.player.attackDamage * 0.28,
+      ttl: 1.2,
+      size: Math.max(4, PROJECTILE_SIZE * 0.75),
+      color: '#fb7185',
+      pierceRemaining: 0,
+      explosionRadius: 0,
+      effect: 'none',
+      effectStrength: 0,
+      sourceSkillId: sourceId,
+      sourceName,
+      homingRange: 300,
+      homingStrength: 0.48,
+    }))
+  }
+  snapshot.bursts.push(createBurst({ ...origin }, 'rgba(251, 113, 133, ALPHA)', 20))
+}
+
+const triggerBloodRift = (snapshot: GameSnapshot, source: Enemy) => {
+  if (!hasSelectedRunTalent(snapshot, 'run_blood_06') || (source.bleedStacks?.length ?? 0) < 5) {
+    return
+  }
+  const radius = 70
+  snapshot.enemies.forEach((enemy) => {
+    if (enemy.id !== source.id && enemy.hp > 0 && distance(enemy.position, source.position) <= radius) {
+      damageEnemy(snapshot, enemy, snapshot.player.attackDamage * 0.45, '#fb7185', getIncomingDirection(source.position, enemy.position), getPlayerDamageAttribution('run_blood_06', '血裂追击'))
+    }
+  })
+  snapshot.bursts.push(createBurst({ ...source.position }, 'rgba(251, 113, 133, ALPHA)', radius))
+}
+
 const triggerBloodfeatherBurst = (snapshot: GameSnapshot, origin: Vector2, damage: number) => {
   const radius = 82 * getTalentRadiusMultiplier(snapshot, 'bloodFeatherStormRadius')
   snapshot.enemies.forEach((nearby) => {
@@ -2006,8 +2921,15 @@ const triggerBloodfeatherBurst = (snapshot: GameSnapshot, origin: Vector2, damag
       return
     }
 
-    damageEnemy(snapshot, nearby, damage, '#fb7185', getIncomingDirection(origin, nearby.position))
-    applyBleed(snapshot, nearby, damage)
+    damageEnemy(
+      snapshot,
+      nearby,
+      damage,
+      '#fb7185',
+      getIncomingDirection(origin, nearby.position),
+      getPlayerDamageAttribution('bloodfeather-set-burst', '血羽爆发'),
+    )
+    applyBleed(snapshot, nearby, damage, 'bloodfeather-set-burst', '血羽爆发')
   })
   snapshot.floatingTexts.push(createFloatingText(origin, '血羽爆发', '#fb7185'))
   snapshot.bursts.push(createBurst({ ...origin }, 'rgba(251, 113, 133, ALPHA)', radius))
@@ -2020,12 +2942,13 @@ const registerBloodfeatherSpreadHit = (snapshot: GameSnapshot, projectile: Proje
   }
 
   const nextCount = (snapshot.equipmentSetCounters['bloodfeather-ranger'] ?? 0) + 1
-  if (nextCount < 20) {
+  const requiredHits = Math.max(1, 20 + getMetaTalentRuntimeEffectValue(snapshot, 'hit-count-threshold', 'blood-feather-storm', 'count'))
+  if (nextCount < requiredHits) {
     snapshot.equipmentSetCounters['bloodfeather-ranger'] = nextCount
     return
   }
 
-  snapshot.equipmentSetCounters['bloodfeather-ranger'] = nextCount - 20
+  snapshot.equipmentSetCounters['bloodfeather-ranger'] = nextCount - requiredHits
   triggerBloodfeatherBurst(snapshot, enemy.position, Math.max(4, dealtDamage * 0.7))
 }
 
@@ -2055,10 +2978,19 @@ const summonBeastKingSetReinforcement = (snapshot: GameSnapshot, skillLevel: num
 const createEquipmentDropsForEnemy = (snapshot: GameSnapshot, enemy: Enemy) => {
   const drops: EquipmentItem[] = []
   const equipmentBonus = getSnapshotEquipmentBonus(snapshot)
+  const metaTalentRuntimeEffects = getMetaTalentRuntimeEffectsForSnapshot(snapshot)
+  const metaEquipmentWeightBonuses = metaTalentRuntimeEffects.equipmentWeightByBuild
+  const metaInheritanceWeightBonuses = metaTalentRuntimeEffects.inheritanceWeightByBuild
   const campaignProfile = getCampaignLootProfile(snapshot.level, true)
   const dropProfile = getMonsterDropProfile(enemy.archetypeId)
   const profileBuildTag = dropProfile.equipmentPools.find((pool): pool is SkillBuildTag => pool !== 'general')
   const preferredBuildTag = getPreferredBuildTag(snapshot) ?? profileBuildTag ?? campaignProfile.dropFocus[0]
+  const isEliteReward = enemy.kind === 'elite' || enemy.grantsEliteReward
+  const lootPremonition = getTalentCombatState(snapshot).lootPremonition
+  const applyLootPremonition = hasSelectedRunTalent(snapshot, 'run_common_07') && isEliteReward && lootPremonition?.pending !== false
+  const runEquipmentWeightBonuses = applyLootPremonition
+    ? { ...metaEquipmentWeightBonuses, [preferredBuildTag]: (metaEquipmentWeightBonuses[preferredBuildTag] ?? 0) + 35 }
+    : metaEquipmentWeightBonuses
   const unlockedSlots = getEffectiveUnlockedEquipmentSlots(snapshot.level, snapshot.unsealedEquipmentSlots)
   const difficulty = getSnapshotDifficulty(snapshot)
   const difficultyConfig = getCampaignDifficultyConfig(difficulty)
@@ -2073,6 +3005,8 @@ const createEquipmentDropsForEnemy = (snapshot: GameSnapshot, enemy: Enemy) => {
       forceDrop: true,
       difficulty,
       discoveredHighRarityEquipmentIds,
+      talentBuildWeightBonuses: runEquipmentWeightBonuses,
+      talentLegacyWeaponWeightBonuses: metaInheritanceWeightBonuses,
     })
     const extraDrop = createEquipmentDrop(snapshot.level, 'boss', createId, {
       preferredBuildTag,
@@ -2080,6 +3014,8 @@ const createEquipmentDropsForEnemy = (snapshot: GameSnapshot, enemy: Enemy) => {
       highValueDropMultiplier,
       difficulty,
       discoveredHighRarityEquipmentIds,
+      talentBuildWeightBonuses: runEquipmentWeightBonuses,
+      talentLegacyWeaponWeightBonuses: metaInheritanceWeightBonuses,
     })
     if (legacyDrop) {
       drops.push(legacyDrop)
@@ -2090,8 +3026,8 @@ const createEquipmentDropsForEnemy = (snapshot: GameSnapshot, enemy: Enemy) => {
     return drops
   }
 
-  const source = enemy.kind === 'elite' || enemy.grantsEliteReward ? 'elite' : 'normal'
-  const dropTier = enemy.kind === 'elite' || enemy.grantsEliteReward ? 'elite' : dropProfile.equipmentTier
+  const source = isEliteReward ? 'elite' : 'normal'
+  const dropTier = isEliteReward ? 'elite' : dropProfile.equipmentTier
   if (dropTier === 'none' || Math.random() >= getEquipmentDropChanceForTier(dropTier, difficulty)) {
     return drops
   }
@@ -2104,6 +3040,8 @@ const createEquipmentDropsForEnemy = (snapshot: GameSnapshot, enemy: Enemy) => {
     difficulty,
     dropTier,
     discoveredHighRarityEquipmentIds,
+    talentBuildWeightBonuses: runEquipmentWeightBonuses,
+    talentLegacyWeaponWeightBonuses: metaInheritanceWeightBonuses,
   })
   if (firstDrop) {
     drops.push(firstDrop)
@@ -2118,12 +3056,18 @@ const createEquipmentDropsForEnemy = (snapshot: GameSnapshot, enemy: Enemy) => {
       difficulty,
       dropTier,
       discoveredHighRarityEquipmentIds,
+      talentBuildWeightBonuses: runEquipmentWeightBonuses,
+      talentLegacyWeaponWeightBonuses: metaInheritanceWeightBonuses,
     })
     if (extraDrop) {
       drops.push(extraDrop)
     }
   }
 
+  if (applyLootPremonition) {
+    const state = getTalentCombatState(snapshot)
+    state.lootPremonition = { pending: false }
+  }
   return drops
 }
 
@@ -2134,12 +3078,20 @@ const keepInsideRoom = (position: Vector2, radius: number): Vector2 => ({
 
 const getBossArenaCenter = () => ({ x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 })
 
-const keepInsideCombatArea = (snapshot: GameSnapshot, position: Vector2, radius: number): Vector2 => {
+const keepInsideCombatArea = (
+  snapshot: GameSnapshot,
+  position: Vector2,
+  radius: number,
+  constrainBossArena = false,
+): Vector2 => {
   if (snapshot.battlefield.mode === 'infinite') {
     return position
   }
 
   if (snapshot.battlefield.mode === 'boss-arena') {
+    if (!constrainBossArena) {
+      return position
+    }
     const center = getBossArenaCenter()
     const arenaRadius = Math.max(160, (snapshot.battlefield.bossArenaRadius ?? BOSS_ARENA_RADIUS) - radius)
     const offset = { x: position.x - center.x, y: position.y - center.y }
@@ -2160,6 +3112,7 @@ const keepInsideCombatArea = (snapshot: GameSnapshot, position: Vector2, radius:
 
 const syncBattlefieldObstacles = (snapshot: GameSnapshot, forward: Vector2 = snapshot.player.dashDirection) => {
   const manualObstacles = snapshot.mapObstacles.filter((obstacle) => !obstacle.id.startsWith('chunk-'))
+  const manualDecorations = (snapshot.mapDecorations ?? []).filter((decoration) => !decoration.id.startsWith('chunk-decor-'))
   if (snapshot.battlefield.mode === 'infinite') {
     refreshBattlefieldChunks(snapshot.battlefield, snapshot.level, snapshot.player.position, forward)
   }
@@ -2167,6 +3120,10 @@ const syncBattlefieldObstacles = (snapshot: GameSnapshot, forward: Vector2 = sna
   snapshot.mapObstacles = snapshot.battlefield.mode === 'infinite'
     ? [...generatedObstacles, ...manualObstacles]
     : generatedObstacles
+  const generatedDecorations = getBattlefieldDecorations(snapshot.battlefield, snapshot.level, snapshot.mapObstacles)
+  snapshot.mapDecorations = snapshot.battlefield.mode === 'infinite'
+    ? [...generatedDecorations, ...manualDecorations]
+    : generatedDecorations
   snapshot.battlefield.debug.activeChunkCount = snapshot.battlefield.activeChunks.length
   snapshot.battlefield.debug.obstacleCount = snapshot.mapObstacles.length
 }
@@ -2294,10 +3251,19 @@ const isFastEnemy = (enemy: Pick<Enemy, 'kind' | 'movementTrait' | 'skillTrait'>
   enemy.movementTrait === 'flanker' ||
   enemy.movementTrait === 'charger' ||
   enemy.skillTrait === 'pack-haste' ||
-  enemy.skillTrait === 'wall-charge'
+  canUseWallChargeSkill(enemy)
 )
 
+const isDungeonHellhoundEnemy = (enemy: Pick<Enemy, 'archetypeId' | 'displayName'>) => {
+  const identity = `${enemy.archetypeId ?? ''} ${enemy.displayName ?? ''}`.toLowerCase()
+  return identity.includes('dungeon-hellhound') || identity.includes('hellhound') || identity.includes('地狱犬')
+}
+
 export const getEnemyBaseSpeedSoftCap = (enemy: Enemy) => {
+  if (isDungeonHellhoundEnemy(enemy)) {
+    return 162
+  }
+
   if (isFodderEnemy(enemy)) {
     return 62
   }
@@ -2330,6 +3296,10 @@ export const getEnemyBaseSpeedSoftCap = (enemy: Enemy) => {
 }
 
 export const getEnemyEffectiveSpeedSoftCap = (enemy: Enemy) => {
+  if (isDungeonHellhoundEnemy(enemy)) {
+    return 162
+  }
+
   if (isFodderEnemy(enemy)) {
     return 66
   }
@@ -2362,13 +3332,16 @@ export const getEnemyEffectiveSpeedSoftCap = (enemy: Enemy) => {
 }
 
 export const getEnemyEffectiveMoveSpeed = (enemy: Enemy, traitMultiplier = 1, slowMultiplier = 1) => {
+  if (isDungeonWardenBoss(enemy)) {
+    return enemy.speed * traitMultiplier * slowMultiplier * getDungeonWardenMoveMultiplier(enemy)
+  }
   return Math.min(getEnemyEffectiveSpeedSoftCap(enemy), enemy.speed * traitMultiplier * slowMultiplier)
 }
 
 export const getEnemyChargeMoveSpeed = (enemy: Enemy, effectiveMoveSpeed: number) => {
   const chargeCap = enemy.kind === 'boss' || enemy.role === 'boss'
     ? 245
-    : enemy.skillTrait === 'wall-charge' || enemy.archetypeId?.includes('skeleton-knight')
+    : canUseWallChargeSkill(enemy) || enemy.archetypeId?.includes('skeleton-knight')
       ? 235
       : enemy.kind === 'elite' || enemy.role === 'elite'
         ? 225
@@ -2410,6 +3383,16 @@ const getSnapshotDifficulty = (snapshot: Pick<GameSnapshot, 'selectedCampaignDif
   return normalizeCampaignDifficulty(snapshot.selectedCampaignDifficulty ?? snapshot.selectedDifficulty)
 }
 
+const isFirstCampaignSingleLifeEliteArchetype = (archetype: CampaignEnemyArchetype) => (
+  archetype.kind === 'elite' && FIRST_CAMPAIGN_SINGLE_LIFE_ELITE_ARCHETYPE_IDS.has(archetype.id)
+)
+
+const canInitializeSkeletonWarriorRevives = (archetype: CampaignEnemyArchetype, kind: EnemyKind) => (
+  kind === 'elite' &&
+  !isFirstCampaignSingleLifeEliteArchetype(archetype) &&
+  (archetype.id.includes('skeleton') || archetype.id.includes('chain-captain') || archetype.skillTrait === 'skeleton-revive')
+)
+
 const createEnemy = (
   level: number,
   kind: EnemyKind = getCampaignEnemyKind(level),
@@ -2427,13 +3410,17 @@ const createEnemy = (
   const speed = Math.max(18, Math.round(stats.speed * archetype.speedMultiplier * getCampaignDifficultyConfig(difficulty).speedMultiplier))
   const attackDamage = Math.max(1, Math.round((stats.attack ?? ENEMY_CONTACT_DAMAGE) * archetype.damageMultiplier))
   const campaignIndex = getCampaignIndex(level)
-  const canRevive = resolvedKind === 'elite' && (archetype.id.includes('skeleton') || archetype.id.includes('chain-captain') || archetype.skillTrait === 'skeleton-revive')
+  const isWardenArchetype = resolvedKind === 'boss' && archetype.id === 'dungeon-warden'
+  const canRevive = canInitializeSkeletonWarriorRevives(archetype, resolvedKind)
   const role = roleOverride ?? (resolvedKind === 'boss' ? 'boss' : isHighThreatArchetype(archetype) ? 'high-threat' : 'theme')
 
   const enemy: Enemy = {
     id,
     kind: resolvedKind,
-    grantsEliteReward: false,
+    // Reward eligibility is part of the formal entity definition. Local battle
+    // tests isolate the reward/settlement path separately and must not change
+    // this combat-facing state.
+    grantsEliteReward: resolvedKind === 'boss' || role === 'elite',
     position,
     hp,
     maxHp: hp,
@@ -2442,14 +3429,20 @@ const createEnemy = (
     size: stats.size,
     tint: archetype.tint ?? stats.tint,
     archetypeId: archetype.id,
-    displayName: archetype.name,
+    displayName: isWardenArchetype ? '典狱长' : archetype.name,
     campaignIndex,
     role,
     isFodder: archetype.id === CORROSIVE_SLIME_ARCHETYPE.id || role === 'fodder',
-    movementTrait: archetype.movementTrait,
-    skillTrait: archetype.skillTrait,
+    movementTrait: isWardenArchetype ? 'direct' : archetype.movementTrait,
+    skillTrait: isWardenArchetype ? 'none' : archetype.skillTrait,
     hitFlash: 0,
-    attackCooldown: resolvedKind === 'ranged' ? getRangedEnemyAttackInterval(level) * randomBetween(0.4, 1) : 0,
+    // Keep the first combat tick identical for formal and local spawns. Boss
+    // waves used to patch this after createEnemy, which left local Bosses at 0.
+    attackCooldown: resolvedKind === 'ranged'
+      ? getRangedEnemyAttackInterval(level) * randomBetween(0.4, 1)
+      : resolvedKind === 'boss'
+        ? 1.1
+        : 0,
     behaviorCooldown: resolvedKind === 'charger' ? randomBetween(0.5, 1.2) : resolvedKind === 'boss' ? 1.1 : 0,
     behaviorTimer: 0,
     behaviorDirection: { x: 0, y: 0 },
@@ -2465,8 +3458,12 @@ const createEnemy = (
     markStacks: 0,
     revivesRemaining: canRevive ? SKELETON_WARRIOR_REVIVES : 0,
     reviveCount: 0,
-    blockCooldown: resolvedKind === 'boss' && campaignIndex === 1 ? 1.2 : 0,
+    blockCooldown: resolvedKind === 'boss' && campaignIndex === 1 && !isWardenArchetype ? 1.2 : 0,
     blockTimer: 0,
+    skeletonWarriorDefenseCooldown: 0,
+    skeletonWarriorDefenseTimer: 0,
+    skeletonWarriorDefenseDirection: undefined,
+    skeletonWarriorDefensePosition: undefined,
     breathTimer: 0,
     breathDirection: { x: 1, y: 0 },
     breathTickCooldown: 0,
@@ -2487,6 +3484,13 @@ const createEnemy = (
     bossTransitionTimer: resolvedKind === 'boss' ? 0 : undefined,
     bossPendingPhase: undefined,
     bossPhaseHpFloor: undefined,
+    wardenBloodthirstTimer: isWardenArchetype ? 0 : undefined,
+    wardenBloodthirstCooldown: isWardenArchetype ? 0 : undefined,
+    wardenRageTimer: isWardenArchetype ? 0 : undefined,
+    wardenRageCooldown: isWardenArchetype ? 0 : undefined,
+    wardenActionSlot: undefined,
+    wardenActionTimer: 0,
+    wardenLastAttackCrit: false,
   }
   enemy.speed = Math.min(Math.round(enemy.speed * getEnemySpawnSpeedBoost(enemy)), getEnemyBaseSpeedSoftCap(enemy))
   return enemy
@@ -2560,6 +3564,15 @@ const getRouteObjectiveCandidatePositions = (snapshot: GameSnapshot) => {
 }
 
 const syncRouteObjectives = (snapshot: GameSnapshot) => {
+  if (isBossLevel(snapshot.level)) {
+    snapshot.battlefield.routeObjectives = []
+    snapshot.battlefield.routeObjectiveSkillBoost = undefined
+    snapshot.battlefield.debug.routeObjectiveCount = 0
+    snapshot.battlefield.debug.routeObjectiveRewardBudget = 0
+    snapshot.battlefield.debug.routeObjectiveExtraThreatCount = 0
+    return
+  }
+
   if (snapshot.battlefield.mode !== 'infinite' || snapshot.phase !== 'running' || snapshot.battlefield.rift) {
     snapshot.battlefield.routeObjectives = []
     snapshot.battlefield.debug.routeObjectiveCount = 0
@@ -2595,7 +3608,7 @@ const spawnRouteObjectiveThreat = (snapshot: GameSnapshot, objective: RouteObjec
   const maxEnemies = getMaxEnemiesOnField(snapshot.level, difficulty)
   const currentHighThreat = snapshot.enemies.filter((enemy) => enemy.role === 'high-threat').length
   const highThreatCap = getRouteObjectiveExtraThreatCap(snapshot.level)
-  const theme = getCampaignMonsterTheme(getCampaignIndex(snapshot.level))
+  const theme = getCampaignMonsterTheme(snapshot.level)
   const highThreatArchetype = theme.normalPool.find(isHighThreatArchetype)
   let spawnedHighThreat = 0
 
@@ -2656,6 +3669,11 @@ const grantRouteObjectiveReward = (snapshot: GameSnapshot, objective: RouteObjec
 }
 
 const updateRouteObjectives = (snapshot: GameSnapshot, delta: number) => {
+  if (isBossLevel(snapshot.level)) {
+    syncRouteObjectives(snapshot)
+    return
+  }
+
   if (snapshot.battlefield.mode !== 'infinite' || snapshot.phase !== 'running') {
     return
   }
@@ -2796,7 +3814,7 @@ const spawnEliteEnemy = (
   const position = positionOverride ?? getSpawnPosition(obstacles)
   const id = `elite-${createId()}`
   const hp = Math.max(18, Math.round(stats.hp * archetype.hpMultiplier * multiplier.hp))
-  const canRevive = archetype.id.includes('skeleton') || archetype.id.includes('chain-captain') || archetype.skillTrait === 'skeleton-revive'
+  const canRevive = canInitializeSkeletonWarriorRevives(archetype, 'elite')
   const eliteAffixes = getEliteAffixes(level, rank)
   const hpAffixMultiplier = eliteAffixes.includes('thick-hide') ? 1.28 : 1
   const speedAffixMultiplier = eliteAffixes.includes('swift') ? 1.2 : 1
@@ -2840,6 +3858,10 @@ const spawnEliteEnemy = (
     reviveCount: 0,
     blockCooldown: 0,
     blockTimer: 0,
+    skeletonWarriorDefenseCooldown: 0,
+    skeletonWarriorDefenseTimer: 0,
+    skeletonWarriorDefenseDirection: undefined,
+    skeletonWarriorDefensePosition: undefined,
     breathTimer: 0,
     breathDirection: { x: 1, y: 0 },
     breathTickCooldown: 0,
@@ -2856,8 +3878,140 @@ const spawnEliteEnemy = (
   return enemy
 }
 
+const LOCAL_BATTLE_TEST_MAX_COUNT_PER_ENTITY = 20
+const LOCAL_BATTLE_TEST_MIN_SPAWN_DISTANCE = 260
+const LOCAL_BATTLE_TEST_MAX_SPAWN_DISTANCE = Math.min(WORLD_WIDTH, WORLD_HEIGHT) / 2
+const LOCAL_BATTLE_TEST_MAX_SPAWN_ATTEMPTS = 32
+
+const localBattleArchetypeEntries = [
+  ...CAMPAIGN_MONSTER_THEMES.flatMap((theme) => [
+    ...theme.normalPool,
+    ...theme.elitePool,
+    theme.boss,
+  ]),
+  CORROSIVE_SLIME_ARCHETYPE,
+]
+
+const localBattleArchetypeById = new Map(localBattleArchetypeEntries.map((archetype) => [archetype.id, archetype]))
+
+const getLocalBattleEntityGroup = (archetype: CampaignEnemyArchetype): LocalBattleTestSpawnOption['group'] => {
+  if (archetype.kind === 'boss') return 'boss'
+  if (archetype.kind === 'elite') return 'elite'
+  return 'ordinary'
+}
+
+const getLocalBattleEntityDisabledReason = (entityId: string) => {
+  const archetype = localBattleArchetypeById.get(entityId)
+  if (!archetype) {
+    return '运行时未登记该怪物实体'
+  }
+
+  const assetEntity = developerAssetEntities.find((entity) => entity.id === entityId)
+  if (!assetEntity) {
+    return '资产清单未登记该怪物实体'
+  }
+
+  if (!assetEntity.kind) {
+    return '资产清单缺少战斗实体类型'
+  }
+
+  if (assetEntity.assetStatus === 'missing-action') {
+    return '缺少必填动作'
+  }
+  if (assetEntity.assetStatus === 'missing-anchor') {
+    return '缺少战斗锚点'
+  }
+  if (assetEntity.assetStatus === 'missing-resource') {
+    return '缺少可用素材资源'
+  }
+
+  const blockingIssue = validateDeveloperAssetEntity(assetEntity).find((issue) => issue.severity === 'error')
+  if (blockingIssue) {
+    return blockingIssue.message
+  }
+
+  return undefined
+}
+
+export const getLocalBattleTestSpawnOptions = (): LocalBattleTestSpawnOption[] => (
+  developerAssetEntities
+    .filter((entity) => entity.category !== 'beast' && Boolean(entity.kind))
+    .map((entity) => {
+      const archetype = localBattleArchetypeById.get(entity.id)
+      const disabledReason = getLocalBattleEntityDisabledReason(entity.id)
+      return {
+        entityId: entity.id,
+        name: entity.name,
+        group: archetype ? getLocalBattleEntityGroup(archetype) : entity.category === 'boss' ? 'boss' : entity.category === 'elite' ? 'elite' : 'ordinary',
+        enabled: !disabledReason,
+        disabledReason,
+        maxCount: LOCAL_BATTLE_TEST_MAX_COUNT_PER_ENTITY,
+      }
+    })
+    .sort((a, b) => {
+      const groupOrder = { ordinary: 0, elite: 1, boss: 2 }
+      return groupOrder[a.group] - groupOrder[b.group] || a.name.localeCompare(b.name, 'zh-Hans-CN')
+    })
+)
+
+const circleOverlapsRect = (
+  position: Vector2,
+  radius: number,
+  rect: { position: Vector2; width: number; height: number; collisionWidth?: number; collisionHeight?: number },
+) => {
+  const halfW = (rect.collisionWidth ?? rect.width) / 2
+  const halfH = (rect.collisionHeight ?? rect.height) / 2
+  const nearestX = clamp(position.x, rect.position.x - halfW, rect.position.x + halfW)
+  const nearestY = clamp(position.y, rect.position.y - halfH, rect.position.y + halfH)
+  return distance(position, { x: nearestX, y: nearestY }) < radius
+}
+
+const isLegalLocalBattleSpawnPosition = (snapshot: GameSnapshot, position: Vector2, radius: number) => {
+  if (distance(position, snapshot.player.position) < LOCAL_BATTLE_TEST_MIN_SPAWN_DISTANCE) {
+    return false
+  }
+
+  if (isBlockedByObstacle(position, radius, snapshot.mapObstacles)) {
+    return false
+  }
+
+  if ((snapshot.mapDecorations ?? []).some((decoration) => circleOverlapsRect(position, radius, decoration))) {
+    return false
+  }
+
+  if (snapshot.enemies.some((enemy) => distance(position, enemy.position) < radius + enemy.size + 12)) {
+    return false
+  }
+
+  return true
+}
+
+const getLocalBattleSpawnPosition = (snapshot: GameSnapshot, archetype: CampaignEnemyArchetype) => {
+  const radius = archetype.kind === 'boss' ? 34 : archetype.kind === 'elite' ? 26 : 18
+  const forward = getSpawnForward(snapshot)
+  const baseAngle = Math.atan2(forward.y, forward.x)
+  for (let attempt = 0; attempt < LOCAL_BATTLE_TEST_MAX_SPAWN_ATTEMPTS; attempt += 1) {
+    const offsetStep = Math.ceil(attempt / 2)
+    const offsetSign = attempt % 2 === 0 ? -1 : 1
+    const angle = baseAngle + (attempt === 0 ? 0 : offsetSign * offsetStep * (Math.PI / 8))
+    const distanceStep = attempt % 4
+    const spawnDistance = LOCAL_BATTLE_TEST_MIN_SPAWN_DISTANCE +
+      (LOCAL_BATTLE_TEST_MAX_SPAWN_DISTANCE - LOCAL_BATTLE_TEST_MIN_SPAWN_DISTANCE) * (distanceStep / 3)
+    const candidate = {
+      x: snapshot.player.position.x + Math.cos(angle) * spawnDistance,
+      y: snapshot.player.position.y + Math.sin(angle) * spawnDistance,
+    }
+    if (isLegalLocalBattleSpawnPosition(snapshot, candidate, radius)) {
+      snapshot.battlefield.debug.lastSpawnDistance = distance(candidate, snapshot.player.position)
+      return candidate
+    }
+  }
+  return null
+}
+
 const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
   ...snapshot,
+  pauseMenuOpen: snapshot.pauseMenuOpen ?? false,
   unlockedWeapons: [...snapshot.unlockedWeapons],
   discoveredHighRarityEquipmentIds: [...snapshot.discoveredHighRarityEquipmentIds],
   unsealedEquipmentSlots: [...snapshot.unsealedEquipmentSlots],
@@ -2892,6 +4046,7 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
   ),
   unlockedTalentIds: [...snapshot.unlockedTalentIds],
   unlockedMetaTalentIds: [...(snapshot.unlockedMetaTalentIds ?? snapshot.unlockedTalentIds)],
+  metaTalentRanks: { ...(snapshot.metaTalentRanks ?? {}) },
   talentUnlockRecords: snapshot.talentUnlockRecords.map((record) => ({ ...record })),
   talentPointRecords: snapshot.talentPointRecords.map((record) => ({ ...record })),
   talentPointLedger: (snapshot.talentPointLedger ?? snapshot.talentPointRecords).map((record) => ({ ...record })),
@@ -2916,13 +4071,60 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
     ? {
         crystalCharge: snapshot.talentCombatState.crystalCharge ? { ...snapshot.talentCombatState.crystalCharge } : undefined,
         crystalOverload: snapshot.talentCombatState.crystalOverload ? { ...snapshot.talentCombatState.crystalOverload } : undefined,
+        cooldownEcho: snapshot.talentCombatState.cooldownEcho ? { ...snapshot.talentCombatState.cooldownEcho } : undefined,
+        emergencyDodge: snapshot.talentCombatState.emergencyDodge ? { ...snapshot.talentCombatState.emergencyDodge } : undefined,
+        eliteInsight: snapshot.talentCombatState.eliteInsight
+          ? Object.fromEntries(Object.entries(snapshot.talentCombatState.eliteInsight).map(([id, state]) => [id, { ...state }]))
+          : undefined,
+        lootPremonition: snapshot.talentCombatState.lootPremonition ? { ...snapshot.talentCombatState.lootPremonition } : undefined,
+        overloadTempo: snapshot.talentCombatState.overloadTempo ? { ...snapshot.talentCombatState.overloadTempo } : undefined,
+        deathChain: snapshot.talentCombatState.deathChain
+          ? Object.fromEntries(Object.entries(snapshot.talentCombatState.deathChain).map(([id, state]) => [id, { ...state }]))
+          : undefined,
+        soulFireCooldowns: snapshot.talentCombatState.soulFireCooldowns ? { ...snapshot.talentCombatState.soulFireCooldowns } : undefined,
+        bloodFeather: snapshot.talentCombatState.bloodFeather
+          ? {
+              ...snapshot.talentCombatState.bloodFeather,
+              spreadCastTargets: snapshot.talentCombatState.bloodFeather.spreadCastTargets
+                ? Object.fromEntries(Object.entries(snapshot.talentCombatState.bloodFeather.spreadCastTargets).map(([id, targets]) => [id, [...targets]]))
+                : undefined,
+            }
+          : undefined,
+        beast: snapshot.talentCombatState.beast
+          ? {
+              ...snapshot.talentCombatState.beast,
+              teamBiteCooldowns: snapshot.talentCombatState.beast.teamBiteCooldowns ? { ...snapshot.talentCombatState.beast.teamBiteCooldowns } : undefined,
+            }
+          : undefined,
+        crystal: snapshot.talentCombatState.crystal
+          ? {
+              ...snapshot.talentCombatState.crystal,
+              pulseCastIds: snapshot.talentCombatState.crystal.pulseCastIds ? { ...snapshot.talentCombatState.crystal.pulseCastIds } : undefined,
+            }
+          : undefined,
       }
     : {},
+  combatDamageLog: snapshot.combatDamageLog.map((event) => ({ ...event })),
   inRunRewardHistory: {
     noMainBuildStreak: snapshot.inRunRewardHistory.noMainBuildStreak,
     lastOfferedChoiceIds: [...snapshot.inRunRewardHistory.lastOfferedChoiceIds],
   },
   debugControls: { ...snapshot.debugControls },
+  localBattleTest: snapshot.localBattleTest
+    ? {
+        active: snapshot.localBattleTest.active,
+        status: snapshot.localBattleTest.status ?? 'active',
+        monsterConfig: snapshot.localBattleTest.monsterConfig.map((config) => ({ ...config })),
+        spawnedEnemyIds: [...snapshot.localBattleTest.spawnedEnemyIds],
+        lastApplyResult: snapshot.localBattleTest.lastApplyResult
+          ? {
+              ok: snapshot.localBattleTest.lastApplyResult.ok,
+              spawned: snapshot.localBattleTest.lastApplyResult.spawned,
+              errors: [...snapshot.localBattleTest.lastApplyResult.errors],
+            }
+          : undefined,
+      }
+    : undefined,
   activeSkills: snapshot.activeSkills.map((skill) => ({ ...skill })),
   pendingSkillReward: snapshot.pendingSkillReward
     ? {
@@ -2930,6 +4132,7 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
         choices: snapshot.pendingSkillReward.choices.map((choice) => ({ ...choice })),
       }
     : null,
+  floorTransition: snapshot.floorTransition ? { ...snapshot.floorTransition } : undefined,
   aimPoint: { ...snapshot.aimPoint },
   player: {
     ...snapshot.player,
@@ -2942,6 +4145,12 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
     position: { ...enemy.position },
     behaviorDirection: { ...enemy.behaviorDirection },
     facingDirection: { ...(enemy.facingDirection ?? { x: 0, y: 1 }) },
+    skeletonWarriorDefenseDirection: enemy.skeletonWarriorDefenseDirection
+      ? { ...enemy.skeletonWarriorDefenseDirection }
+      : undefined,
+    skeletonWarriorDefensePosition: enemy.skeletonWarriorDefensePosition
+      ? { ...enemy.skeletonWarriorDefensePosition }
+      : undefined,
     talentStates: enemy.talentStates
       ? Object.fromEntries(Object.entries(enemy.talentStates).map(([key, state]) => [key, state ? { ...state } : state])) as Enemy['talentStates']
       : undefined,
@@ -2954,6 +4163,10 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
     ...obstacle,
     position: { ...obstacle.position },
   })),
+  mapDecorations: (snapshot.mapDecorations ?? []).map((decoration) => ({
+    ...decoration,
+    position: { ...decoration.position },
+  })),
   pickups: snapshot.pickups.map((pickup) => ({
     ...pickup,
     position: { ...pickup.position },
@@ -2962,17 +4175,33 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
   projectiles: snapshot.projectiles.map((projectile) => ({
     ...projectile,
     position: { ...projectile.position },
+    previousPosition: projectile.previousPosition ? { ...projectile.previousPosition } : undefined,
     origin: { ...(projectile.origin ?? projectile.position) },
     velocity: { ...projectile.velocity },
     hitEnemyIds: [...(projectile.hitEnemyIds ?? [])],
+    curveReturnOutboundHitEnemyIds: projectile.curveReturnOutboundHitEnemyIds
+      ? [...projectile.curveReturnOutboundHitEnemyIds]
+      : undefined,
+    curveReturnReturnHitEnemyIds: projectile.curveReturnReturnHitEnemyIds
+      ? [...projectile.curveReturnReturnHitEnemyIds]
+      : undefined,
+    hitEnemyCounts: projectile.hitEnemyCounts ? { ...projectile.hitEnemyCounts } : undefined,
     modifiers: projectile.modifiers?.map((modifier) => ({ ...modifier })),
   })),
   enemyProjectiles: snapshot.enemyProjectiles.map((projectile) => ({
     ...projectile,
     position: { ...projectile.position },
+    previousPosition: projectile.previousPosition ? { ...projectile.previousPosition } : undefined,
     origin: { ...(projectile.origin ?? projectile.position) },
     velocity: { ...projectile.velocity },
     hitEnemyIds: [...(projectile.hitEnemyIds ?? [])],
+    curveReturnOutboundHitEnemyIds: projectile.curveReturnOutboundHitEnemyIds
+      ? [...projectile.curveReturnOutboundHitEnemyIds]
+      : undefined,
+    curveReturnReturnHitEnemyIds: projectile.curveReturnReturnHitEnemyIds
+      ? [...projectile.curveReturnReturnHitEnemyIds]
+      : undefined,
+    hitEnemyCounts: projectile.hitEnemyCounts ? { ...projectile.hitEnemyCounts } : undefined,
     modifiers: projectile.modifiers?.map((modifier) => ({ ...modifier })),
   })),
   skillFields: snapshot.skillFields.map((field) => ({
@@ -3032,6 +4261,9 @@ const createProjectile = (args: {
   effect: SkillEffectTag
   effectStrength: number
   sourceSkillId: string
+  attackerId?: string
+  attackerName?: string
+  sourceName?: string
   ricochetRemaining?: number
   returnAfter?: number
   modifiers?: EquipmentSkillModifier[]
@@ -3053,14 +4285,23 @@ const createProjectile = (args: {
   ricochetMaxHitsPerEnemy?: number
   ricochetRepeatDamageFalloff?: number
   slowOnHit?: { factor: number; duration: number }
+  distanceDamageBonusMax?: number
+  distanceDamageRange?: number
+  homingRange?: number
+  homingStrength?: number
+  linePullMaxDistance?: number
+  linePullEliteMultiplier?: number
   castId?: string
   sourceSlotIndex?: number
   sourceBaseCooldown?: number
   talentCrystalOverload?: boolean
+  talentOverloadTempo?: boolean
+  talentCooldownEcho?: boolean
 }): Projectile => ({
   id: createId(),
   owner: args.owner,
   position: { ...args.origin },
+  previousPosition: { ...args.origin },
   origin: { ...args.origin },
   velocity: { ...args.velocity },
   damage: args.damage,
@@ -3073,8 +4314,13 @@ const createProjectile = (args: {
   effect: args.effect,
   effectStrength: args.effectStrength,
   sourceSkillId: args.sourceSkillId,
+  attackerId: args.attackerId,
+  attackerName: args.attackerName,
+  sourceName: args.sourceName,
   ricochetRemaining: args.ricochetRemaining,
   hitEnemyIds: [],
+  curveReturnOutboundHitEnemyIds: args.sourceSkillId === 'curve-return' ? [] : undefined,
+  curveReturnReturnHitEnemyIds: args.sourceSkillId === 'curve-return' ? [] : undefined,
   returnAfter: args.returnAfter,
   modifiers: args.modifiers ? [...args.modifiers] : undefined,
   skillLevel: args.skillLevel,
@@ -3096,10 +4342,18 @@ const createProjectile = (args: {
   ricochetRepeatDamageFalloff: args.ricochetRepeatDamageFalloff,
   hitEnemyCounts: {},
   slowOnHit: args.slowOnHit,
+  distanceDamageBonusMax: args.distanceDamageBonusMax,
+  distanceDamageRange: args.distanceDamageRange,
+  homingRange: args.homingRange,
+  homingStrength: args.homingStrength,
+  linePullMaxDistance: args.linePullMaxDistance,
+  linePullEliteMultiplier: args.linePullEliteMultiplier,
   castId: args.castId,
   sourceSlotIndex: args.sourceSlotIndex,
   sourceBaseCooldown: args.sourceBaseCooldown,
   talentCrystalOverload: args.talentCrystalOverload,
+  talentOverloadTempo: args.talentOverloadTempo,
+  talentCooldownEcho: args.talentCooldownEcho,
 })
 
 const createPlayerProjectile = (
@@ -3134,7 +4388,7 @@ const createPlayerProjectile = (
   })
 }
 
-const createEnemyProjectiles = (origin: Vector2, target: Vector2, damage = 12) => {
+const createEnemyProjectiles = (origin: Vector2, target: Vector2, damage = 12, attacker?: Enemy) => {
   const direction = normalize({ x: target.x - origin.x, y: target.y - origin.y })
 
   return RANGED_SPREAD_ANGLES.map((angle) => {
@@ -3156,6 +4410,9 @@ const createEnemyProjectiles = (origin: Vector2, target: Vector2, damage = 12) =
       effect: 'none',
       effectStrength: 0,
       sourceSkillId: 'enemy-ranged-shot',
+      attackerId: attacker?.id,
+      attackerName: attacker ? getEnemyDisplayName(attacker) : undefined,
+      sourceName: '远程射击',
     })
   })
 }
@@ -3172,7 +4429,7 @@ const isSkeletonArcherEnemy = (enemy: Enemy) => {
 }
 
 const fireRangedEnemyShot = (snapshot: GameSnapshot, enemy: Enemy, target: Vector2) => {
-  snapshot.enemyProjectiles.push(...createEnemyProjectiles(enemy.position, target, Math.max(4, enemy.attackDamage ?? 12)))
+  snapshot.enemyProjectiles.push(...createEnemyProjectiles(enemy.position, target, Math.max(4, enemy.attackDamage ?? 12), enemy))
   enemy.attackCooldown = getRangedEnemyAttackInterval(snapshot.level)
   snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(125, 211, 252, ALPHA)', 12))
 }
@@ -3224,7 +4481,7 @@ const applyCampaignArchetypeSkill = (snapshot: GameSnapshot, enemy: Enemy, direc
   if (campaign === 2 && (archetypeId.includes('vampire') || archetypeId.includes('blood-noble')) && gap <= 112) {
     const damage = enemy.kind === 'elite' ? 10 : 7
     if (snapshot.player.hurtCooldown <= 0 && snapshot.player.dashTimer <= 0) {
-      snapshot.player.hp -= damage
+      damagePlayer(snapshot, damage, getEnemyDamageAttribution(enemy, 'vampire-life-steal', '吸血'))
       snapshot.player.hurtCooldown = PLAYER_HURT_COOLDOWN * 0.42
       enemy.hp = Math.min(enemy.maxHp, enemy.hp + damage * 1.8)
     }
@@ -3270,6 +4527,10 @@ const applyCampaignArchetypeSkill = (snapshot: GameSnapshot, enemy: Enemy, direc
       spread: 0,
       projectileSpeed: 0,
       sourceSkillId: 'swamp-poison-mist',
+      owner: 'enemy',
+      sourceEnemyId: enemy.id,
+      sourceEnemyName: getEnemyDisplayName(enemy),
+      sourceName: '毒雾',
       skillLevel: 5,
       reactionCooldown: 0,
       centerStrikeCooldown: 0,
@@ -3311,6 +4572,10 @@ const applyCampaignArchetypeSkill = (snapshot: GameSnapshot, enemy: Enemy, direc
       spread: 0,
       projectileSpeed: 0,
       sourceSkillId: 'forest-root-snare',
+      owner: 'enemy',
+      sourceEnemyId: enemy.id,
+      sourceEnemyName: getEnemyDisplayName(enemy),
+      sourceName: '根须',
       skillLevel: 5,
       reactionCooldown: 0,
       centerStrikeCooldown: 0,
@@ -3331,7 +4596,7 @@ const applyCampaignArchetypeSkill = (snapshot: GameSnapshot, enemy: Enemy, direc
     }, 24)
     snapshot.bursts.push(createBurst(mine, 'rgba(249, 115, 22, ALPHA)', enemy.kind === 'elite' ? 58 : 42))
     if (distance(mine, snapshot.player.position) <= (enemy.kind === 'elite' ? 58 : 42) && snapshot.player.hurtCooldown <= 0) {
-      snapshot.player.hp -= enemy.kind === 'elite' ? 17 : 11
+      damagePlayer(snapshot, enemy.kind === 'elite' ? 17 : 11, getEnemyDamageAttribution(enemy, 'campaign-mine', '地雷'))
       snapshot.player.hurtCooldown = PLAYER_HURT_COOLDOWN * 0.5
     }
     snapshot.floatingTexts.push(createFloatingText(mine, '地雷', '#fb923c'))
@@ -3355,7 +4620,7 @@ const applyCampaignArchetypeSkill = (snapshot: GameSnapshot, enemy: Enemy, direc
       range: archetypeId.includes('eel') ? 58 : 48,
     })
     if (archetypeId.includes('eel') && snapshot.player.hurtCooldown <= 0) {
-      snapshot.player.hp -= 8
+      damagePlayer(snapshot, 8, getEnemyDamageAttribution(enemy, 'tide-chain-lightning', '电链'))
       snapshot.player.hurtCooldown = PLAYER_HURT_COOLDOWN * 0.45
     }
     snapshot.floatingTexts.push(createFloatingText(snapshot.player.position, archetypeId.includes('eel') ? '电链' : '潮汐', '#22d3ee'))
@@ -3416,7 +4681,7 @@ const updateEnemyTraitSkill = (snapshot: GameSnapshot, enemy: Enemy, direction: 
     }, 18)
     snapshot.bursts.push(createBurst(minePosition, 'rgba(249, 115, 22, ALPHA)', 34))
     if (distance(snapshot.player.position, minePosition) <= 42 && snapshot.player.hurtCooldown <= 0 && snapshot.player.dashTimer <= 0) {
-      snapshot.player.hp -= ENEMY_TRAIT_SKILL_DAMAGE
+      damagePlayer(snapshot, ENEMY_TRAIT_SKILL_DAMAGE, getEnemyDamageAttribution(enemy, 'enemy-minefield', '地雷'))
       snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, PLAYER_HURT_COOLDOWN * 0.45)
     }
     enemy.attackCooldown = ENEMY_TRAIT_SKILL_COOLDOWN + 0.6
@@ -3434,14 +4699,14 @@ const updateEnemyTraitSkill = (snapshot: GameSnapshot, enemy: Enemy, direction: 
       range: 48,
     })
     if (snapshot.player.hurtCooldown <= 0 && snapshot.player.dashTimer <= 0) {
-      snapshot.player.hp -= ENEMY_TRAIT_SKILL_DAMAGE
+      damagePlayer(snapshot, ENEMY_TRAIT_SKILL_DAMAGE, getEnemyDamageAttribution(enemy, 'enemy-chain-lightning', '连锁闪电'))
       snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, PLAYER_HURT_COOLDOWN * 0.45)
     }
     enemy.attackCooldown = ENEMY_TRAIT_SKILL_COOLDOWN
     return
   }
 
-  if (enemy.skillTrait === 'wall-charge' && gap < 300 && enemy.behaviorCooldown <= 0) {
+  if (canUseWallChargeSkill(enemy) && gap < 300 && enemy.behaviorCooldown <= 0) {
     enemy.behaviorDirection = direction
     enemy.behaviorTimer = Math.max(enemy.behaviorTimer, 0.38)
     enemy.behaviorCooldown = 2.6
@@ -3462,22 +4727,26 @@ const createField = (
 ): SkillField => {
   const equipmentBonus = getSnapshotEquipmentBonus(snapshot)
   const modifiers = getSkillModifiers(snapshot, skillId, buildTag)
-  const talentRadiusMultiplier = buildTag === 'control' || skillId.includes('crystal') || skillId.includes('overload')
+  const isCrystalField = buildTag === 'control' || skillId.includes('crystal') || skillId.includes('overload')
+  const talentRadiusMultiplier = isCrystalField
     ? getTalentRadiusMultiplier(snapshot, 'crystalPulseRadius')
     : 1
+  const overloadTempoMultiplier = cast?.overloadTempo ? 1.1 : 1
   const radiusMultiplier = (buildTag === 'control' ? Math.min(CORE_FIELD_RADIUS_MULTIPLIER_CAP, 1 + equipmentBonus.fieldRadiusMultiplier) : 1) * talentRadiusMultiplier
   const projectileBonus = buildTag === 'spread' ? Math.min(CORE_PROJECTILE_BONUS_CAP, equipmentBonus.spreadProjectileBonus) : 0
   const durationMultiplier = modifiers.reduce((multiplier, modifier) => {
     return modifier.type === 'field-duration' ? Math.min(CORE_FIELD_DURATION_MULTIPLIER_CAP, Math.max(multiplier, modifier.multiplier)) : multiplier
   }, 1)
+  const metaFieldDurationMultiplier = isCrystalField ? 1 + getMetaTalentRuntimeEffectValue(snapshot, 'field-duration', 'crystal-field') / 100 : 1
+  const metaFieldDurationSeconds = isCrystalField ? getMetaTalentRuntimeEffectValue(snapshot, 'field-duration', 'crystal-field', 'seconds') : 0
   const modifierProjectileBonus = getModifierProjectileBonus(modifiers)
 
   return {
     id: createId(),
     kind,
     position: { ...position },
-    ttl: config.fieldTtl * durationMultiplier,
-    radius: config.fieldRadius * radiusMultiplier,
+    ttl: config.fieldTtl * Math.min(CORE_FIELD_DURATION_MULTIPLIER_CAP, durationMultiplier * metaFieldDurationMultiplier * (hasSelectedRunTalent(snapshot, 'run_crystal_04') && isCrystalField ? 1.08 : 1)) + metaFieldDurationSeconds,
+    radius: config.fieldRadius * radiusMultiplier * overloadTempoMultiplier,
     damage: scaleSkillDamage(snapshot, config.tickDamage, buildTag),
     tickInterval: config.tickInterval,
     tickCooldown: 0,
@@ -3488,6 +4757,7 @@ const createField = (
     spread: config.spread,
     projectileSpeed: config.speed,
     sourceSkillId: skillId,
+    sourceName: ARCHER_ACTIVE_SKILL_MAP[skillId]?.name ?? '技能',
     modifiers,
     skillLevel,
     reactionCooldown: 0,
@@ -3497,6 +4767,8 @@ const createField = (
     sourceSlotIndex: cast?.slotIndex,
     sourceBaseCooldown: cast?.baseCooldown,
     talentCrystalOverload: cast?.crystalOverload,
+    talentOverloadTempo: cast?.overloadTempo,
+    talentCooldownEcho: cast?.cooldownEcho,
   }
 }
 
@@ -3504,6 +4776,10 @@ const applyProjectileEffectToEnemy = (snapshot: GameSnapshot, enemy: Enemy, proj
   if (projectile.effect === 'burn') {
     enemy.burnTtl = Math.max(enemy.burnTtl, 2.2 + projectile.effectStrength * 0.25)
     enemy.burnDamagePerSecond = Math.max(enemy.burnDamagePerSecond, projectile.effectStrength)
+    enemy.burnSource = {
+      sourceId: projectile.sourceSkillId,
+      sourceName: ARCHER_ACTIVE_SKILL_MAP[projectile.sourceSkillId]?.name ?? '灼烧',
+    }
     snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(249, 115, 22, ALPHA)', enemy.size * 0.85))
   }
 
@@ -3524,7 +4800,7 @@ const applyProjectileEffectToEnemy = (snapshot: GameSnapshot, enemy: Enemy, proj
   }
 
   if (projectile.infectOnDeath && projectile.infectOnDeath !== 'none') {
-    markEnemyAsInfectious(enemy)
+    markEnemyAsInfectious(snapshot, enemy)
   }
 
   if (projectile.slowOnHit) {
@@ -3539,7 +4815,7 @@ const getProjectileDamageForEnemy = (snapshot: GameSnapshot, projectile: Project
   let damage = projectile.damage + consumedMarks * 0.8
   if ((consumedMarks > 0 || enemy.talentStates?.deathMark) && enemy.hp / Math.max(1, enemy.maxHp) <= 0.25) {
     if (!applyTalentEnemyState(snapshot, enemy, 'executeLine') && hasSelectedRunTalent(snapshot, 'run_death_02')) {
-      applyDirectTalentEnemyState(enemy, 'executeLine', 4, 1, 1, 'marked-low-hp')
+      applyDirectTalentEnemyState(snapshot, enemy, 'executeLine', 4, 1, 1, 'marked-low-hp')
     }
   }
 
@@ -3553,6 +4829,13 @@ const getProjectileDamageForEnemy = (snapshot: GameSnapshot, projectile: Project
 
   if (projectile.singleTargetDamageMultiplier && (projectile.hitEnemyIds?.length ?? 0) === 0) {
     damage *= projectile.singleTargetDamageMultiplier
+  }
+
+  if (projectile.distanceDamageBonusMax && projectile.distanceDamageRange) {
+    const origin = projectile.origin ?? projectile.position
+    const traveled = distance(origin, enemy.position)
+    const rampRatio = clamp(traveled / Math.max(1, projectile.distanceDamageRange), 0, 1)
+    damage *= 1 + projectile.distanceDamageBonusMax * rampRatio
   }
 
   if (projectile.eliteBossDamageMultiplier && isEliteOrBoss(enemy)) {
@@ -3576,29 +4859,131 @@ const getProjectileDamageForEnemy = (snapshot: GameSnapshot, projectile: Project
   if (enemy.bleedStacks?.length || enemy.talentStates?.bleed) {
     damage = scaleTalentDamageForTarget(snapshot, enemy, damage, 'bleeding')
   }
-  if (enemy.talentStates?.crystalOverload || projectile.talentCrystalOverload || projectile.sourceSkillId.includes('crystal') || projectile.sourceSkillId.includes('overload')) {
-    damage = scaleTalentDamageForTarget(snapshot, enemy, damage, 'crystal-overloaded')
+  if (projectile.talentCrystalOverload) {
+    damage *= enemy.kind === 'boss' ? 1.06 : 1.15
+  }
+  if (projectile.talentOverloadTempo) {
+    damage *= 1.1
   }
 
   return damage
 }
 
+const pullEnemyTowardProjectileLine = (snapshot: GameSnapshot, enemy: Enemy, projectile: Projectile) => {
+  if (!projectile.linePullMaxDistance || enemy.hp <= 0 || enemy.kind === 'boss') {
+    return
+  }
+
+  const origin = projectile.origin ?? projectile.position
+  const direction = normalize(projectile.velocity)
+  if (direction.x === 0 && direction.y === 0) {
+    return
+  }
+
+  const toEnemy = {
+    x: enemy.position.x - origin.x,
+    y: enemy.position.y - origin.y,
+  }
+  const forward = toEnemy.x * direction.x + toEnemy.y * direction.y
+  if (forward < 0) {
+    return
+  }
+
+  const projected = {
+    x: origin.x + direction.x * forward,
+    y: origin.y + direction.y * forward,
+  }
+  const pullDistance = distance(enemy.position, projected)
+  if (pullDistance <= 0.5) {
+    return
+  }
+
+  const eliteMultiplier = projectile.linePullEliteMultiplier ?? 0.5
+  const maxPullDistance = projectile.linePullMaxDistance * (enemy.kind === 'elite' ? eliteMultiplier : 1)
+  const ratio = Math.min(1, maxPullDistance / pullDistance)
+  const before = { ...enemy.position }
+  enemy.position = keepInsideCombatArea(snapshot, {
+    x: enemy.position.x + (projected.x - enemy.position.x) * ratio,
+    y: enemy.position.y + (projected.y - enemy.position.y) * ratio,
+  }, enemy.size * 0.5)
+  enemy.slowTtl = Math.max(enemy.slowTtl, 0.2)
+  snapshot.enemySkillEffects.push({
+    id: `line-pull-${createId()}`,
+    kind: 'ricochet-link',
+    position: before,
+    targetPosition: { ...enemy.position },
+    color: '#fde047',
+    age: 0,
+    ttl: 0.22,
+  })
+}
+
 const applyProjectileDamageToEnemy = (snapshot: GameSnapshot, enemy: Enemy, projectile: Projectile, incomingDirection: Vector2) => {
   const consumedMarks = enemy.markStacks
+  const wasDeathMarked = Boolean(enemy.talentStates?.deathMark)
+  const wasBelowExecuteLine = wasDeathMarked && enemy.hp / Math.max(1, enemy.maxHp) <= 0.25
   let damage = getProjectileDamageForEnemy(snapshot, projectile, enemy, consumedMarks)
-  const criticalChance = projectile.forceCritical ? 1 : projectile.criticalChance ?? 0
-  const isCritical = criticalChance > 0 && Math.random() < criticalChance
+  const isCurveReturnBackstab = projectile.sourceSkillId === 'curve-return' && projectile.hasReturned
+  const isCritical = projectile.forceCritical
+    || isCurveReturnBackstab
+    || ((projectile.criticalChance ?? 0) > 0 && Math.random() < (projectile.criticalChance ?? 0))
   if (isCritical) {
     damage *= projectile.criticalDamageMultiplier ?? DEFAULT_CRIT_DAMAGE_MULTIPLIER
   }
 
-  damageEnemy(snapshot, enemy, damage, isCritical ? '#fef3c7' : projectile.color, incomingDirection)
+  const damageSource: EnemyDamageSource = projectile.owner === 'player'
+    ? getPlayerSkillDamageAttribution(projectile.sourceSkillId, true, projectile.sourceName)
+    : {
+        side: 'enemy',
+        attackerId: projectile.attackerId ?? 'enemy-projectile',
+        attackerName: projectile.attackerName ?? '敌人',
+        sourceId: projectile.sourceSkillId || 'enemy-ranged-shot',
+        sourceName: projectile.sourceName ?? '远程射击',
+      }
+  damageEnemy(snapshot, enemy, damage, isCritical ? '#fef3c7' : projectile.color, incomingDirection, damageSource)
+
+  if (projectile.talentPierceJudgmentReady && enemy.hp > 0) {
+    damageEnemy(
+      snapshot,
+      enemy,
+      damage * 0.22,
+      '#f97316',
+      incomingDirection,
+      getPlayerDamageAttribution('run_death_06', '贯穿审判'),
+    )
+    projectile.talentPierceJudgmentReady = false
+  }
+
+  if (hasSelectedRunTalent(snapshot, 'run_death_02') && wasBelowExecuteLine && enemy.hp > 0) {
+    const executeDamage = enemy.kind === 'boss'
+      ? damage * 0.06
+      : enemy.grantsEliteReward || enemy.kind === 'elite'
+        ? damage * 0.18
+        : enemy.hp
+    damageEnemy(snapshot, enemy, executeDamage, '#fb7185', incomingDirection, getPlayerDamageAttribution('run_death_02', '处刑线'))
+  }
+
+  if (hasSelectedRunTalent(snapshot, 'run_death_03') && wasDeathMarked && projectile.pierceRemaining > 0 && enemy.hp > 0) {
+    const state = getTalentCombatState(snapshot)
+    const lastAt = state.soulFireCooldowns?.[enemy.id] ?? -Infinity
+    if (snapshot.elapsedTime - lastAt >= 1) {
+      state.soulFireCooldowns = { ...(state.soulFireCooldowns ?? {}), [enemy.id]: snapshot.elapsedTime }
+      damageEnemy(snapshot, enemy, damage * 0.35, '#d8b4fe', incomingDirection, getPlayerDamageAttribution('run_death_03', '穿透魂火'))
+      snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(216, 180, 254, ALPHA)', enemy.size * 0.65))
+    }
+  }
+
+  if (hasSelectedRunTalent(snapshot, 'run_death_06') && wasDeathMarked && projectile.pierceRemaining > 0) {
+    projectile.talentPierceJudgmentReady = true
+  }
+  createCrystalOverloadPulses(snapshot, enemy, projectile)
   if (projectile.castId && projectile.sourceSlotIndex !== undefined && projectile.sourceBaseCooldown !== undefined) {
     tryRefundTalentSkillCooldown(snapshot, {
       castId: projectile.castId,
       slotIndex: projectile.sourceSlotIndex,
       skillId: projectile.sourceSkillId,
       baseCooldown: projectile.sourceBaseCooldown,
+      cooldownEcho: projectile.talentCooldownEcho,
     })
     addTalentCrystalChargeForSkillHit(snapshot, enemy, {
       castId: projectile.castId,
@@ -3612,24 +4997,72 @@ const applyProjectileDamageToEnemy = (snapshot: GameSnapshot, enemy: Enemy, proj
     snapshot.floatingTexts.push(createFloatingText(enemy.position, '暴击', '#fef3c7'))
   }
 
-  if (projectile.lightDamageMultiplier) {
-    damageEnemy(snapshot, enemy, damage * projectile.lightDamageMultiplier, '#fef9c3', incomingDirection)
+  if (projectile.owner === 'player') {
+    const blood = getTalentCombatState(snapshot).bloodFeather ?? {}
+    const isSpreadHit = ARCHER_ACTIVE_SKILL_MAP[projectile.sourceSkillId]?.buildTag === 'spread'
+    if (hasSelectedRunTalent(snapshot, 'run_blood_01') && (isCritical || isSpreadHit) && snapshot.elapsedTime - (blood.lastBaseAt ?? -Infinity) >= 0.4) {
+      blood.lastBaseAt = snapshot.elapsedTime
+      getTalentCombatState(snapshot).bloodFeather = blood
+      triggerBloodFeather(snapshot, enemy.position, 'run_blood_01', '血羽印记')
+    }
+    if (hasSelectedRunTalent(snapshot, 'run_blood_04') && isCritical && snapshot.elapsedTime - (blood.lastCriticalAt ?? -Infinity) >= 0.6) {
+      blood.lastCriticalAt = snapshot.elapsedTime
+      getTalentCombatState(snapshot).bloodFeather = blood
+      triggerBloodFeather(snapshot, enemy.position, 'run_blood_04', '暴击羽裂')
+    }
+    if (hasSelectedRunTalent(snapshot, 'run_blood_05') && isSpreadHit && projectile.castId) {
+      const targets = blood.spreadCastTargets?.[projectile.castId] ?? []
+      if (!targets.includes(enemy.id)) targets.push(enemy.id)
+      const alreadyTriggered = targets.includes('__blood-feather-volley__')
+      if (targets.filter((id) => id !== '__blood-feather-volley__').length >= 4 && !alreadyTriggered) {
+        targets.push('__blood-feather-volley__')
+        triggerBloodFeather(snapshot, enemy.position, 'run_blood_05', '血羽连射', 3)
+      }
+      blood.spreadCastTargets = { ...(blood.spreadCastTargets ?? {}), [projectile.castId]: targets }
+      getTalentCombatState(snapshot).bloodFeather = blood
+    }
+    if (hasSelectedRunTalent(snapshot, 'run_blood_08')) {
+      const windowActive = (blood.stormWindowTtl ?? 0) > 0
+      blood.stormWindowTtl = windowActive ? blood.stormWindowTtl : 12
+      blood.stormHits = (blood.stormHits ?? 0) + 1
+      if ((blood.stormHits ?? 0) >= 30 && (blood.stormCooldown ?? 0) <= 0) {
+        blood.stormHits = 0
+        blood.stormWindowTtl = 12
+        blood.stormCooldown = 18
+        triggerBloodFeather(snapshot, enemy.position, 'run_blood_08', '血羽风暴', 10)
+      }
+      getTalentCombatState(snapshot).bloodFeather = blood
+    }
   }
+
+  if (projectile.lightDamageMultiplier) {
+    damageEnemy(snapshot, enemy, damage * projectile.lightDamageMultiplier, '#fef9c3', incomingDirection, damageSource)
+  }
+
+  pullEnemyTowardProjectileLine(snapshot, enemy, projectile)
 
   registerBloodfeatherSpreadHit(snapshot, projectile, enemy, damage)
 
   if (consumedMarks > 0) {
     enemy.markStacks = Math.max(0, enemy.markStacks - 1)
   }
-  if (projectile.effect === 'mark') {
+  if (projectile.owner === 'player' && hasSelectedRunTalent(snapshot, 'run_death_01')) {
+    applyDirectTalentEnemyState(snapshot, enemy, 'deathMark', 4, 1, 1, 'run_death_01')
+  } else if (projectile.effect === 'mark') {
     applyTalentEnemyState(snapshot, enemy, 'deathMark')
   }
   if (projectile.talentCrystalOverload || projectile.sourceSkillId.includes('crystal') || projectile.sourceSkillId.includes('overload')) {
     applyTalentEnemyState(snapshot, enemy, 'crystalOverload')
   }
 
-  if (projectile.bleedOnHit) {
-    applyBleed(snapshot, enemy, damage)
+  if (projectile.bleedOnHit || (projectile.owner === 'player' && hasSelectedRunTalent(snapshot, 'run_blood_02') && (projectile.sourceSkillId === 'basic-arrow' || ARCHER_ACTIVE_SKILL_MAP[projectile.sourceSkillId]?.buildTag === 'spread'))) {
+    applyBleed(
+      snapshot,
+      enemy,
+      damage,
+      hasSelectedRunTalent(snapshot, 'run_blood_02') ? 'run_blood_02' : projectile.sourceSkillId,
+      hasSelectedRunTalent(snapshot, 'run_blood_02') ? '流血箭簇' : projectile.sourceName ?? ARCHER_ACTIVE_SKILL_MAP[projectile.sourceSkillId]?.name ?? '流血',
+    )
   }
 
   if (projectile.stunOnHit) {
@@ -3661,7 +5094,14 @@ const applyProjectileModifierEffects = (snapshot: GameSnapshot, enemy: Enemy, pr
           return
         }
 
-        damageEnemy(snapshot, nearby, projectile.damage * modifier.damageMultiplier, projectile.color, getIncomingDirection(enemy.position, nearby.position))
+        damageEnemy(
+          snapshot,
+          nearby,
+          projectile.damage * modifier.damageMultiplier,
+          projectile.color,
+          getIncomingDirection(enemy.position, nearby.position),
+          getPlayerSkillDamageAttribution(`${projectile.sourceSkillId}:pierce-echo`, false, `${projectile.sourceName ?? ARCHER_ACTIVE_SKILL_MAP[projectile.sourceSkillId]?.name ?? '技能'}贯穿回响`),
+        )
       })
       snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(253, 230, 138, ALPHA)', modifier.radius))
     }
@@ -3674,7 +5114,18 @@ const applyProjectileModifierEffects = (snapshot: GameSnapshot, enemy: Enemy, pr
           x: projectile.position.x + side.x * 18 * sign,
           y: projectile.position.y + side.y * 18 * sign,
         }
-        damageEnemiesInLine(snapshot, origin, direction, 170, 13, projectile.damage * modifier.damageMultiplier, projectile.color)
+        damageEnemiesInLine(
+          snapshot,
+          origin,
+          direction,
+          170,
+          13,
+          projectile.damage * modifier.damageMultiplier,
+          projectile.color,
+          undefined,
+          undefined,
+          getPlayerSkillDamageAttribution(`${projectile.sourceSkillId}:elite-parallel-line`, false, `${projectile.sourceName ?? ARCHER_ACTIVE_SKILL_MAP[projectile.sourceSkillId]?.name ?? '技能'}精英平行箭`),
+        )
         snapshot.enemySkillEffects.push({
           id: `parallel-line-${createId()}`,
           kind: 'ricochet-link',
@@ -3702,10 +5153,16 @@ const createSkillProjectile = (
   skillLevel: number,
   cast?: TalentCastContext,
 ) => {
+  const skillLevelIndex = Math.max(0, Math.min(4, skillLevel - 1))
+  const ricochetBouncesByLevel = [3, 4, 4, 5, 5]
+  const dawnDistanceBonusByLevel = [0.2, 0.3, 0.4, 0.55, 0.8]
+  const doubleStarHomingStrengthByLevel = [0.16, 0.2, 0.24, 0.28, 0.32]
+  const sunPiercerLinePullByLevel = [40, 52, 64, 78, 96]
   const definition = ARCHER_ACTIVE_SKILL_MAP[skillId]
   const buildTag = definition?.buildTag ?? 'pierce'
   const equipmentBonus = getSnapshotEquipmentBonus(snapshot)
-  const spreadOffset = count === 1 ? 0 : (index - (count - 1) / 2) * config.spread
+  const talentSpreadAngle = hasSelectedRunTalent(snapshot, 'run_blood_03') && buildTag === 'spread' ? Math.PI / 180 * 8 : 0
+  const spreadOffset = count === 1 ? 0 : (index - (count - 1) / 2) * (config.spread + talentSpreadAngle)
   let shotDirection = rotate(direction, spreadOffset)
   const isRicochet = skillId === 'ricochet-feather'
   const isCurveReturn = skillId === 'curve-return'
@@ -3721,22 +5178,37 @@ const createSkillProjectile = (
       })
     }
   }
+  if (skillId === 'double-star') {
+    const target = snapshot.enemies
+      .filter((enemy) => enemy.hp > 0 && distance(enemy.position, snapshot.player.position) <= config.range + 120)
+      .sort((a, b) => distance(a.position, snapshot.player.position) - distance(b.position, snapshot.player.position))[0]
+    if (target) {
+      const targetDirection = normalize({
+        x: target.position.x - snapshot.player.position.x,
+        y: target.position.y - snapshot.player.position.y,
+      })
+      shotDirection = rotate(targetDirection, spreadOffset)
+    }
+  }
   const curveReturnRangeMultiplier = isLevelFive && isCurveReturn ? 1.35 : 1
   const flightTtl = Math.max(config.ttl, config.range * curveReturnRangeMultiplier / Math.max(config.speed, 1))
   const pierceBonus = buildTag === 'pierce' ? equipmentBonus.pierceProjectileBonus : 0
   const modifiers = getSkillModifiers(snapshot, skillId, buildTag)
   const ricochetBonus = modifiers.reduce((sum, modifier) => modifier.type === 'ricochet-bounces' ? sum + modifier.amount : sum, 0)
-  const ricochetBouncesByLevel = [3, 4, 5, 6, 8]
-  const ricochetRemaining = isRicochet ? ricochetBouncesByLevel[Math.max(0, Math.min(4, skillLevel - 1))] + ricochetBonus : undefined
+  const ricochetRemaining = isRicochet ? ricochetBouncesByLevel[skillLevelIndex] + ricochetBonus : undefined
+  const extraPierce = skillId === 'double-star' ? 1 : 0
   const isCenterFanArrow = isLevelFive && skillId === 'fan-burst' && Math.abs(index - (count - 1) / 2) <= 1
   const isQuickTripleFinisher = isLevelFive && skillId === 'quick-triple' && index === count - 1
   const isDoubleStarSecondArrow = isLevelFive && skillId === 'double-star' && index % 2 === 1
+  const spreadProjectileSpeedMultiplier = buildTag === 'spread'
+    ? 1 + getMetaTalentRuntimeEffectValue(snapshot, 'projectile-speed', 'spread-skill') / 100
+    : 1
   let projectileDamage = scaleSkillDamage(snapshot, config.damage, buildTag)
   if (isLevelFive && skillId === 'heavy-snipe') {
     projectileDamage *= 1.4
   }
   if (isCenterFanArrow) {
-    projectileDamage *= 1.4
+    projectileDamage *= 1.4 * (1 + getMetaTalentRuntimeEffectValue(snapshot, 'damage', 'spread-center-arrow') / 100)
   }
   if (isDoubleStarSecondArrow) {
     projectileDamage *= 1.5
@@ -3756,15 +5228,15 @@ const createSkillProjectile = (
   return createProjectile({
     origin: snapshot.player.position,
     velocity: {
-      x: shotDirection.x * config.speed,
-      y: shotDirection.y * config.speed,
+      x: shotDirection.x * config.speed * spreadProjectileSpeedMultiplier,
+      y: shotDirection.y * config.speed * spreadProjectileSpeedMultiplier,
     },
     owner: 'player',
     damage: projectileDamage,
     ttl: flightTtl,
-    size: config.size,
+    size: config.size * (cast?.overloadTempo ? 1.1 : 1),
     color: config.color,
-    pierceRemaining: isRicochet ? 0 : config.pierce + pierceBonus,
+    pierceRemaining: isRicochet ? 0 : config.pierce + pierceBonus + extraPierce,
     explosionRadius: isLevelFive && skillId === 'light-split'
       ? Math.max(26, config.explosionRadius)
       : isLevelFive && skillId === 'hunter-mark'
@@ -3790,7 +5262,12 @@ const createSkillProjectile = (
     singleTargetDamageMultiplier: isLevelFive && skillId === 'heavy-snipe' && potentialLineTargets <= 1 ? 1.25 : undefined,
     eliteBossDamageMultiplier: isLevelFive && skillId === 'sun-piercer' ? 1.3 : undefined,
     eliteSweepMultiplier: getEliteSweepMultiplier(skillLevel, modifiers),
-    lightDamageMultiplier: isLevelFive && skillId === 'dawn-bolt' ? 0.3 : undefined,
+    distanceDamageBonusMax: skillId === 'dawn-bolt' ? dawnDistanceBonusByLevel[skillLevelIndex] : undefined,
+    distanceDamageRange: skillId === 'dawn-bolt' ? config.range : undefined,
+    homingRange: skillId === 'double-star' ? config.range + 120 : undefined,
+    homingStrength: skillId === 'double-star' ? doubleStarHomingStrengthByLevel[skillLevelIndex] : undefined,
+    linePullMaxDistance: skillId === 'sun-piercer' ? sunPiercerLinePullByLevel[skillLevelIndex] : undefined,
+    linePullEliteMultiplier: skillId === 'sun-piercer' ? 0.5 : undefined,
     lowHpThreshold: isLevelFive && (skillId === 'weakness-trace' || skillId === 'final-hunt') ? (skillId === 'final-hunt' ? 0.25 : 0.2) : undefined,
     lowHpDamageMultiplier: isLevelFive && skillId === 'weakness-trace' ? 1.5 : isLevelFive && skillId === 'final-hunt' ? 1.45 : undefined,
     bleedOnHit: isLevelFive && (skillId === 'wind-cut' || skillId === 'cross-cut' || skillId === 'spiral-break'),
@@ -3801,13 +5278,17 @@ const createSkillProjectile = (
       : undefined,
     ricochetMaxHitsPerEnemy: isLevelFive && isRicochet ? 3 : undefined,
     ricochetRepeatDamageFalloff: isLevelFive && isRicochet ? 0.35 : undefined,
-    slowOnHit: isLevelFive && ['arrow-screen', 'double-crescent', 'moonshard-volley', 'chain-reflect', 'hawk-wing'].includes(skillId)
-      ? { factor: skillId === 'arrow-screen' ? 0.3 : 0.18, duration: skillId === 'arrow-screen' ? 1.1 : 0.75 }
-      : undefined,
+    slowOnHit: skillId === 'wind-cut'
+      ? { factor: 1, duration: 1 }
+      : isLevelFive && ['arrow-screen', 'double-crescent', 'moonshard-volley', 'chain-reflect', 'hawk-wing'].includes(skillId)
+        ? { factor: skillId === 'arrow-screen' ? 0.3 : 0.18, duration: skillId === 'arrow-screen' ? 1.1 : 0.75 }
+        : undefined,
     castId: cast?.castId,
     sourceSlotIndex: cast?.slotIndex,
     sourceBaseCooldown: cast?.baseCooldown,
     talentCrystalOverload: cast?.crystalOverload,
+    talentOverloadTempo: cast?.overloadTempo,
+    talentCooldownEcho: cast?.cooldownEcho,
   })
 }
 
@@ -3949,8 +5430,13 @@ const canUseSkeletonWarriorSkill = (enemy: Enemy) => {
   return enemy.kind === 'elite' && isDungeonSkeletonEnemy(enemy)
 }
 
+const canUseSkeletonWarriorRevive = (enemy: Enemy) => (
+  canUseSkeletonWarriorSkill(enemy) &&
+  !FIRST_CAMPAIGN_SINGLE_LIFE_ELITE_ARCHETYPE_IDS.has(enemy.archetypeId ?? '')
+)
+
 const canUseBasicMeleeAttack = (enemy: Enemy) => {
-  if (enemy.kind === 'ranged' || enemy.kind === 'charger' || enemy.kind === 'bomber') {
+  if (enemy.kind === 'ranged' || (enemy.kind === 'charger' && !isDungeonHellhoundEnemy(enemy)) || enemy.kind === 'bomber') {
     return false
   }
 
@@ -4039,11 +5525,15 @@ const clearBasicMeleeAttackState = (enemy: Enemy, cooldown = BASIC_MELEE_ATTACK_
 }
 
 const canUseSkeletonKnightSkill = (enemy: Enemy) => {
-  return enemy.kind === 'boss' && enemy.campaignIndex === 1
+  return enemy.kind === 'boss' && enemy.campaignIndex === 1 && !isDungeonWardenBoss(enemy)
 }
 
 const canUseFireBreath = (enemy: Enemy) => {
-  return enemy.skillTrait === 'fire-breath' || enemy.archetypeId === 'dungeon-hellhound'
+  return enemy.skillTrait === 'fire-breath'
+}
+
+const canUseWallChargeSkill = (enemy: Pick<Enemy, 'kind' | 'skillTrait'> & Partial<Pick<Enemy, 'archetypeId' | 'displayName'>>) => {
+  return enemy.skillTrait === 'wall-charge' && !isDungeonWardenBoss(enemy)
 }
 
 const getBuildDamageBonus = (snapshot: GameSnapshot, buildTag: SkillBuildTag) => {
@@ -4062,7 +5552,156 @@ const getSkillCooldownMultiplier = (snapshot: GameSnapshot, buildTag: SkillBuild
 }
 
 const getSnapshotMetaTalentSummary = (snapshot: GameSnapshot) => {
-  return getMetaTalentBonusSummary(snapshot.unlockedMetaTalentIds ?? [])
+  return getMetaTalentBonusSummary(snapshot.unlockedMetaTalentIds ?? [], snapshot.metaTalentRanks)
+}
+
+export type MetaTalentRuntimeEffects = {
+  effectValues: Readonly<Record<string, number>>
+  skillRewardWeightByBuild: Partial<Record<SkillBuildTag, number>>
+  equipmentWeightByBuild: Partial<Record<SkillBuildTag, number>>
+  inheritanceWeightByBuild: Partial<Record<SkillBuildTag, number>>
+  consumedThreeRankEffectKeys: string[]
+  unconsumedThreeRankEffectKeys: string[]
+}
+
+const META_TALENT_CANDIDATE_BUILD_TARGETS: Partial<Record<string, SkillBuildTag>> = {
+  'death-run-node': 'pierce',
+  'pierce-skill-equipment': 'pierce',
+  'blood-run-node': 'spread',
+  critical: 'spread',
+  'beast-run-node': 'beast',
+  'crystal-run-node': 'control',
+}
+
+const META_TALENT_INHERITANCE_TARGETS: Partial<Record<string, SkillBuildTag>> = {
+  'death-set-weapon': 'pierce',
+  'blood-set-weapon': 'spread',
+  'beast-set-weapon': 'beast',
+  'crystal-set-weapon': 'control',
+}
+
+const META_TALENT_RUNTIME_EFFECT_TARGETS = new Set([
+  'reroll-bonus:skill-reward',
+  'pickup-range:crystal',
+  'candidate-weight:death-run-node',
+  'duration:death-mark',
+  'radius:soul-explosion',
+  'candidate-weight:pierce-skill-equipment',
+  'elite-vulnerability:death-break',
+  'candidate-weight:death-set-weapon',
+  'candidate-weight:blood-run-node',
+  'projectile-speed:spread-skill',
+  'candidate-weight:critical',
+  'bleed-duration:bleed',
+  'tracking-radius:blood-feather',
+  'candidate-weight:blood-set-weapon',
+  'candidate-weight:beast-run-node',
+  'revive-time:beast',
+  'protect-cooldown:beast-protect',
+  'command-cooldown:beast-command',
+  'aura-effect:leader-beast',
+  'candidate-weight:beast-set-weapon',
+  'candidate-weight:crystal-run-node',
+  'charge-efficiency:crystal-charge',
+  'pulse-stability:overload-pulse',
+  'field-duration:crystal-field',
+  'cooldown-refund-cap:skill-hit',
+  'candidate-weight:crystal-set-weapon',
+  'duration:elite-break',
+  'mechanic:death-chain-limit',
+  'damage:blood-rift',
+  'damage:spread-center-arrow',
+  'hit-count-threshold:blood-feather-storm',
+  'follow-speed:beast',
+  'shield:player-max-hp',
+  'aura-radius:leader-beast',
+  'cooldown:beast-surround',
+  'range:overload-skill',
+  'cooldown:cooldown-refund-interval',
+  'radius:field-skill',
+])
+
+const META_TALENT_RUNTIME_EFFECT_CACHE = new WeakMap<GameSnapshot, MetaTalentRuntimeEffects>()
+
+const getMetaTalentEffectTargetKey = (type: TalentEffectType, target: string) => `${type}:${target}`
+
+const getMetaTalentEffectKey = (type: TalentEffectType, target: string, unit?: TalentEffect['unit']) => `${type}:${target}:${unit ?? 'none'}`
+
+const addMetaTalentRuntimeValue = (values: Record<string, number>, type: TalentEffectType, target: string, value: number, unit?: TalentEffect['unit']) => {
+  const key = getMetaTalentEffectKey(type, target, unit)
+  values[key] = (values[key] ?? 0) + value
+}
+
+export const getMetaTalentRuntimeEffectsForSnapshot = (snapshot: GameSnapshot): MetaTalentRuntimeEffects => {
+  const cached = META_TALENT_RUNTIME_EFFECT_CACHE.get(snapshot)
+  if (cached) {
+    return cached
+  }
+
+  const effectValues: Record<string, number> = {}
+  const skillRewardWeightByBuild: Partial<Record<SkillBuildTag, number>> = {}
+  const equipmentWeightByBuild: Partial<Record<SkillBuildTag, number>> = {}
+  const inheritanceWeightByBuild: Partial<Record<SkillBuildTag, number>> = {}
+  const consumedThreeRankEffectKeys: string[] = []
+  const unconsumedThreeRankEffectKeys: string[] = []
+
+  getSnapshotMetaTalentSummary(snapshot).resolvedEffects.forEach(({ maxRank, effect }) => {
+    const target = effect.target ?? effect.type
+    const value = effect.value ?? 0
+    const key = getMetaTalentEffectTargetKey(effect.type, target)
+    addMetaTalentRuntimeValue(effectValues, effect.type, target, value, effect.unit)
+
+    if (effect.type === 'candidate-weight') {
+      const buildTag = META_TALENT_CANDIDATE_BUILD_TARGETS[target]
+      if (buildTag) {
+        skillRewardWeightByBuild[buildTag] = (skillRewardWeightByBuild[buildTag] ?? 0) + value
+        if (target === 'pierce-skill-equipment') {
+          equipmentWeightByBuild[buildTag] = (equipmentWeightByBuild[buildTag] ?? 0) + value
+        }
+      }
+      const inheritanceBuildTag = META_TALENT_INHERITANCE_TARGETS[target]
+      if (inheritanceBuildTag) {
+        equipmentWeightByBuild[inheritanceBuildTag] = (equipmentWeightByBuild[inheritanceBuildTag] ?? 0) + value
+        inheritanceWeightByBuild[inheritanceBuildTag] = (inheritanceWeightByBuild[inheritanceBuildTag] ?? 0) + value
+      }
+    }
+
+    if (maxRank === 3) {
+      if (META_TALENT_RUNTIME_EFFECT_TARGETS.has(key)) {
+        consumedThreeRankEffectKeys.push(key)
+      } else {
+        unconsumedThreeRankEffectKeys.push(key)
+      }
+    }
+  })
+
+  const runtime = {
+    effectValues,
+    skillRewardWeightByBuild,
+    equipmentWeightByBuild,
+    inheritanceWeightByBuild,
+    consumedThreeRankEffectKeys,
+    unconsumedThreeRankEffectKeys,
+  }
+  META_TALENT_RUNTIME_EFFECT_CACHE.set(snapshot, runtime)
+  return runtime
+}
+
+const getMetaTalentRuntimeEffectValue = (
+  snapshot: GameSnapshot,
+  type: TalentEffectType,
+  target: string,
+  unit: TalentEffect['unit'] = '%',
+) => getMetaTalentRuntimeEffectsForSnapshot(snapshot).effectValues[getMetaTalentEffectKey(type, target, unit)] ?? 0
+
+const applyMetaTalentRunStartState = (snapshot: GameSnapshot) => {
+  const rerolls = Math.max(1, 1 + getMetaTalentRuntimeEffectValue(snapshot, 'reroll-bonus', 'skill-reward', 'count'))
+  snapshot.runTalentState = {
+    ...snapshot.runTalentState,
+    rerollsRemaining: rerolls,
+    rerollsUsed: 0,
+  }
+  snapshot.inRunRewardRerolls = rerolls
 }
 
 const getSnapshotRunTalentSummary = (snapshot: GameSnapshot) => {
@@ -4077,16 +5716,23 @@ const hasSelectedRunTalent = (snapshot: GameSnapshot, talentId: string) => (
 )
 
 const getTalentCrystalPickupRangeMultiplier = (snapshot: GameSnapshot) => {
-  const metaSummary = getSnapshotMetaTalentSummary(snapshot)
   const runSummary = getSnapshotRunTalentSummary(snapshot)
-  return metaSummary.pickupRangeMultiplier * runSummary.pickupRangeMultiplier
+  const metaMultiplier = 1 + Math.max(0, getMetaTalentRuntimeEffectValue(snapshot, 'pickup-range', 'crystal')) / 100
+  return metaMultiplier * runSummary.pickupRangeMultiplier
 }
 
 const getTalentRadiusMultiplier = (
   snapshot: GameSnapshot,
   target: 'soulBurstRadius' | 'bloodFeatherStormRadius' | 'beastAuraRadius' | 'crystalPulseRadius',
 ) => {
-  const multiplier = getSnapshotRunTalentSummary(snapshot).radiusMultiplier[target] ?? 1
+  const metaTargetBonus = target === 'soulBurstRadius'
+    ? getMetaTalentRuntimeEffectValue(snapshot, 'radius', 'soul-explosion')
+    : target === 'bloodFeatherStormRadius'
+      ? getMetaTalentRuntimeEffectValue(snapshot, 'tracking-radius', 'blood-feather')
+      : target === 'beastAuraRadius'
+        ? getMetaTalentRuntimeEffectValue(snapshot, 'aura-radius', 'leader-beast')
+        : getMetaTalentRuntimeEffectValue(snapshot, 'range', 'overload-skill') + getMetaTalentRuntimeEffectValue(snapshot, 'radius', 'field-skill')
+  const multiplier = (getSnapshotRunTalentSummary(snapshot).radiusMultiplier[target] ?? 1) * (1 + metaTargetBonus / 100)
   return Math.min(TALENT_RADIUS_MULTIPLIER_CAP, Math.max(1, multiplier))
 }
 
@@ -4110,8 +5756,12 @@ const scaleTalentDamageForTarget = (
   target: 'death-marked' | 'bleeding' | 'beast-commanded' | 'crystal-overloaded',
 ) => damage * getTalentDamageMultiplier(snapshot, enemy, target)
 
-const getTalentStateDamageMultiplier = (enemy: Enemy) => {
+const getTalentStateDamageMultiplier = (snapshot: GameSnapshot, enemy: Enemy) => {
   let multiplier = 1
+  const eliteInsight = snapshot.talentCombatState?.eliteInsight?.[enemy.id]
+  if (eliteInsight && eliteInsight.ttl > 0 && enemy.kind !== 'boss' && (enemy.grantsEliteReward || enemy.kind === 'elite')) {
+    multiplier *= 1.08
+  }
   const vulnerable = enemy.talentStates?.vulnerable
   if (vulnerable) {
     const stacks = enemy.kind === 'boss' ? 1 : Math.max(1, vulnerable.stacks)
@@ -4121,25 +5771,14 @@ const getTalentStateDamageMultiplier = (enemy: Enemy) => {
   const armorBreak = enemy.talentStates?.armorBreak
   if (armorBreak) {
     const stacks = enemy.kind === 'boss' ? 1 : Math.max(1, armorBreak.stacks)
-    multiplier *= 1 + (enemy.kind === 'boss' ? 0.04 : 0.08) * stacks
+    const metaVulnerability = getMetaTalentRuntimeEffectValue(snapshot, 'elite-vulnerability', 'death-break') / 100
+    multiplier *= 1 + ((enemy.kind === 'boss' ? 0.04 : 0.08) + metaVulnerability) * stacks
   }
 
   return multiplier
 }
 
-const scaleExecuteLineDamage = (enemy: Enemy, damage: number) => {
-  if (!enemy.talentStates?.executeLine) {
-    return damage
-  }
-  if (enemy.kind === 'boss') {
-    return damage * 1.06
-  }
-  if (enemy.grantsEliteReward || enemy.kind === 'elite') {
-    return damage * 1.18
-  }
-  if (enemy.hp / Math.max(1, enemy.maxHp) <= 0.25) {
-    return Math.max(damage, enemy.hp)
-  }
+const scaleExecuteLineDamage = (damage: number) => {
   return damage
 }
 
@@ -4218,6 +5857,8 @@ type TalentCastContext = {
   skillId: string
   baseCooldown: number
   crystalOverload?: boolean
+  cooldownEcho?: boolean
+  overloadTempo?: boolean
 }
 
 const createTalentCastContext = (
@@ -4230,15 +5871,39 @@ const createTalentCastContext = (
     return undefined
   }
   const castId = `cast-${slotIndex}-${skillInstance.skillId}-${(skillInstance.castCount ?? 0) + 1}-${createId()}`
-  return { castId, slotIndex, skillId: skillInstance.skillId, baseCooldown, crystalOverload: consumeTalentCrystalOverloadForCast(snapshot) }
+  synchronizeSelectedRunTalentFeedbackState(snapshot)
+  const state = getTalentCombatState(snapshot)
+  const cooldownEcho = hasSelectedRunTalent(snapshot, 'run_common_04')
+    && state.cooldownEcho?.pending === true
+    && state.cooldownEcho.pendingSlotIndex === slotIndex
+  if (hasSelectedRunTalent(snapshot, 'run_common_04')) {
+    state.cooldownEcho = {
+      pending: true,
+      lastSlotIndex: slotIndex,
+      pendingSlotIndex: (slotIndex + 1) % PLAYER_ACTIVE_SKILL_SLOTS,
+      refund: cooldownEcho ? baseCooldown * 0.08 : 0,
+    }
+  }
+  const overloadTempo = hasSelectedRunTalent(snapshot, 'run_common_08') && Boolean(state.overloadTempo?.ready)
+  if (overloadTempo) {
+    state.overloadTempo = { kills: state.overloadTempo?.kills ?? 20, ready: false }
+  }
+  return {
+    castId,
+    slotIndex,
+    skillId: skillInstance.skillId,
+    baseCooldown,
+    crystalOverload: consumeTalentCrystalOverloadForCast(snapshot),
+    cooldownEcho,
+    overloadTempo,
+  }
 }
 
 const tryRefundTalentSkillCooldown = (snapshot: GameSnapshot, cast?: TalentCastContext) => {
   if (!cast || cast.slotIndex < 0 || cast.slotIndex >= PLAYER_ACTIVE_SKILL_SLOTS) {
     return false
   }
-  const multiplier = getSnapshotRunTalentSummary(snapshot).cooldownRefundMultiplier
-  const refundRatio = Math.min(TALENT_COOLDOWN_REFUND_CAP, Math.max(0, multiplier - 1))
+  const refundRatio = cast.cooldownEcho ? 0.08 : 0
   if (refundRatio <= 0) {
     return false
   }
@@ -4251,7 +5916,8 @@ const tryRefundTalentSkillCooldown = (snapshot: GameSnapshot, cast?: TalentCastC
     return false
   }
   const now = snapshot.elapsedTime
-  if (skill.lastTalentCooldownRefundAt !== undefined && now - skill.lastTalentCooldownRefundAt < TALENT_COOLDOWN_REFUND_SLOT_INTERVAL) {
+  const refundInterval = Math.max(0.2, TALENT_COOLDOWN_REFUND_SLOT_INTERVAL + getMetaTalentRuntimeEffectValue(snapshot, 'cooldown', 'cooldown-refund-interval', 'seconds'))
+  if (skill.lastTalentCooldownRefundAt !== undefined && now - skill.lastTalentCooldownRefundAt < refundInterval) {
     return false
   }
 
@@ -4272,13 +5938,49 @@ const tryRefundTalentSkillCooldown = (snapshot: GameSnapshot, cast?: TalentCastC
     remainingBefore,
     refund,
     remainingAfter: skill.cooldownRemaining,
+    sourceId: 'run_common_04',
+    sourceName: '冷却回声',
+    occurredAt: snapshot.elapsedTime,
   }
   return true
 }
 
 type TalentEnemyStateKey = NonNullable<Enemy['talentStates']> extends Partial<Record<infer Key, unknown>> ? Key : never
 
-const getTalentMechanic = (snapshot: GameSnapshot, key: TalentEnemyStateKey) => getSnapshotRunTalentSummary(snapshot).mechanics[key]
+const RUN_TALENT_MECHANIC_IDS: Partial<Record<TalentEnemyStateKey, string>> = {
+  deathMark: 'run_death_01',
+  executeLine: 'run_death_02',
+  soulBurst: 'run_death_05',
+  bleed: 'run_blood_02',
+  bloodRift: 'run_blood_06',
+  beastCommand: 'run_beast_02',
+  crystalCharge: 'run_crystal_01',
+  crystalOverload: 'run_crystal_05',
+}
+
+const getTalentMechanic = (snapshot: GameSnapshot, key: TalentEnemyStateKey) => {
+  const configured = getSnapshotRunTalentSummary(snapshot).mechanics[key]
+  if (configured) {
+    return configured
+  }
+  const talentId = RUN_TALENT_MECHANIC_IDS[key]
+  if (!talentId || !hasSelectedRunTalent(snapshot, talentId)) {
+    return undefined
+  }
+  const fallback = {
+    deathMark: { active: true as const, durationSeconds: 4, maxStacks: 1, refreshRule: '刷新持续时间', bossScale: 1 },
+    executeLine: { active: true as const, durationSeconds: 4, maxStacks: 1, refreshRule: '低血处刑', bossScale: 0.6 },
+    soulBurst: { active: true as const, durationSeconds: 0, maxStacks: 1, refreshRule: '击杀触发', bossScale: 0 },
+    bleed: { active: true as const, durationSeconds: 4, maxStacks: 5, refreshRule: '最多五层', bossScale: 0.5 },
+    bloodRift: { active: true as const, durationSeconds: 0.2, maxStacks: 1, refreshRule: '满层触发', bossScale: 0.5 },
+    beastCommand: { active: true as const, durationSeconds: 3, maxStacks: 1, refreshRule: '指令', bossScale: 1 },
+    crystalCharge: { active: true as const, durationSeconds: 0, maxStacks: 20, refreshRule: '充能', bossScale: 1 },
+    crystalOverload: { active: true as const, durationSeconds: 4, maxStacks: 1, refreshRule: '过载', bossScale: 1 },
+    vulnerable: { active: true as const, durationSeconds: 4, maxStacks: 1, refreshRule: '易伤', bossScale: 0.6 },
+    armorBreak: { active: true as const, durationSeconds: 5, maxStacks: 3, refreshRule: '破防', bossScale: 0.5 },
+  }
+  return fallback[key]
+}
 
 const applyTalentEnemyState = (
   snapshot: GameSnapshot,
@@ -4291,7 +5993,13 @@ const applyTalentEnemyState = (
     return false
   }
   const maxStacks = Math.max(1, mechanic.maxStacks)
-  const ttl = Math.max(0.1, mechanic.durationSeconds || 0.1)
+  const durationPercent = key === 'deathMark'
+    ? getMetaTalentRuntimeEffectValue(snapshot, 'duration', 'death-mark')
+    : 0
+  const durationSeconds = key === 'deathMark'
+    ? getMetaTalentRuntimeEffectValue(snapshot, 'duration', 'death-mark', 'seconds')
+    : 0
+  const ttl = Math.max(0.1, Math.min(6, (mechanic.durationSeconds || 0.1) * (1 + durationPercent / 100) + durationSeconds))
   const current = enemy.talentStates?.[key]
   enemy.talentStates = {
     ...(enemy.talentStates ?? {}),
@@ -4305,6 +6013,7 @@ const applyTalentEnemyState = (
 }
 
 const applyDirectTalentEnemyState = (
+  snapshot: GameSnapshot,
   enemy: Enemy,
   key: TalentEnemyStateKey,
   ttl: number,
@@ -4312,11 +6021,14 @@ const applyDirectTalentEnemyState = (
   stacks = 1,
   source: string = key,
 ) => {
+  const adjustedTtl = key === 'armorBreak'
+    ? Math.max(0.1, ttl + getMetaTalentRuntimeEffectValue(snapshot, 'duration', 'elite-break', 'seconds'))
+    : ttl
   const current = enemy.talentStates?.[key]
   enemy.talentStates = {
     ...(enemy.talentStates ?? {}),
     [key]: {
-      ttl: Math.max(current?.ttl ?? 0, ttl),
+      ttl: Math.max(current?.ttl ?? 0, adjustedTtl),
       stacks: Math.min(Math.max(1, maxStacks), (current?.stacks ?? 0) + stacks),
       source,
     },
@@ -4328,6 +6040,153 @@ const getTalentCombatState = (snapshot: GameSnapshot) => {
   return snapshot.talentCombatState
 }
 
+const synchronizeSelectedRunTalentFeedbackState = (snapshot: GameSnapshot) => {
+  const selectedFeedbackTalents = [
+    'run_common_04',
+    'run_common_07',
+    'run_common_08',
+    'run_blood_08',
+    'run_beast_03',
+    'run_beast_08',
+    'run_crystal_01',
+    'run_crystal_08',
+  ]
+  if (!selectedFeedbackTalents.some((talentId) => hasSelectedRunTalent(snapshot, talentId))) {
+    return
+  }
+
+  const state = getTalentCombatState(snapshot)
+  if (hasSelectedRunTalent(snapshot, 'run_common_04')) {
+    state.cooldownEcho = { pending: false, refund: 0, ...(state.cooldownEcho ?? {}) }
+  }
+  if (hasSelectedRunTalent(snapshot, 'run_common_07') && !state.lootPremonition) {
+    state.lootPremonition = { pending: true }
+  }
+  if (hasSelectedRunTalent(snapshot, 'run_common_08')) {
+    state.overloadTempo = { kills: 0, ready: false, ...(state.overloadTempo ?? {}) }
+  }
+  if (hasSelectedRunTalent(snapshot, 'run_blood_08')) {
+    state.bloodFeather = {
+      stormHits: 0,
+      stormWindowTtl: 0,
+      stormCooldown: 0,
+      ...(state.bloodFeather ?? {}),
+    }
+  }
+  if (hasSelectedRunTalent(snapshot, 'run_beast_03') || hasSelectedRunTalent(snapshot, 'run_beast_08')) {
+    state.beast = {
+      ...(state.beast ?? {}),
+      ...(hasSelectedRunTalent(snapshot, 'run_beast_03') && state.beast?.protectCooldown === undefined ? { protectCooldown: 0 } : {}),
+      ...(hasSelectedRunTalent(snapshot, 'run_beast_08') && state.beast?.surroundCooldown === undefined ? { surroundCooldown: 0 } : {}),
+    }
+  }
+  if (hasSelectedRunTalent(snapshot, 'run_crystal_01')) {
+    state.crystalCharge = { stacks: 0, ttl: 0, ...(state.crystalCharge ?? {}) }
+  }
+  if (hasSelectedRunTalent(snapshot, 'run_crystal_08')) {
+    state.crystal = { castCount: 0, chainCooldown: 0, ...(state.crystal ?? {}) }
+  }
+}
+
+export const synchronizeRunTalentFeedbackSnapshot = (current: GameSnapshot): GameSnapshot => {
+  const snapshot = cloneSnapshot(current)
+  synchronizeSelectedRunTalentFeedbackState(snapshot)
+  return snapshot
+}
+
+const getTalentSkillDamageReference = (snapshot: GameSnapshot) => Math.max(
+  snapshot.player.attackDamage,
+  ...snapshot.activeSkills.map((skill) => ARCHER_ACTIVE_SKILL_MAP[skill.skillId]?.levels[skill.level - 1]?.damage ?? 0),
+)
+
+const triggerCrystalPickupEcho = (snapshot: GameSnapshot, origin: Vector2) => {
+  if (!hasSelectedRunTalent(snapshot, 'run_crystal_02')) {
+    return
+  }
+  snapshot.enemies.forEach((enemy) => {
+    if (enemy.hp > 0 && distance(enemy.position, origin) <= 60) {
+      damageEnemy(snapshot, enemy, getTalentSkillDamageReference(snapshot) * 0.18, '#67e8f9', getIncomingDirection(origin, enemy.position), getPlayerDamageAttribution('run_crystal_02', '吸晶回响'))
+    }
+  })
+  snapshot.bursts.push(createBurst({ ...origin }, 'rgba(103, 232, 249, ALPHA)', 60))
+}
+
+const createCrystalOverloadPulses = (snapshot: GameSnapshot, enemy: Enemy, projectile: Projectile) => {
+  if (!projectile.talentCrystalOverload || !hasSelectedRunTalent(snapshot, 'run_crystal_06')) {
+    return
+  }
+  const castId = projectile.castId ?? projectile.id
+  const state = getTalentCombatState(snapshot)
+  if (state.crystal?.pulseCastIds?.[castId]) {
+    return
+  }
+  state.crystal = {
+    ...(state.crystal ?? {}),
+    pulseCastIds: { ...(state.crystal?.pulseCastIds ?? {}), [castId]: true },
+  }
+  ;[0.45, 0.9].forEach((delay, index) => {
+    snapshot.skillFields.push({
+      id: `crystal-overload-pulse-${castId}-${index}-${createId()}`,
+      kind: 'storm',
+      owner: 'player',
+      position: { ...enemy.position },
+      ttl: delay + 0.08,
+      radius: Math.max(8, enemy.size * 0.6),
+      damage: projectile.damage * 0.3,
+      tickInterval: 1,
+      tickCooldown: delay,
+      color: '#67e8f9',
+      effect: 'none',
+      effectStrength: 0,
+      projectileCount: 0,
+      spread: 0,
+      projectileSpeed: 0,
+      sourceSkillId: 'run_crystal_06',
+      sourceName: '脉冲共鸣',
+      skillLevel: 1,
+      reactionCooldown: 0,
+      centerStrikeCooldown: 0,
+      enteredEnemyIds: [],
+    })
+  })
+}
+
+const registerCrystalCastChain = (snapshot: GameSnapshot, cast?: TalentCastContext) => {
+  if (!cast || !hasSelectedRunTalent(snapshot, 'run_crystal_08')) {
+    return
+  }
+  const state = getTalentCombatState(snapshot)
+  const count = (state.crystal?.castCount ?? 0) + 1
+  if (count < 3 || (state.crystal?.chainCooldown ?? 0) > 0) {
+    state.crystal = { ...(state.crystal ?? {}), castCount: Math.min(3, count) }
+    return
+  }
+  state.crystal = { ...(state.crystal ?? {}), castCount: 0, chainCooldown: 20 }
+  snapshot.skillFields.push({
+    id: `crystal-field-chain-${createId()}`,
+    kind: 'storm',
+    owner: 'player',
+    position: { ...snapshot.player.position },
+    ttl: 4,
+    radius: 120,
+    damage: 0,
+    tickInterval: 0.4,
+    tickCooldown: 0,
+    color: '#67e8f9',
+    effect: 'slow',
+    effectStrength: 0.18,
+    projectileCount: 0,
+    spread: 0,
+    projectileSpeed: 0,
+    sourceSkillId: 'run_crystal_08',
+    sourceName: '晶域连锁',
+    skillLevel: 1,
+    reactionCooldown: 0,
+    centerStrikeCooldown: 0,
+    enteredEnemyIds: [],
+  })
+}
+
 const addTalentCrystalCharge = (snapshot: GameSnapshot, amount: number) => {
   if (!getTalentMechanic(snapshot, 'crystalCharge')?.active || amount <= 0) {
     return false
@@ -4335,12 +6194,37 @@ const addTalentCrystalCharge = (snapshot: GameSnapshot, amount: number) => {
 
   const state = getTalentCombatState(snapshot)
   const current = state.crystalCharge?.stacks ?? 0
-  const next = Math.min(20, current + amount)
+  const chargeMultiplier = 1 + getMetaTalentRuntimeEffectValue(snapshot, 'charge-efficiency', 'crystal-charge') / 100
+  const next = Math.min(20, current + amount * chargeMultiplier)
   state.crystalCharge = {
     stacks: next,
     ttl: Math.max(state.crystalCharge?.ttl ?? 0, 999),
   }
-  if (next >= 20) {
+  const previousMilestone = state.crystal?.chargeMilestone ?? Math.floor(current / 5)
+  const nextMilestone = Math.floor(next / 5)
+  state.crystal = { ...(state.crystal ?? {}), chargeMilestone: nextMilestone }
+  if (hasSelectedRunTalent(snapshot, 'run_crystal_03') && nextMilestone > previousMilestone) {
+    const target = snapshot.activeSkills
+      .filter((skill) => skill.cooldownRemaining > 0)
+      .sort((left, right) => right.cooldownRemaining - left.cooldownRemaining)[0]
+    if (target) {
+      const refund = Math.min(target.cooldownRemaining, target.cooldownRemaining * 0.03)
+      target.cooldownRemaining -= refund
+      snapshot.lastTalentCooldownRefund = {
+        slotIndex: snapshot.activeSkills.indexOf(target),
+        castId: `crystal-charge-${createId()}`,
+        skillId: target.skillId,
+        baseCooldown: target.cooldownRemaining + refund,
+        remainingBefore: target.cooldownRemaining + refund,
+        refund,
+        remainingAfter: target.cooldownRemaining,
+        sourceId: 'run_crystal_03',
+        sourceName: '冷却导流',
+        occurredAt: snapshot.elapsedTime,
+      }
+    }
+  }
+  if (next >= 20 && hasSelectedRunTalent(snapshot, 'run_crystal_05')) {
     state.crystalCharge = { stacks: 0, ttl: 999 }
     const overload = getTalentMechanic(snapshot, 'crystalOverload')
     state.crystalOverload = {
@@ -4365,11 +6249,17 @@ const addTalentCrystalChargeForSkillHit = (snapshot: GameSnapshot, enemy: Enemy,
 }
 
 const consumeTalentCrystalOverloadForCast = (snapshot: GameSnapshot) => {
+  if (!hasSelectedRunTalent(snapshot, 'run_crystal_05')) {
+    return false
+  }
   const state = getTalentCombatState(snapshot)
   if (!state.crystalOverload || state.crystalOverload.ttl <= 0) {
     return false
   }
-  state.crystalOverload = undefined
+  const stability = Math.max(0, Math.min(1, getMetaTalentRuntimeEffectValue(snapshot, 'pulse-stability', 'overload-pulse') / 100))
+  state.crystalOverload = stability > 0 && Math.random() < stability
+    ? { ...state.crystalOverload, ttl: Math.max(0.1, state.crystalOverload.ttl) }
+    : undefined
   return true
 }
 
@@ -4381,6 +6271,38 @@ const updateTalentCombatState = (snapshot: GameSnapshot, delta: number) => {
   if (state.crystalOverload) {
     const ttl = state.crystalOverload.ttl - delta
     state.crystalOverload = ttl > 0 ? { ...state.crystalOverload, ttl } : undefined
+  }
+  if (state.emergencyDodge) {
+    state.emergencyDodge.cooldown = Math.max(0, state.emergencyDodge.cooldown - delta)
+    if ((snapshot.player.shield ?? 0) <= 0) {
+      state.emergencyDodge.shield = 0
+    }
+  }
+  if (hasSelectedRunTalent(snapshot, 'run_common_05') && snapshot.player.hp / Math.max(1, snapshot.player.maxHp) < 0.3) {
+    const emergency = state.emergencyDodge ?? { shield: 0, cooldown: 0 }
+    if (emergency.cooldown <= 0) {
+      const shield = snapshot.player.maxHp * 0.12
+      snapshot.player.shield = Math.max(snapshot.player.shield ?? 0, shield)
+      state.emergencyDodge = { shield, cooldown: 35 }
+      snapshot.floatingTexts.push(createFloatingText(snapshot.player.position, '危急闪避', '#93c5fd'))
+    }
+  }
+  if (state.eliteInsight) {
+    Object.entries(state.eliteInsight).forEach(([enemyId, insight]) => {
+      state.eliteInsight![enemyId] = { ttl: Math.max(0, insight.ttl - delta) }
+    })
+  }
+  if (state.bloodFeather) {
+    state.bloodFeather.stormWindowTtl = Math.max(0, (state.bloodFeather.stormWindowTtl ?? 0) - delta)
+    state.bloodFeather.stormCooldown = Math.max(0, (state.bloodFeather.stormCooldown ?? 0) - delta)
+    if ((state.bloodFeather.stormWindowTtl ?? 0) <= 0) state.bloodFeather.stormHits = 0
+  }
+  if (state.beast) {
+    state.beast.protectCooldown = Math.max(0, (state.beast.protectCooldown ?? 0) - delta)
+    state.beast.surroundCooldown = Math.max(0, (state.beast.surroundCooldown ?? 0) - delta)
+  }
+  if (state.crystal) {
+    state.crystal.chainCooldown = Math.max(0, (state.crystal.chainCooldown ?? 0) - delta)
   }
 }
 
@@ -4533,15 +6455,21 @@ export const buildPendingReward = (snapshot: GameSnapshot): PendingSkillReward =
   availableNewSkills.forEach((skill) => newSkillChoices.push(createRewardChoice('new-active', skill.id)))
 
   const rewardWeight = (choice: SkillRewardChoice) => {
+    const metaBuildWeight = choice.buildTag === 'general'
+      ? 0
+      : getMetaTalentRuntimeEffectsForSnapshot(snapshot).skillRewardWeightByBuild[choice.buildTag] ?? 0
+    const applyMetaWeight = (weight: number) => weight * (1 + Math.max(0, metaBuildWeight) / 100)
     if (choice.mode === 'upgrade-active') {
-      return choice.buildTag === preferredBuildTag ? 5 : 3
+      const base = applyMetaWeight(choice.buildTag === preferredBuildTag ? 5 : 3)
+      return base * (hasSelectedRunTalent(snapshot, 'run_common_03') ? 1.3 : 1)
     }
 
     if (choice.mode === 'new-active') {
-      return choice.buildTag === preferredBuildTag ? 4 : 1
+      const base = applyMetaWeight(choice.buildTag === preferredBuildTag ? 4 : 1)
+      return base * (hasSelectedRunTalent(snapshot, 'run_common_01') && choice.buildTag === preferredBuildTag ? 1.25 : 1)
     }
 
-    return preferredBuildTag === 'pierce' ? 2 : 1
+    return applyMetaWeight(preferredBuildTag === 'pierce' ? 2 : 1)
   }
 
   const forcedNewSkill = snapshot.activeSkills.length < PLAYER_ACTIVE_SKILL_SLOTS && newSkillChoices.length > 0
@@ -4566,15 +6494,22 @@ export const buildPendingReward = (snapshot: GameSnapshot): PendingSkillReward =
   ]
 
   return {
-    choices: chosenChoices.slice(0, REWARD_CHOICE_COUNT),
+    poolKind: 'skill',
+    choices: chosenChoices.slice(0, REWARD_CHOICE_COUNT).map((choice) => ({
+      ...choice,
+      talentSourceIds: [
+        ...(choice.mode === 'new-active' && choice.buildTag === preferredBuildTag && hasSelectedRunTalent(snapshot, 'run_common_01') ? ['run_common_01'] : []),
+        ...(choice.mode === 'upgrade-active' && hasSelectedRunTalent(snapshot, 'run_common_03') ? ['run_common_03'] : []),
+      ],
+    })),
     source: 'level-clear',
   }
 }
 
 const createDefaultActiveSkills = (): ActiveSkillInstance[] => {
   return [
-    { skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0.5 },
-    { skillId: 'fan-burst', level: 1, cooldownRemaining: 1.4 },
+    { skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0.5, cooldownDuration: 0.5 },
+    { skillId: 'fan-burst', level: 1, cooldownRemaining: 1.4, cooldownDuration: 1.4 },
   ]
 }
 
@@ -4585,15 +6520,26 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     getDerivedPlayerStats(previous.skillAllocations, previous.fixedPassiveLevel, previous.equippedWeaponId, previous.equippedItems).maxHp,
     previous.player.hp + HEALTH_PACK_HEAL,
   )
-  const startPosition = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }
-  const battlefield = createBattlefieldState(getBattlefieldMode('running', nextLevel), nextLevel, startPosition, previous.battlefield.seed)
-  const levelObstacles = getBattlefieldObstacles(battlefield, nextLevel)
+  const preserveTerrain = shouldPreserveFloorTerrain(previous, nextLevel)
+  const startPosition = preserveTerrain
+    ? { ...previous.player.position }
+    : { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }
+  const battlefield = preserveTerrain
+    ? resetPreservedFloorBattlefieldState(previous.battlefield)
+    : createBattlefieldState(getBattlefieldMode('running', nextLevel), nextLevel, startPosition, previous.battlefield.seed)
+  const levelObstacles = preserveTerrain
+    ? previous.mapObstacles
+    : getBattlefieldObstacles(battlefield, nextLevel)
+  const levelDecorations = preserveTerrain
+    ? previous.mapDecorations
+    : getBattlefieldDecorations(battlefield, nextLevel, levelObstacles)
   const previousForBounds = { ...previous, level: nextLevel, battlefield, mapObstacles: levelObstacles }
 
   return {
     ...createBaseSnapshot('running'),
     phase: 'running',
     phaseBeforePause: 'running',
+    pauseMenuOpen: false,
     professionId: previous.professionId,
     currency: previous.currency,
     earnedGold: 0,
@@ -4616,6 +6562,7 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     selectedDifficulty: normalizeCampaignDifficulty(previous.selectedCampaignDifficulty ?? previous.selectedDifficulty),
     unlockedTalentIds: [...previous.unlockedTalentIds],
     unlockedMetaTalentIds: [...(previous.unlockedMetaTalentIds ?? previous.unlockedTalentIds)],
+    metaTalentRanks: { ...(previous.metaTalentRanks ?? {}) },
     talentUnlockRecords: previous.talentUnlockRecords.map((record) => ({ ...record })),
     unlockedWeapons: [...previous.unlockedWeapons],
     equippedWeaponId: previous.equippedWeaponId,
@@ -4642,12 +6589,15 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     levelTargetKills: targetKills,
     remainingToSpawn: targetKills,
     eliteSpawnedThisLevel: false,
+    bossDefeatedThisLevel: false,
     spawnCooldown: 0.25,
     levelTimer: DUNGEON_ENTRY_GRACE,
     elapsedTime: previous.elapsedTime,
     skillPoints: 0,
     skillAllocations: { ...previous.skillAllocations },
     contractBoons: { ...previous.contractBoons },
+    combatDamageLog: previous.combatDamageLog.map((event) => ({ ...event })),
+    talentCombatState: cloneSnapshot(previous).talentCombatState,
     targetPriority: previous.targetPriority,
     fixedPassiveLevel: previous.fixedPassiveLevel,
     activeSkills: previous.activeSkills.map((skill) => ({ ...skill, cooldownRemaining: Math.min(skill.cooldownRemaining, 1) })),
@@ -4670,10 +6620,12 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
       lastOfferedCandidateIds: [...(previous.runTalentState?.lastOfferedCandidateIds ?? previous.inRunRewardHistory.lastOfferedChoiceIds)],
     },
     pendingSkillReward: null,
+    floorTransition: undefined,
     levelClearConfirmed: false,
-    aimPoint: { x: startPosition.x + WORLD_WIDTH * 0.18, y: startPosition.y },
+    aimPoint: preserveTerrain ? { ...previous.aimPoint } : { x: startPosition.x + WORLD_WIDTH * 0.18, y: startPosition.y },
     battlefield,
     mapObstacles: levelObstacles,
+    mapDecorations: levelDecorations,
     beastCompanions: previous.beastCompanions.map((beast, index) => ({
       ...beast,
       position: keepInsideCombatArea(previousForBounds, {
@@ -4744,28 +6696,60 @@ const updatePlayerMovement = (snapshot: GameSnapshot, input: InputState, delta: 
 
 const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
   snapshot.enemies.forEach((enemy) => {
+    if (enemy.hp <= 0) {
+      return
+    }
+
     const previousPosition = { ...enemy.position }
     const boundedByRoom = snapshot.battlefield.mode === 'village'
     updateTalentEnemyStates(enemy, delta)
+    if (hasSelectedRunTalent(snapshot, 'run_common_06') && enemy.kind !== 'boss' && (enemy.grantsEliteReward || enemy.kind === 'elite')) {
+      const state = getTalentCombatState(snapshot)
+      if (!state.eliteInsight || !(enemy.id in state.eliteInsight)) {
+        state.eliteInsight = { ...(state.eliteInsight ?? {}), [enemy.id]: { ttl: 5 } }
+      }
+    }
     if (enemy.burnTtl > 0) {
-      enemy.hp -= enemy.burnDamagePerSecond * delta
+      damageEnemy(
+        snapshot,
+        enemy,
+        enemy.burnDamagePerSecond * delta,
+        '#fb923c',
+        undefined,
+        getPlayerDamageAttribution(enemy.burnSource?.sourceId ?? 'burn', enemy.burnSource?.sourceName ?? '灼烧'),
+      )
       enemy.burnTtl = Math.max(0, enemy.burnTtl - delta)
       enemy.burnDamagePerSecond = enemy.burnTtl > 0 ? enemy.burnDamagePerSecond : 0
     }
     if ((enemy.darkTtl ?? 0) > 0) {
-      enemy.hp -= Math.max(0.4, enemy.maxHp * (enemy.darkDamageMultiplier ?? 0.08)) * delta
+      damageEnemy(
+        snapshot,
+        enemy,
+        Math.max(0.4, enemy.maxHp * (enemy.darkDamageMultiplier ?? 0.08)) * delta,
+        '#c084fc',
+        undefined,
+        getPlayerDamageAttribution(enemy.darkSource?.sourceId ?? 'dark-erosion', enemy.darkSource?.sourceName ?? '暗蚀'),
+      )
       enemy.darkTtl = Math.max(0, (enemy.darkTtl ?? 0) - delta)
       enemy.darkDamageMultiplier = (enemy.darkTtl ?? 0) > 0 ? enemy.darkDamageMultiplier : 0
     }
     if (enemy.bleedStacks?.length) {
       enemy.bleedStacks = enemy.bleedStacks
         .map((stack) => {
-          const bleedingDamage = scaleTalentDamageForTarget(snapshot, enemy, stack.damagePerSecond, 'bleeding')
-          enemy.hp -= bleedingDamage * delta
+          const bleedingDamage = stack.damagePerSecond
+          damageEnemy(
+            snapshot,
+            enemy,
+            bleedingDamage * delta,
+            '#fb7185',
+            undefined,
+            getPlayerDamageAttribution(stack.sourceId ?? 'bleed', stack.sourceName ?? '流血'),
+          )
           return { ...stack, ttl: stack.ttl - delta }
         })
         .filter((stack) => stack.ttl > 0)
     }
+    tryResolveDungeonWardenHealthGate(snapshot, enemy)
     const tauntingBeast = snapshot.beastCompanions
       .filter((beast) => beast.reviveTimer <= 0 && (beast.tauntTimer ?? 0) > 0)
       .filter((beast) => distance(beast.position, enemy.position) <= (beast.tauntRadius ?? 0))
@@ -4777,6 +6761,20 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     }
     const direction = normalize(offset)
     const gap = distance(targetPosition, enemy.position)
+    if (!enemy.steeringSide) {
+      enemy.steeringSide = enemy.id.charCodeAt(enemy.id.length - 1) % 2 === 0 ? 1 : -1
+    }
+    const movementTargetPosition = isDungeonWardenBoss(enemy) || enemy.kind !== 'boss'
+      ? getEnemyObstacleDetourTarget(enemy.position, targetPosition, enemy.size * 0.55, snapshot.mapObstacles, enemy.steeringSide ?? 0)
+      : targetPosition
+    const hasDetourTarget = movementTargetPosition !== targetPosition
+    const enemyAttackLineBlocked = enemy.kind !== 'boss' && snapshot.mapObstacles.some((obstacle) => (
+      segmentIntersectsObstacle(enemy.position, targetPosition, obstacle, enemy.size * 0.55 + 6)
+    ))
+    const movementDirection = normalize({
+      x: movementTargetPosition.x - enemy.position.x,
+      y: movementTargetPosition.y - enemy.position.y,
+    })
     const packHaste = enemy.skillTrait === 'pack-haste' && snapshot.enemies.some((other) => other.id !== enemy.id && distance(other.position, enemy.position) <= 86)
     const drumHaste = snapshot.enemies.some((other) => (
       other.id !== enemy.id &&
@@ -4785,8 +6783,44 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     ))
     const traitMultiplier = (packHaste ? 1.12 : 1) * (drumHaste ? 1.08 : 1) * (enemy.movementTrait === 'flanker' ? 1.04 : 1)
     const slowedSpeed = getEnemyEffectiveMoveSpeed(enemy, traitMultiplier, enemy.slowTtl > 0 ? 1 - enemy.slowFactor : 1)
+    const basicMeleeRange = isDungeonSkeletonWarriorEnemy(enemy)
+      ? getSkeletonWarriorMeleeRange(enemy, snapshot.player.size)
+      : getBasicMeleeAttackRange(enemy, snapshot.player.size)
     let movement = { x: 0, y: 0 }
 
+    enemy.skeletonWarriorDefenseCooldown = Math.max(0, (enemy.skeletonWarriorDefenseCooldown ?? 0) - delta)
+    enemy.skeletonWarriorDefenseTimer = Math.max(0, (enemy.skeletonWarriorDefenseTimer ?? 0) - delta)
+    if (isSkeletonWarriorDefenseTarget(enemy) && (enemy.skeletonWarriorDefenseTimer ?? 0) > 0) {
+      enemy.blockCooldown = Math.max(0, (enemy.blockCooldown ?? 0) - delta)
+      enemy.blockTimer = Math.max(0, (enemy.blockTimer ?? 0) - delta)
+      enemy.steeringTimer = Math.max(0, (enemy.steeringTimer ?? 0) - delta)
+      enemy.stunTimer = Math.max(0, (enemy.stunTimer ?? 0) - delta)
+      enemy.slowTtl = Math.max(0, enemy.slowTtl - delta)
+      if (enemy.slowTtl <= 0) {
+        enemy.slowFactor = 0
+      }
+      enemy.hitFlash = Math.max(0, enemy.hitFlash - delta)
+      lockSkeletonWarriorDefenseState(enemy)
+      const defenseMovement = {
+        x: movementDirection.x * slowedSpeed * delta * 0.4,
+        y: movementDirection.y * slowedSpeed * delta * 0.4,
+      }
+      const nextPosition = moveEnemyWithSteering(
+        enemy.position,
+        enemy.size * 0.5,
+        defenseMovement,
+        movementTargetPosition,
+        snapshot.mapObstacles,
+        enemy.steeringSide ?? 0,
+        boundedByRoom,
+      )
+      enemy.position = keepInsideCombatArea(snapshot, nextPosition, enemy.size * 0.55)
+      enemy.lastPosition = { ...enemy.position }
+      return
+    }
+    if (isSkeletonWarriorDefenseTarget(enemy)) {
+      clearSkeletonWarriorDefenseLock(enemy)
+    }
     enemy.behaviorCooldown = Math.max(0, enemy.behaviorCooldown - delta)
     enemy.behaviorTimer = Math.max(0, enemy.behaviorTimer - delta)
     enemy.blockCooldown = Math.max(0, (enemy.blockCooldown ?? 0) - delta)
@@ -4795,6 +6829,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     enemy.stunTimer = Math.max(0, (enemy.stunTimer ?? 0) - delta)
     enemy.affixCooldown = Math.max(0, (enemy.affixCooldown ?? 0) - delta)
     enemy.meleeAttackImpactDelay = Math.max(0, (enemy.meleeAttackImpactDelay ?? 0) - delta)
+    updateDungeonWardenState(snapshot, enemy, delta)
     const bossTransitionLocked = updateBossPhaseTransition(snapshot, enemy, delta)
     if (canUseBasicMeleeAttack(enemy)) {
       enemy.attackCooldown = Math.max(0, enemy.attackCooldown - delta)
@@ -4810,10 +6845,9 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       enemy.meleeAttackOrigin = enemy.meleeAttackOrigin ?? { ...enemy.position }
       enemy.meleeAttackDirection = enemy.meleeAttackDirection ?? normalize(enemy.facingDirection ?? enemy.behaviorDirection ?? direction)
     }
-    if (!enemy.steeringSide) {
-      enemy.steeringSide = enemy.id.charCodeAt(enemy.id.length - 1) % 2 === 0 ? 1 : -1
-    }
-    let basicMeleeLocked = canUseBasicMeleeAttack(enemy) && ((enemy.meleeAttackWindup ?? 0) > 0 || enemy.meleeAttackReady)
+    let basicMeleeLocked = canUseBasicMeleeAttack(enemy) &&
+      ((enemy.meleeAttackWindup ?? 0) > 0 || enemy.meleeAttackReady) &&
+      !isDungeonWardenP1ContemptActive(enemy)
     if (basicMeleeLocked) {
       enemy.facingDirection = enemy.meleeAttackDirection ?? enemy.facingDirection ?? direction
       enemy.behaviorDirection = enemy.meleeAttackDirection ?? enemy.behaviorDirection
@@ -4823,11 +6857,11 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
 
     const isStunned = (enemy.stunTimer ?? 0) > 0
     let rangedAttackLocked = !isStunned && updateRangedEnemyAttackWindup(snapshot, enemy, delta)
-    if (!isStunned && !rangedAttackLocked && isSkeletonArcherEnemy(enemy) && enemy.attackCooldown <= 0 && gap <= 430) {
+    if (!isStunned && !enemyAttackLineBlocked && !rangedAttackLocked && isSkeletonArcherEnemy(enemy) && enemy.attackCooldown <= 0 && gap <= 430) {
       beginRangedEnemyAttackWindup(enemy, snapshot.player.position)
       rangedAttackLocked = true
     }
-    const breathLocked = !isStunned && enemy.kind !== 'boss' && canUseFireBreath(enemy) && updateHellhoundBreath(snapshot, enemy, delta, direction, gap)
+    const breathLocked = !isStunned && enemy.kind !== 'boss' && canUseFireBreath(enemy) && updateHellhoundBreath(snapshot, enemy, delta, direction, gap, !enemyAttackLineBlocked)
 
     if (isStunned || bossTransitionLocked || breathLocked || rangedAttackLocked) {
       movement = { x: 0, y: 0 }
@@ -4863,9 +6897,6 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       enemy.affixCooldown = 2.8
     }
 
-    const basicMeleeRange = isDungeonSkeletonWarriorEnemy(enemy)
-      ? getSkeletonWarriorMeleeRange(enemy, snapshot.player.size)
-      : getBasicMeleeAttackRange(enemy, snapshot.player.size)
     if (canUseBasicMeleeAttack(enemy) && isBasicMeleeImpactReady(enemy) && gap > basicMeleeRange + 24) {
       enemy.meleeAttackReady = false
       enemy.meleeAttackImpactDelay = 0
@@ -4886,12 +6917,23 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       const attackDirection = direction.x === 0 && direction.y === 0
         ? normalize(enemy.facingDirection ?? enemy.behaviorDirection ?? { x: -1, y: 0 })
         : direction
-      const attackOrigin = isDungeonSkeletonWarriorEnemy(enemy)
+      const canMoveAttack = isDungeonWardenP1ContemptActive(enemy)
+      const attackOrigin = canMoveAttack
+        ? { ...enemy.position }
+        : isDungeonSkeletonWarriorEnemy(enemy)
         ? getSkeletonWarriorAttackOrigin(enemy, targetPosition, attackDirection)
         : getBasicMeleeAttackOrigin(enemy, targetPosition, attackDirection, snapshot.player.size)
-      enemy.position = keepInsideCombatArea(snapshot, attackOrigin, enemy.size * 0.55)
+      if (!canMoveAttack) {
+        enemy.position = keepInsideCombatArea(snapshot, attackOrigin, enemy.size * 0.55)
+      }
       const windupDuration = isDungeonSkeletonWarriorEnemy(enemy) ? SKELETON_WARRIOR_MELEE_WINDUP : BASIC_MELEE_ATTACK_WINDUP
       const impactDelay = isDungeonSkeletonWarriorEnemy(enemy) ? SKELETON_WARRIOR_MELEE_IMPACT_DELAY : BASIC_MELEE_ATTACK_IMPACT_DELAY
+      const isWardenCrit = isDungeonWardenBoss(enemy) && Math.random() < getDungeonWardenCritChance(enemy, snapshot.player)
+      if (isDungeonWardenBoss(enemy)) {
+        enemy.wardenLastAttackCrit = isWardenCrit
+        enemy.wardenActionSlot = isWardenCrit ? 'skill_1' : undefined
+        enemy.wardenActionTimer = windupDuration + impactDelay
+      }
       enemy.meleeAttackWindup = windupDuration
       enemy.meleeAttackReady = false
       enemy.meleeAttackImpactDelay = 0
@@ -4902,8 +6944,10 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       enemy.behaviorDirection = attackDirection
       enemy.stuckTimer = 0
       enemy.steeringTimer = 0
-      basicMeleeLocked = true
-      snapshot.message = isDungeonSkeletonWarriorEnemy(enemy) ? '骷髅战士举剑准备近身劈砍' : '近战怪停步准备挥击'
+      basicMeleeLocked = !canMoveAttack
+      snapshot.message = isDungeonWardenBoss(enemy)
+        ? isWardenCrit ? '典狱长准备暴击攻击' : canMoveAttack ? '典狱长轻视地边移动边挥击' : '典狱长准备普通攻击'
+        : isDungeonSkeletonWarriorEnemy(enemy) ? '骷髅战士举剑准备近身劈砍' : '近战怪停步准备挥击'
     }
 
     if (
@@ -4916,7 +6960,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       enemy.behaviorTimer = Math.max(enemy.behaviorTimer, SKELETON_WARRIOR_WHIRLWIND_DURATION)
       enemy.attackCooldown = SKELETON_WARRIOR_WHIRLWIND_COOLDOWN
       if (snapshot.player.dashTimer <= 0 && snapshot.player.hurtCooldown <= 0) {
-        snapshot.player.hp -= SKELETON_WARRIOR_WHIRLWIND_DAMAGE
+        damagePlayer(snapshot, SKELETON_WARRIOR_WHIRLWIND_DAMAGE, getEnemyDamageAttribution(enemy, 'skeleton-warrior-whirlwind', '旋风斩'))
         snapshot.player.hurtCooldown = PLAYER_HURT_COOLDOWN
       }
       snapshot.message = '骷髅战士发动旋风斩，离开它的近身范围'
@@ -4938,17 +6982,27 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
     })
     if (isStunned || bossTransitionLocked || rangedAttackLocked || (enemy.breathTimer ?? 0) > 0 || hasActiveBreathVisual || basicMeleeLocked) {
       movement = { x: 0, y: 0 }
-    } else if (enemy.kind === 'charger' || canUseSkeletonKnightSkill(enemy) || enemy.skillTrait === 'wall-charge') {
+    } else if (isDungeonWardenBoss(enemy)) {
+      const wardenCollisionStopDistance = getBasicMeleeBaseRange(enemy, snapshot.player.size)
+      const remainingSafeDistance = distance(targetPosition, enemy.position) - wardenCollisionStopDistance
+      if (remainingSafeDistance > 0.5) {
+        const step = Math.min(slowedSpeed * delta, remainingSafeDistance)
+        movement = {
+          x: movementDirection.x * step,
+          y: movementDirection.y * step,
+        }
+      }
+    } else if ((enemy.kind === 'charger' && !isDungeonHellhoundEnemy(enemy)) || canUseSkeletonKnightSkill(enemy) || canUseWallChargeSkill(enemy)) {
       if (enemy.behaviorTimer > 0) {
         const chargeSpeed = getEnemyChargeMoveSpeed(enemy, slowedSpeed)
         movement = {
           x: enemy.behaviorDirection.x * chargeSpeed * delta,
           y: enemy.behaviorDirection.y * chargeSpeed * delta,
         }
-      } else if (enemy.behaviorCooldown <= 0 && gap < (canUseSkeletonKnightSkill(enemy) || enemy.skillTrait === 'wall-charge' ? 360 : 290)) {
+      } else if (!hasDetourTarget && enemy.behaviorCooldown <= 0 && gap < (canUseSkeletonKnightSkill(enemy) || canUseWallChargeSkill(enemy) ? 360 : 290)) {
         enemy.behaviorDirection = direction
-        enemy.behaviorTimer = canUseSkeletonKnightSkill(enemy) || enemy.skillTrait === 'wall-charge' ? 0.42 : 0.34
-        enemy.behaviorCooldown = canUseSkeletonKnightSkill(enemy) || enemy.skillTrait === 'wall-charge' ? 3.1 : 1.8
+        enemy.behaviorTimer = canUseSkeletonKnightSkill(enemy) || canUseWallChargeSkill(enemy) ? 0.42 : 0.34
+        enemy.behaviorCooldown = canUseSkeletonKnightSkill(enemy) || canUseWallChargeSkill(enemy) ? 3.1 : 1.8
         enemy.facingDirection = direction
         if (canUseSkeletonKnightSkill(enemy)) {
           snapshot.message = '骷髅骑士开始冲锋，被撞到会眩晕'
@@ -4966,23 +7020,28 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
             range: 96,
           })
         }
-        snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(251, 113, 133, ALPHA)', canUseSkeletonKnightSkill(enemy) || enemy.skillTrait === 'wall-charge' ? 22 : 14))
+        snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(251, 113, 133, ALPHA)', canUseSkeletonKnightSkill(enemy) || canUseWallChargeSkill(enemy) ? 22 : 14))
       } else {
         movement = {
-          x: direction.x * slowedSpeed * delta * (canUseSkeletonKnightSkill(enemy) || enemy.skillTrait === 'wall-charge' ? 0.72 : 0.58),
-          y: direction.y * slowedSpeed * delta * (canUseSkeletonKnightSkill(enemy) || enemy.skillTrait === 'wall-charge' ? 0.72 : 0.58),
+          x: movementDirection.x * slowedSpeed * delta * (canUseSkeletonKnightSkill(enemy) || canUseWallChargeSkill(enemy) ? 0.72 : 0.58),
+          y: movementDirection.y * slowedSpeed * delta * (canUseSkeletonKnightSkill(enemy) || canUseWallChargeSkill(enemy) ? 0.72 : 0.58),
         }
       }
-    } else if (enemy.kind === 'melee' || enemy.kind === 'splitter' || enemy.kind === 'bomber') {
+    } else if (enemy.kind === 'melee' || enemy.kind === 'splitter' || enemy.kind === 'bomber' || isDungeonHellhoundEnemy(enemy)) {
       movement = {
-        x: direction.x * slowedSpeed * delta,
-        y: direction.y * slowedSpeed * delta,
+        x: movementDirection.x * slowedSpeed * delta,
+        y: movementDirection.y * slowedSpeed * delta,
       }
     } else {
-      if (gap > 260) {
+      if (hasDetourTarget) {
         movement = {
-          x: direction.x * slowedSpeed * delta * 0.8,
-          y: direction.y * slowedSpeed * delta * 0.8,
+          x: movementDirection.x * slowedSpeed * delta * 0.82,
+          y: movementDirection.y * slowedSpeed * delta * 0.82,
+        }
+      } else if (gap > 260) {
+        movement = {
+          x: movementDirection.x * slowedSpeed * delta * 0.8,
+          y: movementDirection.y * slowedSpeed * delta * 0.8,
         }
       } else if (gap < 170) {
         movement = {
@@ -5004,7 +7063,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       enemy.position,
       enemy.size * 0.5,
       movement,
-      targetPosition,
+      movementTargetPosition,
       snapshot.mapObstacles,
       enemy.steeringSide ?? 0,
       boundedByRoom,
@@ -5021,17 +7080,17 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
         enemy.stuckTimer = Math.max(0, enemy.stuckTimer - delta * 2)
       }
 
-      if (enemy.stuckTimer > 0.35) {
+      if (enemy.stuckTimer > 0.35 && (!isDungeonWardenBoss(enemy) || hasDetourTarget)) {
         const side = enemy.steeringSide ?? (enemy.id.charCodeAt(0) % 2 === 0 ? 1 : -1)
         enemy.steeringTimer = Math.max(enemy.steeringTimer ?? 0, 0.9)
         nextPosition = moveEnemyWithSteering(
           enemy.position,
           enemy.size * 0.5,
           {
-            x: -direction.y * slowedSpeed * delta * side,
-            y: direction.x * slowedSpeed * delta * side,
+            x: -movementDirection.y * slowedSpeed * delta * side,
+            y: movementDirection.x * slowedSpeed * delta * side,
           },
-          targetPosition,
+          movementTargetPosition,
           snapshot.mapObstacles,
           side,
           boundedByRoom,
@@ -5039,7 +7098,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
         enemy.stuckTimer = Math.max(0, enemy.stuckTimer - delta)
       }
 
-      if (enemy.stuckTimer > 1.4 && gap > 120) {
+      if (!isDungeonWardenBoss(enemy) && enemy.stuckTimer > 1.4 && gap > 120) {
         enemy.steeringSide = -(enemy.steeringSide ?? 1)
         enemy.steeringTimer = 1.2
         const pressureDirection = rotate(direction, enemy.id.charCodeAt(1) % 2 === 0 ? 0.9 : -0.9)
@@ -5056,7 +7115,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       }
     }
 
-    enemy.position = keepInsideCombatArea(snapshot, nextPosition, enemy.size * 0.55)
+    enemy.position = keepInsideCombatArea(snapshot, nextPosition, enemy.size * 0.55, enemy.kind === 'boss')
     const walkDistance = distance(previousPosition, enemy.position)
     if (walkDistance > 0.08) {
       enemy.walkTimer = (enemy.walkTimer ?? 0) + Math.min(0.42, walkDistance / Math.max(1, enemy.size)) * 10
@@ -5083,9 +7142,10 @@ const triggerAutoAttack = (snapshot: GameSnapshot) => {
   }
 
   const bossTarget = snapshot.enemies
-    .filter((enemy) => enemy.kind === 'boss')
+    .filter((enemy) => enemy.hp > 0 && enemy.kind === 'boss')
     .sort((a, b) => distance(a.position, snapshot.player.position) - distance(b.position, snapshot.player.position))[0]
   const target = bossTarget ?? snapshot.enemies
+    .filter((enemy) => enemy.hp > 0)
     .sort((a, b) => distance(a.position, snapshot.player.position) - distance(b.position, snapshot.player.position))[0]
 
   if (!target || distance(target.position, snapshot.player.position) > snapshot.player.attackRange) {
@@ -5110,6 +7170,7 @@ const triggerAutoAttack = (snapshot: GameSnapshot) => {
     getPlayerArrowCriticalChance(snapshot),
   )
   snapshot.projectiles.push(projectile)
+  snapshot.lastBasicAttackId = projectile.id
   snapshot.player.attackCooldown = snapshot.player.attackInterval
 }
 
@@ -5118,7 +7179,16 @@ const resolveSkillCast = (snapshot: GameSnapshot, skillInstance: ActiveSkillInst
   const direction = getAimDirection(snapshot)
   const beastKind = BEAST_SKILL_KIND[definition.id]
   const modifiers = getSkillModifiers(snapshot, definition.id, definition.buildTag)
-  const baseCooldown = config.cooldown * getSkillCooldownMultiplier(snapshot, definition.buildTag) * getSkillCooldownModifier(modifiers)
+  const metaBeastCommandMultiplier = beastKind
+    ? 1 + getMetaTalentRuntimeEffectValue(snapshot, 'command-cooldown', 'beast-command') / 100
+    : 1
+  const metaBeastSurroundOffset = definition.id === 'god-hunt'
+    ? getMetaTalentRuntimeEffectValue(snapshot, 'cooldown', 'beast-surround', 'seconds')
+    : 0
+  const baseCooldown = Math.max(
+    0.2,
+    config.cooldown * getSkillCooldownMultiplier(snapshot, definition.buildTag) * getSkillCooldownModifier(modifiers) * metaBeastCommandMultiplier + metaBeastSurroundOffset,
+  )
   const cast = createTalentCastContext(snapshot, skillInstance, slotIndex, baseCooldown)
   skillInstance.castCount = (skillInstance.castCount ?? 0) + 1
 
@@ -5189,6 +7259,8 @@ const resolveSkillCast = (snapshot: GameSnapshot, skillInstance: ActiveSkillInst
     summonBeastKingSetReinforcement(snapshot, skillInstance.level, definition.id, slotIndex)
     snapshot.bursts.push(createBurst({ ...snapshot.player.position }, 'rgba(157, 213, 172, ALPHA)', beastKind === 'pack' ? 34 : 22))
     skillInstance.cooldownRemaining = baseCooldown
+    skillInstance.cooldownDuration = baseCooldown
+    registerCrystalCastChain(snapshot, cast)
     consumeRouteObjectiveSkillBoost(snapshot)
     return
   }
@@ -5236,6 +7308,8 @@ const resolveSkillCast = (snapshot: GameSnapshot, skillInstance: ActiveSkillInst
   snapshot.bursts.push(createBurst({ ...snapshot.player.position }, 'rgba(251, 191, 36, ALPHA)', 10))
   summonBeastKingSetReinforcement(snapshot, skillInstance.level, definition.id, slotIndex)
   skillInstance.cooldownRemaining = baseCooldown
+  skillInstance.cooldownDuration = baseCooldown
+  registerCrystalCastChain(snapshot, cast)
   consumeRouteObjectiveSkillBoost(snapshot)
 }
 
@@ -5246,6 +7320,15 @@ const updateActiveSkills = (snapshot: GameSnapshot, delta: number) => {
 }
 
 const updateBeastCompanions = (snapshot: GameSnapshot, delta: number) => {
+  const state = getTalentCombatState(snapshot)
+  if (hasSelectedRunTalent(snapshot, 'run_beast_05') && snapshot.contractLevel >= 5) {
+    const leader = snapshot.beastCompanions.find((beast) => beast.id === state.beast?.leaderBeastId && beast.reviveTimer <= 0)
+      ?? snapshot.beastCompanions.find((beast) => beast.reviveTimer <= 0)
+    if (leader) {
+      leader.isAlpha = true
+      state.beast = { ...(state.beast ?? {}), leaderBeastId: leader.id }
+    }
+  }
   snapshot.beastCompanions.forEach((beast, index) => {
     beast.durationTimer = Math.max(0, (beast.durationTimer ?? BEAST_BASE_DURATION) - delta)
     beast.attackCooldown = Math.max(0, beast.attackCooldown - delta)
@@ -5259,13 +7342,15 @@ const updateBeastCompanions = (snapshot: GameSnapshot, delta: number) => {
       const shieldAmount = snapshot.player.maxHp * 0.08
       snapshot.player.hp = Math.min(snapshot.player.maxHp, snapshot.player.hp + shieldAmount)
       snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, 0.32)
-      beast.shieldPulseCooldown = 5
+      const protectCooldownMultiplier = 1 + getMetaTalentRuntimeEffectValue(snapshot, 'protect-cooldown', 'beast-protect') / 100
+      beast.shieldPulseCooldown = Math.max(0.3, 5 * protectCooldownMultiplier)
       snapshot.floatingTexts.push(createFloatingText(snapshot.player.position, '灵鹿护盾', '#f7e8bf'))
       snapshot.bursts.push(createBurst({ ...snapshot.player.position }, 'rgba(247, 232, 191, ALPHA)', 32))
     }
     const beastAuraRadius = 120 * getTalentRadiusMultiplier(snapshot, 'beastAuraRadius')
+    const auraEffectMultiplier = (1 + getMetaTalentRuntimeEffectValue(snapshot, 'aura-effect', 'leader-beast') / 100) * (hasSelectedRunTalent(snapshot, 'run_beast_05') ? 1.08 : 1)
     if (beast.isAlpha && beast.kind === 'wolf' && beast.reviveTimer <= 0 && distance(beast.position, snapshot.player.position) <= beastAuraRadius) {
-      snapshot.player.attackCooldown = Math.min(snapshot.player.attackCooldown, snapshot.player.attackInterval * 0.88)
+      snapshot.player.attackCooldown = Math.min(snapshot.player.attackCooldown, snapshot.player.attackInterval * Math.max(0.1, 1 - (1 - 0.88) * auraEffectMultiplier))
       snapshot.enemies.forEach((enemy) => {
         if (enemy.hp > 0 && distance(enemy.position, beast.position) <= 112) {
           enemy.slowTtl = Math.max(enemy.slowTtl, 0.35)
@@ -5274,7 +7359,7 @@ const updateBeastCompanions = (snapshot: GameSnapshot, delta: number) => {
       })
     }
     if (beast.isAlpha && beast.kind === 'hawk' && beast.reviveTimer <= 0 && distance(beast.position, snapshot.player.position) <= beastAuraRadius) {
-      snapshot.player.attackCooldown = Math.min(snapshot.player.attackCooldown, snapshot.player.attackInterval * 0.82)
+      snapshot.player.attackCooldown = Math.min(snapshot.player.attackCooldown, snapshot.player.attackInterval * Math.max(0.1, 1 - (1 - 0.82) * auraEffectMultiplier))
     }
 
     if (beast.reviveTimer > 0) {
@@ -5283,6 +7368,11 @@ const updateBeastCompanions = (snapshot: GameSnapshot, delta: number) => {
         beast.hp = beast.maxHp
         beast.position = createBeastSpawnPoint(snapshot, index, Math.max(1, snapshot.beastCompanions.length))
         beast.commandPoint = { ...snapshot.player.position }
+        const reviveShield = getMetaTalentRuntimeEffectValue(snapshot, 'shield', 'player-max-hp') / 100
+        if (reviveShield > 0) {
+          snapshot.player.hp = Math.min(snapshot.player.maxHp, snapshot.player.hp + snapshot.player.maxHp * reviveShield)
+          snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, 0.32)
+        }
         snapshot.floatingTexts.push(createFloatingText(beast.position, `${BEAST_STATS[beast.kind].label}归队`, beast.tint))
         snapshot.bursts.push(createBurst({ ...beast.position }, 'rgba(157, 213, 172, ALPHA)', 18))
       }
@@ -5302,10 +7392,11 @@ const updateBeastCompanions = (snapshot: GameSnapshot, delta: number) => {
     const desiredDistance = target ? beast.attackRange * 0.65 : 20
 
     if (distance(beast.position, desiredPoint) > desiredDistance) {
+      const followSpeedMultiplier = 1 + getMetaTalentRuntimeEffectValue(snapshot, 'follow-speed', 'beast') / 100
       beast.position = moveEnemyWithSteering(
         beast.position,
         beast.size * 0.5,
-        { x: toDesired.x * beast.speed * delta, y: toDesired.y * beast.speed * delta },
+        { x: toDesired.x * beast.speed * followSpeedMultiplier * delta, y: toDesired.y * beast.speed * followSpeedMultiplier * delta },
         desiredPoint,
         snapshot.mapObstacles,
         0,
@@ -5315,8 +7406,29 @@ const updateBeastCompanions = (snapshot: GameSnapshot, delta: number) => {
     }
 
     if (target && beast.attackCooldown <= 0 && distance(beast.position, target.position) <= beast.attackRange + target.size * 0.5) {
-      const beastHitDamage = beast.damage * getBeastDualBondDamageMultiplier(snapshot, beast.skillId)
-      damageEnemy(snapshot, target, beastHitDamage, beast.tint, getIncomingDirection(beast.position, target.position))
+      const leader = snapshot.beastCompanions.find((companion) => companion.id === state.beast?.leaderBeastId && companion.reviveTimer <= 0)
+      const receivesLeaderAura = hasSelectedRunTalent(snapshot, 'run_beast_07') && leader && leader.id !== beast.id && distance(leader.position, beast.position) <= 150 * getTalentRadiusMultiplier(snapshot, 'beastAuraRadius')
+      const beastHitDamage = beast.damage * getBeastDualBondDamageMultiplier(snapshot, beast.skillId) * (receivesLeaderAura ? 1.04 : 1)
+      const beastAttribution: CombatDamageAttribution = {
+        side: 'player',
+        attackerId: beast.id,
+        attackerName: BEAST_STATS[beast.kind].label,
+        sourceId: `beast-${beast.kind}-attack`,
+        sourceName: `${BEAST_STATS[beast.kind].label}攻击`,
+      }
+      damageEnemy(snapshot, target, beastHitDamage, beast.tint, getIncomingDirection(beast.position, target.position), beastAttribution)
+      beast.lastAttackTargetId = target.id
+      if (hasSelectedRunTalent(snapshot, 'run_beast_04')) {
+        const cooldownAt = state.beast?.teamBiteCooldowns?.[target.id] ?? 0
+        const partner = snapshot.beastCompanions.find((other) => other.id !== beast.id && other.reviveTimer <= 0 && other.lastAttackTargetId === target.id)
+        if (partner && snapshot.elapsedTime >= cooldownAt) {
+          state.beast = {
+            ...(state.beast ?? {}),
+            teamBiteCooldowns: { ...(state.beast?.teamBiteCooldowns ?? {}), [target.id]: snapshot.elapsedTime + 2 },
+          }
+          damageEnemy(snapshot, target, beastHitDamage * 0.4, '#bef264', getIncomingDirection(beast.position, target.position), getPlayerDamageAttribution('run_beast_04', '协同撕咬'))
+        }
+      }
       beast.attackCooldown = beast.attackInterval
 
       if (beast.kind === 'wolf') {
@@ -5333,7 +7445,14 @@ const updateBeastCompanions = (snapshot: GameSnapshot, delta: number) => {
           const stacks = (beast.poisonStacks?.[target.id] ?? 0) + 1
           beast.poisonStacks = { ...(beast.poisonStacks ?? {}), [target.id]: stacks }
           if (stacks >= 3) {
-            damageEnemy(snapshot, target, beastHitDamage * 1.25, '#84cc16', getIncomingDirection(beast.position, target.position))
+            damageEnemy(
+              snapshot,
+              target,
+              beastHitDamage * 1.25,
+              '#84cc16',
+              getIncomingDirection(beast.position, target.position),
+              getBeastDamageAttribution(beast, 'beast-snake-toxin-burst', '毒蛇爆毒'),
+            )
             beast.poisonStacks[target.id] = 0
             snapshot.floatingTexts.push(createFloatingText(target.position, '爆毒', '#84cc16'))
             snapshot.bursts.push(createBurst({ ...target.position }, 'rgba(132, 204, 22, ALPHA)', 30))
@@ -5382,7 +7501,12 @@ const updateBeastCompanions = (snapshot: GameSnapshot, delta: number) => {
       return
     }
 
-    damageBeast(snapshot, targetBeast, enemy.kind === 'boss' ? ENEMY_CONTACT_DAMAGE + 8 : enemy.kind === 'elite' ? ENEMY_CONTACT_DAMAGE + 4 : ENEMY_CONTACT_DAMAGE * 0.55)
+    damageBeast(
+      snapshot,
+      targetBeast,
+      enemy.kind === 'boss' ? ENEMY_CONTACT_DAMAGE + 8 : enemy.kind === 'elite' ? ENEMY_CONTACT_DAMAGE + 4 : ENEMY_CONTACT_DAMAGE * 0.55,
+      getEnemyDamageAttribution(enemy, 'enemy-basic-attack', '普通攻击'),
+    )
   })
 
   snapshot.enemyProjectiles.forEach((projectile) => {
@@ -5398,7 +7522,18 @@ const updateBeastCompanions = (snapshot: GameSnapshot, delta: number) => {
       return
     }
 
-    damageBeast(snapshot, targetBeast, projectile.damage * 0.75)
+    damageBeast(
+      snapshot,
+      targetBeast,
+      projectile.damage * 0.75,
+      {
+        side: 'enemy',
+        attackerId: projectile.attackerId ?? 'enemy-projectile',
+        attackerName: projectile.attackerName ?? '敌人',
+        sourceId: projectile.sourceSkillId || 'enemy-ranged-shot',
+        sourceName: projectile.sourceName ?? '远程射击',
+      },
+    )
     projectile.ttl = 0
   })
 }
@@ -5505,6 +7640,9 @@ const pushBossAreaField = (
     spread: 0,
     projectileSpeed: 0,
     sourceSkillId: skill.id,
+    sourceEnemyId: enemy.id,
+    sourceEnemyName: getEnemyDisplayName(enemy),
+    sourceName: skill.label,
     skillLevel: 5,
     reactionCooldown: 0,
     centerStrikeCooldown: 0,
@@ -5565,11 +7703,6 @@ const applyBossCombatSkill = (
   }
 
   switch (skill.id) {
-    case 'chain-sweep':
-      pushBossConeWarning(snapshot, enemy, skill, direction, '#f97316')
-      setMessage('扇形铁链预警')
-      break
-    case 'bone-guard':
     case 'bat-swarm':
     case 'moon-howl':
     case 'shield-wall':
@@ -5578,7 +7711,6 @@ const applyBossCombatSkill = (
     case 'murloc-guard':
       summonBossGuardForSkill(snapshot, enemy, phase, skill)
       break
-    case 'cage-root':
     case 'hex-slow':
     case 'vine-bind':
       pushBossAreaField(snapshot, enemy, skill, targetPoint, { kind: 'trap', color: '#bef264', effect: 'slow', effectStrength: 0.42, radius: skill.radius ?? 68 })
@@ -5587,14 +7719,12 @@ const applyBossCombatSkill = (
       }
       setMessage('控制预警')
       break
-    case 'chain-line':
     case 'minecart-lane':
     case 'ground-crack':
     case 'second-crack':
       pushBossLineWarning(snapshot, enemy, skill, direction, '#f97316')
       setMessage('线形残留预警')
       break
-    case 'execution-charge':
     case 'flying-dive':
       pushBossLineWarning(snapshot, enemy, skill, direction, '#fb923c')
       enemy.behaviorTimer = Math.max(enemy.behaviorTimer, skill.warning)
@@ -5661,12 +7791,13 @@ const applyBossCombatSkill = (
       setMessage(skill.safetyWindow ?? '三圈连锁')
       break
     case 'giant-axe':
-      snapshot.enemyProjectiles.push(...createEnemyProjectiles(enemy.position, snapshot.player.position, Math.max(4, enemy.attackDamage ?? 12)).map((projectile) => ({
+      snapshot.enemyProjectiles.push(...createEnemyProjectiles(enemy.position, snapshot.player.position, Math.max(4, enemy.attackDamage ?? 12), enemy).map((projectile) => ({
         ...projectile,
         damage: Math.max(projectile.damage, (enemy.attackDamage ?? 12) * skill.damageMultiplier),
         size: projectile.size + 2,
         color: '#f59e0b',
         sourceSkillId: skill.id,
+        sourceName: skill.label,
       })))
       setMessage('巨斧弹道')
       break
@@ -5723,6 +7854,10 @@ const applyBossCombatSkill = (
 }
 
 const triggerBossSpecialAttack = (snapshot: GameSnapshot, enemy: Enemy) => {
+  if (isDungeonWardenBoss(enemy)) {
+    enemy.attackCooldown = Math.max(enemy.attackCooldown, 0.1)
+    return false
+  }
   if ((enemy.bossTransitionTimer ?? 0) > 0) {
     enemy.attackCooldown = Math.max(enemy.attackCooldown, enemy.bossTransitionTimer ?? 0)
     return false
@@ -5746,7 +7881,7 @@ const triggerBossSpecialAttack = (snapshot: GameSnapshot, enemy: Enemy) => {
 
 const triggerEnemyAttacks = (snapshot: GameSnapshot) => {
   snapshot.enemies.forEach((enemy) => {
-    if ((enemy.kind !== 'ranged' && enemy.kind !== 'boss') || enemy.attackCooldown > 0 || (enemy.rangedAttackWindup ?? 0) > 0) {
+    if (enemy.hp <= 0 || (enemy.kind !== 'ranged' && enemy.kind !== 'boss') || enemy.attackCooldown > 0 || (enemy.rangedAttackWindup ?? 0) > 0) {
       return
     }
 
@@ -5756,6 +7891,10 @@ const triggerEnemyAttacks = (snapshot: GameSnapshot) => {
 
     if (enemy.kind === 'boss') {
       triggerBossSpecialAttack(snapshot, enemy)
+      return
+    }
+
+    if (snapshot.mapObstacles.some((obstacle) => segmentIntersectsObstacle(enemy.position, snapshot.player.position, obstacle, enemy.size * 0.55 + 6))) {
       return
     }
 
@@ -5774,6 +7913,53 @@ const triggerEnemyAttacks = (snapshot: GameSnapshot) => {
     enemy.behaviorTimer = Math.max(enemy.behaviorTimer, RANGED_ENEMY_ATTACK_WINDUP)
     fireRangedEnemyShot(snapshot, enemy, snapshot.player.position)
   })
+}
+
+const isCurveReturnProjectile = (projectile: Projectile) => {
+  return projectile.owner === 'player' && projectile.sourceSkillId === 'curve-return'
+}
+
+const getProjectileCurrentSegmentHitEnemyIds = (projectile: Projectile) => {
+  if (!isCurveReturnProjectile(projectile)) {
+    return projectile.hitEnemyIds ?? []
+  }
+
+  return projectile.hasReturned
+    ? projectile.curveReturnReturnHitEnemyIds ?? []
+    : projectile.curveReturnOutboundHitEnemyIds ?? []
+}
+
+const hasProjectileHitEnemyInCurrentSegment = (projectile: Projectile, enemyId: string) => {
+  return getProjectileCurrentSegmentHitEnemyIds(projectile).includes(enemyId)
+}
+
+const recordProjectileHitEnemy = (projectile: Projectile, enemyId: string) => {
+  const previousHits = projectile.hitEnemyCounts?.[enemyId] ?? 0
+  projectile.hitEnemyCounts = {
+    ...(projectile.hitEnemyCounts ?? {}),
+    [enemyId]: previousHits + 1,
+  }
+
+  if (!isCurveReturnProjectile(projectile)) {
+    projectile.hitEnemyIds = [...(projectile.hitEnemyIds ?? []), enemyId]
+    return
+  }
+
+  if (projectile.hasReturned) {
+    projectile.curveReturnReturnHitEnemyIds = [
+      ...(projectile.curveReturnReturnHitEnemyIds ?? []),
+      enemyId,
+    ]
+  } else {
+    projectile.curveReturnOutboundHitEnemyIds = [
+      ...(projectile.curveReturnOutboundHitEnemyIds ?? []),
+      enemyId,
+    ]
+  }
+
+  if (!projectile.hitEnemyIds?.includes(enemyId)) {
+    projectile.hitEnemyIds = [...(projectile.hitEnemyIds ?? []), enemyId]
+  }
 }
 
 const updateProjectileList = (projectiles: Projectile[], delta: number, snapshot?: GameSnapshot) => {
@@ -5814,6 +8000,32 @@ const updateProjectileList = (projectiles: Projectile[], delta: number, snapshot
         }
       }
     }
+    if (projectile.owner === 'player' && projectile.homingRange && projectile.homingStrength && snapshot) {
+      const nearestEnemy = snapshot.enemies
+        .filter((enemy) => enemy.hp > 0 && !(projectile.hitEnemyIds ?? []).includes(enemy.id))
+        .filter((enemy) => distance(enemy.position, projectile.position) <= projectile.homingRange!)
+        .sort((a, b) => distance(a.position, projectile.position) - distance(b.position, projectile.position))[0]
+      if (nearestEnemy) {
+        const speed = Math.hypot(projectile.velocity.x, projectile.velocity.y)
+        const currentDirection = normalize(projectile.velocity)
+        const targetDirection = normalize({
+          x: nearestEnemy.position.x - projectile.position.x,
+          y: nearestEnemy.position.y - projectile.position.y,
+        })
+        const strength = clamp(projectile.homingStrength, 0, 1)
+        const nextDirection = normalize({
+          x: currentDirection.x * (1 - strength) + targetDirection.x * strength,
+          y: currentDirection.y * (1 - strength) + targetDirection.y * strength,
+        })
+        if (speed > 0 && (nextDirection.x !== 0 || nextDirection.y !== 0)) {
+          projectile.velocity = {
+            x: nextDirection.x * speed,
+            y: nextDirection.y * speed,
+          }
+        }
+      }
+    }
+    projectile.previousPosition = { ...projectile.position }
     projectile.position.x += projectile.velocity.x * delta
     projectile.position.y += projectile.velocity.y * delta
     projectile.ttl -= delta
@@ -5824,6 +8036,17 @@ const resolveProjectileObstacleHits = (snapshot: GameSnapshot) => {
   const handleProjectileList = (projectiles: Projectile[]) => {
     projectiles.forEach((projectile) => {
       if (projectile.ttl <= 0) {
+        return
+      }
+
+      const hasImmediateEnemyHit = projectile.owner === 'player' && snapshot.enemies.some((enemy) => {
+        if (enemy.hp <= 0 || hasProjectileHitEnemyInCurrentSegment(projectile, enemy.id)) {
+          return false
+        }
+
+        return distance(projectile.position, enemy.position) <= enemy.size * 0.5 + projectile.size
+      })
+      if (hasImmediateEnemyHit) {
         return
       }
 
@@ -5855,7 +8078,14 @@ const explodeProjectile = (snapshot: GameSnapshot, projectile: Projectile) => {
       return
     }
 
-    damageEnemy(snapshot, enemy, projectile.damage * 0.65, '#fbbf24', getIncomingDirection(projectile.position, enemy.position))
+    damageEnemy(
+      snapshot,
+      enemy,
+      projectile.damage * 0.65,
+      '#fbbf24',
+      getIncomingDirection(projectile.position, enemy.position),
+      getPlayerSkillDamageAttribution(`${projectile.sourceSkillId}:explosion`, false, `${projectile.sourceName ?? ARCHER_ACTIVE_SKILL_MAP[projectile.sourceSkillId]?.name ?? '技能'}爆裂`),
+    )
     applyProjectileEffectToEnemy(snapshot, enemy, projectile)
     if (projectile.sourceSkillId === 'thunder-chain' && (projectile.skillLevel ?? 1) >= 5) {
       applyStun(snapshot, enemy, 1)
@@ -5925,7 +8155,39 @@ const retargetRicochetProjectile = (snapshot: GameSnapshot, projectile: Projecti
   return true
 }
 
-const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
+const isC1SlimeVariantEnemy = (enemy: Pick<Enemy, 'archetypeId'>) => (
+  C1_SLIME_VARIANT_ARCHETYPE_IDS.has(enemy.archetypeId ?? '')
+)
+
+const advanceC1SlimeVariantDeathPresentation = (snapshot: GameSnapshot, enemy: Enemy, delta: number) => {
+  const duration = enemy.deathAnimationDuration
+  if (duration === undefined) {
+    const timing = getEnemyDeathAnimationTiming(enemy.archetypeId, undefined)
+    if (!timing) {
+      snapshot.message = `资源缺失：${enemy.displayName ?? enemy.archetypeId ?? '敌人'} 无法播放死亡动作`
+      return true
+    }
+
+    enemy.deathAnimationDuration = timing.durationSeconds
+    enemy.deathAnimationElapsed = 0
+    enemy.behaviorTimer = 0
+    enemy.rangedAttackWindup = 0
+    enemy.meleeAttackWindup = 0
+    enemy.meleeAttackReady = false
+    enemy.meleeAttackImpactDelay = 0
+    enemy.breathTimer = 0
+    return true
+  }
+
+  const nextElapsed = Math.min(
+    duration,
+    Math.max(0, enemy.deathAnimationElapsed ?? 0) + delta,
+  )
+  enemy.deathAnimationElapsed = duration - nextElapsed <= 0.000001 ? duration : nextElapsed
+  return (enemy.deathAnimationElapsed ?? 0) < duration
+}
+
+const resolvePlayerProjectiles = (snapshot: GameSnapshot, delta: number) => {
   snapshot.projectiles.forEach((projectile) => {
     snapshot.enemies.forEach((enemy) => {
       if (projectile.ttl <= 0 || enemy.hp <= 0) {
@@ -5934,7 +8196,11 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
 
       const previousHits = projectile.hitEnemyCounts?.[enemy.id] ?? 0
       const maxHitsPerEnemy = projectile.ricochetMaxHitsPerEnemy ?? 1
-      if (projectile.sourceSkillId === 'ricochet-feather') {
+      if (isCurveReturnProjectile(projectile)) {
+        if (hasProjectileHitEnemyInCurrentSegment(projectile, enemy.id)) {
+          return
+        }
+      } else if (projectile.sourceSkillId === 'ricochet-feather') {
         if (projectile.lastHitEnemyId === enemy.id || previousHits >= maxHitsPerEnemy) {
           return
         }
@@ -5943,16 +8209,15 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
       }
 
       const hitDistance = enemy.size * 0.5 + projectile.size
-      if (distance(projectile.position, enemy.position) > hitDistance) {
+      const sweepStart = projectile.previousPosition ?? projectile.position
+      const didHit = distance(projectile.position, enemy.position) <= hitDistance
+        || distanceToSegment(enemy.position, sweepStart, projectile.position) <= hitDistance
+      if (!didHit) {
         return
       }
 
       applyProjectileDamageToEnemy(snapshot, enemy, projectile, normalize(projectile.velocity))
-      projectile.hitEnemyIds = [...(projectile.hitEnemyIds ?? []), enemy.id]
-      projectile.hitEnemyCounts = {
-        ...(projectile.hitEnemyCounts ?? {}),
-        [enemy.id]: previousHits + 1,
-      }
+      recordProjectileHitEnemy(projectile, enemy.id)
       applyProjectileEffectToEnemy(snapshot, enemy, projectile)
       applyProjectileModifierEffects(snapshot, enemy, projectile)
 
@@ -6008,7 +8273,11 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
       return true
     }
 
-    if (canUseSkeletonWarriorSkill(enemy) && (enemy.revivesRemaining ?? 0) > 0) {
+    if (isC1SlimeVariantEnemy(enemy) && advanceC1SlimeVariantDeathPresentation(snapshot, enemy, delta)) {
+      return true
+    }
+
+    if (canUseSkeletonWarriorRevive(enemy) && (enemy.revivesRemaining ?? 0) > 0) {
       const reviveCount = (enemy.reviveCount ?? 0) + 1
       const nextMaxHp = Math.max(24, Math.round(enemy.maxHp * SKELETON_WARRIOR_MAX_HP_DECAY))
       enemy.reviveCount = reviveCount
@@ -6060,6 +8329,10 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
           speed: childStats.speed + 20,
           size: Math.max(10, childStats.size - 3),
           tint: '#bef264',
+          archetypeId: 'dungeon-splitting-ooze',
+          displayName: '裂变软泥',
+          campaignIndex: enemy.campaignIndex,
+          c1SlimeVariantParentSize: enemy.size,
         })
       })
       snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(163, 230, 53, ALPHA)', 22))
@@ -6084,7 +8357,7 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
     if (enemy.kind === 'elite' && enemy.eliteAffixes?.includes('explosive')) {
       snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(249, 115, 22, ALPHA)', 58))
       if (distance(enemy.position, snapshot.player.position) <= 58 && snapshot.player.dashTimer <= 0) {
-        snapshot.player.hp -= 18
+        damagePlayer(snapshot, 18, getEnemyDamageAttribution(enemy, 'elite-explosive', '爆裂'))
         snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, PLAYER_HURT_COOLDOWN * 0.5)
       }
     }
@@ -6098,10 +8371,11 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
         age: 0,
         ttl: 0.52,
         range: BOMBER_EXPLOSION_RADIUS,
+        sourceEnemySize: enemy.size,
       })
       snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(249, 115, 22, ALPHA)', BOMBER_EXPLOSION_RADIUS))
       if (distance(enemy.position, snapshot.player.position) <= BOMBER_EXPLOSION_RADIUS && snapshot.player.dashTimer <= 0) {
-        snapshot.player.hp -= BOMBER_EXPLOSION_DAMAGE
+        damagePlayer(snapshot, BOMBER_EXPLOSION_DAMAGE, getEnemyDamageAttribution(enemy, 'bomber-explosion', '自爆'))
         snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, PLAYER_HURT_COOLDOWN * 0.5)
         snapshot.message = '爆裂怪炸开了，击杀后也要拉开距离'
       }
@@ -6115,64 +8389,86 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot) => {
       })
     }
 
+    triggerBloodRift(snapshot, enemy)
+    if (enemy.talentStates?.deathMark) {
+      spreadDeathMark(snapshot, enemy)
+    }
     if (enemy.talentStates?.deathMark && (getTalentMechanic(snapshot, 'soulBurst')?.active || hasSelectedRunTalent(snapshot, 'run_death_05'))) {
       enemy.markStacks = Math.max(enemy.markStacks, 1)
       enemy.talentStates = {
         ...enemy.talentStates,
         soulBurst: enemy.talentStates.soulBurst ?? { ttl: 0.1, stacks: 1, source: 'deathMark' },
       }
-      markEnemyAsInfectious(enemy)
+      markEnemyAsInfectious(snapshot, enemy)
       triggerTalentSoulBurst(snapshot, enemy)
     }
     spreadDeathInfection(snapshot, enemy)
 
+    if (isDungeonWardenBoss(enemy)) {
+      clearDungeonWardenArenaState(snapshot)
+    }
+
+    const localBattleTest = isLocalBattleTestActive(snapshot)
+    if (hasSelectedRunTalent(snapshot, 'run_common_08') && enemy.kind !== 'elite' && enemy.kind !== 'boss' && !enemy.grantsEliteReward) {
+      const state = getTalentCombatState(snapshot)
+      const kills = Math.min(20, (state.overloadTempo?.kills ?? 0) + 1)
+      state.overloadTempo = { kills, ready: kills >= 20 }
+    }
     snapshot.kills += 1
     snapshot.levelKills += 1
-    if (enemy.kind === 'boss') {
-      snapshot.runBossKills += 1
-    } else if (enemy.grantsEliteReward || enemy.kind === 'elite') {
-      snapshot.runEliteKills += 1
-      grantEliteTalentMaterialReward(snapshot, enemy)
+    if (!localBattleTest) {
+      if (enemy.kind === 'boss') {
+        snapshot.runBossKills += 1
+        if (isBossLevel(snapshot.level)) {
+          snapshot.bossDefeatedThisLevel = true
+        }
+      } else if (enemy.grantsEliteReward || enemy.kind === 'elite') {
+        snapshot.runEliteKills += 1
+        grantEliteTalentMaterialReward(snapshot, enemy)
+      }
     }
     snapshot.bursts.push(
       createBurst({ ...enemy.position }, enemy.kind === 'ranged' ? 'rgba(125, 211, 252, ALPHA)' : 'rgba(244, 114, 182, ALPHA)', 10),
     )
-    const crystalDropValues = getCrystalDropValues(enemy)
-    if ((enemy.grantsEliteReward || enemy.kind === 'elite') && getEquipmentSetCount(snapshot, 'blue-crystal-contract') >= 6) {
-      crystalDropValues.push(26)
-      snapshot.floatingTexts.push(createFloatingText(enemy.position, '蓝晶契约', '#60a5fa'))
-    }
-    crystalDropValues.forEach((expValue) => {
-      snapshot.pickups.push(createSoulCrystalPickup(enemy.position, expValue))
-    })
-    const equipmentDrops = createEquipmentDropsForEnemy(snapshot, enemy)
-    if (enemy.kind === 'boss' && equipmentDrops.length > 0) {
-      equipmentDrops.forEach((equipment) => {
-        addEquipmentToInventory(snapshot, equipment, { autoEquip: false })
-      })
-      snapshot.pendingBossLoot = equipmentDrops.map(cloneEquipmentItem)
-      snapshot.phaseBeforePause = 'level-clear'
-      snapshot.phase = 'level-clear'
-      snapshot.message = 'Boss 战利品已封存，请先处理传承掉落'
+    if (localBattleTest) {
+      snapshot.message = `本地战斗测试：${enemy.displayName ?? getEnemyKindLabel(enemy.kind)} 已被击败，未产生收益`
     } else {
-      equipmentDrops.forEach((equipment) => {
-        snapshot.pickups.push(createEquipmentPickup(enemy.position, equipment))
-      })
-    }
-    if (enemy.grantsEliteReward || enemy.kind === 'elite') {
-      resetDeathContractPierceCooldown(snapshot)
-    }
-    if (enemy.grantsEliteReward && enemy.kind !== 'boss' && !snapshot.pendingSkillReward) {
-      snapshot.pendingSkillReward = {
-        ...buildPendingReward(snapshot),
-        source: 'elite',
+      const crystalDropValues = getCrystalDropValues(enemy)
+      if ((enemy.grantsEliteReward || enemy.kind === 'elite') && getEquipmentSetCount(snapshot, 'blue-crystal-contract') >= 6) {
+        crystalDropValues.push(26)
+        snapshot.floatingTexts.push(createFloatingText(enemy.position, '蓝晶契约', '#60a5fa'))
       }
-      snapshot.phaseBeforePause = snapshot.phase === 'paused' ? 'running' : snapshot.phase
-      snapshot.phase = 'paused'
-      snapshot.message = '精英怪已被击败，立刻选择 1 项职业奖励'
-    }
-    if (Math.random() < getHealthPackDropChance(snapshot)) {
-      snapshot.pickups.push(createHealthPickup(enemy.position))
+      crystalDropValues.forEach((expValue) => {
+        snapshot.pickups.push(createSoulCrystalPickup(enemy.position, expValue))
+      })
+      const equipmentDrops = createEquipmentDropsForEnemy(snapshot, enemy)
+      if (enemy.kind === 'boss' && equipmentDrops.length > 0) {
+        equipmentDrops.forEach((equipment) => {
+          addEquipmentToInventory(snapshot, equipment, { autoEquip: false })
+        })
+        snapshot.pendingBossLoot = equipmentDrops.map(cloneEquipmentItem)
+        snapshot.message = 'Boss 战利品已封存，清除全部护卫后处理传承掉落'
+      } else {
+        equipmentDrops.forEach((equipment) => {
+          snapshot.pickups.push(createEquipmentPickup(enemy.position, equipment))
+        })
+      }
+      if (enemy.grantsEliteReward || enemy.kind === 'elite') {
+        resetDeathContractPierceCooldown(snapshot)
+      }
+      if (enemy.grantsEliteReward && enemy.kind !== 'boss' && !snapshot.pendingSkillReward) {
+        snapshot.pendingSkillReward = {
+          ...buildPendingReward(snapshot),
+          source: 'elite',
+        }
+        snapshot.phaseBeforePause = snapshot.phase === 'paused' ? 'running' : snapshot.phase
+        snapshot.phase = 'paused'
+        snapshot.pauseMenuOpen = false
+        snapshot.message = '精英怪已被击败，立刻选择 1 项职业奖励'
+      }
+      if (Math.random() < getHealthPackDropChance(snapshot)) {
+        snapshot.pickups.push(createHealthPickup(enemy.position))
+      }
     }
     return false
   })
@@ -6234,7 +8530,7 @@ const triggerFieldReaction = (snapshot: GameSnapshot, first: SkillField, second:
     const radius = Math.min(88, Math.max(36, Math.min(first.radius, second.radius) * 0.85))
     snapshot.enemies.forEach((enemy) => {
       if (enemy.hp > 0 && distance(enemy.position, center) <= radius) {
-        damageEnemy(snapshot, enemy, Math.max(first.damage, second.damage) * 0.85, '#fef3c7', getIncomingDirection(center, enemy.position))
+        damageEnemy(snapshot, enemy, Math.max(first.damage, second.damage) * 0.85, '#fef3c7', getIncomingDirection(center, enemy.position), getPlayerDamageAttribution('field-reaction-steam', '蒸汽爆裂'))
       }
     })
     snapshot.floatingTexts.push(createFloatingText(center, '蒸汽爆裂', '#fef3c7'))
@@ -6254,7 +8550,7 @@ const triggerFieldReaction = (snapshot: GameSnapshot, first: SkillField, second:
     const radius = Math.min(90, Math.max(38, Math.min(first.radius, second.radius) * 0.9))
     snapshot.enemies.forEach((enemy) => {
       if (enemy.hp > 0 && distance(enemy.position, center) <= radius) {
-        damageEnemy(snapshot, enemy, Math.max(first.damage, second.damage) * 0.65, '#67e8f9', getIncomingDirection(center, enemy.position))
+        damageEnemy(snapshot, enemy, Math.max(first.damage, second.damage) * 0.65, '#67e8f9', getIncomingDirection(center, enemy.position), getPlayerDamageAttribution('field-reaction-conductive', '导电震击'))
         applyStun(snapshot, enemy, 0.55)
       }
     })
@@ -6266,6 +8562,7 @@ const triggerFieldReaction = (snapshot: GameSnapshot, first: SkillField, second:
       if (enemy.hp > 0 && distance(enemy.position, center) <= radius) {
         enemy.darkTtl = Math.max(enemy.darkTtl ?? 0, 2)
         enemy.darkDamageMultiplier = Math.max(enemy.darkDamageMultiplier ?? 0, 0.1)
+        enemy.darkSource = { sourceId: 'field-reaction-rift', sourceName: '裂隙回响' }
       }
     })
     snapshot.floatingTexts.push(createFloatingText(center, '裂隙回响', '#c084fc'))
@@ -6289,7 +8586,10 @@ const updateEnemyOwnedSkillField = (snapshot: GameSnapshot, field: SkillField) =
   }
 
   if (snapshot.player.hurtCooldown <= 0) {
-    snapshot.player.hp -= field.damage
+    const attribution = getEnemyFieldDamageAttribution(snapshot, field)
+    if (attribution) {
+      damagePlayer(snapshot, field.damage, attribution)
+    }
     snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, PLAYER_HURT_COOLDOWN * 0.55)
     if (field.effect === 'slow') {
       snapshot.player.stunTimer = Math.max(snapshot.player.stunTimer ?? 0, Math.min(0.45, 0.18 + field.effectStrength))
@@ -6321,10 +8621,11 @@ const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
       if ((field.skillLevel ?? 1) >= 5 && field.sourceSkillId === 'starfire-fall') {
         snapshot.enemies.forEach((enemy) => {
           if (enemy.hp > 0 && distance(enemy.position, field.position) <= field.radius) {
-            damageEnemy(snapshot, enemy, field.damage * 1.25, '#fb923c', getIncomingDirection(field.position, enemy.position))
+            damageEnemy(snapshot, enemy, field.damage * 1.25, '#fb923c', getIncomingDirection(field.position, enemy.position), getPlayerSkillDamageAttribution(`${field.sourceSkillId}:lv5-end-burst`, false, `${field.sourceName ?? ARCHER_ACTIVE_SKILL_MAP[field.sourceSkillId]?.name ?? '技能'}Lv5爆发`))
             enemy.burnTtl = Math.max(enemy.burnTtl, 2.2)
             enemy.burnDamagePerSecond = Math.max(enemy.burnDamagePerSecond, field.effectStrength)
-            markEnemyAsInfectious(enemy)
+            enemy.burnSource = { sourceId: `${field.sourceSkillId}:lv5-end-burst`, sourceName: `${field.sourceName ?? ARCHER_ACTIVE_SKILL_MAP[field.sourceSkillId]?.name ?? '技能'}Lv5爆发` }
+        markEnemyAsInfectious(snapshot, enemy)
           }
         })
         snapshot.floatingTexts.push(createFloatingText(field.position, '星火爆发', '#fb923c'))
@@ -6334,7 +8635,7 @@ const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
         const burstRadius = field.sourceSkillId === 'thorn-whistle' ? field.radius * 1.1 : field.radius * 0.92
         snapshot.enemies.forEach((enemy) => {
           if (enemy.hp > 0 && distance(enemy.position, field.position) <= burstRadius) {
-            damageEnemy(snapshot, enemy, field.damage * 0.85, field.color, getIncomingDirection(field.position, enemy.position))
+            damageEnemy(snapshot, enemy, field.damage * 0.85, field.color, getIncomingDirection(field.position, enemy.position), getPlayerSkillDamageAttribution(`${field.sourceSkillId}:lv5-end-burst`, false, `${field.sourceName ?? ARCHER_ACTIVE_SKILL_MAP[field.sourceSkillId]?.name ?? '技能'}Lv5爆发`))
             if (field.sourceSkillId === 'hunter-net' || field.sourceSkillId === 'snare-line' || field.sourceSkillId === 'thorn-whistle') {
               applyStun(snapshot, enemy, field.sourceSkillId === 'thorn-whistle' ? 0.7 : 0.55)
               enemy.slowTtl = Math.max(enemy.slowTtl, 1.2)
@@ -6353,7 +8654,7 @@ const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
         const burstRadius = field.radius * modifier.radiusMultiplier
         snapshot.enemies.forEach((enemy) => {
           if (enemy.hp > 0 && distance(enemy.position, field.position) <= burstRadius) {
-            damageEnemy(snapshot, enemy, field.damage * modifier.damageMultiplier, field.color, getIncomingDirection(field.position, enemy.position))
+            damageEnemy(snapshot, enemy, field.damage * modifier.damageMultiplier, field.color, getIncomingDirection(field.position, enemy.position), getPlayerSkillDamageAttribution(`${field.sourceSkillId}:${modifier.type}`, false, `${field.sourceName ?? ARCHER_ACTIVE_SKILL_MAP[field.sourceSkillId]?.name ?? '技能'}余波`))
           }
         })
         snapshot.bursts.push(createBurst({ ...field.position }, field.color.includes('rgba') ? field.color.replace('1)', 'ALPHA)') : 'rgba(157, 213, 172, ALPHA)', burstRadius))
@@ -6378,7 +8679,7 @@ const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
         .filter((enemy) => enemy.hp > 0 && distance(enemy.position, field.position) <= field.radius)
         .sort((a, b) => distance(a.position, field.position) - distance(b.position, field.position))[0]
       if (target) {
-        damageEnemy(snapshot, target, field.damage * (field.sourceSkillId === 'arrow-rain' ? 1.85 : 1.45), '#facc15', getIncomingDirection(field.position, target.position))
+        damageEnemy(snapshot, target, field.damage * (field.sourceSkillId === 'arrow-rain' ? 1.85 : 1.45), '#facc15', getIncomingDirection(field.position, target.position), getPlayerSkillDamageAttribution(`${field.sourceSkillId}:center-strike`, false, `${field.sourceName ?? ARCHER_ACTIVE_SKILL_MAP[field.sourceSkillId]?.name ?? '技能'}中心打击`))
         snapshot.enemySkillEffects.push({
           id: `arrow-rain-center-${createId()}`,
           kind: 'ricochet-link',
@@ -6411,6 +8712,7 @@ const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
             effect: field.effect,
             effectStrength: field.effectStrength,
             sourceSkillId: field.sourceSkillId,
+            sourceName: field.sourceName,
             modifiers: field.modifiers,
             skillLevel: field.skillLevel,
             criticalChance: getPlayerArrowCriticalChance(snapshot),
@@ -6419,6 +8721,8 @@ const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
             sourceSlotIndex: field.sourceSlotIndex,
             sourceBaseCooldown: field.sourceBaseCooldown,
             talentCrystalOverload: field.talentCrystalOverload,
+            talentOverloadTempo: field.talentOverloadTempo,
+            talentCooldownEcho: field.talentCooldownEcho,
           }),
         )
       }
@@ -6431,16 +8735,22 @@ const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
       }
 
       const isCrystalField = field.talentCrystalOverload || field.sourceSkillId.includes('crystal') || field.sourceSkillId.includes('overload')
-      const fieldDamage = isCrystalField
-        ? scaleTalentDamageForTarget(snapshot, enemy, field.damage, 'crystal-overloaded')
-        : field.damage
-      damageEnemy(snapshot, enemy, fieldDamage, field.color, getIncomingDirection(field.position, enemy.position))
+      const fieldDamage = field.damage * (field.talentCrystalOverload ? (enemy.kind === 'boss' ? 1.06 : 1.15) : 1)
+      damageEnemy(
+        snapshot,
+        enemy,
+        fieldDamage,
+        field.color,
+        getIncomingDirection(field.position, enemy.position),
+        getPlayerDamageAttribution(field.sourceSkillId, field.sourceName ?? ARCHER_ACTIVE_SKILL_MAP[field.sourceSkillId]?.name ?? '技能'),
+      )
       if (field.castId && field.sourceSlotIndex !== undefined && field.sourceBaseCooldown !== undefined) {
         tryRefundTalentSkillCooldown(snapshot, {
           castId: field.castId,
           slotIndex: field.sourceSlotIndex,
           skillId: field.sourceSkillId,
           baseCooldown: field.sourceBaseCooldown,
+          cooldownEcho: field.talentCooldownEcho,
         })
         addTalentCrystalChargeForSkillHit(snapshot, enemy, {
           castId: field.castId,
@@ -6452,12 +8762,23 @@ const updateSkillFields = (snapshot: GameSnapshot, delta: number) => {
       }
       if (isCrystalField) {
         applyTalentEnemyState(snapshot, enemy, 'crystalOverload')
+        if (hasSelectedRunTalent(snapshot, 'run_crystal_07') && (enemy.grantsEliteReward || enemy.kind === 'elite' || enemy.kind === 'boss')) {
+          enemy.slowTtl = Math.max(enemy.slowTtl, field.tickInterval)
+          enemy.slowFactor = Math.max(enemy.slowFactor, enemy.kind === 'boss' ? 0.06 : 0.18)
+          if (enemy.kind !== 'boss') {
+            damageEnemy(snapshot, enemy, field.damage * 0.12 * field.tickInterval, '#67e8f9', getIncomingDirection(field.position, enemy.position), getPlayerDamageAttribution('run_crystal_07', '精英缓蚀'))
+          }
+        }
       }
       if (field.effect === 'burn') {
         enemy.burnTtl = Math.max(enemy.burnTtl, 2)
         enemy.burnDamagePerSecond = Math.max(enemy.burnDamagePerSecond, field.effectStrength)
+        enemy.burnSource = {
+          sourceId: field.sourceSkillId,
+          sourceName: ARCHER_ACTIVE_SKILL_MAP[field.sourceSkillId]?.name ?? '灼烧',
+        }
         if ((field.skillLevel ?? 1) >= 5 && (field.sourceSkillId === 'starfire-fall' || field.sourceSkillId === 'celestial-starfire')) {
-          markEnemyAsInfectious(enemy)
+          markEnemyAsInfectious(snapshot, enemy)
         }
       }
       if (field.effect === 'slow') {
@@ -6494,7 +8815,7 @@ const resolvePlayerDamage = (snapshot: GameSnapshot) => {
     if (enemy.kind === 'ranged') {
       return false
     }
-    if (canUseBasicMeleeAttack(enemy) && !(enemy.kind === 'boss' && enemy.behaviorTimer > 0)) {
+    if (canUseBasicMeleeAttack(enemy) && (isDungeonWardenBoss(enemy) || !(enemy.kind === 'boss' && enemy.behaviorTimer > 0))) {
       return false
     }
     return distance(enemy.position, snapshot.player.position) < enemy.size * 0.55 + snapshot.player.size * 0.55
@@ -6509,9 +8830,21 @@ const resolvePlayerDamage = (snapshot: GameSnapshot) => {
     const bearMitigation = !hitByProjectile && collidingEnemy && snapshot.beastCompanions.some((beast) => {
       return beast.kind === 'bear' && beast.isAlpha && beast.reviveTimer <= 0 && distance(beast.position, snapshot.player.position) <= beastAuraRadius
     }) ? 0.9 : 1
-    snapshot.player.hp -= hitByProjectile
+    const incomingDamage = hitByProjectile
       ? hitByProjectile.damage
-      : Math.max(1, (collidingEnemy?.attackDamage ?? (collidingEnemy?.kind === 'boss' ? ENEMY_CONTACT_DAMAGE + 10 : ENEMY_CONTACT_DAMAGE)) * bearMitigation)
+      : Math.max(1, (collidingEnemy?.attackDamage ?? (collidingEnemy?.kind === 'boss' ? ENEMY_CONTACT_DAMAGE + 10 : ENEMY_CONTACT_DAMAGE)) *
+        bearMitigation *
+        (collidingEnemy && isDungeonWardenBoss(collidingEnemy) ? getDungeonWardenAttackDamageMultiplier(collidingEnemy) : 1))
+    const attribution = hitByProjectile
+      ? {
+          side: 'enemy' as const,
+          attackerId: hitByProjectile.attackerId ?? 'enemy-projectile',
+          attackerName: hitByProjectile.attackerName ?? '敌人',
+          sourceId: hitByProjectile.sourceSkillId || 'enemy-ranged-shot',
+          sourceName: hitByProjectile.sourceName ?? '远程射击',
+        }
+      : getEnemyDamageAttribution(collidingEnemy!, 'enemy-basic-attack', '普通攻击')
+    damagePlayer(snapshot, incomingDamage, attribution)
     snapshot.player.hurtCooldown = PLAYER_HURT_COOLDOWN
     if (collidingEnemy && canUseSkeletonKnightSkill(collidingEnemy) && collidingEnemy.behaviorTimer > 0) {
       snapshot.player.stunTimer = Math.max(snapshot.player.stunTimer ?? 0, SKELETON_KNIGHT_CHARGE_STUN)
@@ -6554,6 +8887,27 @@ const resolvePlayerDamage = (snapshot: GameSnapshot) => {
         range: collidingEnemy.size * 1.4,
       })
       clearBasicMeleeAttackState(collidingEnemy, 0.92)
+    } else if (collidingEnemy && isDungeonWardenBoss(collidingEnemy) && canUseBasicMeleeAttack(collidingEnemy)) {
+      const slashDirection = normalize(collidingEnemy.meleeAttackDirection ?? {
+        x: snapshot.player.position.x - collidingEnemy.position.x,
+        y: snapshot.player.position.y - collidingEnemy.position.y,
+      })
+      const slashAnchor = getEnemySkillVisualAnchor(collidingEnemy, collidingEnemy.wardenLastAttackCrit ? 'skill' : 'attack', slashDirection)
+      snapshot.enemySkillEffects.push({
+        id: `dungeon-warden-attack-${collidingEnemy.id}-${createId()}`,
+        kind: collidingEnemy.wardenLastAttackCrit ? 'dungeon-warden-crit' : 'dungeon-warden-slash',
+        position: slashAnchor,
+        direction: slashDirection,
+        color: collidingEnemy.wardenLastAttackCrit ? '#facc15' : '#e7ddc6',
+        age: 0,
+        ttl: collidingEnemy.wardenLastAttackCrit ? 0.32 : 0.24,
+        range: collidingEnemy.size * 1.5,
+      })
+      if (collidingEnemy.wardenLastAttackCrit) {
+        snapshot.floatingTexts.push(createFloatingText(collidingEnemy.position, '暴击攻击', '#facc15'))
+      }
+      collidingEnemy.wardenLastAttackCrit = false
+      clearBasicMeleeAttackState(collidingEnemy, getDungeonWardenAttackCooldown(collidingEnemy))
     } else if (collidingEnemy && canUseBasicMeleeAttack(collidingEnemy)) {
       clearBasicMeleeAttackState(collidingEnemy, BASIC_MELEE_ATTACK_COOLDOWN)
     }
@@ -6641,6 +8995,7 @@ const resolvePickups = (snapshot: GameSnapshot, delta: number) => {
     if (pickup.kind === 'soul-crystal') {
       addContractExperience(snapshot, pickup.expValue ?? 0)
       addTalentCrystalCharge(snapshot, 1)
+      triggerCrystalPickupEcho(snapshot, pickup.position)
       snapshot.bursts.push(createBurst({ ...pickup.position }, 'rgba(96, 165, 250, ALPHA)', 8))
       pickedCrystal = true
       return false
@@ -6679,27 +9034,12 @@ const getLevelRewardKind = (level: number): NonNullable<GameSnapshot['lastLevelS
 const collectLevelSettlement = (snapshot: GameSnapshot) => {
   let absorbedCrystals = 0
   let absorbedExp = 0
-  const equipmentPickups: EquipmentItem[] = []
-
-  snapshot.pickups = snapshot.pickups.filter((pickup) => {
+  snapshot.pickups.forEach((pickup) => {
     if (pickup.kind === 'soul-crystal') {
       const expValue = pickup.expValue ?? 0
       absorbedCrystals += 1
       absorbedExp += expValue
-      addContractExperience(snapshot, expValue)
-      return false
     }
-
-    if (pickup.kind === 'equipment' && pickup.equipment) {
-      equipmentPickups.push(pickup.equipment)
-      return false
-    }
-
-    return false
-  })
-
-  equipmentPickups.forEach((equipment) => {
-    addEquipmentToInventory(snapshot, equipment)
   })
 
   const autoDismantlePreview = getTemporaryEquipmentPreview(snapshot)
@@ -6718,6 +9058,7 @@ const enterLevelClear = (snapshot: GameSnapshot) => {
   const settlement = collectLevelSettlement(snapshot)
   snapshot.phase = 'level-clear'
   snapshot.phaseBeforePause = 'level-clear'
+  snapshot.pauseMenuOpen = false
   snapshot.levelTimer = LEVEL_CLEAR_DELAY
   snapshot.levelClearConfirmed = false
   const shouldOfferNodeReward = settlement.rewardKind === 'elite' || settlement.rewardKind === 'prelude'
@@ -6730,7 +9071,7 @@ const enterLevelClear = (snapshot: GameSnapshot) => {
       }
     }
   }
-  const absorbedText = settlement.absorbedCrystals > 0 ? `，自动吸附 ${settlement.absorbedCrystals} 个蓝晶（+${Math.round(settlement.absorbedExp)} 经验）` : ''
+  const absorbedText = settlement.absorbedCrystals > 0 ? `，场上保留 ${settlement.absorbedCrystals} 个蓝晶` : ''
   if (settlement.rewardKind === 'light') {
     snapshot.message = `契约裂隙已稳定，第 ${snapshot.level} 层轻结算${absorbedText}，紫色以下装备离开战斗将自动分解 ${settlement.autoDismantlePreviewCount} 件`
   } else if (settlement.rewardKind === 'prelude') {
@@ -6742,58 +9083,208 @@ const enterLevelClear = (snapshot: GameSnapshot) => {
   }
 }
 
-const findSafeRiftPosition = (snapshot: GameSnapshot) => {
-  const forward = getSpawnForward(snapshot)
-  const candidates = [
-    { x: snapshot.player.position.x + forward.x * 118, y: snapshot.player.position.y + forward.y * 118 },
-    { x: snapshot.player.position.x - forward.y * 104, y: snapshot.player.position.y + forward.x * 104 },
-    { x: snapshot.player.position.x + forward.y * 104, y: snapshot.player.position.y - forward.x * 104 },
-    { x: snapshot.player.position.x - forward.x * 92, y: snapshot.player.position.y - forward.y * 92 },
-    { ...snapshot.player.position },
-  ]
+const hasCompletedBossCombat = (snapshot: GameSnapshot) => (
+  isBossLevel(snapshot.level) &&
+  !isLocalBattleTestActive(snapshot) &&
+  snapshot.bossDefeatedThisLevel === true &&
+  snapshot.levelKills >= snapshot.levelTargetKills &&
+  snapshot.remainingToSpawn <= 0 &&
+  snapshot.enemies.length === 0
+)
 
-  return candidates.find((candidate) => (
-    !isBlockedByObstacle(candidate, CONTRACT_RIFT_RADIUS * 0.65, snapshot.mapObstacles) &&
-    !isProtectedWorldPoint(snapshot, candidate, CONTRACT_RIFT_RADIUS)
-  )) ?? { ...snapshot.player.position }
+const clearBossProgressionArtifacts = (snapshot: GameSnapshot) => {
+  if (!isBossLevel(snapshot.level) || snapshot.phase === 'idle' || snapshot.phase === 'game-over') {
+    return
+  }
+
+  snapshot.battlefield.mode = 'boss-arena'
+  snapshot.battlefield.rift = undefined
+  snapshot.battlefield.routeObjectives = []
+  snapshot.battlefield.routeObjectiveSkillBoost = undefined
+  snapshot.battlefield.noKillTimer = 0
+  snapshot.battlefield.escapePressure = 0
+  snapshot.battlefield.bossArenaRadius ??= BOSS_ARENA_RADIUS
+  snapshot.battlefield.debug.routeObjectiveCount = 0
+  snapshot.battlefield.debug.routeObjectiveRewardBudget = 0
+  snapshot.battlefield.debug.routeObjectiveExtraThreatCount = 0
+  snapshot.floorTransition = undefined
+
+  if (hasCompletedBossCombat(snapshot)) {
+    return
+  }
+
+  snapshot.levelClearConfirmed = false
+  if (snapshot.pendingSkillReward?.source === 'level-clear') {
+    snapshot.pendingSkillReward = null
+  }
+  if (snapshot.phase === 'level-clear' || (snapshot.phase === 'paused' && !snapshot.pauseMenuOpen)) {
+    snapshot.phase = 'running'
+    snapshot.phaseBeforePause = 'running'
+    snapshot.pauseMenuOpen = false
+    snapshot.levelTimer = 0
+  }
 }
 
-const ensureContractRift = (snapshot: GameSnapshot) => {
-  if (
-    snapshot.battlefield.mode !== 'infinite' ||
-    snapshot.battlefield.rift ||
-    snapshot.levelKills < snapshot.levelTargetKills ||
-    isBossLevel(snapshot.level)
-  ) {
+const canFinishBossLevel = (snapshot: GameSnapshot) => (
+  hasCompletedBossCombat(snapshot) &&
+  snapshot.pendingBossLoot.length === 0 &&
+  !snapshot.pendingSkillReward
+)
+
+const startNextFloorInPlace = (snapshot: GameSnapshot, nextLevel: number) => {
+  const difficulty = getSnapshotDifficulty(snapshot)
+  const playerPosition = { ...snapshot.player.position }
+  const preserveTerrain = shouldPreserveFloorTerrain(snapshot, nextLevel)
+  const battlefield = preserveTerrain
+    ? resetPreservedFloorBattlefieldState(snapshot.battlefield)
+    : createBattlefieldState(getBattlefieldMode('running', nextLevel), nextLevel, playerPosition, snapshot.battlefield.seed)
+  const levelObstacles = preserveTerrain
+    ? snapshot.mapObstacles
+    : getBattlefieldObstacles(battlefield, nextLevel)
+  const levelDecorations = preserveTerrain
+    ? snapshot.mapDecorations
+    : getBattlefieldDecorations(battlefield, nextLevel, levelObstacles)
+  const targetKills = getLevelGoal(nextLevel, difficulty)
+
+  snapshot.phase = 'running'
+  snapshot.phaseBeforePause = 'running'
+  snapshot.pauseMenuOpen = false
+  snapshot.level = nextLevel
+  snapshot.selectedCampaign = getCampaignIndex(nextLevel)
+  snapshot.levelKills = 0
+  snapshot.levelTargetKills = targetKills
+  snapshot.remainingToSpawn = targetKills
+  snapshot.eliteSpawnedThisLevel = false
+  snapshot.bossDefeatedThisLevel = false
+  snapshot.spawnCooldown = 0
+  snapshot.levelTimer = 0
+  snapshot.levelClearConfirmed = false
+  snapshot.pendingSkillReward = null
+  snapshot.floorTransition = undefined
+  snapshot.battlefield = battlefield
+  snapshot.mapObstacles = levelObstacles
+  snapshot.mapDecorations = levelDecorations
+  snapshot.message = `第 ${nextLevel} 层开始，敌群正在视野外集结`
+}
+
+const beginFloorTransition = (snapshot: GameSnapshot) => {
+  if (isBossLevel(snapshot.level)) {
+    if (hasCompletedBossCombat(snapshot)) {
+      enterLevelClear(snapshot)
+    }
     return
   }
 
   snapshot.remainingToSpawn = 0
   snapshot.spawnCooldown = 999
-  snapshot.battlefield.rift = {
-    id: `rift-${snapshot.level}-${createId()}`,
-    position: findSafeRiftPosition(snapshot),
-    radius: CONTRACT_RIFT_RADIUS,
-    timer: CONTRACT_RIFT_AUTO_SETTLE_TIME,
+  const settlement = collectLevelSettlement(snapshot)
+  const nextLevel = snapshot.level + 1
+  const shouldOfferNodeReward = settlement.rewardKind === 'elite' || settlement.rewardKind === 'prelude'
+  snapshot.floorTransition = {
+    nextLevel,
+    timer: LEVEL_CLEAR_DELAY,
+    awaitingReward: false,
   }
-  snapshot.enemies = snapshot.enemies.filter((enemy) => {
-    if (enemy.kind === 'elite' || enemy.kind === 'boss' || enemy.role === 'elite' || enemy.role === 'boss') {
-      enemy.slowTtl = Math.max(enemy.slowTtl, 2)
-      enemy.slowFactor = Math.max(enemy.slowFactor, 0.45)
-      return true
+  snapshot.levelClearConfirmed = false
+
+  const absorbedText = settlement.absorbedCrystals > 0 ? `，场上保留 ${settlement.absorbedCrystals} 个蓝晶` : ''
+  if (shouldOfferNodeReward && !snapshot.pendingSkillReward) {
+    const reward = buildPendingReward(snapshot)
+    if (reward.choices.length > 0) {
+      snapshot.pendingSkillReward = {
+        ...reward,
+        source: 'level-clear',
+      }
+      snapshot.floorTransition.awaitingReward = true
+      snapshot.phase = 'paused'
+      snapshot.phaseBeforePause = 'running'
+      snapshot.pauseMenuOpen = false
+      snapshot.message = settlement.rewardKind === 'prelude'
+        ? `Boss 前置层肃清${absorbedText}，请选择 1 项短期补给或构筑强化`
+        : `精英层肃清${absorbedText}，构筑奖励已进入处理流程`
+      return
     }
-    snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(96, 165, 250, ALPHA)', 16))
+  }
+
+  snapshot.phase = 'running'
+  snapshot.phaseBeforePause = 'running'
+  snapshot.pauseMenuOpen = false
+  snapshot.message = `第 ${snapshot.level} 层肃清${absorbedText}，下一层敌群即将集结`
+}
+
+const resumeFloorTransitionAfterReward = (snapshot: GameSnapshot, rewardSource: PendingSkillReward['source'] | undefined) => {
+  if (rewardSource === 'level-clear') {
+    snapshot.levelClearConfirmed = true
+    if (snapshot.floorTransition) {
+      snapshot.floorTransition.awaitingReward = false
+      snapshot.phase = 'running'
+      snapshot.phaseBeforePause = 'running'
+      snapshot.pauseMenuOpen = false
+      snapshot.levelTimer = 0
+    }
+    return
+  }
+
+  if (rewardSource === 'elite' && snapshot.phase === 'paused') {
+    snapshot.phase = 'running'
+    snapshot.phaseBeforePause = 'running'
+    snapshot.pauseMenuOpen = false
+  }
+}
+
+const getPendingRewardSource = (snapshot: GameSnapshot): PendingSkillReward['source'] => {
+  return snapshot.pendingSkillReward?.source ?? (snapshot.phase === 'paused' ? 'elite' : 'level-clear')
+}
+
+const updateFloorTransition = (snapshot: GameSnapshot, delta: number) => {
+  if (isBossLevel(snapshot.level)) {
+    snapshot.floorTransition = undefined
     return false
-  })
-  snapshot.enemyProjectiles = []
-  snapshot.pickups = snapshot.pickups.map((pickup) => pickup.kind === 'soul-crystal' ? { ...pickup, magnetized: true } : pickup)
-  snapshot.message = '目标完成，契约裂隙在附近开启'
-  snapshot.floatingTexts.push(createFloatingText(snapshot.battlefield.rift.position, '契约裂隙', '#60a5fa'))
-  snapshot.bursts.push(createBurst(snapshot.battlefield.rift.position, 'rgba(96, 165, 250, ALPHA)', CONTRACT_RIFT_RADIUS))
+  }
+
+  const transition = snapshot.floorTransition
+  if (!transition || snapshot.phase !== 'running') {
+    return false
+  }
+
+  if (transition.awaitingReward) {
+    return true
+  }
+
+  transition.timer = Math.max(0, transition.timer - delta)
+  if (transition.timer > 0) {
+    snapshot.message = `第 ${snapshot.level} 层肃清，下一层 ${transition.timer.toFixed(1)} 秒后开始`
+    return true
+  }
+
+  startNextFloorInPlace(snapshot, transition.nextLevel)
+  return false
+}
+
+const ensureSpawnBudgetForIncompleteFloor = (snapshot: GameSnapshot) => {
+  if (
+    isBossLevel(snapshot.level) ||
+    snapshot.floorTransition ||
+    snapshot.pendingSkillReward ||
+    snapshot.levelKills >= snapshot.levelTargetKills ||
+    snapshot.remainingToSpawn > 0 ||
+    snapshot.enemies.length > 0
+  ) {
+    return
+  }
+
+  const remainingKills = Math.max(1, snapshot.levelTargetKills - snapshot.levelKills)
+  snapshot.remainingToSpawn = Math.max(snapshot.remainingToSpawn, remainingKills)
+  snapshot.spawnCooldown = 0
+  snapshot.message = `第 ${snapshot.level} 层目标未完成，敌群正在重新集结`
 }
 
 const updateContractRift = (snapshot: GameSnapshot, delta: number) => {
-  ensureContractRift(snapshot)
+  if (isBossLevel(snapshot.level)) {
+    snapshot.battlefield.rift = undefined
+    return
+  }
+
   const rift = snapshot.battlefield.rift
   if (!rift || snapshot.phase !== 'running') {
     return
@@ -6803,7 +9294,7 @@ const updateContractRift = (snapshot: GameSnapshot, delta: number) => {
   const gap = distance(snapshot.player.position, rift.position)
   if (gap <= rift.radius + snapshot.player.size || rift.timer <= 0) {
     snapshot.battlefield.rift = undefined
-    enterLevelClear(snapshot)
+    beginFloorTransition(snapshot)
   }
 }
 
@@ -6830,7 +9321,7 @@ const recycleDistantOrdinaryEnemies = (snapshot: GameSnapshot) => {
 }
 
 const updateInfiniteBattlePressure = (snapshot: GameSnapshot, delta: number, killedThisFrame: boolean) => {
-  if (snapshot.battlefield.mode !== 'infinite' || snapshot.phase !== 'running' || snapshot.battlefield.rift) {
+  if (isBossLevel(snapshot.level) || snapshot.battlefield.mode !== 'infinite' || snapshot.phase !== 'running' || snapshot.battlefield.rift) {
     return
   }
 
@@ -6844,7 +9335,31 @@ const updateInfiniteBattlePressure = (snapshot: GameSnapshot, delta: number, kil
 }
 
 const updateBossArenaBoundary = (snapshot: GameSnapshot, delta: number) => {
-  if (snapshot.battlefield.mode !== 'boss-arena' || snapshot.phase !== 'running') {
+  if (snapshot.phase !== 'running') {
+    return
+  }
+
+  if (snapshot.battlefield.wardenArena) {
+    const arena = snapshot.battlefield.wardenArena
+    arena.elapsed = Math.min(arena.duration, arena.elapsed + delta)
+    const arenaRadius = getDungeonWardenArenaRadius(arena)
+    snapshot.battlefield.bossArenaRadius = arenaRadius
+    const gap = distance(snapshot.player.position, arena.center)
+    snapshot.battlefield.bossArenaWarningTimer = Math.max(0, (snapshot.battlefield.bossArenaWarningTimer ?? 0) - delta)
+    if (gap >= arenaRadius - BOSS_ARENA_SOFT_MARGIN && (snapshot.battlefield.bossArenaWarningTimer ?? 0) <= 0) {
+      snapshot.battlefield.bossArenaWarningTimer = 1.6
+      snapshot.message = '典狱长缩圈压迫，圈外会持续失血'
+    }
+    if (gap > arenaRadius - snapshot.player.size * 0.5) {
+      const warden = snapshot.enemies.find((enemy) => isDungeonWardenBoss(enemy))
+      if (warden) {
+        damagePlayer(snapshot, snapshot.player.maxHp * DUNGEON_WARDEN_OUTSIDE_DAMAGE_PER_SECOND * delta, getEnemyDamageAttribution(warden, 'dungeon-warden-arena', '缩圈'))
+      }
+    }
+    return
+  }
+
+  if (snapshot.battlefield.mode !== 'boss-arena') {
     return
   }
 
@@ -6857,9 +9372,11 @@ const updateBossArenaBoundary = (snapshot: GameSnapshot, delta: number) => {
     snapshot.message = '契约封锁领域边缘正在排斥你，靠近 Boss 才能维持战斗'
   }
   if (gap > arenaRadius - snapshot.player.size * 0.5) {
-    snapshot.player.position = keepInsideCombatArea(snapshot, snapshot.player.position, snapshot.player.size * 0.55)
     if (snapshot.player.hurtCooldown <= 0 && snapshot.player.dashTimer <= 0) {
-      snapshot.player.hp -= 2
+      const boss = snapshot.enemies.find((enemy) => enemy.kind === 'boss')
+      if (boss) {
+        damagePlayer(snapshot, 2, getEnemyDamageAttribution(boss, 'boss-arena-boundary', '封锁领域'))
+      }
       snapshot.player.hurtCooldown = Math.max(snapshot.player.hurtCooldown, 0.35)
     }
   }
@@ -7049,11 +9566,29 @@ const createHordeEnemy = (level: number, spawnedCount: number, position: Vector2
 }
 
 const spawnWaveEnemies = (snapshot: GameSnapshot) => {
+  const isBossFloor = isBossLevel(snapshot.level)
+  const activeBossExists = snapshot.enemies.some((enemy) => enemy.kind === 'boss')
+  const difficulty = getSnapshotDifficulty(snapshot)
+
+  if (isBossFloor && !snapshot.bossDefeatedThisLevel && !activeBossExists) {
+    const arenaCenter = getBossArenaCenter()
+    const boss = createEnemy(snapshot.level, 'boss', {
+      x: arenaCenter.x,
+      y: arenaCenter.y - Math.min(220, (snapshot.battlefield.bossArenaRadius ?? BOSS_ARENA_RADIUS) * 0.34),
+    }, undefined, undefined, difficulty)
+    boss.id = `boss-${createId()}`
+    snapshot.enemies.push(boss)
+    snapshot.eliteSpawnedThisLevel = true
+    snapshot.remainingToSpawn = Math.max(0, snapshot.remainingToSpawn - 1)
+    snapshot.spawnCooldown = getSpawnInterval(snapshot.level)
+    snapshot.message = `${boss.displayName ?? '小 Boss'}登场：暴击攻击、嗜血、激怒、轻视`
+    return
+  }
+
   if (snapshot.remainingToSpawn <= 0) {
     return
   }
 
-  const difficulty = getSnapshotDifficulty(snapshot)
   const maxEnemies = getMaxEnemiesOnField(snapshot.level, difficulty)
 
   if (snapshot.enemies.length >= maxEnemies || snapshot.spawnCooldown > 0) {
@@ -7064,20 +9599,7 @@ const spawnWaveEnemies = (snapshot: GameSnapshot) => {
   const featuredKind = getFeaturedEnemyKind(snapshot.level, spawnedCount)
   let spawnCount = 0
 
-  if (isBossLevel(snapshot.level) && !snapshot.eliteSpawnedThisLevel) {
-    const arenaCenter = getBossArenaCenter()
-    const boss = createEnemy(snapshot.level, 'boss', {
-      x: arenaCenter.x,
-      y: arenaCenter.y - Math.min(220, (snapshot.battlefield.bossArenaRadius ?? BOSS_ARENA_RADIUS) * 0.34),
-    }, undefined, undefined, difficulty)
-    boss.id = `boss-${createId()}`
-    boss.grantsEliteReward = true
-    boss.attackCooldown = 1.1
-    snapshot.enemies.push(boss)
-    snapshot.eliteSpawnedThisLevel = true
-    spawnCount = 1
-    snapshot.message = `${boss.displayName ?? '小 Boss'}登场：会冲锋，也会释放扇形弹幕`
-  } else if (isEliteLevel(snapshot.level) && !snapshot.eliteSpawnedThisLevel) {
+  if (isEliteLevel(snapshot.level) && !snapshot.eliteSpawnedThisLevel) {
     const capacity = Math.max(1, maxEnemies - snapshot.enemies.length)
     const ranks = getEliteSpawnRanks(snapshot.level, difficulty).slice(0, Math.min(capacity, snapshot.remainingToSpawn))
     ranks.forEach((rank, index) => {
@@ -7141,6 +9663,35 @@ const filterProjectiles = (projectiles: Projectile[]) => {
   })
 }
 
+const isProtectedPickup = (pickup: GameSnapshot['pickups'][number]) => {
+  return pickup.kind === 'equipment' &&
+    pickup.equipment &&
+    ['epic', 'legacy', 'legendary'].includes(pickup.equipment.rarity)
+}
+
+const recycleDistantTransientResources = (snapshot: GameSnapshot) => {
+  if (snapshot.battlefield.mode !== 'infinite') {
+    return
+  }
+
+  const isNearPlayer = (position: Vector2, maxDistance: number) => {
+    return distance(position, snapshot.player.position) <= maxDistance
+  }
+
+  snapshot.projectiles = snapshot.projectiles.filter((projectile) => {
+    return isNearPlayer(projectile.position, OFFSCREEN_PROJECTILE_CLEANUP_DISTANCE)
+  })
+  snapshot.enemyProjectiles = snapshot.enemyProjectiles.filter((projectile) => {
+    return isNearPlayer(projectile.position, OFFSCREEN_PROJECTILE_CLEANUP_DISTANCE)
+  })
+  snapshot.pickups = snapshot.pickups.filter((pickup) => {
+    if (isNearPlayer(pickup.position, OFFSCREEN_LOW_VALUE_PICKUP_CLEANUP_DISTANCE)) {
+      return true
+    }
+    return Boolean(isProtectedPickup(pickup))
+  })
+}
+
 export const createInitialSnapshot = (phase: GamePhase = 'idle') => {
   const snapshot = createBaseSnapshot(phase)
   snapshot.activeSkills = createDefaultActiveSkills()
@@ -7173,6 +9724,7 @@ const preserveMetaProgress = (baseSnapshot: GameSnapshot, previous: GameSnapshot
   )
   baseSnapshot.unlockedTalentIds = [...(migrated.unlockedTalentIds ?? [])]
   baseSnapshot.unlockedMetaTalentIds = [...(migrated.unlockedMetaTalentIds ?? migrated.unlockedTalentIds ?? [])]
+  baseSnapshot.metaTalentRanks = { ...(migrated.metaTalentRanks ?? {}) }
   baseSnapshot.talentUnlockRecords = (migrated.talentUnlockRecords ?? []).map((record) => ({ ...record }))
   baseSnapshot.unlockedWeapons = []
   baseSnapshot.equippedWeaponId = null
@@ -7220,6 +9772,7 @@ const applySelectedCampaignStart = (snapshot: GameSnapshot, campaign: number, di
   snapshot.aimPoint = { x: WORLD_WIDTH * 0.68, y: WORLD_HEIGHT / 2 }
   snapshot.battlefield = createBattlefieldState(getBattlefieldMode('running', level), level, snapshot.player.position, snapshot.battlefield.seed)
   snapshot.mapObstacles = getBattlefieldObstacles(snapshot.battlefield, level)
+  snapshot.mapDecorations = getBattlefieldDecorations(snapshot.battlefield, level, snapshot.mapObstacles)
   snapshot.message = `${theme.name} · ${difficultyConfig.label} · ${getLevelIntroMessage(level, targetKills)}，准备时间 ${DUNGEON_ENTRY_GRACE.toFixed(1)} 秒`
 }
 
@@ -7252,10 +9805,12 @@ const TALENT_POINT_DIFFICULTY_REWARD: Record<CampaignDifficulty, { multiplier: n
 }
 
 const TALENT_POINT_SOURCE_MULTIPLIER: Record<'death' | 'forfeit' | 'campaign-clear', number> = {
-  death: 0.75,
-  forfeit: 0.45,
+  death: 0.3,
+  forfeit: 0,
   'campaign-clear': 1,
 }
+
+const FAILURE_REWARD_MULTIPLIER = 0.3
 
 const applyTalentSoftCap = (points: number, softCap: number) => {
   if (points <= softCap) {
@@ -7269,11 +9824,13 @@ const getTalentPointBonusMultiplier = (
   difficulty: CampaignDifficulty,
   source: 'death' | 'forfeit' | 'campaign-clear',
 ) => {
+  if (source !== 'campaign-clear') {
+    return 1
+  }
+
   const summary = getSnapshotMetaTalentSummary(snapshot)
   const difficultyBonus = summary.talentPointBonuses[difficulty] ?? 0
-  const sourceBonus = source === 'death' || source === 'forfeit'
-    ? summary.talentPointBonuses.deathOrForfeit ?? 0
-    : 0
+  const sourceBonus = 0
   const cappedBonus = Math.min(TALENT_POINT_BONUS_CAP, Math.max(0, (difficultyBonus + sourceBonus) / 100))
   return 1 + cappedBonus
 }
@@ -7313,7 +9870,11 @@ const calculateTalentPointGain = (
     getTalentPointBonusMultiplier(snapshot, difficulty, source),
   )
   const softCap = Math.round(difficultyReward.softCap * getTalentPointSoftCapMultiplier(snapshot, difficulty, source))
-  return Math.max(snapshot.runExpGained > 0 || snapshot.kills > 0 ? 1 : 0, applyTalentSoftCap(scaled, softCap))
+  const capped = applyTalentSoftCap(scaled, softCap)
+  if (source !== 'campaign-clear') {
+    return capped
+  }
+  return Math.max(snapshot.runExpGained > 0 || snapshot.kills > 0 ? 1 : 0, capped)
 }
 
 const finalizeTalentPointSettlement = (
@@ -7363,17 +9924,21 @@ const finalizeTalentPointSettlement = (
 }
 
 const finishRunToVillage = (snapshot: GameSnapshot, options: { earnedGold: number; message: string; source: 'death' | 'forfeit' | 'campaign-clear' }) => {
-  const autoDismantle = autoDismantleTemporaryEquipment(snapshot)
+  const autoDismantle = resolveSettlementDungeonEquipment(snapshot, options.source)
   const talentRecord = finalizeTalentPointSettlement(snapshot, options.source)
   snapshot.phase = 'game-over'
   snapshot.phaseBeforePause = 'running'
+  snapshot.pauseMenuOpen = false
   snapshot.earnedGold = options.earnedGold
   snapshot.currency += options.earnedGold
-  snapshot.bestLevel = Math.max(snapshot.bestLevel, snapshot.level)
-  recordRunResult(snapshot, options.earnedGold)
+  if (options.source !== 'forfeit') {
+    snapshot.bestLevel = Math.max(snapshot.bestLevel, snapshot.level)
+    recordRunResult(snapshot, options.earnedGold)
+  }
   snapshot.player = createPlayer(snapshot.skillAllocations, snapshot.fixedPassiveLevel, snapshot.equippedWeaponId, snapshot.equippedItems, undefined, VILLAGE_POINTS.campfire)
   snapshot.battlefield = createBattlefieldState('village', snapshot.level, snapshot.player.position, snapshot.battlefield.seed)
   snapshot.mapObstacles = createVillageObstacles()
+  snapshot.mapDecorations = []
   snapshot.enemies = []
   snapshot.projectiles = []
   snapshot.enemyProjectiles = []
@@ -7385,6 +9950,8 @@ const finishRunToVillage = (snapshot: GameSnapshot, options: { earnedGold: numbe
   snapshot.pendingBossLoot = []
   snapshot.inRunTalentIds = []
   snapshot.talentCombatState = {}
+  snapshot.combatDamageLog = []
+  snapshot.lastTalentCooldownRefund = undefined
   snapshot.runTalentState = {
     selectedBuild: snapshot.runTalentState?.selectedBuild ?? 'death',
     selectedTalentIds: [],
@@ -7397,12 +9964,28 @@ const finishRunToVillage = (snapshot: GameSnapshot, options: { earnedGold: numbe
   snapshot.inRunRewardHistory = { noMainBuildStreak: 0, lastOfferedChoiceIds: [] }
   snapshot.levelTimer = 0
   const dismantleText = autoDismantle.count > 0 ? `，自动分解 ${autoDismantle.count} 件紫色以下地下城装备，获得 ${formatEquipmentMaterials(autoDismantle.materials)}` : ''
-  const talentText = talentRecord ? `，结算天赋点 +${talentRecord.points}` : ''
+  const talentText = talentRecord && talentRecord.points > 0 ? `，结算天赋点 +${talentRecord.points}` : ''
   snapshot.message = `${options.message}${talentText}${dismantleText}`
+}
+
+const finishBossLevelToVillage = (snapshot: GameSnapshot) => {
+  if (!canFinishBossLevel(snapshot)) {
+    return false
+  }
+
+  const earnedGold = getGoldReward(snapshot.level, snapshot.kills) + 800 + getCampaignIndex(snapshot.level) * 180
+  finishRunToVillage(snapshot, {
+    earnedGold,
+    source: 'campaign-clear',
+    message: `战役 ${getCampaignIndex(snapshot.level)} 契约完成，击败 ${snapshot.kills} 只敌人，获得 ${earnedGold} 金币`,
+  })
+  return true
 }
 
 export const restartRunSnapshot = (current: GameSnapshot): GameSnapshot => {
   const next = preserveMetaProgress(createInitialSnapshot('running'), current)
+  next.debugControls = { ...current.debugControls }
+  applyMetaTalentRunStartState(next)
   applySelectedCampaignStart(next, current.selectedCampaign ?? 1, current.selectedCampaignDifficulty ?? current.selectedDifficulty)
   next.levelTimer = DUNGEON_ENTRY_GRACE
   next.player.hurtCooldown = DUNGEON_ENTRY_GRACE
@@ -7411,6 +9994,8 @@ export const restartRunSnapshot = (current: GameSnapshot): GameSnapshot => {
 
 export const startRunSnapshot = (current: GameSnapshot): GameSnapshot => {
   const next = preserveMetaProgress(createInitialSnapshot('running'), current)
+  next.debugControls = { ...current.debugControls }
+  applyMetaTalentRunStartState(next)
   applySelectedCampaignStart(next, current.selectedCampaign ?? 1, current.selectedCampaignDifficulty ?? current.selectedDifficulty)
   next.levelTimer = DUNGEON_ENTRY_GRACE
   next.player.hurtCooldown = DUNGEON_ENTRY_GRACE
@@ -7423,6 +10008,194 @@ export const returnToVillageSnapshot = (current: GameSnapshot): GameSnapshot => 
   return next
 }
 
+const preserveCurrentCombatBuildForLocalTest = (target: GameSnapshot, current: GameSnapshot) => {
+  target.skillAllocations = { ...current.skillAllocations }
+  target.fixedPassiveLevel = current.fixedPassiveLevel
+  target.contractBoons = { ...current.contractBoons }
+  target.activeSkills = current.activeSkills.length > 0
+    ? current.activeSkills.map((skill) => ({ ...skill, cooldownRemaining: Math.min(skill.cooldownRemaining, 0.25) }))
+    : target.activeSkills
+  target.inRunTalentIds = [...current.inRunTalentIds]
+  target.runTalentState = {
+    selectedBuild: current.runTalentState?.selectedBuild ?? 'death',
+    selectedTalentIds: [...(current.runTalentState?.selectedTalentIds ?? current.inRunTalentIds)],
+    rerollsRemaining: current.runTalentState?.rerollsRemaining ?? current.inRunRewardRerolls,
+    rerollsUsed: current.runTalentState?.rerollsUsed ?? 0,
+    guarantee: {
+      noMainBuildStreak: current.runTalentState?.guarantee?.noMainBuildStreak ?? current.inRunRewardHistory.noMainBuildStreak,
+      mainBuildOffersLv3To4: current.runTalentState?.guarantee?.mainBuildOffersLv3To4 ?? 0,
+      lv5GuaranteeConsumed: current.runTalentState?.guarantee?.lv5GuaranteeConsumed ?? false,
+    },
+    lastOfferedCandidateIds: [...(current.runTalentState?.lastOfferedCandidateIds ?? current.inRunRewardHistory.lastOfferedChoiceIds)],
+  }
+  target.inRunRewardRerolls = current.inRunRewardRerolls
+  target.inRunRewardHistory = {
+    noMainBuildStreak: current.inRunRewardHistory.noMainBuildStreak,
+    lastOfferedChoiceIds: [...current.inRunRewardHistory.lastOfferedChoiceIds],
+  }
+  target.talentCombatState = {}
+  target.player = createPlayer(
+    target.skillAllocations,
+    target.fixedPassiveLevel,
+    target.equippedWeaponId,
+    target.equippedItems,
+    undefined,
+    target.player.position,
+  )
+}
+
+export const startLocalBattleTestSnapshot = (current: GameSnapshot): GameSnapshot => {
+  const next = preserveMetaProgress(createInitialSnapshot('running'), current)
+  applySelectedCampaignStart(next, 1, 'normal')
+  preserveCurrentCombatBuildForLocalTest(next, current)
+  applyMetaTalentRunStartState(next)
+  next.debugControls = { ...current.debugControls }
+  next.levelTimer = 0
+  next.player.hurtCooldown = 0
+  next.kills = 0
+  next.levelKills = 0
+  next.levelTargetKills = 0
+  next.remainingToSpawn = 0
+  next.spawnCooldown = 999
+  next.eliteSpawnedThisLevel = true
+  next.pendingSkillReward = null
+  next.pendingBossLoot = []
+  next.floorTransition = undefined
+  next.levelClearConfirmed = false
+  next.runExpGained = 0
+  next.runHighestContractLevel = next.contractLevel
+  next.runEliteKills = 0
+  next.runBossKills = 0
+  next.runSettlementClaimed = false
+  next.enemies = []
+  next.pickups = []
+  next.projectiles = []
+  next.enemyProjectiles = []
+  next.skillFields = []
+  next.enemySkillEffects = []
+  next.bursts = []
+  next.floatingTexts = []
+  next.localBattleTest = {
+    active: true,
+    status: 'active',
+    monsterConfig: [],
+    spawnedEnemyIds: [],
+  }
+  synchronizeSelectedRunTalentFeedbackState(next)
+  next.message = '本地战斗测试：第一关地图已载入，请通过怪物面板手动生成敌人'
+  return next
+}
+
+const normalizeLocalBattleMonsterConfig = (config: LocalBattleTestMonsterConfig[]) => {
+  const merged = new Map<string, number>()
+  config.forEach((item) => {
+    const entityId = String(item.entityId ?? '').trim()
+    if (!entityId) return
+    const count = clamp(Math.round(Number(item.count) || 0), 0, LOCAL_BATTLE_TEST_MAX_COUNT_PER_ENTITY)
+    merged.set(entityId, Math.min(LOCAL_BATTLE_TEST_MAX_COUNT_PER_ENTITY, (merged.get(entityId) ?? 0) + count))
+  })
+  return Array.from(merged.entries())
+    .map(([entityId, count]) => ({ entityId, count }))
+    .filter((item) => item.count > 0)
+}
+
+const ensureLocalBattleTestState = (snapshot: GameSnapshot) => {
+  snapshot.localBattleTest = snapshot.localBattleTest ?? {
+    active: true,
+    status: 'active',
+    monsterConfig: [],
+    spawnedEnemyIds: [],
+  }
+  snapshot.localBattleTest.active = true
+  snapshot.localBattleTest.status = snapshot.localBattleTest.status ?? 'active'
+  return snapshot.localBattleTest
+}
+
+export const clearLocalBattleTestMonstersSnapshot = (current: GameSnapshot): GameSnapshot => {
+  const snapshot = cloneSnapshot(current)
+  if (!isLocalBattleTestActive(snapshot)) {
+    return snapshot
+  }
+
+  snapshot.enemies = []
+  clearDungeonWardenArenaState(snapshot)
+  const localState = ensureLocalBattleTestState(snapshot)
+  localState.spawnedEnemyIds = []
+  localState.lastApplyResult = { ok: true, spawned: 0, errors: [] }
+  snapshot.message = '本地战斗测试：已清空测试会话怪物'
+  return snapshot
+}
+
+export const applyLocalBattleTestMonsterConfigSnapshot = (
+  current: GameSnapshot,
+  config: LocalBattleTestMonsterConfig[],
+): GameSnapshot => {
+  const snapshot = cloneSnapshot(current)
+  if (!isLocalBattleTestActive(snapshot)) {
+    return snapshot
+  }
+
+  const localState = ensureLocalBattleTestState(snapshot)
+  const normalized = normalizeLocalBattleMonsterConfig(config)
+  const errors: string[] = []
+  const spawnedIds: string[] = []
+  snapshot.enemies = []
+  clearDungeonWardenArenaState(snapshot)
+  localState.monsterConfig = normalized.map((item) => ({ ...item }))
+
+  normalized.forEach((item) => {
+    const disabledReason = getLocalBattleEntityDisabledReason(item.entityId)
+    const archetype = localBattleArchetypeById.get(item.entityId)
+    if (disabledReason || !archetype) {
+      errors.push(`${item.entityId}：${disabledReason ?? '实体未登记'}`)
+      return
+    }
+
+    for (let index = 0; index < item.count; index += 1) {
+      const position = getLocalBattleSpawnPosition(snapshot, archetype)
+      if (!position) {
+        errors.push(`${archetype.name}：未找到合法出生点`)
+        break
+      }
+      const group = getLocalBattleEntityGroup(archetype)
+      const enemy = createEnemy(
+        snapshot.level,
+        archetype.kind,
+        position,
+        archetype,
+        group === 'boss' ? 'boss' : group === 'elite' ? 'elite' : archetype.id === CORROSIVE_SLIME_ARCHETYPE.id ? 'fodder' : 'theme',
+        getSnapshotDifficulty(snapshot),
+      )
+      enemy.id = `local-test-${createId()}`
+      snapshot.enemies.push(enemy)
+      spawnedIds.push(enemy.id)
+    }
+  })
+
+  localState.spawnedEnemyIds = spawnedIds
+  localState.lastApplyResult = {
+    ok: errors.length === 0,
+    spawned: spawnedIds.length,
+    errors,
+  }
+  snapshot.remainingToSpawn = 0
+  snapshot.spawnCooldown = 999
+  snapshot.message = errors.length > 0
+    ? `本地战斗测试：生成 ${spawnedIds.length} 只，${errors[0]}`
+    : `本地战斗测试：已生成 ${spawnedIds.length} 只怪物`
+  return snapshot
+}
+
+export const exitLocalBattleTestSnapshot = (current: GameSnapshot): GameSnapshot => {
+  if (!isLocalBattleTestActive(current)) {
+    return returnToVillageSnapshot(current)
+  }
+  const next = preserveMetaProgress(createInitialSnapshot('idle'), current)
+  next.localBattleTest = undefined
+  next.message = '已退出本地战斗测试，测试数据未写入正式存档'
+  return next
+}
+
 export const forfeitRunSnapshot = (current: GameSnapshot): GameSnapshot => {
   const snapshot = cloneSnapshot(current)
 
@@ -7431,9 +10204,9 @@ export const forfeitRunSnapshot = (current: GameSnapshot): GameSnapshot => {
   }
 
   finishRunToVillage(snapshot, {
-    earnedGold: Math.max(0, Math.floor(getGoldReward(snapshot.level, snapshot.kills) * 0.35)),
+    earnedGold: 0,
     source: 'forfeit',
-    message: `主动放弃本次契约，第 ${snapshot.level} 层战利品已带回村庄处理`,
+    message: `主动放弃本次契约，第 ${snapshot.level} 层未获得任何收益`,
   })
   return snapshot
 }
@@ -7546,10 +10319,23 @@ export const toggleEquipmentLockSnapshot = (current: GameSnapshot, itemId: strin
 
 export const dismissBossLootSnapshot = (current: GameSnapshot, itemId?: string): GameSnapshot => {
   const snapshot = cloneSnapshot(current)
+  if (isBossLevel(snapshot.level) && !hasCompletedBossCombat(snapshot)) {
+    clearBossProgressionArtifacts(snapshot)
+    snapshot.pendingBossLoot = itemId
+      ? snapshot.pendingBossLoot.filter((item) => item.id !== itemId).map(cloneEquipmentItem)
+      : []
+    snapshot.message = itemId ? 'Boss 战利品已移入仓库，继续清除护卫' : 'Boss 战利品已全部移入仓库，继续清除护卫'
+    return snapshot
+  }
+
   snapshot.pendingBossLoot = itemId
     ? snapshot.pendingBossLoot.filter((item) => item.id !== itemId).map(cloneEquipmentItem)
     : []
   if (snapshot.phase === 'level-clear' && snapshot.pendingBossLoot.length === 0 && !snapshot.pendingSkillReward) {
+    if (isBossLevel(snapshot.level)) {
+      finishBossLevelToVillage(snapshot)
+      return snapshot
+    }
     snapshot.levelClearConfirmed = true
     snapshot.levelTimer = 0
   }
@@ -7568,6 +10354,12 @@ const isBelowEpicDungeonEquipment = (item: EquipmentItem) => {
   return ['broken', 'common', 'fine', 'rare'].includes(item.rarity) && (item.source ?? 'dungeon') === 'dungeon'
 }
 
+const isExplicitDungeonEquipment = (item: EquipmentItem) => item.source === 'dungeon'
+
+const isHighRarityDungeonEquipment = (item: EquipmentItem) => {
+  return ['epic', 'legacy', 'legendary'].includes(item.rarity) && isExplicitDungeonEquipment(item)
+}
+
 const getTemporaryEquipment = (snapshot: GameSnapshot) => {
   const byId = new Map<string, EquipmentItem>()
   snapshot.equipmentInventory.forEach((item) => {
@@ -7581,6 +10373,17 @@ const getTemporaryEquipment = (snapshot: GameSnapshot) => {
     }
   })
   return Array.from(byId.values())
+}
+
+const scaleEquipmentMaterialRewards = (
+  materials: ReturnType<typeof createEmptyEquipmentMaterials>,
+  multiplier: number,
+) => {
+  const scaled = createEmptyEquipmentMaterials()
+  ;(Object.keys(scaled) as Array<keyof typeof scaled>).forEach((id) => {
+    scaled[id] = Math.max(0, Math.floor((materials[id] ?? 0) * multiplier))
+  })
+  return scaled
 }
 
 const getTalentAutoDismantleMaterialMultiplier = (snapshot: GameSnapshot) => {
@@ -7612,12 +10415,13 @@ const getTemporaryEquipmentPreview = (snapshot: GameSnapshot) => {
   }
 }
 
-const autoDismantleTemporaryEquipment = (snapshot: GameSnapshot) => {
+const autoDismantleTemporaryEquipment = (snapshot: GameSnapshot, settlementMaterialMultiplier = 1) => {
   const temporary = getTemporaryEquipment(snapshot)
   const rawPreview = getEquipmentDismantlePreview(temporary)
+  const talentAdjustedMaterials = applyTalentMaterialMultiplier(rawPreview.materials, getTalentAutoDismantleMaterialMultiplier(snapshot))
   const preview = {
     ...rawPreview,
-    materials: applyTalentMaterialMultiplier(rawPreview.materials, getTalentAutoDismantleMaterialMultiplier(snapshot)),
+    materials: scaleEquipmentMaterialRewards(talentAdjustedMaterials, settlementMaterialMultiplier),
   }
   if (preview.count <= 0) {
     snapshot.lastAutoDismantleSummary = {
@@ -7639,6 +10443,40 @@ const autoDismantleTemporaryEquipment = (snapshot: GameSnapshot) => {
     materials: { ...preview.materials },
   }
   return preview
+}
+
+const discardDungeonEquipment = (snapshot: GameSnapshot, shouldDiscard: (item: EquipmentItem) => boolean) => {
+  snapshot.equipmentInventory = snapshot.equipmentInventory
+    .filter((item) => !shouldDiscard(item))
+    .map(cloneEquipmentItem)
+  snapshot.equippedItems = Object.fromEntries(
+    Object.entries(snapshot.equippedItems).map(([slot, item]) => [slot, item && shouldDiscard(item) ? undefined : item]),
+  ) as Partial<Record<EquipmentSlot, EquipmentItem>>
+  snapshot.pendingBossLoot = snapshot.pendingBossLoot
+    .filter((item) => !shouldDiscard(item))
+    .map(cloneEquipmentItem)
+  applyDerivedPlayerStats(snapshot)
+}
+
+const resolveSettlementDungeonEquipment = (
+  snapshot: GameSnapshot,
+  source: 'death' | 'forfeit' | 'campaign-clear',
+) => {
+  if (source === 'forfeit') {
+    discardDungeonEquipment(snapshot, isExplicitDungeonEquipment)
+    snapshot.lastAutoDismantleSummary = {
+      count: 0,
+      materials: createEmptyEquipmentMaterials(),
+    }
+    return snapshot.lastAutoDismantleSummary
+  }
+
+  if (source === 'death') {
+    discardDungeonEquipment(snapshot, isHighRarityDungeonEquipment)
+    return autoDismantleTemporaryEquipment(snapshot, FAILURE_REWARD_MULTIPLIER)
+  }
+
+  return autoDismantleTemporaryEquipment(snapshot)
 }
 
 export const dismantleEquipmentSnapshot = (
@@ -7865,6 +10703,7 @@ export const triggerDashSnapshot = (current: GameSnapshot): GameSnapshot => {
 
 export const triggerActiveSkillSnapshot = (current: GameSnapshot, slotIndex: number): GameSnapshot => {
   const snapshot = cloneSnapshot(current)
+  synchronizeSelectedRunTalentFeedbackState(snapshot)
 
   if (snapshot.phase !== 'running') {
     return snapshot
@@ -7901,6 +10740,7 @@ export const triggerActiveSkillSnapshot = (current: GameSnapshot, slotIndex: num
 
 export const togglePauseSnapshot = (current: GameSnapshot): GameSnapshot => {
   const snapshot = cloneSnapshot(current)
+  synchronizeSelectedRunTalentFeedbackState(snapshot)
 
   if (snapshot.phase === 'idle' || snapshot.phase === 'game-over') {
     return snapshot
@@ -7911,24 +10751,32 @@ export const togglePauseSnapshot = (current: GameSnapshot): GameSnapshot => {
       snapshot.message = '请先处理当前职业技能奖励'
       return snapshot
     }
-    snapshot.phase = snapshot.phaseBeforePause
-    snapshot.message = snapshot.phase === 'level-clear' ? '层间奖励已处理，准备进入下一层' : '已继续战斗'
+    if (snapshot.pauseMenuOpen) {
+      snapshot.phase = snapshot.phaseBeforePause
+      snapshot.pauseMenuOpen = false
+      snapshot.message = snapshot.phase === 'level-clear' ? '层间奖励已处理，准备进入下一层' : '已继续战斗'
+      return snapshot
+    }
+    snapshot.pauseMenuOpen = true
+    snapshot.message = '游戏已暂停，按 ESC 继续'
     return snapshot
   }
 
   snapshot.phaseBeforePause = snapshot.phase
   snapshot.phase = 'paused'
+  snapshot.pauseMenuOpen = true
   snapshot.message = '游戏已暂停，按 ESC 继续'
   return snapshot
 }
 
-const addNewSkill = (snapshot: GameSnapshot, skillId: string) => {
+const addNewSkill = (snapshot: GameSnapshot, skillId: string, source?: PendingSkillReward['source']) => {
   if (snapshot.activeSkills.length < PLAYER_ACTIVE_SKILL_SLOTS) {
-    snapshot.activeSkills.push({ skillId, level: 1, cooldownRemaining: 0.4 })
+    snapshot.activeSkills.push({ skillId, level: 1, cooldownRemaining: 0.4, cooldownDuration: 0.4 })
     return
   }
 
   snapshot.pendingSkillReward = {
+    poolKind: 'skill',
     choices: snapshot.activeSkills.map((skill) => {
       const definition = ARCHER_ACTIVE_SKILL_MAP[skill.skillId]
 
@@ -7945,6 +10793,7 @@ const addNewSkill = (snapshot: GameSnapshot, skillId: string) => {
       }
     }),
     replacementSkillId: skillId,
+    source,
   }
 }
 
@@ -7954,7 +10803,7 @@ export const acceptSkillRewardSnapshot = (current: GameSnapshot, choiceId: strin
     return snapshot
   }
 
-  const rewardSource = snapshot.pendingSkillReward.source ?? 'level-clear'
+  const rewardSource = getPendingRewardSource(snapshot)
 
   const choice = snapshot.pendingSkillReward.choices.find((item) => item.choiceId === choiceId)
   if (!choice) {
@@ -7964,16 +10813,10 @@ export const acceptSkillRewardSnapshot = (current: GameSnapshot, choiceId: strin
   if (snapshot.pendingSkillReward.replacementSkillId) {
     const replacementSkillId = snapshot.pendingSkillReward.replacementSkillId
     snapshot.activeSkills = snapshot.activeSkills.filter((skill) => skill.skillId !== choice.skillId)
-    snapshot.activeSkills.push({ skillId: replacementSkillId, level: 1, cooldownRemaining: 0.4 })
+    snapshot.activeSkills.push({ skillId: replacementSkillId, level: 1, cooldownRemaining: 0.4, cooldownDuration: 0.4 })
     snapshot.pendingSkillReward = null
-    if (rewardSource === 'level-clear') {
-      snapshot.levelClearConfirmed = true
-    }
+    resumeFloorTransitionAfterReward(snapshot, rewardSource)
     snapshot.message = `已替换技能为 ${ARCHER_ACTIVE_SKILL_MAP[replacementSkillId].name}`
-    if (rewardSource === 'elite' && snapshot.phase === 'paused') {
-      snapshot.phase = 'running'
-      snapshot.phaseBeforePause = 'running'
-    }
     return snapshot
   }
 
@@ -7983,14 +10826,8 @@ export const acceptSkillRewardSnapshot = (current: GameSnapshot, choiceId: strin
     snapshot.player.attackRange = derived.attackRange
     snapshot.player.attackPierce = derived.attackPierce
     snapshot.pendingSkillReward = null
-    if (rewardSource === 'level-clear') {
-      snapshot.levelClearConfirmed = true
-    }
+    resumeFloorTransitionAfterReward(snapshot, rewardSource)
     snapshot.message = `固定被动升级到 Lv.${snapshot.fixedPassiveLevel}`
-    if (rewardSource === 'elite' && snapshot.phase === 'paused') {
-      snapshot.phase = 'running'
-      snapshot.phaseBeforePause = 'running'
-    }
     return snapshot
   }
 
@@ -8005,28 +10842,16 @@ export const acceptSkillRewardSnapshot = (current: GameSnapshot, choiceId: strin
       }
     })
     snapshot.pendingSkillReward = null
-    if (rewardSource === 'level-clear') {
-      snapshot.levelClearConfirmed = true
-    }
+    resumeFloorTransitionAfterReward(snapshot, rewardSource)
     snapshot.message = `${ARCHER_ACTIVE_SKILL_MAP[choice.skillId].name} 已升级`
-    if (rewardSource === 'elite' && snapshot.phase === 'paused') {
-      snapshot.phase = 'running'
-      snapshot.phaseBeforePause = 'running'
-    }
     return snapshot
   }
 
-  addNewSkill(snapshot, choice.skillId)
+  addNewSkill(snapshot, choice.skillId, rewardSource)
   if (!snapshot.pendingSkillReward?.replacementSkillId) {
     snapshot.pendingSkillReward = null
-    if (rewardSource === 'level-clear') {
-      snapshot.levelClearConfirmed = true
-    }
+    resumeFloorTransitionAfterReward(snapshot, rewardSource)
     snapshot.message = `已获得技能 ${ARCHER_ACTIVE_SKILL_MAP[choice.skillId].name}`
-    if (rewardSource === 'elite' && snapshot.phase === 'paused') {
-      snapshot.phase = 'running'
-      snapshot.phaseBeforePause = 'running'
-    }
   } else {
     snapshot.message = `主动技能已满，请先放弃一个技能以换取 ${ARCHER_ACTIVE_SKILL_MAP[choice.skillId].name}`
   }
@@ -8040,21 +10865,20 @@ export const declineSkillRewardSnapshot = (current: GameSnapshot): GameSnapshot 
     return snapshot
   }
 
-  const rewardSource = snapshot.pendingSkillReward?.source ?? 'level-clear'
+  const rewardSource = getPendingRewardSource(snapshot)
   snapshot.pendingSkillReward = null
-  if (rewardSource === 'level-clear') {
-    snapshot.levelClearConfirmed = true
-  }
+  resumeFloorTransitionAfterReward(snapshot, rewardSource)
   snapshot.message = '已放弃本次职业技能奖励'
-  if (rewardSource === 'elite' && snapshot.phase === 'paused') {
-    snapshot.phase = 'running'
-    snapshot.phaseBeforePause = 'running'
-  }
   return snapshot
 }
 
 export const confirmLevelClearSnapshot = (current: GameSnapshot): GameSnapshot => {
   const snapshot = cloneSnapshot(current)
+  if (isBossLevel(snapshot.level) && !hasCompletedBossCombat(snapshot)) {
+    clearBossProgressionArtifacts(snapshot)
+    return snapshot
+  }
+
   if (snapshot.phase !== 'level-clear' || snapshot.pendingSkillReward || snapshot.pendingBossLoot.length > 0) {
     return snapshot
   }
@@ -8070,6 +10894,9 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
   const snapshot = cloneSnapshot(current)
   const messageBeforeFrame = current.message
   snapshot.elapsedTime += delta
+  synchronizeSelectedRunTalentFeedbackState(snapshot)
+
+  clearBossProgressionArtifacts(snapshot)
 
   if (snapshot.phase === 'idle') {
     updatePlayerMovement(snapshot, input, delta)
@@ -8080,6 +10907,11 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
   }
 
   if (snapshot.phase === 'game-over' || snapshot.phase === 'paused') {
+    return snapshot
+  }
+
+  // A failed local test session remains inspectable, but never re-enters combat or formal settlement.
+  if (isLocalBattleTestFailed(snapshot)) {
     return snapshot
   }
 
@@ -8104,12 +10936,7 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
     snapshot.levelTimer -= delta
     if (snapshot.levelTimer <= 0) {
       if (isBossLevel(snapshot.level)) {
-        const earnedGold = getGoldReward(snapshot.level, snapshot.kills) + 800 + getCampaignIndex(snapshot.level) * 180
-        finishRunToVillage(snapshot, {
-          earnedGold,
-          source: 'campaign-clear',
-          message: `战役 ${getCampaignIndex(snapshot.level)} 契约完成，击败 ${snapshot.kills} 只敌人，获得 ${earnedGold} 金币`,
-        })
+        finishBossLevelToVillage(snapshot)
         return snapshot
       }
       return createLevelState(snapshot, snapshot.level + 1)
@@ -8149,8 +10976,18 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
     return snapshot
   }
 
-  applyCampaignEnvironmentMechanic(snapshot)
-  spawnWaveEnemies(snapshot)
+  if (updateFloorTransition(snapshot, delta)) {
+    updateBursts(snapshot, delta)
+    updateFloatingTexts(snapshot, delta)
+    return snapshot
+  }
+
+  const localBattleTest = isLocalBattleTestActive(snapshot)
+  if (!localBattleTest) {
+    applyCampaignEnvironmentMechanic(snapshot)
+    ensureSpawnBudgetForIncompleteFloor(snapshot)
+    spawnWaveEnemies(snapshot)
+  }
   updateEnemies(snapshot, delta)
   recycleDistantOrdinaryEnemies(snapshot)
   updateBeastCompanions(snapshot, delta)
@@ -8158,14 +10995,19 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
   triggerAutoAttack(snapshot)
   updateProjectileList(snapshot.projectiles, delta, snapshot)
   updateProjectileList(snapshot.enemyProjectiles, delta)
-  updateRouteObjectives(snapshot, delta)
+  if (!localBattleTest) {
+    updateRouteObjectives(snapshot, delta)
+  }
   resolveProjectileObstacleHits(snapshot)
   updateSkillFields(snapshot, delta)
-  resolvePlayerProjectiles(snapshot)
+  resolvePlayerProjectiles(snapshot, delta)
   resolvePickups(snapshot, delta)
+  recycleDistantTransientResources(snapshot)
   resolvePlayerDamage(snapshot)
-  updateContractRift(snapshot, delta)
-  updateInfiniteBattlePressure(snapshot, delta, snapshot.kills > current.kills)
+  if (!localBattleTest) {
+    updateContractRift(snapshot, delta)
+    updateInfiniteBattlePressure(snapshot, delta, snapshot.kills > current.kills)
+  }
 
   if (snapshot.debugControls.infiniteHealth) {
     snapshot.player.hp = snapshot.player.maxHp
@@ -8178,7 +11020,19 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
   updateEnemySkillEffects(snapshot, delta)
 
   if (snapshot.player.hp <= 0) {
-    const earnedGold = getGoldReward(snapshot.level, snapshot.kills)
+    if (localBattleTest) {
+      snapshot.localBattleTest = snapshot.localBattleTest
+        ? { ...snapshot.localBattleTest, status: 'failed' }
+        : undefined
+      snapshot.phase = 'running'
+      snapshot.phaseBeforePause = 'running'
+      snapshot.pauseMenuOpen = false
+      snapshot.player.hp = 0
+      snapshot.message = '本地战斗测试：玩家倒下，未产生收益；退出测试可回到首页'
+      return snapshot
+    }
+    const fullGold = getGoldReward(snapshot.level, snapshot.kills)
+    const earnedGold = Math.floor(fullGold * FAILURE_REWARD_MULTIPLIER)
     finishRunToVillage(snapshot, {
       earnedGold,
       source: 'death',
@@ -8195,10 +11049,22 @@ export const advanceGame = (current: GameSnapshot, input: InputState, rawDelta: 
     return snapshot
   }
 
-  if (snapshot.remainingToSpawn === 0 && snapshot.enemies.length === 0 && snapshot.enemyProjectiles.length === 0) {
-    enterLevelClear(snapshot)
+  if (localBattleTest) {
+    if (snapshot.message === messageBeforeFrame) {
+      snapshot.message = snapshot.enemies.length > 0
+        ? `本地战斗测试：场上 ${snapshot.enemies.length} 只测试怪物`
+        : '本地战斗测试：等待手动生成怪物'
+    }
     return snapshot
   }
+
+  if (!snapshot.floorTransition && snapshot.levelKills >= snapshot.levelTargetKills) {
+    snapshot.remainingToSpawn = 0
+    beginFloorTransition(snapshot)
+    return snapshot
+  }
+
+  ensureSpawnBudgetForIncompleteFloor(snapshot)
 
   const remaining = snapshot.levelTargetKills - snapshot.levelKills
   const rangedCount = snapshot.enemies.filter((enemy) => enemy.kind === 'ranged').length

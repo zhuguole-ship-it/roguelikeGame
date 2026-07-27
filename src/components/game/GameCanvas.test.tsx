@@ -4,11 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createInitialSnapshot } from '../../game/engine'
 import {
   RUNTIME_ASSET_DRAFT_STORAGE_KEY,
-  clearRuntimeAssetOverrides,
+  exportRuntimeAssetDraftConfig,
   getRuntimeAssetActionOverride,
+  restoreRuntimeAssetOverrideSnapshot,
+  type RuntimeAssetDraftConfig,
 } from '../../game/runtimeAssetOverrides'
 import { useGameStore } from '../../store/useGameStore'
 import { GameCanvas } from './GameCanvas'
+import { getHellhoundImage2FrameUrls } from '../../game/hellhoundAssetFrames'
 
 const createCanvasContext = () => ({
   setTransform: vi.fn(),
@@ -38,7 +41,12 @@ const createCanvasContext = () => ({
   imageSmoothingEnabled: false,
 })
 
+let runtimeOverrideSnapshot: RuntimeAssetDraftConfig | undefined
+let draftStorageSnapshot: string | null = null
+
 beforeEach(() => {
+  runtimeOverrideSnapshot = exportRuntimeAssetDraftConfig()
+  draftStorageSnapshot = window.localStorage.getItem(RUNTIME_ASSET_DRAFT_STORAGE_KEY)
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(createCanvasContext() as unknown as CanvasRenderingContext2D)
   vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
@@ -46,8 +54,12 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
-  clearRuntimeAssetOverrides()
-  window.localStorage.removeItem(RUNTIME_ASSET_DRAFT_STORAGE_KEY)
+  restoreRuntimeAssetOverrideSnapshot(runtimeOverrideSnapshot)
+  if (draftStorageSnapshot === null) {
+    window.localStorage.removeItem(RUNTIME_ASSET_DRAFT_STORAGE_KEY)
+  } else {
+    window.localStorage.setItem(RUNTIME_ASSET_DRAFT_STORAGE_KEY, draftStorageSnapshot)
+  }
   useGameStore.setState({ ...createInitialSnapshot() })
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -91,6 +103,45 @@ describe('GameCanvas', () => {
     expect(useGameStore.getState().debugControls.disableAttacks).toBe(true)
   })
 
+  it('hides test and local battle entries for a remote development host', () => {
+    const browserWindow = window
+    vi.stubGlobal('window', new Proxy(browserWindow, {
+      get(target, property, receiver) {
+        if (property === 'location') {
+          return { ...target.location, hostname: 'dev.example.com' }
+        }
+        const value = Reflect.get(target, property, receiver)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    }))
+    useGameStore.setState({
+      ...createInitialSnapshot('running'),
+      mapObstacles: [],
+    })
+
+    render(<GameCanvas />)
+
+    expect(screen.queryByRole('button', { name: '测试' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '战斗' })).toBeNull()
+  })
+
+  it('mounts the combat damage log above combat HUD when the engine has actual damage events', () => {
+    const base = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...base,
+      combatDamageLog: [{
+        id: 'damage-log-1', occurredAt: 1, side: 'player', attackerId: 'player', attackerName: '玩家',
+        sourceId: 'pierce-arrow', sourceName: '穿刺箭', targetId: 'slime', targetName: '腐蚀史莱姆', damage: 12.4, mergeKey: 'damage-log-1',
+      }],
+    })
+
+    render(<GameCanvas />)
+
+    expect(screen.getByTestId('combat-damage-log').className).toContain('left-4')
+    expect(screen.getByTestId('combat-damage-log').className).toContain('z-40')
+    expect(screen.getByText('玩家使用 穿刺箭 攻击 腐蚀史莱姆 造成伤害12')).toBeTruthy()
+  })
+
   it('restores saved developer asset drafts when combat canvas mounts', async () => {
     window.localStorage.setItem(RUNTIME_ASSET_DRAFT_STORAGE_KEY, JSON.stringify({
       version: 1,
@@ -118,6 +169,40 @@ describe('GameCanvas', () => {
 
     await waitFor(() => {
       expect(getRuntimeAssetActionOverride('dungeon-skeleton-warrior', 'move')?.combatScale).toBe(1.4)
+    })
+  })
+
+  it('ignores legacy skeleton warrior browser drafts so PT manifest frames remain authoritative', async () => {
+    window.localStorage.setItem(RUNTIME_ASSET_DRAFT_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      generatedAt: '2026-06-24T00:00:00.000Z',
+      entities: [{
+        entityId: 'dungeon-skeleton-warrior',
+        actions: [{
+          entityId: 'dungeon-skeleton-warrior',
+          slot: 'move',
+          combatAction: 'move',
+          frameUrls: [
+            'assets/developer-assets/dungeon-skeleton-warrior/move/frame_01.png',
+            '/Users/zackota/Desktop/old-skeleton-warrior/move/frame_02.png',
+            'assets/monsters/skeleton-warrior-image2/Run-1.png',
+          ],
+          frameWidth: 64,
+          frameHeight: 64,
+          frameCount: 3,
+          fps: 4,
+          durationSeconds: 1,
+          loop: true,
+          flipX: true,
+          combatScale: 1.4,
+        }],
+      }],
+    }))
+
+    render(<GameCanvas />)
+
+    await waitFor(() => {
+      expect(getRuntimeAssetActionOverride('dungeon-skeleton-warrior', 'move')).toBeUndefined()
     })
   })
 
@@ -154,9 +239,9 @@ describe('GameCanvas', () => {
             entityId: 'dungeon-hellhound',
             slot: 'move',
             combatAction: 'move',
-            frameUrls: ['assets/developer-assets/dungeon-hellhound/move/frame_01.png'],
-            frameWidth: 64,
-            frameHeight: 64,
+            frameUrls: [getHellhoundImage2FrameUrls('move')[0]],
+            frameWidth: 192,
+            frameHeight: 192,
             frameCount: 1,
             fps: 6,
             durationSeconds: 0.7,
@@ -172,7 +257,7 @@ describe('GameCanvas', () => {
 
     await waitFor(() => {
       const override = getRuntimeAssetActionOverride('dungeon-hellhound', 'move')
-      expect(override?.frameUrls[0]).toBe('assets/developer-assets/dungeon-hellhound/move/frame_01.png')
+      expect(override?.frameUrls[0]).toBe(getHellhoundImage2FrameUrls('move')[0])
       expect(override?.combatScale).toBe(1.2)
       expect(override?.fps).toBe(6)
     })

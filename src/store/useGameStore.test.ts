@@ -1,17 +1,27 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { ARCHER_ACTIVE_SKILLS } from '../game/archerSkills'
 import { resetGameSoundRuntimeForTests, setGameSoundNowProviderForTests, setGameSoundTestPlayer } from '../game/audio'
-import { createInitialSnapshot } from '../game/engine'
-import { TALENT_SCHEMA_VERSION } from '../game/talents'
-import type { Enemy, EquipmentItem, Pickup, Projectile } from '../game/types'
-import { GAME_SAVE_STORAGE_KEY, extractPersistedGameState, getSimulationSoundEvents, restorePersistedGameState, useGameStore } from './useGameStore'
+import { buildPendingReward, createInitialSnapshot } from '../game/engine'
+import { TALENT_SCHEMA_VERSION, getMetaTalentUnlockState } from '../game/talents'
+import type { Enemy, EquipmentItem, Pickup, Projectile, SkillRewardChoice } from '../game/types'
+import {
+  GAME_SAVE_STORAGE_KEY,
+  extractPersistedGameState,
+  getSimulationSoundEvents,
+  installLocalE2EHarness,
+  isLocalBattleTestRuntimeAllowed,
+  restorePersistedGameState,
+  shouldInstallLocalE2EHarness,
+  useGameStore,
+} from './useGameStore'
 
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   resetGameSoundRuntimeForTests()
   localStorage.removeItem(GAME_SAVE_STORAGE_KEY)
-  useGameStore.setState({ ...createInitialSnapshot('idle') })
+  useGameStore.setState({ ...createInitialSnapshot('idle'), metaTalentRanks: {} })
 })
 
 const makeEquipment = (): EquipmentItem => ({
@@ -29,11 +39,28 @@ const makeEquipment = (): EquipmentItem => ({
   isNew: true,
 })
 
+const rewardChoiceStableKey = (choice: SkillRewardChoice) => [
+  choice.mode,
+  choice.skillId,
+  choice.talentId ?? '',
+  choice.title,
+  choice.description,
+  choice.buildTag,
+  choice.levelText,
+  choice.tacticalText,
+  choice.tacticalTags.join(','),
+].join('|')
+
+const rewardChoiceStableSignature = (choices: readonly SkillRewardChoice[]) => choices
+  .map(rewardChoiceStableKey)
+  .sort()
+  .join('||')
+
 describe('game store persistence', () => {
   afterEach(() => {
     resetGameSoundRuntimeForTests()
     localStorage.removeItem(GAME_SAVE_STORAGE_KEY)
-    useGameStore.setState({ ...createInitialSnapshot('idle') })
+    useGameStore.setState({ ...createInitialSnapshot('idle'), metaTalentRanks: {} })
   })
 
   it('restores long term progression while dropping active combat state', () => {
@@ -86,6 +113,7 @@ describe('game store persistence', () => {
     running.talentSchemaVersion = TALENT_SCHEMA_VERSION
     running.unlockedMetaTalentIds = ['meta_common_01', 'meta_common_02']
     running.unlockedTalentIds = ['meta_common_01', 'meta_common_02']
+    running.metaTalentRanks = { meta_common_01: 1, meta_common_02: 2 }
     running.talentUnlockRecords = [{
       id: 'unlock-1',
       talentId: 'meta_common_01',
@@ -104,6 +132,7 @@ describe('game store persistence', () => {
       },
       lastOfferedCandidateIds: ['run_blood_05', 'run_common_01'],
     }
+    running.debugControls = { infiniteHealth: true, disableAttacks: false }
     running.inRunTalentIds = ['run_blood_05']
     running.runHistory = [{
       id: 'record-1',
@@ -153,7 +182,8 @@ describe('game store persistence', () => {
       sourceSkillId: 'test',
     }]
 
-    const restored = restorePersistedGameState(extractPersistedGameState(running))
+    const persisted = extractPersistedGameState(running)
+    const restored = restorePersistedGameState(persisted)
 
     expect(restored.phase).toBe('idle')
     expect(restored.currency).toBe(321)
@@ -179,9 +209,12 @@ describe('game store persistence', () => {
     expect(restored.talentPointLedger[0].points).toBe(27)
     expect(restored.talentSchemaVersion).toBe(TALENT_SCHEMA_VERSION)
     expect(restored.unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
+    expect(restored.metaTalentRanks).toEqual({ meta_common_01: 1, meta_common_02: 2 })
     expect(restored.talentUnlockRecords[0].talentId).toBe('meta_common_01')
     expect(restored.runTalentState.selectedTalentIds).toEqual(['run_blood_05'])
     expect(restored.inRunTalentIds).toEqual([])
+    expect(persisted).not.toHaveProperty('debugControls')
+    expect(restored.debugControls).toEqual({ infiniteHealth: false, disableAttacks: false })
     expect(restored.runHistory[0].level).toBe(44)
     expect(restored.enemies).toHaveLength(0)
     expect(restored.projectiles).toHaveLength(0)
@@ -223,6 +256,134 @@ describe('game store persistence', () => {
     expect(state.equipmentMaterials.crystalDust).toBe(7)
     expect(state.enemies).toHaveLength(0)
     expect(state.projectiles).toHaveLength(0)
+  })
+
+  it('skips localStorage writes for runtime-only combat ticks while preserving progression saves', () => {
+    const running = createInitialSnapshot('running')
+    running.levelTimer = 1
+    useGameStore.setState({ ...running })
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+
+    const idleInput = { up: false, down: false, left: false, right: false }
+    useGameStore.getState().tick(0.016, idleInput)
+    useGameStore.getState().tick(0.016, idleInput)
+
+    expect(setItemSpy).not.toHaveBeenCalledWith(GAME_SAVE_STORAGE_KEY, expect.any(String))
+
+    useGameStore.getState().updateAudioSettings({ masterVolume: 77 })
+
+    expect(setItemSpy).toHaveBeenCalledWith(GAME_SAVE_STORAGE_KEY, expect.any(String))
+  })
+
+  it('exposes local battle test actions without polluting persisted save data', () => {
+    const saved = JSON.stringify({ state: { currency: 777, selectedCampaign: 4 }, version: 1 })
+    localStorage.setItem(GAME_SAVE_STORAGE_KEY, saved)
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+
+    const startResult = useGameStore.getState().startLocalBattleTest()
+    expect(startResult).toEqual({ ok: true, spawned: 0, errors: [] })
+    expect(useGameStore.getState().localBattleTest?.active).toBe(true)
+    expect(useGameStore.getState().selectedCampaign).toBe(1)
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(saved)
+
+    const option = useGameStore.getState().getLocalBattleTestSpawnOptions().find((candidate) => candidate.enabled && candidate.group === 'ordinary')
+    expect(option).toBeTruthy()
+    const applyResult = useGameStore.getState().applyLocalBattleTestMonsterConfig([{ entityId: option!.entityId, count: 2 }])
+    expect(applyResult).toEqual({ ok: true, spawned: 2, errors: [] })
+    expect(useGameStore.getState().enemies).toHaveLength(2)
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(saved)
+
+    useGameStore.getState().tick(0.05, { up: false, down: false, left: false, right: false })
+    expect(useGameStore.getState().localBattleTest?.active).toBe(true)
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(saved)
+
+    const clearResult = useGameStore.getState().clearLocalBattleTestMonsters()
+    expect(clearResult).toEqual({ ok: true, spawned: 0, errors: [] })
+    expect(useGameStore.getState().enemies).toHaveLength(0)
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(saved)
+
+    useGameStore.getState().exitLocalBattleTest()
+    expect(useGameStore.getState().phase).toBe('idle')
+    expect(useGameStore.getState().localBattleTest).toBeUndefined()
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(saved)
+    expect(setItemSpy).not.toHaveBeenCalledWith(GAME_SAVE_STORAGE_KEY, expect.any(String))
+  })
+
+  it('rejects non-local developer actions and stale E2E calls without changing game state', () => {
+    const initial = createInitialSnapshot('idle')
+    initial.message = '正式状态不应变化'
+    useGameStore.setState({ ...initial })
+    const harness = window.__ROGUELIKE_E2E__
+    const target: Pick<Window, '__ROGUELIKE_E2E__'> = { __ROGUELIKE_E2E__: harness }
+
+    expect(isLocalBattleTestRuntimeAllowed({ DEV: true, PROD: false, MODE: 'development' }, 'dev.example.com')).toBe(false)
+    expect(isLocalBattleTestRuntimeAllowed({ DEV: true, PROD: true, MODE: 'production' }, 'localhost')).toBe(false)
+    expect(isLocalBattleTestRuntimeAllowed({ DEV: true, PROD: false, MODE: 'development' }, 'localhost')).toBe(true)
+    expect(shouldInstallLocalE2EHarness({ DEV: true, PROD: false, MODE: 'development' }, 'dev.example.com')).toBe(false)
+    expect(shouldInstallLocalE2EHarness({ DEV: true, PROD: false, MODE: 'development' }, 'localhost')).toBe(true)
+    expect(installLocalE2EHarness(target, { DEV: true, PROD: false, MODE: 'development' }, 'dev.example.com')).toBe(false)
+    expect(target.__ROGUELIKE_E2E__).toBeUndefined()
+
+    vi.stubGlobal('window', { location: { hostname: 'dev.example.com' } })
+
+    expect(useGameStore.getState().startLocalBattleTest()).toEqual({
+      ok: false,
+      spawned: 0,
+      errors: ['本地战斗测试仅允许在本地运行时使用'],
+    })
+    expect(useGameStore.getState().applyLocalBattleTestMonsterConfig([{ entityId: 'dungeon-skeleton-warrior', count: 1 }])).toEqual({
+      ok: false,
+      spawned: 0,
+      errors: ['本地战斗测试仅允许在本地运行时使用'],
+    })
+    expect(useGameStore.getState().clearLocalBattleTestMonsters()).toEqual({
+      ok: false,
+      spawned: 0,
+      errors: ['本地战斗测试仅允许在本地运行时使用'],
+    })
+    useGameStore.getState().exitLocalBattleTest()
+    useGameStore.getState().updateDebugControls({ infiniteHealth: true, disableAttacks: true })
+
+    expect(useGameStore.getState().getLocalBattleTestSpawnOptions()).toEqual([])
+    expect(useGameStore.getState().debugControls).toEqual({ infiniteHealth: false, disableAttacks: false })
+    expect(useGameStore.getState().message).toBe('正式状态不应变化')
+    expect(useGameStore.getState().localBattleTest).toBeUndefined()
+    expect(() => harness?.summary()).toThrow('E2E helper 仅允许在本地运行时调用')
+  })
+
+  it('keeps local battle death out of formal settlement and persisted progress', () => {
+    const saved = JSON.stringify({ state: { currency: 777, talentPoints: 4 }, version: 1 })
+    localStorage.setItem(GAME_SAVE_STORAGE_KEY, saved)
+
+    expect(useGameStore.getState().startLocalBattleTest()).toEqual({ ok: true, spawned: 0, errors: [] })
+    const running = useGameStore.getState()
+    useGameStore.setState({
+      ...running,
+      player: { ...running.player, hp: 0 },
+    })
+
+    useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })
+    const failed = useGameStore.getState()
+
+    expect(failed.phase).toBe('running')
+    expect(failed.localBattleTest?.active).toBe(true)
+    expect(failed.localBattleTest?.status).toBe('failed')
+    expect(failed.earnedGold).toBe(0)
+    expect(failed.lastTalentPointRecord).toBeNull()
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(saved)
+  })
+
+  it('uses the complete dungeon warden manifest for local battle test spawning', () => {
+    useGameStore.getState().startLocalBattleTest()
+    const warden = useGameStore.getState().getLocalBattleTestSpawnOptions().find((candidate) => candidate.entityId === 'dungeon-warden')
+    const result = useGameStore.getState().applyLocalBattleTestMonsterConfig([{ entityId: 'dungeon-warden', count: 1 }])
+
+    expect(warden?.enabled).toBe(true)
+    expect(warden?.disabledReason).toBeUndefined()
+    expect(result).toEqual({ ok: true, spawned: 1, errors: [] })
+    expect(useGameStore.getState().enemies).toHaveLength(1)
+    expect(useGameStore.getState().enemies[0]?.archetypeId).toBe('dungeon-warden')
+    expect(useGameStore.getState().enemies[0]?.displayName).toBe('典狱长')
   })
 
   it('migrates legacy completed campaigns into per-campaign normal difficulty progress', () => {
@@ -296,11 +457,73 @@ describe('game store persistence', () => {
     })
 
     expect(restored.unlockedMetaTalentIds).toEqual(['meta_common_01'])
+    expect(restored.metaTalentRanks).toEqual({ meta_common_01: 1 })
     expect(restored.talentPointLedger[0].id).toBe('legacy-talent-record')
     expect(restored.talentSchemaVersion).toBe(TALENT_SCHEMA_VERSION)
     expect(restored.runTalentState.selectedBuild).toBe('beast')
     expect(restored.runTalentState.selectedTalentIds).toEqual(['run_beast_01'])
     expect(restored.runTalentState.guarantee.noMainBuildStreak).toBe(2)
+  })
+
+  it('merges legacy and current meta talent save fields without losing prerequisites', () => {
+    const legacyOnly = restorePersistedGameState({
+      talentPoints: 10,
+      completedCampaignDifficulties: { 1: ['normal'] },
+      unlockedTalentIds: ['meta_common_01'],
+      unlockedMetaTalentIds: [],
+    })
+
+    expect(legacyOnly.unlockedMetaTalentIds).toEqual(['meta_common_01'])
+    expect(legacyOnly.unlockedTalentIds).toEqual(['meta_common_01'])
+    expect(getMetaTalentUnlockState('meta_campaign_01', {
+      talentPoints: legacyOnly.talentPoints,
+      unlockedMetaTalentIds: legacyOnly.unlockedMetaTalentIds,
+      unlockedCampaignDifficulties: legacyOnly.unlockedCampaignDifficulties,
+      completedCampaignDifficulties: legacyOnly.completedCampaignDifficulties,
+    })).toEqual({ canUnlock: true })
+
+    const currentOnly = restorePersistedGameState({
+      unlockedTalentIds: [],
+      unlockedMetaTalentIds: ['meta_common_01'],
+    })
+
+    expect(currentOnly.unlockedMetaTalentIds).toEqual(['meta_common_01'])
+    expect(currentOnly.unlockedTalentIds).toEqual(['meta_common_01'])
+
+    const merged = restorePersistedGameState({
+      unlockedTalentIds: ['meta_common_01', 'run_death_05', 'meta_common_01'],
+      unlockedMetaTalentIds: ['meta_common_02'],
+    })
+
+    expect(merged.unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
+    expect(merged.unlockedTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
+    expect(merged.unlockedMetaTalentIds).not.toContain('run_death_05')
+  })
+
+  it('keeps rank state synchronized across store upgrades, snapshots and persisted restore', () => {
+    useGameStore.setState({
+      ...createInitialSnapshot('idle'),
+      talentPoints: 9,
+      unlockedTalentIds: ['meta_common_01'],
+      unlockedMetaTalentIds: ['meta_common_01'],
+      metaTalentRanks: { meta_common_01: 1 },
+    })
+
+    useGameStore.getState().unlockMetaTalent('meta_common_02')
+    useGameStore.getState().unlockMetaTalent('meta_common_02')
+    useGameStore.getState().unlockMetaTalent('meta_common_02')
+
+    const upgraded = useGameStore.getState()
+    expect(upgraded.metaTalentRanks).toEqual({ meta_common_01: 1, meta_common_02: 3 })
+    expect(upgraded.unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
+    expect(upgraded.talentUnlockRecords.slice(0, 3).map((record) => record.rank)).toEqual([3, 2, 1])
+
+    useGameStore.getState().startGame()
+    expect(useGameStore.getState().metaTalentRanks).toEqual({ meta_common_01: 1, meta_common_02: 3 })
+
+    const restored = restorePersistedGameState(extractPersistedGameState(useGameStore.getState()))
+    expect(restored.metaTalentRanks).toEqual({ meta_common_01: 1, meta_common_02: 3 })
+    expect(restored.unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
   })
 
   it('exposes meta unlock and in-run candidate store actions without consuming combat effects', () => {
@@ -336,9 +559,11 @@ describe('game store persistence', () => {
     useGameStore.getState().openRunTalentUpgradeReward('formal-upgrade-test')
     const opened = useGameStore.getState()
     expect(opened.phase).toBe('paused')
+    expect(opened.pauseMenuOpen).toBe(false)
+    expect(opened.pendingSkillReward?.poolKind).toBe('run-talent')
     expect(opened.pendingSkillReward?.choices.length).toBeGreaterThanOrEqual(3)
     expect(opened.pendingSkillReward?.choices.length).toBeLessThanOrEqual(4)
-    expect(opened.pendingSkillReward?.choices.some((choice) => choice.mode === 'in-run-talent')).toBe(true)
+    expect(opened.pendingSkillReward?.choices.every((choice) => choice.mode === 'in-run-talent')).toBe(true)
     expect(opened.pendingSkillReward?.choices.some((choice) => /基础攻击|生命|攻速|移速/.test(`${choice.title}${choice.description}`))).toBe(false)
     expect(opened.pendingSkillReward?.choices.some((choice) => choice.talentId === 'run_death_05')).toBe(true)
 
@@ -346,6 +571,8 @@ describe('game store persistence', () => {
     useGameStore.getState().rerollPendingRunTalentReward('formal-upgrade-reroll')
     const rerolled = useGameStore.getState()
     expect(rerolled.runTalentState.rerollsUsed).toBe(1)
+    expect(rerolled.pendingSkillReward?.poolKind).toBe('run-talent')
+    expect(rerolled.pendingSkillReward?.choices.every((choice) => choice.mode === 'in-run-talent')).toBe(true)
     expect(rerolled.pendingSkillReward!.choices.map((choice) => choice.choiceId)).not.toEqual(beforeReroll)
     expect(rerolled.pendingSkillReward?.choices.some((choice) => choice.talentId === 'run_death_05')).toBe(true)
 
@@ -356,6 +583,179 @@ describe('game store persistence', () => {
 
     useGameStore.getState().returnToVillage()
     expect(useGameStore.getState().runTalentState.selectedTalentIds).toEqual([])
+  })
+
+  it('clears duplicate in-run talent rewards without opening the manual pause menu', () => {
+    const base = createInitialSnapshot('running')
+
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      phaseBeforePause: 'running',
+      pauseMenuOpen: false,
+      runTalentState: {
+        ...base.runTalentState,
+        selectedTalentIds: ['run_death_05'],
+      },
+      pendingSkillReward: {
+        poolKind: 'run-talent',
+        source: 'elite',
+        choices: [{
+          choiceId: 'duplicate-run-talent',
+          mode: 'in-run-talent',
+          skillId: 'run_death_05',
+          talentId: 'run_death_05',
+          title: '处刑晋阶',
+          description: '重复选择应被忽略。',
+          buildTag: 'pierce',
+          tacticalTags: ['death'],
+          levelText: '局内 Lv.5+',
+          tacticalText: '局内天赋',
+        }],
+      },
+    })
+
+    useGameStore.getState().acceptSkillReward('duplicate-run-talent')
+    const next = useGameStore.getState()
+    expect(next.pendingSkillReward).toBeNull()
+    expect(next.phase).toBe('running')
+    expect(next.pauseMenuOpen).toBe(false)
+    expect(next.message).toContain('该局内天赋本局已选择')
+  })
+
+  it('keeps skill rewards and in-run talent rewards in separate pools', () => {
+    const manualSkillChoice: SkillRewardChoice = {
+      choiceId: 'manual-skill-choice',
+      mode: 'upgrade-active',
+      skillId: 'pierce-arrow',
+      title: '穿刺箭',
+      description: '旧候选用于验证技能池重掷会替换稳定字段。',
+      buildTag: 'pierce',
+      tacticalTags: ['穿透直线'],
+      levelText: '升级至 Lv.2',
+      tacticalText: '穿透直线',
+    }
+    const skillSnapshot = {
+      ...createInitialSnapshot('level-clear'),
+      phase: 'level-clear' as const,
+      runTalentState: {
+        ...createInitialSnapshot('level-clear').runTalentState,
+        rerollsRemaining: 1,
+        rerollsUsed: 0,
+      },
+      pendingSkillReward: {
+        ...buildPendingReward(createInitialSnapshot('level-clear')),
+        choices: [manualSkillChoice],
+        source: 'elite' as const,
+      },
+    }
+    useGameStore.setState(skillSnapshot)
+    const skillPool = useGameStore.getState().pendingSkillReward!
+    expect(skillPool.poolKind).toBe('skill')
+    expect(skillPool.choices.length).toBeGreaterThan(0)
+    expect(skillPool.choices.every((choice) => choice.mode !== 'in-run-talent')).toBe(true)
+
+    const beforeSkillSignature = rewardChoiceStableSignature(skillPool.choices)
+    const activeSkillsBeforeReroll = useGameStore.getState().activeSkills.map((skill) => ({ ...skill }))
+    const fixedPassiveBeforeReroll = useGameStore.getState().fixedPassiveLevel
+    const contractLevelBeforeReroll = useGameStore.getState().contractLevel
+    useGameStore.getState().rerollPendingRunTalentReward('skill-pool-reroll')
+    const rerolledSkillPool = useGameStore.getState().pendingSkillReward!
+    expect(rerolledSkillPool.poolKind).toBe('skill')
+    expect(rerolledSkillPool.source).toBe('elite')
+    expect(rerolledSkillPool.choices.every((choice) => choice.mode !== 'in-run-talent')).toBe(true)
+    expect(rewardChoiceStableSignature(rerolledSkillPool.choices)).not.toBe(beforeSkillSignature)
+    expect(useGameStore.getState().runTalentState.rerollsRemaining).toBe(0)
+    expect(useGameStore.getState().runTalentState.rerollsUsed).toBe(1)
+    expect(useGameStore.getState().activeSkills).toEqual(activeSkillsBeforeReroll)
+    expect(useGameStore.getState().fixedPassiveLevel).toBe(fixedPassiveBeforeReroll)
+    expect(useGameStore.getState().contractLevel).toBe(contractLevelBeforeReroll)
+    expect(useGameStore.getState().message).toContain('已重掷当前技能奖励')
+
+    const skillChoice = useGameStore.getState().pendingSkillReward!.choices[0]
+    const fixedPassiveBefore = useGameStore.getState().fixedPassiveLevel
+    const activeSkillBefore = useGameStore.getState().activeSkills.find((skill) => skill.skillId === skillChoice.skillId)
+    const activeSkillCountBefore = useGameStore.getState().activeSkills.length
+    useGameStore.getState().acceptSkillReward(skillChoice.choiceId)
+    expect(useGameStore.getState().pendingSkillReward).toBeNull()
+    if (skillChoice.mode === 'upgrade-passive') {
+      expect(useGameStore.getState().fixedPassiveLevel).toBe(fixedPassiveBefore + 1)
+    } else if (skillChoice.mode === 'upgrade-active') {
+      expect(useGameStore.getState().activeSkills.find((skill) => skill.skillId === skillChoice.skillId)?.level).toBe((activeSkillBefore?.level ?? 0) + 1)
+    } else {
+      expect(useGameStore.getState().activeSkills.length).toBe(activeSkillCountBefore + 1)
+      expect(useGameStore.getState().activeSkills.some((skill) => skill.skillId === skillChoice.skillId)).toBe(true)
+    }
+
+    useGameStore.setState({
+      ...createInitialSnapshot('idle'),
+      contractLevel: 5,
+      phase: 'running',
+      phaseBeforePause: 'running',
+    })
+    useGameStore.getState().openRunTalentUpgradeReward('separate-run-pool')
+    const runPool = useGameStore.getState().pendingSkillReward!
+    expect(runPool.poolKind).toBe('run-talent')
+    expect(runPool.choices.length).toBeGreaterThan(0)
+    expect(runPool.choices.every((choice) => choice.mode === 'in-run-talent')).toBe(true)
+
+    const runChoice = runPool.choices[0]
+    useGameStore.getState().acceptSkillReward(runChoice.choiceId)
+    expect(useGameStore.getState().pendingSkillReward).toBeNull()
+    expect(useGameStore.getState().runTalentState.selectedTalentIds).toContain(runChoice.talentId)
+  })
+
+  it('does not spend rerolls when skill rewards have no legal replacement candidates', () => {
+    const base = createInitialSnapshot('level-clear')
+    const blockedChoice: SkillRewardChoice = {
+      choiceId: 'blocked-skill-choice',
+      mode: 'upgrade-active',
+      skillId: 'pierce-arrow',
+      title: '穿刺箭',
+      description: '当前候选应保持不变。',
+      buildTag: 'pierce',
+      tacticalTags: ['穿透直线'],
+      levelText: '升级至 Lv.2',
+      tacticalText: '穿透直线',
+    }
+
+    useGameStore.setState({
+      ...base,
+      fixedPassiveLevel: 5,
+      activeSkills: ARCHER_ACTIVE_SKILLS.map((skill) => ({ skillId: skill.id, level: 5, cooldownRemaining: 0 })),
+      runTalentState: {
+        ...base.runTalentState,
+        rerollsRemaining: 1,
+        rerollsUsed: 0,
+      },
+      pendingSkillReward: {
+        poolKind: 'skill',
+        source: 'level-clear',
+        choices: [blockedChoice],
+      },
+    })
+
+    const beforeSignature = rewardChoiceStableSignature(useGameStore.getState().pendingSkillReward!.choices)
+    useGameStore.getState().rerollPendingRunTalentReward('blocked-skill-reroll')
+    const after = useGameStore.getState()
+    expect(after.pendingSkillReward?.poolKind).toBe('skill')
+    expect(rewardChoiceStableSignature(after.pendingSkillReward!.choices)).toBe(beforeSignature)
+    expect(after.runTalentState.rerollsRemaining).toBe(1)
+    expect(after.runTalentState.rerollsUsed).toBe(0)
+    expect(after.message).toContain('候选不足以重掷')
+
+    useGameStore.setState({
+      ...after,
+      runTalentState: {
+        ...after.runTalentState,
+        rerollsRemaining: 0,
+      },
+    })
+    useGameStore.getState().rerollPendingRunTalentReward('zero-skill-reroll')
+    expect(useGameStore.getState().runTalentState.rerollsRemaining).toBe(0)
+    expect(useGameStore.getState().runTalentState.rerollsUsed).toBe(0)
+    expect(rewardChoiceStableSignature(useGameStore.getState().pendingSkillReward!.choices)).toBe(beforeSignature)
+    expect(useGameStore.getState().message).toContain('重掷次数不足')
   })
 
   it('resets meta talents with documented costs and preserves earned point records', () => {
@@ -453,7 +853,7 @@ describe('game store audio events', () => {
   afterEach(() => {
     resetGameSoundRuntimeForTests()
     localStorage.removeItem(GAME_SAVE_STORAGE_KEY)
-    useGameStore.setState({ ...createInitialSnapshot('idle') })
+    useGameStore.setState({ ...createInitialSnapshot('idle'), metaTalentRanks: {} })
   })
 
   it('plays button and skill cast sounds through store actions and respects mute', () => {
@@ -526,6 +926,25 @@ describe('game store audio events', () => {
     expect(player).toHaveBeenCalledWith('crystal-pickup', 0.3)
     expect(player).toHaveBeenCalledWith('equipment-pickup', 0.3)
 
+    player.mockClear()
+    const attackRun = createInitialSnapshot('running')
+    attackRun.levelTimer = 0
+    attackRun.remainingToSpawn = 1
+    attackRun.spawnCooldown = 999
+    attackRun.mapObstacles = []
+    attackRun.player.attackCooldown = 0
+    attackRun.enemies = [makeEnemy({
+      id: 'basic-attack-audio-target',
+      position: { x: attackRun.player.position.x + 60, y: attackRun.player.position.y },
+      lastPosition: { x: attackRun.player.position.x + 60, y: attackRun.player.position.y },
+    })]
+    attackRun.audioSettings = { masterVolume: 60, effectsVolume: 50, muted: false }
+    useGameStore.setState(attackRun)
+
+    useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })
+
+    expect(player).toHaveBeenCalledWith('basic-attack', 0.3)
+
     const combatPrevious = createInitialSnapshot('running')
     combatPrevious.enemies = [makeEnemy({ id: 'audio-hit-target', hp: 10, maxHp: 10 })]
     combatPrevious.projectiles = [makeProjectile({ sourceSkillId: 'pierce-arrow' })]
@@ -535,6 +954,16 @@ describe('game store audio events', () => {
 
     expect(getSimulationSoundEvents(combatPrevious, combatNext)).toEqual(
       expect.arrayContaining(['enemy-death', 'skill-hit']),
+    )
+
+    const basicHitPrevious = createInitialSnapshot('running')
+    basicHitPrevious.enemies = [makeEnemy({ id: 'audio-basic-hit-target', hp: 10, maxHp: 10 })]
+    basicHitPrevious.projectiles = [makeProjectile({ sourceSkillId: 'basic-arrow' })]
+    const basicHitNext = createInitialSnapshot('running')
+    basicHitNext.enemies = [{ ...basicHitPrevious.enemies[0], hp: 4 }]
+
+    expect(getSimulationSoundEvents(basicHitPrevious, basicHitNext)).not.toEqual(
+      expect.arrayContaining(['skill-hit', 'basic-hit']),
     )
 
     player.mockClear()
@@ -598,6 +1027,7 @@ describe('game store audio events', () => {
     const elite = harness!.forceRewardScreen('elite')
     expect(elite.rewardKind).toBe('elite')
     expect(elite.pendingSkillReward).toBe(true)
+    expect(elite.poolKind).toBe('skill')
     expect(elite.levelClearConfirmed).toBe(false)
 
     const accepted = harness!.acceptFirstReward()
@@ -610,8 +1040,12 @@ describe('game store audio events', () => {
     expect(boss.levelClearConfirmed).toBe(false)
 
     const dismissed = harness!.dismissBossLoot()
+    expect(dismissed.phase).toBe('running')
     expect(dismissed.pendingBossLoot).toBe(0)
-    expect(dismissed.levelClearConfirmed).toBe(true)
+    expect(dismissed.levelClearConfirmed).toBe(false)
+    expect(useGameStore.getState().completedCampaigns).not.toContain(1)
+    expect(useGameStore.getState().message).toContain('继续清除护卫')
+    expect(useGameStore.getState().message).not.toContain('契约完成')
   })
 
   it('exposes a dev-only Boss fight harness without changing persisted save data', () => {
@@ -823,7 +1257,9 @@ describe('game store audio events', () => {
 
     const popup = harness.openTalentUpgradeRewardForE2E('talent-e2e-popup-test')
     expect(popup.upgradeRewardPopup.visible).toBe(true)
+    expect(popup.upgradeRewardPopup.poolKind).toBe('run-talent')
     expect(popup.upgradeRewardPopup.choiceCount).toBeGreaterThanOrEqual(3)
+    expect(popup.upgradeRewardPopup.modes.every((mode) => mode === 'in-run-talent')).toBe(true)
     expect(popup.upgradeRewardPopup.containsBaseStat).toBe(false)
     expectFormalStoreUnchanged()
     const reset = harness.resetMetaTalentsForE2E()

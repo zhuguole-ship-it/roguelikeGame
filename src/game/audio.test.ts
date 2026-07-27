@@ -5,6 +5,7 @@ import { playGameSound, resetGameSoundRuntimeForTests, setGameSoundNowProviderFo
 describe('game audio', () => {
   afterEach(() => {
     resetGameSoundRuntimeForTests()
+    vi.unstubAllGlobals()
   })
 
   it('does not play when muted or at zero volume', () => {
@@ -37,6 +38,42 @@ describe('game audio', () => {
     expect(playGameSound('crystal-pickup', { masterVolume: 100, effectsVolume: 100, muted: false })).toBe(true)
 
     expect(player).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses the imported archer wav for basic attacks and active skill casts', () => {
+    const createdUrls: string[] = []
+    const playedUrls: string[] = []
+    class MockAudio {
+      url: string
+      preload = ''
+      volume = 0
+
+      constructor(url: string) {
+        this.url = url
+        createdUrls.push(url)
+      }
+
+      cloneNode() {
+        const clone = new MockAudio(this.url)
+        return clone
+      }
+
+      play() {
+        playedUrls.push(this.url)
+        return Promise.resolve()
+      }
+    }
+
+    vi.stubGlobal('Audio', MockAudio)
+
+    expect(playGameSound('basic-attack', { masterVolume: 100, effectsVolume: 80, muted: false })).toBe(true)
+    expect(playGameSound('skill-cast', { masterVolume: 100, effectsVolume: 80, muted: false })).toBe(true)
+
+    expect(createdUrls.some((url) => url.endsWith('/assets/audio/archer-basic-attack.wav'))).toBe(true)
+    expect(playedUrls).toHaveLength(2)
+    playedUrls.forEach((url) => {
+      expect(url.endsWith('/assets/audio/archer-basic-attack.wav')).toBe(true)
+    })
   })
 
   it('defines playable program events for combat, loot, ui, and reward flow', () => {

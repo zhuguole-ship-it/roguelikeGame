@@ -10,9 +10,26 @@ import {
   WORLD_WIDTH,
 } from './config'
 import { getCampaignThemeForLevel } from './campaignThemes'
-import { drawBeastCompanionSprite, drawEnemySprite, drawFloorTile, drawObstacleSprite, drawPickupSprite, drawPlayerSprite, drawProjectileSprite, drawTorch } from './sprites'
+import {
+  FIRE_SAC_EXPLOSION_FRAME_COUNT,
+  getFireSacExplosionPublicFrameUrls,
+} from './c1SlimeVariantAssetFrames'
+import {
+  alignDrawYToVisibleBottom,
+  drawBeastCompanionSprite,
+  drawEnemySprite,
+  drawFloorTile,
+  drawObstacleSprite,
+  drawPickupSprite,
+  drawPlayerSprite,
+  drawProjectileSprite,
+  drawTorch,
+  getC1SlimeVariantCombatDrawSize,
+  getEnemySpriteGroundY,
+} from './sprites'
 import { drawReferenceArt } from './referenceArt'
-import type { BeastCompanion, Enemy, GameSnapshot, Player, Vector2 } from './types'
+import { getTerrainAssetById, type TerrainAssetDefinition } from './terrainAssets'
+import type { BeastCompanion, Enemy, EnemySkillEffect, GameSnapshot, Player, Vector2 } from './types'
 import { drawVillageMenuBackground } from './villageMenuBackground'
 import { clamp } from '../utils/math'
 
@@ -20,6 +37,8 @@ export const LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE = 128
 export const LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC = `${import.meta.env.BASE_URL}assets/tiles/dungeon-floor-level1-128-image2.png`
 
 let levelOneDungeonFloorImage: HTMLImageElement | null = null
+const terrainAssetImageCache = new Map<string, HTMLImageElement>()
+const fireSacExplosionImageCache = new Map<string, HTMLImageElement>()
 
 const pixel = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, color: string) => {
   ctx.fillStyle = color
@@ -170,7 +189,8 @@ export const shouldDrawFixedRoomBoundary = (state: GameSnapshot) => (
 )
 
 export const shouldUseLevelOneDungeonFloorTile = (state: GameSnapshot) => (
-  state.battlefield.mode === 'infinite' && getCampaignIndex(state.level) === 1
+  (state.battlefield.mode === 'infinite' || state.battlefield.mode === 'boss-arena')
+  && getCampaignIndex(state.level) === 1
 )
 
 export const getLevelOneDungeonFloorTileRange = (camera: Vector2) => ({
@@ -196,6 +216,85 @@ const getLoadedLevelOneDungeonFloorImage = () => {
   }
 
   return levelOneDungeonFloorImage
+}
+
+export const getTerrainAssetImageSrc = (asset: TerrainAssetDefinition) => `${import.meta.env.BASE_URL}${asset.src}`
+
+const getLoadedTerrainAssetImage = (asset: TerrainAssetDefinition) => {
+  if (typeof Image === 'undefined') {
+    return null
+  }
+
+  const src = getTerrainAssetImageSrc(asset)
+  let image = terrainAssetImageCache.get(src)
+  if (!image) {
+    image = new Image()
+    image.decoding = 'async'
+    image.src = src
+    terrainAssetImageCache.set(src, image)
+  }
+
+  if (!image.complete || image.naturalWidth <= 0) {
+    return null
+  }
+
+  return image
+}
+
+const getLoadedFireSacExplosionImage = (src: string) => {
+  if (typeof Image === 'undefined') {
+    return null
+  }
+
+  let image = fireSacExplosionImageCache.get(src)
+  if (!image) {
+    image = new Image()
+    image.decoding = 'async'
+    image.src = src
+    fireSacExplosionImageCache.set(src, image)
+  }
+
+  if (!image.complete || image.naturalWidth <= 0) {
+    return null
+  }
+
+  return image
+}
+
+export const getFireSacExplosionFrameIndex = (effect: Pick<EnemySkillEffect, 'age' | 'ttl'>) => {
+  const duration = Math.max(0.01, effect.age + effect.ttl)
+  const progress = Math.min(1, Math.max(0, effect.age / duration))
+  return Math.min(FIRE_SAC_EXPLOSION_FRAME_COUNT - 1, Math.floor(progress * FIRE_SAC_EXPLOSION_FRAME_COUNT))
+}
+
+const drawTerrainAssetSprite = (
+  ctx: CanvasRenderingContext2D,
+  assetId: string | undefined,
+  position: Vector2,
+  width: number,
+  height: number,
+) => {
+  const asset = getTerrainAssetById(assetId)
+  if (!asset) {
+    return false
+  }
+
+  const image = getLoadedTerrainAssetImage(asset)
+  if (!image) {
+    return false
+  }
+
+  const previousSmoothing = ctx.imageSmoothingEnabled
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(
+    image,
+    Math.round(position.x - width / 2),
+    Math.round(position.y - height / 2),
+    width,
+    height,
+  )
+  ctx.imageSmoothingEnabled = previousSmoothing
+  return true
 }
 
 const drawLevelOneDungeonFloor = (ctx: CanvasRenderingContext2D, camera: Vector2) => {
@@ -225,6 +324,76 @@ const drawLevelOneDungeonFloor = (ctx: CanvasRenderingContext2D, camera: Vector2
   return true
 }
 
+const drawBossArenaBoundary = (ctx: CanvasRenderingContext2D, state: GameSnapshot, camera: Vector2) => {
+  const arena = state.battlefield.wardenArena
+  if (state.battlefield.mode !== 'boss-arena' && !arena) {
+    return
+  }
+
+  const center = arena?.center ?? { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }
+  const radius = state.battlefield.bossArenaRadius ?? BOSS_ARENA_RADIUS
+  const theme = getCampaignThemeForLevel(state.level)
+
+  ctx.save()
+  ctx.translate(-camera.x, -camera.y)
+  ctx.setLineDash(arena ? [24, 14] : [])
+  ctx.strokeStyle = `${theme.warning}cc`
+  ctx.lineWidth = 4
+  ctx.beginPath()
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.strokeStyle = `${theme.accent}66`
+  ctx.lineWidth = 16
+  ctx.beginPath()
+  ctx.arc(center.x, center.y, radius + 8, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.restore()
+}
+
+const drawDungeonWardenArenaOverlay = (ctx: CanvasRenderingContext2D, state: GameSnapshot, camera: Vector2) => {
+  const arena = state.battlefield.wardenArena
+  if (state.phase !== 'running' || !arena) {
+    return
+  }
+
+  const radius = state.battlefield.bossArenaRadius ?? arena.startRadius
+  const center = {
+    x: arena.center.x - camera.x,
+    y: arena.center.y - camera.y,
+  }
+
+  // A single even-odd canvas path paints only the visible outside region and
+  // leaves the arena interior untouched. The DOM HUD remains above the canvas.
+  ctx.save()
+  ctx.fillStyle = 'rgba(220, 38, 38, 0.24)'
+  ctx.beginPath()
+  ctx.rect(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
+  ctx.moveTo(center.x + radius, center.y)
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2)
+  ctx.fill('evenodd')
+  ctx.restore()
+}
+
+const drawDungeonWardenArenaStatus = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
+  const arena = state.battlefield.wardenArena
+  if (state.phase !== 'running' || !arena) {
+    return
+  }
+
+  const remainingSeconds = Math.max(0, arena.duration - arena.elapsed)
+  const radius = state.battlefield.bossArenaRadius ?? arena.startRadius
+  ctx.save()
+  ctx.font = '14px monospace'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'top'
+  ctx.fillStyle = 'rgba(8, 12, 10, 0.84)'
+  ctx.fillRect(WORLD_WIDTH / 2 - 154, 10, 308, 25)
+  ctx.fillStyle = '#fef3c7'
+  ctx.fillText(`典狱长 P2 缩圈中 · 剩余 ${remainingSeconds.toFixed(1)}s · 边界 ${Math.round(radius)}`, WORLD_WIDTH / 2, 16)
+  ctx.restore()
+}
+
 const drawInfiniteFloor = (ctx: CanvasRenderingContext2D, state: GameSnapshot, camera: Vector2) => {
   const theme = getCampaignThemeForLevel(state.level)
   ctx.fillStyle = theme.floorDark
@@ -251,20 +420,6 @@ const drawInfiniteFloor = (ctx: CanvasRenderingContext2D, state: GameSnapshot, c
         state.level,
       )
     }
-  }
-
-  if (state.battlefield.mode === 'boss-arena') {
-    const radius = state.battlefield.bossArenaRadius ?? BOSS_ARENA_RADIUS
-    ctx.strokeStyle = `${theme.warning}99`
-    ctx.lineWidth = 3
-    ctx.beginPath()
-    ctx.arc(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, radius, 0, Math.PI * 2)
-    ctx.stroke()
-    ctx.strokeStyle = `${theme.accent}44`
-    ctx.lineWidth = 10
-    ctx.beginPath()
-    ctx.arc(WORLD_WIDTH / 2, WORLD_HEIGHT / 2, radius + 8, 0, Math.PI * 2)
-    ctx.stroke()
   }
 
   ctx.restore()
@@ -371,7 +526,7 @@ const drawHealthBar = (
 }
 
 const drawEnemyHealthBar = (ctx: CanvasRenderingContext2D, enemy: Enemy) => {
-  if (enemy.hp >= enemy.maxHp) {
+  if (enemy.hp <= 0 || enemy.hp >= enemy.maxHp) {
     return
   }
 
@@ -804,42 +959,24 @@ const drawEnemySkillEffects = (ctx: CanvasRenderingContext2D, state: GameSnapsho
 
     if (effect.kind === 'fire-sac-explosion') {
       const alpha = Math.max(0, Math.min(1, effect.ttl / 0.52))
-      const progress = Math.min(1, effect.age / Math.max(effect.age + effect.ttl, 0.01))
-      const radius = (effect.range ?? 64) * (0.45 + progress * 0.65)
+      const frameUrls = getFireSacExplosionPublicFrameUrls()
+      const frameUrl = frameUrls[getFireSacExplosionFrameIndex(effect)]
+      const image = getLoadedFireSacExplosionImage(frameUrl)
+      if (!image) {
+        return
+      }
+
+      if (effect.sourceEnemySize === undefined) {
+        return
+      }
+
+      const drawSize = Math.round(getC1SlimeVariantCombatDrawSize({ size: effect.sourceEnemySize }))
+      const groundY = getEnemySpriteGroundY({ size: effect.sourceEnemySize }, effect.position.y)
+      const drawY = alignDrawYToVisibleBottom(image, Math.round(groundY - drawSize), drawSize, groundY)
       ctx.save()
-      ctx.globalAlpha = alpha * 0.2
-      ctx.fillStyle = 'rgba(249, 115, 22, 0.38)'
-      ctx.beginPath()
-      ctx.arc(effect.position.x, effect.position.y, radius, 0, Math.PI * 2)
-      ctx.fill()
       ctx.globalAlpha = alpha
-      for (let ring = 0; ring < 4; ring += 1) {
-        ctx.strokeStyle = ring === 0 ? 'rgba(254, 240, 163, 0.92)' : ring === 1 ? 'rgba(251, 146, 60, 0.78)' : 'rgba(127, 29, 29, 0.66)'
-        ctx.lineWidth = ring === 0 ? 3 : 2
-        ctx.beginPath()
-        ctx.arc(effect.position.x, effect.position.y, radius * (0.32 + ring * 0.16), progress * 1.8 + ring * 0.38, Math.PI * 1.55 + progress * 2.2 + ring * 0.38)
-        ctx.stroke()
-      }
-      ctx.globalAlpha = alpha * 0.95
-      pixel(ctx, effect.position.x - 8, effect.position.y - 8, 16, 16, 'rgba(249, 115, 22, 0.82)')
-      pixel(ctx, effect.position.x - 4, effect.position.y - 5, 8, 9, '#fff0a3')
-      pixel(ctx, effect.position.x + 3, effect.position.y - 11, 5, 4, '#fed7aa')
-      pixel(ctx, effect.position.x - 12, effect.position.y + 3, 6, 3, '#7c2d12')
-      pixel(ctx, effect.position.x + 8, effect.position.y + 5, 7, 3, '#431407')
-      for (let shard = 0; shard < 18; shard += 1) {
-        const angle = shard * 0.72 + progress * 1.4
-        const spread = radius * (0.24 + (shard % 6) * 0.075)
-        const sx = effect.position.x + Math.cos(angle) * spread
-        const sy = effect.position.y + Math.sin(angle) * spread * 0.72
-        pixel(ctx, sx - 3, sy - 2, shard % 3 === 0 ? 7 : 5, shard % 2 === 0 ? 3 : 4, shard % 4 === 0 ? '#fed7aa' : shard % 2 === 0 ? '#7c2d12' : '#431407')
-        pixel(ctx, sx + 1, sy - 3, 2, 2, shard % 3 === 0 ? '#fff0a3' : '#f97316')
-      }
-      for (let ember = 0; ember < 52; ember += 1) {
-        const angle = ember * 0.49 + state.elapsedTime * 6
-        const spread = radius * (0.18 + (ember % 9) * 0.075)
-        const size = ember % 11 === 0 ? 5 : ember % 4 === 0 ? 4 : 2
-        pixel(ctx, effect.position.x + Math.cos(angle) * spread - size / 2, effect.position.y + Math.sin(angle) * spread * 0.82 - size / 2, size, Math.max(2, size - 1), ember % 5 === 0 ? '#fef3c7' : ember % 3 === 0 ? '#f97316' : ember % 2 === 0 ? '#dc2626' : '#7f1d1d')
-      }
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(image, Math.round(effect.position.x - drawSize / 2), drawY, drawSize, drawSize)
       ctx.restore()
       return
     }
@@ -925,6 +1062,46 @@ const drawAimCursor = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
   ctx.fillRect(x - 1, y - 10, 2, 20)
 }
 
+export type EnemyTalentStateIndicator = {
+  key: keyof NonNullable<Enemy['talentStates']>
+  label: string
+  detail: string
+  color: string
+}
+
+export const ENEMY_TALENT_STATUS_CHIP_HEIGHT = 14
+export const ENEMY_TALENT_STATUS_CHIP_ROW_GAP = 3
+export const ENEMY_TALENT_STATUS_CHIP_FONT = '9px "Press Start 2P", monospace'
+
+const formatTalentStateDetail = (ttl: number, stacks: number) => {
+  const parts = []
+  if (stacks > 1) parts.push(`x${stacks}`)
+  if (ttl > 0) parts.push(`${ttl.toFixed(1)}s`)
+  return parts.join(' · ')
+}
+
+export const getEnemyTalentStateIndicators = (enemy: Enemy): EnemyTalentStateIndicator[] => {
+  const states = enemy.talentStates
+  if (!states) return []
+  const definitions: Array<Omit<EnemyTalentStateIndicator, 'detail'> & { ttl?: number; stacks?: number }> = [
+    { key: 'deathMark', label: '死印', color: '#f472b6', ...states.deathMark },
+    { key: 'executeLine', label: '处刑', color: '#fda4af', ...states.executeLine },
+    { key: 'soulBurst', label: '魂爆', color: '#c4b5fd', ...states.soulBurst },
+    { key: 'bleed', label: '流血', color: '#ef4444', ...states.bleed },
+    { key: 'bloodRift', label: '血裂', color: '#fb7185', ...states.bloodRift },
+    { key: 'beastCommand', label: '兽令', color: '#86efac', ...states.beastCommand },
+    { key: 'crystalCharge', label: '晶能', color: '#67e8f9', ...states.crystalCharge },
+    { key: 'crystalOverload', label: '过载', color: '#a78bfa', ...states.crystalOverload },
+    { key: 'vulnerable', label: '易伤', color: '#fde68a', ...states.vulnerable },
+    { key: 'armorBreak', label: '破甲', color: '#fdba74', ...states.armorBreak },
+  ]
+
+  return definitions
+    .filter((indicator) => (indicator.ttl ?? 0) > 0 || (indicator.stacks ?? 0) > 0)
+    .slice(0, 4)
+    .map(({ key, label, color, ttl = 0, stacks = 0 }) => ({ key, label, color, detail: formatTalentStateDetail(ttl, stacks) }))
+}
+
 const drawEnemyStatusIndicators = (ctx: CanvasRenderingContext2D, enemy: Enemy, time: number) => {
   const topY = enemy.position.y - enemy.size * 0.82
 
@@ -949,10 +1126,51 @@ const drawEnemyStatusIndicators = (ctx: CanvasRenderingContext2D, enemy: Enemy, 
     pixel(ctx, enemy.position.x - enemy.size * 0.34, enemy.position.y - enemy.size * 0.48, 4, 4, '#dbeafe')
     pixel(ctx, enemy.position.x + enemy.size * 0.26, enemy.position.y - enemy.size * 0.3, 3, 3, '#bfdbfe')
   }
+
+  const talentIndicators = getEnemyTalentStateIndicators(enemy)
+  if (talentIndicators.length > 0) {
+    const labels = talentIndicators.map((indicator) => `${indicator.label}${indicator.detail ? ` ${indicator.detail}` : ''}`)
+    const chipWidths = labels.map((label) => Math.max(38, label.length * 9 + 12))
+    const totalHeight = talentIndicators.length * ENEMY_TALENT_STATUS_CHIP_HEIGHT
+      + (talentIndicators.length - 1) * ENEMY_TALENT_STATUS_CHIP_ROW_GAP
+    const healthBarTop = enemy.position.y - enemy.size * 0.72 - 13
+    const markTop = enemy.markStacks > 0 ? topY - 17 : Number.POSITIVE_INFINITY
+    const chipBottom = Math.min(healthBarTop - 4, markTop - 4)
+    let chipY = chipBottom - totalHeight
+
+    ctx.save()
+    ctx.font = ENEMY_TALENT_STATUS_CHIP_FONT
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    talentIndicators.forEach((indicator, index) => {
+      const width = chipWidths[index]
+      const chipX = enemy.position.x - width / 2
+      pixel(ctx, chipX, chipY, width, ENEMY_TALENT_STATUS_CHIP_HEIGHT, 'rgba(4, 10, 7, 0.94)')
+      ctx.strokeStyle = indicator.color
+      ctx.lineWidth = 1
+      ctx.strokeRect(Math.round(chipX), Math.round(chipY), Math.round(width), ENEMY_TALENT_STATUS_CHIP_HEIGHT)
+      ctx.fillStyle = indicator.color
+      ctx.fillText(labels[index], Math.round(chipX + width / 2), Math.round(chipY + ENEMY_TALENT_STATUS_CHIP_HEIGHT / 2))
+      chipY += ENEMY_TALENT_STATUS_CHIP_HEIGHT + ENEMY_TALENT_STATUS_CHIP_ROW_GAP
+    })
+    ctx.restore()
+  }
+}
+
+const drawDecorations = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
+  ;(state.mapDecorations ?? []).forEach((decoration) => {
+    drawTerrainAssetSprite(ctx, decoration.assetId, decoration.position, decoration.width, decoration.height)
+  })
 }
 
 const drawObstacles = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
-  state.mapObstacles.forEach((obstacle) => drawObstacleSprite(ctx, obstacle, state.level))
+  state.mapObstacles.forEach((obstacle) => {
+    if (drawTerrainAssetSprite(ctx, obstacle.assetId, obstacle.position, obstacle.width, obstacle.height)) {
+      return
+    }
+
+    drawObstacleSprite(ctx, obstacle, state.level)
+  })
 }
 
 const drawPickups = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
@@ -1310,6 +1528,7 @@ export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot, c
       drawFloor(ctx, state.level)
       TORCHES.forEach((torch) => drawTorch(ctx, torch.x, torch.y, state.elapsedTime))
     }
+    drawDecorations(ctx, state)
     drawObstacles(ctx, state)
     drawContractRift(ctx, state)
     drawRouteObjectives(ctx, state)
@@ -1325,8 +1544,10 @@ export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot, c
     })
     state.enemies.forEach((enemy) => {
       drawEnemySprite(ctx, enemy, state.elapsedTime, state.level)
-      drawEnemyHealthBar(ctx, enemy)
-      drawEnemyStatusIndicators(ctx, enemy, state.elapsedTime)
+      if (enemy.hp > 0) {
+        drawEnemyHealthBar(ctx, enemy)
+        drawEnemyStatusIndicators(ctx, enemy, state.elapsedTime)
+      }
     })
 
     const isMoving = state.phase === 'running' && state.player.animationState === 'move'
@@ -1337,6 +1558,9 @@ export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot, c
     drawBursts(ctx, state)
     drawFloatingTexts(ctx, state)
     ctx.restore()
+    drawDungeonWardenArenaOverlay(ctx, state, camera)
+    drawBossArenaBoundary(ctx, state, camera)
+    drawDungeonWardenArenaStatus(ctx, state)
   }
 
   const theme = getCampaignThemeForLevel(state.level)

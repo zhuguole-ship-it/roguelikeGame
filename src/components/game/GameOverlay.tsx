@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Coins, RotateCcw } from 'lucide-react'
 
-import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, ARCHER_FIXED_PASSIVE, ARCHER_FIXED_PASSIVE_LEVELS, SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
+import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, ARCHER_FIXED_PASSIVE, ARCHER_FIXED_PASSIVE_LEVELS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
+import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
+import { developerAssetEntities, type DeveloperAssetAction } from '../../game/assetManifest'
 import { ACTIVE_SKILL_DAMAGE_MULTIPLIER } from '../../game/config'
 import {
   CAMPAIGN_DIFFICULTY_ORDER,
@@ -11,7 +13,7 @@ import {
   isCampaignDifficultyCompleted,
   isCampaignDifficultyUnlocked,
 } from '../../game/difficulty'
-import { CAMPAIGN_MONSTER_THEMES, getCampaignLootProfile, type CampaignEnemyArchetype } from '../../game/campaignMonsters'
+import { CAMPAIGN_MONSTER_THEMES, CORROSIVE_SLIME_ARCHETYPE, getCampaignLootProfile, type CampaignEnemyArchetype } from '../../game/campaignMonsters'
 import {
   EQUIPMENT_MATERIAL_IDS,
   EQUIPMENT_MATERIAL_LABELS,
@@ -34,23 +36,153 @@ import {
 } from '../../game/equipment'
 import { hasDiscoveredHighRarityEquipment } from '../../game/equipmentDiscovery'
 import { MONSTER_FRAME_SPECS, drawMonsterGuideFrame, getMonsterSpriteAtlasForEnemy, type MonsterFrameAction } from '../../game/sprites'
+import { getMonsterDataCard } from '../../game/monsterDataCards'
 import {
   META_TALENT_NODE_BY_ID,
   META_TALENT_NODES,
+  RUN_TALENT_NODES,
   TALENT_RESET_BUILD_SHARD_COST,
   TALENT_RESET_GOLD_COST,
-  getMetaTalentBonusSummary,
+  getMetaTalentEffectsAtRank,
+  getMetaTalentRank,
   getMetaTalentUnlockState,
-  getRunTalentBonusSummary,
   getTalentBuildLabel,
-  type RunTalentBuild,
-  type RunTalentCandidate,
+  type MetaTalentNode,
+  type RunTalentNode,
+  type TalentEffect,
 } from '../../game/talents'
-import type { EnemyKind, EquipmentDismantleCategory, EquipmentItem, EquipmentRarity, EquipmentReforgeMode, EquipmentSkillModifier, EquipmentSlot, SkillBuildTag, TalentPointRecord } from '../../game/types'
+import { getMetaTalentIconAssetUrl } from '../../game/metaTalentIcons'
+import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
+import type { EnemyKind, EquipmentDismantleCategory, EquipmentItem, EquipmentRarity, EquipmentReforgeMode, EquipmentSkillModifier, EquipmentSlot, SkillBuildTag } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
 
 type VillageModal = 'campaign' | 'shop' | 'guide' | 'character' | 'inventory' | 'settings' | 'hunter-home' | null
+type VillageModalId = Exclude<VillageModal, null>
 type GuideTab = 'career' | 'skills' | 'monsters'
+type HunterHomeTab = 'functional-talents' | 'combat-talents' | 'history'
+type RunTalentModule = RunTalentNode['module']
+type MetaTalentTreeTab = 'common' | 'death' | 'blood' | 'beast' | 'crystal' | 'difficulty' | 'campaign' | 'endgame'
+type VillageClickAreaConfig = {
+  id: string
+  label: string
+  modal: VillageModalId
+  zIndex: number
+  rect: {
+    leftPct: number
+    topPct: number
+    widthPct: number
+    heightPct: number
+  }
+}
+type VillageBackgroundMediaConfig = {
+  videoSrc?: string
+  posterSrc: string
+}
+type VillageHomepageConfig = {
+  clickAreas?: VillageClickAreaConfig[]
+  backgroundMedia?: VillageBackgroundMediaConfig
+}
+
+const GODOT_HOMEPAGE_LAYOUT_URL = `${import.meta.env.BASE_URL}assets/godot-ui/main-menu-layout.json`
+const DEFAULT_VILLAGE_BACKGROUND_VIDEO = `${import.meta.env.BASE_URL}assets/godot-ui/pixel_contract_hunter_start_screen_960x640.webm`
+const DEFAULT_VILLAGE_BACKGROUND_POSTER = `${import.meta.env.BASE_URL}assets/godot-ui/pixel_contract_hunter_start_screen_960x640_poster.png`
+
+const defaultVillageClickAreas: VillageClickAreaConfig[] = [
+  { id: 'start', label: '开始游戏', modal: 'campaign', zIndex: 20, rect: { leftPct: 2.4, topPct: 50.7, widthPct: 16.8, heightPct: 7.9 } },
+  { id: 'character', label: '角色选择', modal: 'character', zIndex: 20, rect: { leftPct: 2.4, topPct: 59.7, widthPct: 16.8, heightPct: 7.9 } },
+  { id: 'inventory', label: '物品仓库', modal: 'inventory', zIndex: 20, rect: { leftPct: 2.4, topPct: 68.8, widthPct: 16.8, heightPct: 7.9 } },
+  { id: 'settings', label: '设置', modal: 'settings', zIndex: 20, rect: { leftPct: 2.4, topPct: 77.8, widthPct: 16.8, heightPct: 7.9 } },
+  { id: 'blacksmith', label: '铁匠铺', modal: 'shop', zIndex: 10, rect: { leftPct: 10.5, topPct: 31.5, widthPct: 24, heightPct: 38 } },
+  { id: 'hunter-home', label: '猎手之家', modal: 'hunter-home', zIndex: 10, rect: { leftPct: 35.5, topPct: 20, widthPct: 30, heightPct: 45 } },
+  { id: 'portal', label: '传送门', modal: 'campaign', zIndex: 10, rect: { leftPct: 69, topPct: 27, widthPct: 15, heightPct: 40 } },
+  { id: 'notice-board', label: '告示牌', modal: 'guide', zIndex: 10, rect: { leftPct: 83, topPct: 42, widthPct: 16, heightPct: 34 } },
+]
+const defaultVillageBackgroundMedia: VillageBackgroundMediaConfig = {
+  videoSrc: DEFAULT_VILLAGE_BACKGROUND_VIDEO,
+  posterSrc: DEFAULT_VILLAGE_BACKGROUND_POSTER,
+}
+
+const villageModalIds = new Set<VillageModalId>(['campaign', 'shop', 'guide', 'character', 'inventory', 'settings', 'hunter-home'])
+
+const isVillageModalId = (value: unknown): value is VillageModalId => (
+  typeof value === 'string' && villageModalIds.has(value as VillageModalId)
+)
+
+const toFinitePercent = (value: unknown) => {
+  if (!Number.isFinite(value)) return undefined
+  return Math.max(0, Math.min(100, Number(value)))
+}
+
+const resolveGodotPublicAssetUrl = (value: unknown) => {
+  if (typeof value !== 'string' || value.trim().length === 0) return undefined
+  if (/^(https?:)?\/\//.test(value) || value.startsWith('/')) return value
+  return `${import.meta.env.BASE_URL}${value.replace(/^\/+/, '')}`
+}
+
+const normalizeGodotBackgroundMedia = (payload: unknown): VillageBackgroundMediaConfig | undefined => {
+  if (!payload || typeof payload !== 'object') return undefined
+  const backgroundMedia = (payload as {
+    backgroundMedia?: {
+      video?: { url?: unknown }
+      poster?: { url?: unknown }
+    }
+  }).backgroundMedia
+  if (!backgroundMedia || typeof backgroundMedia !== 'object') return undefined
+  const videoSrc = resolveGodotPublicAssetUrl(backgroundMedia.video?.url)
+  const posterSrc = resolveGodotPublicAssetUrl(backgroundMedia.poster?.url)
+  if (!videoSrc && !posterSrc) return undefined
+  return {
+    videoSrc,
+    posterSrc: posterSrc ?? DEFAULT_VILLAGE_BACKGROUND_POSTER,
+  }
+}
+
+const normalizeGodotVillageLayout = (payload: unknown): VillageHomepageConfig | undefined => {
+  if (!payload || typeof payload !== 'object' || !Array.isArray((payload as { clickAreas?: unknown }).clickAreas)) {
+    const backgroundMedia = normalizeGodotBackgroundMedia(payload)
+    return backgroundMedia ? { backgroundMedia } : undefined
+  }
+
+  const clickAreas = (payload as { clickAreas: unknown[] }).clickAreas.flatMap((raw): VillageClickAreaConfig[] => {
+    if (!raw || typeof raw !== 'object') return []
+    const area = raw as {
+      id?: unknown
+      label?: unknown
+      modal?: unknown
+      zIndex?: unknown
+      rect?: {
+        leftPct?: unknown
+        topPct?: unknown
+        widthPct?: unknown
+        heightPct?: unknown
+      }
+    }
+    if (typeof area.id !== 'string' || typeof area.label !== 'string' || !isVillageModalId(area.modal)) {
+      return []
+    }
+    const leftPct = toFinitePercent(area.rect?.leftPct)
+    const topPct = toFinitePercent(area.rect?.topPct)
+    const widthPct = toFinitePercent(area.rect?.widthPct)
+    const heightPct = toFinitePercent(area.rect?.heightPct)
+    if (leftPct === undefined || topPct === undefined || widthPct === undefined || heightPct === undefined || widthPct <= 0 || heightPct <= 0) {
+      return []
+    }
+    return [{
+      id: area.id,
+      label: area.label,
+      modal: area.modal,
+      zIndex: Number.isFinite(area.zIndex) ? Number(area.zIndex) : 10,
+      rect: { leftPct, topPct, widthPct, heightPct },
+    }]
+  })
+
+  const backgroundMedia = normalizeGodotBackgroundMedia(payload)
+  if (clickAreas.length <= 0 && !backgroundMedia) return undefined
+  return {
+    ...(clickAreas.length > 0 ? { clickAreas } : {}),
+    ...(backgroundMedia ? { backgroundMedia } : {}),
+  }
+}
 
 const guideTabs: Array<{ id: GuideTab; label: string }> = [
   { id: 'monsters', label: '怪物' },
@@ -58,8 +190,762 @@ const guideTabs: Array<{ id: GuideTab; label: string }> = [
   { id: 'skills', label: '技能' },
 ]
 
+const hunterHomeTabs: Array<{ id: HunterHomeTab; label: string }> = [
+  { id: 'functional-talents', label: '功能天赋' },
+  { id: 'combat-talents', label: '战斗天赋' },
+  { id: 'history', label: '历史冒险' },
+]
+
+const runTalentModuleOrder: RunTalentModule[] = ['common', 'death', 'blood', 'beast', 'crystal']
+
+const runTalentModuleLabels: Record<RunTalentModule, string> = {
+  common: '通用',
+  death: getTalentBuildLabel('death'),
+  blood: getTalentBuildLabel('blood'),
+  beast: getTalentBuildLabel('beast'),
+  crystal: getTalentBuildLabel('crystal'),
+}
+
+const runTalentTierLabels: Record<RunTalentNode['tier'], string> = {
+  basic: '基础',
+  breakthrough: '突破',
+  advanced: '进阶',
+}
+
+const runTalentIconClasses: Record<RunTalentModule, string> = {
+  common: 'border-[#facc15] bg-[#241f0a] text-[#fef08a]',
+  death: 'border-[#ef4444] bg-[#281013] text-[#fecaca]',
+  blood: 'border-[#fb923c] bg-[#25140b] text-[#fed7aa]',
+  beast: 'border-[#22c55e] bg-[#0d2115] text-[#bbf7d0]',
+  crystal: 'border-[#8b5cf6] bg-[#160f2f] text-[#ddd6fe]',
+}
+
+const runTalentModuleTitleClasses: Record<RunTalentModule, string> = {
+  common: 'text-[#fef08a]',
+  death: 'text-[#fecaca]',
+  blood: 'text-[#fed7aa]',
+  beast: 'text-[#bbf7d0]',
+  crystal: 'text-[#ddd6fe]',
+}
+
+const runTalentGuideTagLabels: Record<string, string> = {
+  'blood-feather': '血羽',
+  'build-weight': '流派权重',
+  'skill-upgrade': '技能升级',
+  beast: '兽王赦令',
+  bleed: '流血',
+  blood: '血羽游侠',
+  break: '破防',
+  chain: '连锁',
+  charge: '充能',
+  command: '指令',
+  control: '控场',
+  cooldown: '冷却',
+  critical: '暴击',
+  crystal: '蓝晶契约',
+  death: '死契处刑',
+  elite: '精英',
+  equipment: '装备',
+  execute: '处刑',
+  explosion: '爆炸',
+  field: '领域',
+  leader: '首领',
+  loot: '战利品',
+  lv5: '等级 5',
+  mark: '标记',
+  overload: '过载',
+  pickup: '拾取',
+  pierce: '穿透',
+  pulse: '脉冲',
+  range: '范围',
+  revive: '复苏',
+  skill: '技能',
+  spread: '散射',
+  storm: '风暴',
+  survival: '生存',
+  team: '协同',
+}
+
+const formatRunTalentGuideTag = (tag: string) => runTalentGuideTagLabels[tag] ?? tag
+
+const metaTalentTreeTabs: Array<{
+  id: MetaTalentTreeTab
+  label: string
+  number: number
+  modules: string[]
+  icon: string
+  colorClass: string
+  auraClass: string
+  anchorClass: string
+}> = [
+  { id: 'common', label: '通用', number: 1, modules: ['基础通用树'], icon: '契', colorClass: 'text-[#fde68a]', auraClass: 'shadow-[0_0_28px_rgba(250,204,21,0.44)]', anchorClass: 'border-[#facc15] bg-[rgba(250,204,21,0.2)]' },
+  { id: 'death', label: getTalentBuildLabel('death'), number: 2, modules: ['死契处刑基础树', '死契处刑进阶树'], icon: '刃', colorClass: 'text-[#fca5a5]', auraClass: 'shadow-[0_0_24px_rgba(248,113,113,0.34)]', anchorClass: 'border-[#ef4444] bg-[rgba(127,29,29,0.34)]' },
+  { id: 'blood', label: getTalentBuildLabel('blood'), number: 3, modules: ['血羽游侠基础树', '血羽游侠进阶树'], icon: '羽', colorClass: 'text-[#fdba74]', auraClass: 'shadow-[0_0_24px_rgba(251,146,60,0.32)]', anchorClass: 'border-[#fb923c] bg-[rgba(124,45,18,0.34)]' },
+  { id: 'beast', label: getTalentBuildLabel('beast'), number: 4, modules: ['兽王赦令基础树', '兽王赦令进阶树'], icon: '爪', colorClass: 'text-[#86efac]', auraClass: 'shadow-[0_0_24px_rgba(74,222,128,0.3)]', anchorClass: 'border-[#22c55e] bg-[rgba(20,83,45,0.36)]' },
+  { id: 'crystal', label: getTalentBuildLabel('crystal'), number: 5, modules: ['蓝晶契约基础树', '蓝晶契约进阶树'], icon: '晶', colorClass: 'text-[#c4b5fd]', auraClass: 'shadow-[0_0_24px_rgba(139,92,246,0.34)]', anchorClass: 'border-[#8b5cf6] bg-[rgba(49,46,129,0.4)]' },
+  { id: 'difficulty', label: '四难度', number: 6, modules: ['四难度精通树'], icon: '盾', colorClass: 'text-[#93c5fd]', auraClass: 'shadow-[0_0_24px_rgba(96,165,250,0.34)]', anchorClass: 'border-[#60a5fa] bg-[rgba(30,64,175,0.34)]' },
+  { id: 'campaign', label: '关卡', number: 7, modules: ['十关契约精通'], icon: '图', colorClass: 'text-[#fcd34d]', auraClass: 'shadow-[0_0_24px_rgba(217,119,6,0.34)]', anchorClass: 'border-[#d97706] bg-[rgba(120,53,15,0.36)]' },
+  { id: 'endgame', label: '终局', number: 8, modules: ['终局通用树'], icon: '冠', colorClass: 'text-[#fbbf24]', auraClass: 'shadow-[0_0_24px_rgba(180,83,9,0.36)]', anchorClass: 'border-[#b45309] bg-[rgba(69,26,3,0.44)]' },
+]
+
+const metaTalentModuleTestIds: Record<string, string> = {
+  基础通用树: 'common-base',
+  四难度精通树: 'common-difficulty',
+  十关契约精通: 'common-campaign',
+  终局通用树: 'common-endgame',
+  死契处刑基础树: 'death-base',
+  死契处刑进阶树: 'death-advanced',
+  血羽游侠基础树: 'blood-base',
+  血羽游侠进阶树: 'blood-advanced',
+  兽王赦令基础树: 'beast-base',
+  兽王赦令进阶树: 'beast-advanced',
+  蓝晶契约基础树: 'crystal-base',
+  蓝晶契约进阶树: 'crystal-advanced',
+}
+
+const getMetaTalentIcon = (node: MetaTalentNode) => {
+  const effectTypes = node.effects.map((effect) => effect.type)
+  if (effectTypes.some((type) => type.includes('material') || type.includes('drop'))) return '材'
+  if (effectTypes.some((type) => type.includes('candidate') || type.includes('reward'))) return '候'
+  if (effectTypes.some((type) => type.includes('reroll') || type.includes('ban'))) return '重'
+  if (effectTypes.some((type) => type.includes('boss') || type.includes('pity') || type.includes('archive'))) return '首'
+  if (effectTypes.some((type) => type.includes('pickup') || type.includes('crystal') || type.includes('charge'))) return '晶'
+  if (effectTypes.some((type) => type.includes('damage') || type.includes('elite'))) return '攻'
+  if (effectTypes.some((type) => type.includes('shield') || type.includes('revive') || type.includes('cooldown'))) return '生'
+  if (effectTypes.some((type) => type.includes('ui') || type.includes('unlock'))) return '契'
+  return '技'
+}
+
+const getMetaTalentStateLabel = (rank: number, maxRank: number, canUnlock: boolean) => {
+  if (rank >= maxRank) return '已满'
+  if (rank > 0) return '可升级'
+  return canUnlock ? '可解锁' : '未解锁'
+}
+
+const getMetaTalentStateClass = (rank: number, maxRank: number, canUnlock: boolean) => {
+  if (rank >= maxRank) return 'border-[#86efac] bg-[rgba(74,222,128,0.18)] text-[#bbf7d0]'
+  if (rank > 0) return 'border-[#67e8f9] bg-[rgba(34,211,238,0.14)] text-[#cffafe]'
+  if (canUnlock) return 'border-[#facc15] bg-[rgba(250,204,21,0.16)] text-[#fde68a]'
+  return 'border-[rgba(157,213,172,0.22)] bg-[#0b120e] text-[#7c8f80]'
+}
+
+const formatEffectAmount = (effect: TalentEffect) => {
+  if (typeof effect.value !== 'number') return ''
+  const unit = effect.unit === 'count' ? ' 次' : effect.unit === 'seconds' ? ' 秒' : effect.unit === 'points' ? ' 点' : effect.unit ?? ''
+  return `${Math.abs(effect.value)}${unit}`
+}
+
+const getDifficultyTargetLabel = (target?: string) => {
+  if (target === 'normal') return '普通'
+  if (target === 'hard') return '困难'
+  if (target === 'hell') return '地狱'
+  if (target === 'nightmare') return '折磨'
+  return ''
+}
+
+const formatCandidateWeightEffect = (effect: TalentEffect) => {
+  const amount = formatEffectAmount(effect)
+  switch (effect.target) {
+    case 'opening-build':
+      return `开局流派对应候选权重提高 ${amount}。`
+    case 'build-option':
+      return `击杀精英后的流派相关奖励权重提高 ${amount}。`
+    case 'death-run-node':
+      return `死契处刑局内节点出现权重提高 ${amount}。`
+    case 'blood-run-node':
+      return `血羽游侠局内节点出现权重提高 ${amount}。`
+    case 'beast-run-node':
+      return `兽王赦令局内节点出现权重提高 ${amount}。`
+    case 'crystal-run-node':
+      return `蓝晶契约局内节点出现权重提高 ${amount}。`
+    case 'pierce-skill-equipment':
+      return `穿透类技能和装备候选权重提高 ${amount}。`
+    case 'critical':
+      return `暴击相关奖励权重提高 ${amount}。`
+    case 'normal-build-equipment':
+      return `普通难度流派装备候选权重提高 ${amount}。`
+    case 'hard-set':
+      return `困难难度套装件候选权重提高 ${amount}。`
+    case 'hell-legacy-affix':
+      return `地狱难度橙色核心词缀装备候选权重提高 ${amount}。`
+    case 'legendary-candidate':
+      return `传奇候选权重提高 ${amount}，不直接提高硬掉率。`
+    case 'death-set-weapon':
+      return `死契处刑者套装件和专属武器掉落权重提高 ${amount}。`
+    case 'blood-set-weapon':
+      return `血羽游侠套装件和血羽武器掉落权重提高 ${amount}。`
+    case 'beast-set-weapon':
+      return `兽王赦令套装件和野兽武器掉落权重提高 ${amount}。`
+    case 'crystal-set-weapon':
+      return `蓝晶契约套装件和蓝晶武器掉落权重提高 ${amount}。`
+    case 'campaign-1-death-pierce':
+      return `第 1 关死契处刑者与穿透装备权重提高 ${amount}。`
+    case 'campaign-2-blood-bleed':
+      return `第 2 关血羽、流血、吸血抗性装备权重提高 ${amount}。`
+    case 'campaign-3-beast':
+      return `第 3 关兽王赦令与野兽装备权重提高 ${amount}。`
+    case 'campaign-4-area-element':
+      return `第 4 关区域、毒火冰雷装备权重提高 ${amount}。`
+    case 'campaign-5-spread-break':
+      return `第 5 关散射、破甲、击退装备权重提高 ${amount}。`
+    case 'campaign-6-critical-precision':
+      return `第 6 关暴击、精准、圣光装备权重提高 ${amount}。`
+    case 'trap-explosion':
+      return `机关与爆炸词缀权重提高 ${amount}。`
+    case 'campaign-8-crystal-control':
+      return `第 8 关蓝晶契约与水雷控场装备权重提高 ${amount}。`
+    case 'campaign-9-heavy-stun-defense':
+      return `第 9 关重矢、眩晕、防御装备权重提高 ${amount}。`
+    case 'campaign-10-endgame-legacy':
+      return `第 10 关终局火焰与跨流派传承装备权重提高 ${amount}。`
+    case 'current-build':
+      return `本局后续奖励更容易出现当前流派相关技能或装备，权重提高 ${amount}。`
+    case 'owned-skill-upgrade':
+      return `当前已拥有技能的升级候选权重提高 ${amount}。`
+    case 'next-elite-build-equipment':
+      return `下一次精英奖励更容易出现当前流派装备，权重提高 ${amount}。`
+    default:
+      return `相关候选权重提高 ${amount}。`
+  }
+}
+
+const formatMechanicEffect = (effect: TalentEffect) => {
+  const amount = formatEffectAmount(effect)
+  switch (effect.target) {
+    case 'death-chain-limit':
+      return `死契连锁触发上限增加 ${amount}。`
+    case 'locked-modifier-reforge':
+      return `重铸时可记录锁词条意图，当前阶段不参与锁词重铸。`
+    case 'nightmare-high-rarity-auto-lock':
+      return '折磨掉落的史诗以上装备自动锁定。'
+    case 'death-mark':
+      return '箭矢命中后附加死契标记。'
+    case 'critical-feather':
+      return `暴击目标额外释放 ${amount || '1 次'}血羽。`
+    case 'spread-multi-hit-feather':
+      return `局内等级 5 后，散射命中多个目标触发血羽追击。`
+    case 'main-beast-bind':
+      return '获得野兽伙伴技能后，Q / E / R 会分别指挥对应野兽。'
+    case 'beast-protect':
+      return `玩家低血时，最近野兽尝试护主。`
+    case 'crystal-charge':
+      return `拾取蓝晶和技能命中会积累充能。`
+    case 'overload-pulse':
+      return `过载技能附带额外蓝晶脉冲。`
+    case 'crystal-field-chain':
+      return `连续释放技能后生成短暂蓝晶领域。`
+    case 'death-chain':
+      return `标记、击杀、魂爆、再标记形成清场循环。`
+    case 'blood-feather-storm':
+      return `命中数量达标后触发血羽风暴。`
+    default:
+      return amount ? `解锁相关机制，数值 ${amount}。` : '解锁相关机制。'
+  }
+}
+
+const formatTalentEffect = (effect: TalentEffect) => {
+  const amount = formatEffectAmount(effect)
+  switch (effect.type) {
+    case 'unlock-system':
+      return '解锁局外天赋系统和天赋点记录。'
+    case 'reroll-bonus':
+      return effect.target === 'normal-elite-once'
+        ? `普通精英奖励获得 ${amount || '1 次'}额外重掷机会。`
+        : `每局技能奖励可额外重掷 ${amount || '1 次'}。`
+    case 'ban-reward-type':
+      return `每局可封存 ${typeof effect.value === 'number' ? `${effect.value} 个` : '1 个'}不想再看到的奖励类型。`
+    case 'candidate-weight':
+      return formatCandidateWeightEffect(effect)
+    case 'pickup-range':
+      return `蓝晶吸附范围提高 ${amount}。`
+    case 'elite-reward-weight':
+      return `击杀精英后的流派相关奖励权重提高 ${amount}。`
+    case 'boss-legacy-weight':
+      return `Boss 传承装备候选权重提高 ${amount}。`
+    case 'auto-dismantle-material':
+      return `紫色以下自动分解材料收益提高 ${amount}。`
+    case 'upgrade-discount':
+      return `铁匠铺强化低等级装备时材料消耗降低 ${amount}。`
+    case 'ui-convenience':
+      return '仓库筛选、锁定、套装提示能力增强。'
+    case 'talent-point-bonus': {
+      const difficulty = getDifficultyTargetLabel(effect.target)
+      if (effect.target === 'death-or-forfeit') return `死亡局和放弃局的天赋点保底提高 ${amount}。`
+      return difficulty ? `${difficulty}难度结算天赋点提高 ${amount}。` : `天赋点收益提高 ${amount}。`
+    }
+    case 'next-run-weight':
+      return `下一局前几次升级更容易出现已选流派节点，权重提高 ${amount}。`
+    case 'duration':
+      return `${effect.value && effect.value < 1 ? '相关效果持续时间延长' : '相关效果持续时间提高'} ${amount}。`
+    case 'radius':
+    case 'range':
+      return `相关技能范围提高 ${amount}。`
+    case 'tracking-radius':
+      return `追踪半径提高 ${amount}。`
+    case 'aura-radius':
+      return `光环半径提高 ${amount}。`
+    case 'elite-vulnerability':
+      return `对精英的破防效率提高 ${amount}。`
+    case 'projectile-speed':
+      return `弹体速度提高 ${amount}。`
+    case 'bleed-duration':
+      return `流血持续时间提高 ${amount}。`
+    case 'revive-time':
+      return `野兽复苏时间缩短 ${amount}。`
+    case 'protect-cooldown':
+      return `野兽护主冷却缩短 ${amount}。`
+    case 'command-cooldown':
+      return `野兽指令冷却降低 ${amount}。`
+    case 'aura-effect':
+      return `首领化光环效果提高 ${amount}。`
+    case 'charge-efficiency':
+      return `蓝晶充能效率提高 ${amount}。`
+    case 'pulse-stability':
+      return `过载额外脉冲更稳定触发，稳定性提高 ${amount}。`
+    case 'field-duration':
+      return `蓝晶领域持续时间提高 ${amount}。`
+    case 'cooldown-refund-cap':
+      return `技能命中返还冷却上限提高 ${amount}。`
+    case 'material-drop':
+      return `材料掉落提高 ${amount}。`
+    case 'extra-candidate':
+      return `奖励候选增加 ${amount}。`
+    case 'pity-layer':
+      return `保底保护增加 ${amount}。`
+    case 'damage':
+      return `相关伤害提高 ${amount}。`
+    case 'hit-count-threshold':
+      return `触发所需命中数降低 ${amount}。`
+    case 'follow-speed':
+      return `野兽回到玩家附近速度提高 ${amount}。`
+    case 'shield':
+      return `护盾提高 ${amount}。`
+    case 'cooldown':
+      return effect.value && effect.value < 0 ? `冷却缩短 ${amount}。` : `冷却调整 ${amount}。`
+    case 'legendary-label':
+      return '传奇装备出现时显示流派适配标签和冲突提示。'
+    case 'soft-cap':
+      return `地狱 / 折磨通关天赋点软上限提高 ${amount}。`
+    case 'archive-weight':
+      return `每个关卡最高难度通关记录提供刷装权重 ${amount}。`
+    case 'mechanic':
+      return formatMechanicEffect(effect)
+    default:
+      return amount ? `提升相关效果 ${amount}。` : '提升相关效果。'
+  }
+}
+
+const formatMetaTalentEffects = (node: MetaTalentNode, rank = 1) => {
+  const effects = getMetaTalentEffectsAtRank(node, rank).map(formatTalentEffect).join(' / ')
+  return effects || node.description
+}
+
+const META_TALENT_TOOLTIP_MARGIN = 16
+const META_TALENT_TOOLTIP_GAP = 12
+const META_TALENT_TOOLTIP_MAX_WIDTH = 420
+const META_TALENT_TOOLTIP_ESTIMATED_HEIGHT = 320
+
+type MetaTalentTooltipPlacement = {
+  left: number
+  top: number
+  width: number
+  maxHeight: number
+}
+
+const getMetaTalentTooltipViewport = () => ({
+  width: window.innerWidth || document.documentElement.clientWidth || 1024,
+  height: window.innerHeight || document.documentElement.clientHeight || 720,
+})
+
+const clampMetaTalentTooltipValue = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
+
+const getMetaTalentTooltipPlacement = (
+  anchor: DOMRect,
+  tooltipSize?: { width?: number; height?: number },
+): MetaTalentTooltipPlacement => {
+  const viewport = getMetaTalentTooltipViewport()
+  const availableWidth = Math.max(220, viewport.width - META_TALENT_TOOLTIP_MARGIN * 2)
+  const width = Math.min(tooltipSize?.width && tooltipSize.width > 0 ? tooltipSize.width : META_TALENT_TOOLTIP_MAX_WIDTH, META_TALENT_TOOLTIP_MAX_WIDTH, availableWidth)
+  const height = Math.min(tooltipSize?.height && tooltipSize.height > 0 ? tooltipSize.height : META_TALENT_TOOLTIP_ESTIMATED_HEIGHT, Math.max(140, viewport.height - META_TALENT_TOOLTIP_MARGIN * 2))
+  const rightLeft = anchor.right + META_TALENT_TOOLTIP_GAP
+  const leftLeft = anchor.left - META_TALENT_TOOLTIP_GAP - width
+  const fitsRight = rightLeft + width <= viewport.width - META_TALENT_TOOLTIP_MARGIN
+  const idealLeft = fitsRight ? rightLeft : leftLeft
+  const left = clampMetaTalentTooltipValue(
+    idealLeft,
+    META_TALENT_TOOLTIP_MARGIN,
+    Math.max(META_TALENT_TOOLTIP_MARGIN, viewport.width - META_TALENT_TOOLTIP_MARGIN - width),
+  )
+  const idealTop = anchor.top + anchor.height / 2 - height / 2
+  const top = clampMetaTalentTooltipValue(
+    idealTop,
+    META_TALENT_TOOLTIP_MARGIN,
+    Math.max(META_TALENT_TOOLTIP_MARGIN, viewport.height - META_TALENT_TOOLTIP_MARGIN - height),
+  )
+  const maxHeight = Math.max(140, viewport.height - top - META_TALENT_TOOLTIP_MARGIN)
+
+  return { left, top, width, maxHeight }
+}
+
+const getMetaTalentStatusText = (rank: number, maxRank: number, canUnlock: boolean, reason?: string) => {
+  if (rank >= maxRank) return '已满级'
+  if (rank > 0 && canUnlock) return '已解锁，可升级'
+  if (canUnlock) return '可解锁'
+  if (reason?.includes('前置')) return `锁定：${reason}`
+  if (reason?.includes('天赋点')) return `锁定：${reason}`
+  return '锁定：未解锁'
+}
+
+const MetaTalentShelfNode = ({
+  node,
+  tab,
+  rank,
+  canUnlock,
+  unlockReason,
+  onUnlock,
+}: {
+  node: MetaTalentNode
+  tab: (typeof metaTalentTreeTabs)[number]
+  rank: number
+  canUnlock: boolean
+  unlockReason?: string
+  onUnlock: (nodeId: string) => void
+}) => {
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const tooltipRef = useRef<HTMLDivElement>(null)
+  const [tooltipPlacement, setTooltipPlacement] = useState<MetaTalentTooltipPlacement | null>(null)
+  const iconUrl = getMetaTalentIconAssetUrl(node)
+  const maxRank = node.maxRank
+  const isMaxRank = rank >= maxRank
+  const progress = `${rank}/${maxRank}`
+  const stateLabel = getMetaTalentStateLabel(rank, maxRank, canUnlock)
+  const statusText = getMetaTalentStatusText(rank, maxRank, canUnlock, unlockReason)
+  const prerequisites = node.prerequisites.map((id) => META_TALENT_NODE_BY_ID.get(id)?.name ?? id)
+  const currentEffect = rank > 0 ? formatMetaTalentEffects(node, rank) : '未解锁'
+  const nextEffect = isMaxRank ? '无' : formatMetaTalentEffects(node, rank + 1)
+
+  const updatePlacement = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const tooltipRect = tooltipRef.current?.getBoundingClientRect()
+    setTooltipPlacement(getMetaTalentTooltipPlacement(rect, tooltipRect
+      ? { width: tooltipRect.width, height: tooltipRect.height }
+      : undefined))
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!tooltipPlacement) return
+    updatePlacement()
+  }, [tooltipPlacement?.left, tooltipPlacement?.top, updatePlacement])
+
+  const showTooltip = () => updatePlacement()
+  const hideTooltip = () => setTooltipPlacement(null)
+
+  return (
+    <div className="relative flex w-[5.25rem] shrink-0 flex-col items-center" data-testid={`meta-talent-${node.id}`}>
+      <button
+        ref={buttonRef}
+        type="button"
+        className={`flex h-16 w-16 items-center justify-center overflow-hidden border-2 p-0 font-pixel text-sm transition ${getMetaTalentStateClass(rank, maxRank, canUnlock)} ${canUnlock ? 'hover:scale-105' : ''}`}
+        data-state={isMaxRank ? 'full' : rank > 0 ? 'unlocked' : canUnlock ? 'unlockable' : 'locked'}
+        data-rank={rank}
+        data-max-rank={maxRank}
+        data-testid={`meta-talent-node-${node.id}`}
+        aria-disabled={!canUnlock}
+        aria-describedby={`meta-talent-tooltip-${node.id}`}
+        aria-label={`${node.name} ${progress} ${stateLabel}`}
+        onMouseEnter={showTooltip}
+        onMouseLeave={hideTooltip}
+        onFocus={showTooltip}
+        onBlur={hideTooltip}
+        onClick={() => {
+          if (canUnlock) {
+            onUnlock(node.id)
+          }
+        }}
+      >
+        {iconUrl ? (
+          <img
+            src={iconUrl}
+            alt=""
+            className={`block h-full w-full object-cover [image-rendering:pixelated] ${rank > 0 || canUnlock ? '' : 'opacity-55'}`}
+            data-testid={`meta-talent-node-icon-${node.id}`}
+          />
+        ) : (
+          <span aria-hidden="true" className="text-lg" data-testid={`meta-talent-node-icon-${node.id}`}>{getMetaTalentIcon(node)}</span>
+        )}
+      </button>
+      <span className="mt-1 rounded-sm bg-[rgba(4,8,5,0.76)] px-1 font-pixel text-[11px] leading-none text-[#f4f0d7]" data-testid={`meta-talent-node-progress-${node.id}`}>{progress}</span>
+      <span className="hidden" data-testid={`meta-talent-node-label-${node.id}`}>{node.name}</span>
+      <div
+        ref={tooltipRef}
+        id={`meta-talent-tooltip-${node.id}`}
+        role="tooltip"
+        className={`pointer-events-none fixed z-[120] overflow-y-auto border-2 border-[#fbbf24] bg-[#08100b] p-4 text-left font-sans text-sm leading-relaxed text-[#dfe7d5] shadow-[0_14px_28px_rgba(0,0,0,0.48)] ${tooltipPlacement ? 'block' : 'hidden'}`}
+        style={tooltipPlacement
+          ? {
+              left: tooltipPlacement.left,
+              top: tooltipPlacement.top,
+              width: tooltipPlacement.width,
+              maxHeight: tooltipPlacement.maxHeight,
+            }
+          : undefined}
+        data-testid={`meta-talent-tooltip-${node.id}`}
+      >
+        <div className="flex items-center gap-3">
+          <div className={`grid h-14 w-14 shrink-0 place-items-center overflow-hidden border-2 p-0 font-pixel text-lg leading-none ${tab.anchorClass} ${tab.colorClass}`} data-testid={`meta-talent-tooltip-icon-${node.id}`}>
+            {iconUrl ? (
+              <img src={iconUrl} alt="" className="block h-full w-full object-cover [image-rendering:pixelated]" data-testid={`meta-talent-tooltip-icon-image-${node.id}`} />
+            ) : getMetaTalentIcon(node)}
+          </div>
+          <div className="min-w-0">
+            <p className="font-pixel text-base text-amber-200" data-testid={`meta-talent-tooltip-name-${node.id}`}>{node.name}</p>
+            <p className="mt-1 text-sm text-[#9dd5ac]" data-testid={`meta-talent-tooltip-id-${node.id}`}>节点 ID：{node.id}</p>
+            <p className="mt-1 text-sm text-[#dfe7d5]" data-testid={`meta-talent-tooltip-level-${node.id}`}>等级：{progress}</p>
+          </div>
+        </div>
+        <div className="mt-4 space-y-2">
+          <p data-testid={`meta-talent-tooltip-cost-${node.id}`}>消耗：{node.cost} 天赋点</p>
+          <p data-testid={`meta-talent-tooltip-current-effect-${node.id}`}>当前效果：{currentEffect}</p>
+          <p data-testid={`meta-talent-tooltip-next-effect-${node.id}`}>下一级效果：{nextEffect}</p>
+          <p data-testid={`meta-talent-tooltip-prerequisites-${node.id}`}>前置条件：{prerequisites.length ? prerequisites.join(' / ') : '无'}</p>
+          <p data-testid={`meta-talent-tooltip-status-${node.id}`}>状态：{statusText}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const RunTalentGuideShelfNode = ({ node, selected = false }: { node: RunTalentNode; selected?: boolean }) => {
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const tooltipRef = useRef<HTMLDivElement>(null)
+  const [tooltipPlacement, setTooltipPlacement] = useState<MetaTalentTooltipPlacement | null>(null)
+  const iconUrl = getRunTalentIconAssetUrl(node)
+
+  const updatePlacement = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const tooltipRect = tooltipRef.current?.getBoundingClientRect()
+    setTooltipPlacement(getMetaTalentTooltipPlacement(rect, tooltipRect
+      ? { width: tooltipRect.width, height: tooltipRect.height }
+      : undefined))
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!tooltipPlacement) return
+    updatePlacement()
+  }, [tooltipPlacement?.left, tooltipPlacement?.top, updatePlacement])
+
+  const showTooltip = () => updatePlacement()
+  const hideTooltip = () => setTooltipPlacement(null)
+  const tooltipId = `run-talent-guide-tooltip-${node.id}`
+
+  return (
+    <div className="relative flex w-[5.25rem] shrink-0 flex-col items-center" data-selected={selected ? 'true' : 'false'} data-testid={`run-talent-guide-node-${node.id}`}>
+      <button
+        ref={buttonRef}
+        type="button"
+        className={`flex h-16 w-16 items-center justify-center overflow-hidden border-2 p-0 font-pixel text-lg leading-none shadow-[0_0_0_2px_rgba(8,16,11,0.86)] transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 ${selected ? 'ring-2 ring-amber-200' : ''} ${runTalentIconClasses[node.module]}`}
+        aria-label={node.name}
+        aria-describedby={tooltipId}
+        data-testid={`run-talent-guide-icon-${node.id}`}
+        onMouseEnter={showTooltip}
+        onMouseLeave={hideTooltip}
+        onFocus={showTooltip}
+        onBlur={hideTooltip}
+      >
+        <img
+          src={iconUrl}
+          alt=""
+          className="block h-full w-full object-cover [image-rendering:pixelated]"
+          data-testid={`run-talent-guide-image-${node.id}`}
+        />
+      </button>
+      <span className="hidden" data-testid={`run-talent-guide-node-label-${node.id}`}>{node.name}</span>
+      <div
+        ref={tooltipRef}
+        id={tooltipId}
+        role="tooltip"
+        className={`pointer-events-none fixed z-[120] overflow-y-auto border-2 border-[#fbbf24] bg-[#08100b] p-4 text-left font-sans text-sm leading-relaxed text-[#dfe7d5] shadow-[0_14px_28px_rgba(0,0,0,0.48)] ${tooltipPlacement ? 'block' : 'hidden'}`}
+        style={tooltipPlacement
+          ? {
+              left: tooltipPlacement.left,
+              top: tooltipPlacement.top,
+              width: tooltipPlacement.width,
+              maxHeight: tooltipPlacement.maxHeight,
+            }
+          : undefined}
+        data-testid={tooltipId}
+      >
+        <div className="flex items-center gap-3">
+          <div className={`grid h-14 w-14 shrink-0 place-items-center overflow-hidden border-2 p-0 font-pixel text-lg leading-none ${runTalentIconClasses[node.module]}`} data-testid={`run-talent-guide-tooltip-icon-${node.id}`}>
+            <img
+              src={iconUrl}
+              alt=""
+              className="block h-full w-full object-cover [image-rendering:pixelated]"
+              data-testid={`run-talent-guide-tooltip-image-${node.id}`}
+            />
+          </div>
+          <div className="min-w-0">
+            <p className="font-pixel text-base text-amber-200" data-testid={`run-talent-guide-tooltip-name-${node.id}`}>{node.name}</p>
+            <p className="mt-1 text-sm text-[#9dd5ac]" data-testid={`run-talent-guide-tooltip-level-${node.id}`}>等级：Lv.{node.requiredLevel} · {runTalentTierLabels[node.tier]}</p>
+          </div>
+        </div>
+        <div className="mt-4 space-y-2">
+          <p data-testid={`run-talent-guide-tooltip-module-${node.id}`}>分类：{runTalentModuleLabels[node.module]}</p>
+          <p data-testid={`run-talent-guide-tooltip-description-${node.id}`}>说明：{node.description}</p>
+          <p data-testid={`run-talent-guide-tooltip-tags-${node.id}`}>标签：{node.tags.map(formatRunTalentGuideTag).join(' / ') || '无'}</p>
+          <div data-testid={`run-talent-guide-tooltip-effects-${node.id}`}>
+            <p>效果：</p>
+            {node.effects.map((effect, index) => (
+              <p key={`${node.id}-guide-effect-${index}`} className="text-[#9dd5ac]">{formatTalentEffect(effect)}</p>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const RunTalentGuideShelf = ({ selectedTalentIds }: { selectedTalentIds: string[] }) => {
+  const selectedTalentIdSet = new Set(selectedTalentIds)
+
+  return (
+    <div className="mt-1 overflow-hidden border-2 border-[#08100b] bg-[radial-gradient(circle_at_45%_38%,rgba(34,197,94,0.1),transparent_32%),linear-gradient(135deg,#10170f,#070b08)] shadow-[inset_0_0_0_1px_rgba(244,240,215,0.08)]" data-testid="hunter-home-run-talent-tree">
+      <div className="space-y-3 p-4" data-testid="run-talent-guide">
+        <p className="text-lg leading-tight text-[#9dd5ac]">
+          战斗天赋只在冒险奖励中选择；这里仅作只读预览，不消耗天赋点，也不提供重置或解锁操作。
+        </p>
+        {runTalentModuleOrder.map((module) => {
+          const nodes = RUN_TALENT_NODES
+            .filter((node) => node.module === module)
+            .sort((a, b) => a.order - b.order)
+          const borderClass = runTalentIconClasses[module].split(' ').find((className) => className.startsWith('border-')) ?? 'border-[#9dd5ac]'
+
+          return (
+            <section
+              key={module}
+              className={`border bg-transparent p-3 ${borderClass}`}
+              data-testid={`run-talent-guide-module-${module}`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[rgba(157,213,172,0.2)] pb-3" data-testid={`run-talent-guide-row-${module}`}>
+                <div className="flex min-w-0 items-center gap-3">
+                  <p className={`font-pixel text-base ${runTalentModuleTitleClasses[module]}`} data-testid={`run-talent-guide-row-title-${module}`}>{runTalentModuleLabels[module]}</p>
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-x-3 gap-y-4" data-testid={`run-talent-guide-shelf-${module}`}>
+                {nodes.map((node) => (
+                  <RunTalentGuideShelfNode key={node.id} node={node} selected={selectedTalentIdSet.has(node.id)} />
+                ))}
+              </div>
+            </section>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 const formatScaledDamage = (damage: number) => {
   return Number((damage * ACTIVE_SKILL_DAMAGE_MULTIPLIER).toFixed(1))
+}
+
+type SkillGuideTooltipTrigger = 'hover' | 'focus' | 'click'
+
+const SkillGuideIcon = ({ skill }: { skill?: (typeof ARCHER_ACTIVE_SKILLS)[number] }) => {
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const tooltipRef = useRef<HTMLDivElement>(null)
+  const [tooltipPlacement, setTooltipPlacement] = useState<MetaTalentTooltipPlacement | null>(null)
+  const [tooltipTrigger, setTooltipTrigger] = useState<SkillGuideTooltipTrigger | null>(null)
+  const id = skill?.id ?? ARCHER_FIXED_PASSIVE.id
+  const name = skill?.name ?? ARCHER_FIXED_PASSIVE.name
+  const iconUrl = getArcherSkillIconAssetUrl(id)
+  const tooltipId = `skill-guide-tooltip-${id}`
+
+  const updatePlacement = useCallback((trigger?: SkillGuideTooltipTrigger) => {
+    const rect = buttonRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const tooltipRect = tooltipRef.current?.getBoundingClientRect()
+    setTooltipPlacement(getMetaTalentTooltipPlacement(rect, tooltipRect
+      ? { width: tooltipRect.width, height: tooltipRect.height }
+      : undefined))
+    if (trigger) setTooltipTrigger(trigger)
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!tooltipPlacement) return
+    updatePlacement()
+  }, [tooltipPlacement?.left, tooltipPlacement?.top, updatePlacement])
+
+  const hideTooltip = () => {
+    setTooltipPlacement(null)
+    setTooltipTrigger(null)
+  }
+
+  const toggleClickTooltip = () => {
+    if (tooltipTrigger === 'click') {
+      hideTooltip()
+      return
+    }
+    updatePlacement('click')
+  }
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        className="flex h-16 w-16 items-center justify-center overflow-hidden border-2 border-[#9dd5ac] bg-[#08100b] p-0 shadow-[0_0_0_2px_rgba(8,16,11,0.86)] transition hover:scale-105 hover:border-amber-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+        aria-label={name}
+        aria-describedby={tooltipId}
+        data-testid={`skill-guide-icon-${id}`}
+        onMouseEnter={() => updatePlacement('hover')}
+        onMouseLeave={hideTooltip}
+        onFocus={() => updatePlacement('focus')}
+        onBlur={hideTooltip}
+        onClick={toggleClickTooltip}
+      >
+        {iconUrl ? <img src={iconUrl} alt="" className="block h-full w-full object-cover [image-rendering:pixelated]" data-testid={`skill-guide-image-${id}`} /> : null}
+      </button>
+      <div
+        ref={tooltipRef}
+        id={tooltipId}
+        role="tooltip"
+        className={`pointer-events-none fixed z-[120] overflow-y-auto border-2 border-[#fbbf24] bg-[#08100b] p-4 text-left font-sans text-sm leading-relaxed text-[#dfe7d5] shadow-[0_14px_28px_rgba(0,0,0,0.48)] ${tooltipPlacement ? 'block' : 'hidden'}`}
+        style={tooltipPlacement
+          ? {
+              left: tooltipPlacement.left,
+              top: tooltipPlacement.top,
+              width: tooltipPlacement.width,
+              maxHeight: tooltipPlacement.maxHeight,
+            }
+          : undefined}
+        data-testid={tooltipId}
+      >
+        <div className="flex items-center gap-3">
+          <div className="h-14 w-14 shrink-0 overflow-hidden border-2 border-[#9dd5ac] bg-[#08100b]">
+            {iconUrl ? <img src={iconUrl} alt="" className="block h-full w-full object-cover [image-rendering:pixelated]" /> : null}
+          </div>
+          <p className="font-pixel text-base text-amber-200">{name}</p>
+        </div>
+        {skill ? (
+          <div className="mt-4 space-y-2">
+            <p>说明：{skill.description}</p>
+            <p>流派：{SKILL_BUILD_LABELS[skill.buildTag]}</p>
+            <p>标签：{skill.tacticalTags.join(' / ') || '无'}</p>
+            <p>Lv.1 伤害：{formatScaledDamage(skill.levels[0].damage)}</p>
+            <p>Lv.5 伤害：{formatScaledDamage(skill.levels[4].damage)}</p>
+            <p>冷却：{skill.levels[0].cooldown}s 到 {skill.levels[4].cooldown}s</p>
+          </div>
+        ) : (
+          <div className="mt-4 space-y-2">
+            <p>说明：{ARCHER_FIXED_PASSIVE.description}</p>
+            {ARCHER_FIXED_PASSIVE_LEVELS.map((level) => <p key={level.level}>Lv.{level.level}：{level.description}</p>)}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 const milestoneRewards = [
@@ -80,30 +966,35 @@ const monsterKindLabels: Record<EnemyKind, string> = {
   boss: 'Boss',
 }
 
-const skillTraitLabels: Record<CampaignEnemyArchetype['skillTrait'], string> = {
-  none: '基础攻击',
-  'life-steal': '吸血',
-  'pack-haste': '狼群加速',
-  'hex-slow': '诅咒减速',
-  'war-drum': '战鼓光环',
-  shielded: '护盾',
-  healing: '治疗',
-  minefield: '地雷',
-  'chain-lightning': '连锁电击',
-  'wall-charge': '撞墙冲锋',
-  'fire-breath': '火焰吐息',
-  'skeleton-revive': '骷髅复活',
+const getMonsterPreviewName = (monster: CampaignEnemyArchetype) => {
+  const monsterCard = getMonsterDataCard(monster.id)
+  return monsterCard?.name ?? monster.name
 }
 
-const getMonsterPreviewName = (monster: CampaignEnemyArchetype) => {
-  if (monster.id === 'dungeon-warden') return `${monster.name}（骷髅骑士）`
-  return monster.name
+const getMonsterGuideSkillText = (monster: CampaignEnemyArchetype) => {
+  const monsterCard = getMonsterDataCard(monster.id)
+  if (monsterCard) {
+    return `普攻：${monsterCard.basicAttack.label} · 技能：${monsterCard.skill?.label ?? '无'}`
+  }
+
+  return `普攻：${monsterKindLabels[monster.kind]} · 技能：${monster.skillTrait === 'none' ? '无' : monster.skillTrait}`
+}
+
+const getMonsterGuideTags = (monster: CampaignEnemyArchetype) => {
+  const monsterCard = getMonsterDataCard(monster.id)
+  return monsterCard?.behaviorTags.slice(0, 3) ?? [monsterKindLabels[monster.kind]]
+}
+
+const getMonsterGuideAssetAction = (monsterId: string): DeveloperAssetAction | undefined => {
+  const assetEntity = developerAssetEntities.find((entity) => entity.id === monsterId)
+  return assetEntity?.actions.find((action) => action.slot === 'idle' && action.guideFrame)
+    ?? assetEntity?.actions.find((action) => action.guideFrame)
 }
 
 const formatPortalDropHint = (hint: string) => hint.replace(/^适合刷/, '').replace(/[。.]$/, '')
 
 const getUniqueCampaignMonsters = (theme: (typeof CAMPAIGN_MONSTER_THEMES)[number]) => {
-  const allMonsters = [...theme.normalPool, ...theme.elitePool, theme.boss]
+  const allMonsters = [CORROSIVE_SLIME_ARCHETYPE, ...theme.normalPool, ...theme.elitePool, theme.boss]
   return allMonsters.filter((monster, index) => allMonsters.findIndex((candidate) => candidate.id === monster.id) === index)
 }
 
@@ -196,14 +1087,6 @@ const formatEquipmentRollDiff = (item: EquipmentItem, baseline?: EquipmentItem) 
 }
 
 const isHighRarityProtected = (item: EquipmentItem) => ['epic', 'legacy', 'legendary'].includes(item.rarity)
-
-const talentPointSourceLabels: Record<TalentPointRecord['source'], string> = {
-  death: '阵亡',
-  forfeit: '撤退',
-  'campaign-clear': '通关',
-}
-
-const runTalentBuilds: RunTalentBuild[] = ['death', 'blood', 'beast', 'crystal']
 
 const reforgeModeLabels: Record<EquipmentReforgeMode, string> = {
   secondary: '副属性重铸',
@@ -325,18 +1208,25 @@ const MonsterAnimationStrip = ({
   campaignIndex: number
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const monsterCard = getMonsterDataCard(monster.id)
+  const displayKind = monsterCard?.kind ?? monster.kind
   const name = getMonsterPreviewName(monster)
+  const skillText = getMonsterGuideSkillText(monster)
+  const guideTags = getMonsterGuideTags(monster)
   const atlas = getMonsterSpriteAtlasForEnemy({
-    kind: monster.kind,
+    kind: displayKind,
     archetypeId: monster.id,
-    displayName: monster.name,
+    displayName: name,
   })
-  const frameSize = atlas?.frameSize ?? MONSTER_FRAME_SPECS[monster.kind].frameSize
+  const guideAssetAction = getMonsterGuideAssetAction(monster.id)
+  const guideFrameSrc = atlas?.guidePreviewSrc ?? guideAssetAction?.guideFrame
+  const assetSrc = atlas?.src ?? guideAssetAction?.assetPath
+  const frameSize = atlas?.frameSize ?? guideAssetAction?.frameWidth ?? MONSTER_FRAME_SPECS[displayKind].frameSize
   const idleAction = (atlas?.actions.idle ? 'idle' : Object.keys(atlas?.actions ?? {})[0] ?? 'idle') as MonsterFrameAction
-  const previewAction = (atlas?.guidePreviewAction ?? (atlas?.guidePreviewSrc ? 'attack' : idleAction)) as MonsterFrameAction
+  const previewAction = (atlas?.guidePreviewAction ?? (guideFrameSrc ? guideAssetAction?.combatAction ?? 'idle' : idleAction)) as MonsterFrameAction
 
   useEffect(() => {
-    if (!atlas || atlas.guidePreviewSrc) {
+    if (guideFrameSrc) {
       return
     }
     const canvas = canvasRef.current
@@ -357,7 +1247,15 @@ const MonsterAnimationStrip = ({
       }
       context.imageSmoothingEnabled = false
       context.clearRect(0, 0, canvas.width, canvas.height)
-      drawMonsterGuideFrame(context, monster.kind, previewAction, 0, 0, 0, { atlas, atlasImage })
+      drawMonsterGuideFrame(context, displayKind, previewAction, 0, 0, 0, {
+        atlas,
+        atlasImage,
+        useKindAtlas: Boolean(atlas),
+        fallbackTint: monster.tint,
+        archetypeId: monster.id,
+        displayName: name,
+        campaignIndex,
+      })
     }
 
     if (atlas && typeof Image !== 'undefined') {
@@ -373,34 +1271,7 @@ const MonsterAnimationStrip = ({
         atlasImage.onload = null
       }
     }
-  }, [atlas, frameSize, previewAction, monster.kind])
-
-  if (!atlas) {
-    return (
-      <div
-        className="monster-strip-frame"
-        aria-label={`${name}立绘`}
-        role="img"
-        title={`${name}程序 fallback 预览，按战役与 archetype 区分`}
-        data-archetype-id={monster.id}
-        data-campaign-index={campaignIndex}
-        data-fallback-tint={monster.tint}
-      >
-        <div className="flex min-h-[72px] items-center gap-3 px-3 py-3">
-          <div
-            className="grid h-14 w-14 shrink-0 place-items-center border-2 border-[#08100b] font-pixel text-[10px] uppercase tracking-[0.08em] text-[#08100b] shadow-[0_0_0_1px_rgba(244,240,215,0.16)]"
-            style={{ backgroundColor: monster.tint }}
-          >
-            {monsterKindLabels[monster.kind].slice(0, 1)}
-          </div>
-          <div className="min-w-0">
-            <p className="font-pixel text-[8px] uppercase tracking-[0.14em] text-[#f4f0d7]">{name}</p>
-            <p className="mt-2 text-[0.95rem] leading-tight text-[#9dd5ac]">{monsterKindLabels[monster.kind]} · {skillTraitLabels[monster.skillTrait]}</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  }, [atlas, campaignIndex, displayKind, frameSize, guideFrameSrc, monster.id, monster.tint, name, previewAction])
 
   return (
     <div
@@ -408,17 +1279,20 @@ const MonsterAnimationStrip = ({
       style={{ '--monster-frame-count': 1 } as CSSProperties}
       aria-label={`${name}立绘`}
       role="img"
-      title={`${name}待机帧，规格 ${frameSize}x${frameSize}`}
-      data-asset-src={atlas?.src}
+      title={assetSrc ? `${name}素材帧，规格 ${frameSize}x${frameSize}` : `${name}战斗程序预览，按战役与 archetype 区分`}
+      data-asset-src={assetSrc}
       data-archetype-id={monster.id}
       data-campaign-index={campaignIndex}
       data-preview-action={previewAction}
+      data-fallback-tint={assetSrc ? undefined : monster.tint}
+      data-basic-attack={monsterCard?.basicAttack.label}
+      data-skill-label={monsterCard?.skill?.label ?? '无'}
     >
       <div className="flex min-h-[72px] items-center gap-3 px-3 py-3">
         <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden border-2 border-[#08100b] bg-[#0b120d] shadow-[0_0_0_1px_rgba(244,240,215,0.16)]">
-          {atlas.guidePreviewSrc ? (
+          {guideFrameSrc ? (
             <img
-              src={atlas.guidePreviewSrc}
+              src={guideFrameSrc}
               alt=""
               aria-hidden="true"
               className="h-14 w-14 object-contain [image-rendering:pixelated]"
@@ -435,8 +1309,15 @@ const MonsterAnimationStrip = ({
           )}
         </div>
         <div className="min-w-0">
-          <p className="font-pixel text-[8px] uppercase tracking-[0.14em] text-[#f4f0d7]">{name}</p>
-          <p className="mt-2 text-[0.95rem] leading-tight text-[#9dd5ac]">{monsterKindLabels[monster.kind]} · {skillTraitLabels[monster.skillTrait]}</p>
+          <p className="font-pixel text-sm uppercase tracking-[0.12em] text-[#f4f0d7]">{name}</p>
+          <p className="mt-1 text-base leading-tight text-[#9dd5ac]">{skillText}</p>
+          <div className="mt-2 flex flex-wrap gap-1">
+            {guideTags.map((tag) => (
+              <span key={`${monster.id}-${tag}`} className="border border-[rgba(157,213,172,0.24)] bg-[rgba(8,16,11,0.36)] px-1.5 py-0.5 font-pixel text-[9px] uppercase tracking-[0.08em] text-[#9dd5ac]">
+                {tag}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -667,16 +1548,22 @@ const VillageClickArea = ({
   label,
   onClick,
   className,
+  style,
+  testId,
 }: {
   label: string
   onClick: () => void
-  className: string
+  className?: string
+  style?: CSSProperties
+  testId?: string
 }) => (
   <button
     type="button"
     aria-label={label}
     title={label}
-    className={`pointer-events-auto absolute bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#08100b] ${className}`}
+    data-testid={testId}
+    className={`pointer-events-auto absolute bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#08100b] ${className ?? ''}`}
+    style={style}
     onClick={onClick}
   />
 )
@@ -687,25 +1574,36 @@ const VillageModalShell = ({
   children,
   headerExtra,
   stickyHeader = false,
+  fixedFrame = false,
+  testId,
+  headerTestId,
+  contentTestId,
 }: {
   title: string
   onClose: () => void
   children: ReactNode
   headerExtra?: ReactNode
   stickyHeader?: boolean
+  fixedFrame?: boolean
+  testId?: string
+  headerTestId?: string
+  contentTestId?: string
 }) => (
   <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(3,8,6,0.68)] p-4">
-    <div className={`pointer-events-auto pixel-panel max-h-[92vh] w-[min(94vw,1280px)] ${stickyHeader ? 'flex flex-col overflow-hidden p-0' : 'overflow-y-auto p-5 md:p-6'}`}>
-      <div className={stickyHeader ? 'shrink-0 border-b-2 border-[rgba(157,213,172,0.18)] bg-[#101913] px-5 py-5 shadow-[0_10px_18px_rgba(0,0,0,0.24)] md:px-6 md:py-6' : 'mb-4'}>
+    <div
+      className={`pointer-events-auto pixel-panel w-[min(94vw,1280px)] ${fixedFrame ? 'h-[min(92vh,760px)]' : 'max-h-[92vh]'} ${stickyHeader ? 'flex flex-col overflow-hidden p-0' : 'overflow-y-auto p-5 md:p-6'}`}
+      data-testid={testId}
+    >
+      <div className={stickyHeader ? 'shrink-0 border-b-2 border-[rgba(157,213,172,0.18)] bg-[#101913] px-5 py-5 shadow-[0_10px_18px_rgba(0,0,0,0.24)] md:px-6 md:py-6' : 'mb-4'} data-testid={headerTestId}>
         <div className="flex items-center justify-between gap-4">
           <h2 className="font-pixel text-sm uppercase tracking-[0.18em] text-[#f4f0d7] md:text-base">{title}</h2>
-          <button type="button" className="pixel-button px-4 py-3 font-pixel text-[10px] uppercase tracking-[0.16em]" onClick={onClose}>
+          <button type="button" className={`pixel-button px-4 py-3 font-pixel uppercase tracking-[0.14em] ${fixedFrame ? 'text-sm' : 'text-[10px]'}`} onClick={onClose}>
             关闭
           </button>
         </div>
         {headerExtra ? <div className="mt-4">{headerExtra}</div> : null}
       </div>
-      <div className={stickyHeader ? 'min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4 md:px-6 md:pb-6' : undefined}>
+      <div className={stickyHeader ? 'min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4 md:px-6 md:pb-6' : undefined} data-testid={contentTestId}>
         {children}
       </div>
     </div>
@@ -714,6 +1612,7 @@ const VillageModalShell = ({
 
 export function GameOverlay() {
   const phase = useGameStore((state) => state.phase)
+  const localBattleTest = useGameStore((state) => state.localBattleTest)
   const level = useGameStore((state) => state.level)
   const levelTargetKills = useGameStore((state) => state.levelTargetKills)
   const levelTimer = useGameStore((state) => state.levelTimer)
@@ -725,12 +1624,9 @@ export function GameOverlay() {
   const runHistory = useGameStore((state) => state.runHistory)
   const achievedMilestones = useGameStore((state) => state.achievedMilestones)
   const talentPoints = useGameStore((state) => state.talentPoints)
-  const talentPointRecords = useGameStore((state) => state.talentPointRecords)
-  const talentPointLedger = useGameStore((state) => state.talentPointLedger)
   const lastTalentPointRecord = useGameStore((state) => state.lastTalentPointRecord)
   const unlockedMetaTalentIds = useGameStore((state) => state.unlockedMetaTalentIds)
-  const talentUnlockRecords = useGameStore((state) => state.talentUnlockRecords)
-  const runTalentState = useGameStore((state) => state.runTalentState)
+  const metaTalentRanks = useGameStore((state) => state.metaTalentRanks ?? {})
   const equipmentInventory = useGameStore((state) => state.equipmentInventory)
   const equippedItems = useGameStore((state) => state.equippedItems)
   const equipmentMaterials = useGameStore((state) => state.equipmentMaterials)
@@ -741,13 +1637,13 @@ export function GameOverlay() {
   const completedCampaignDifficulties = useGameStore((state) => state.completedCampaignDifficulties)
   const unsealedEquipmentSlots = useGameStore((state) => state.unsealedEquipmentSlots)
   const activeSkills = useGameStore((state) => state.activeSkills)
-  const skillAllocations = useGameStore((state) => state.skillAllocations)
   const player = useGameStore((state) => state.player)
   const audioSettings = useGameStore((state) => state.audioSettings)
   const startGame = useGameStore((state) => state.startGame)
   const selectCampaign = useGameStore((state) => state.selectCampaign)
   const selectCampaignDifficulty = useGameStore((state) => state.selectCampaignDifficulty)
   const returnToVillage = useGameStore((state) => state.returnToVillage)
+  const exitLocalBattleTest = useGameStore((state) => state.exitLocalBattleTest)
   const equipEquipment = useGameStore((state) => state.equipEquipment)
   const toggleEquipmentLock = useGameStore((state) => state.toggleEquipmentLock)
   const dismantleEquipment = useGameStore((state) => state.dismantleEquipment)
@@ -759,19 +1655,15 @@ export function GameOverlay() {
   const updateAudioSettings = useGameStore((state) => state.updateAudioSettings)
   const unlockMetaTalentAction = useGameStore((state) => state.unlockMetaTalent)
   const resetMetaTalentTreeAction = useGameStore((state) => state.resetMetaTalentTree)
-  const setRunTalentBuild = useGameStore((state) => state.setRunTalentBuild)
-  const selectRunTalent = useGameStore((state) => state.selectRunTalent)
-  const generateRunTalentCandidatesAction = useGameStore((state) => state.generateRunTalentCandidates)
-  const rerollRunTalentCandidatesAction = useGameStore((state) => state.rerollRunTalentCandidates)
+  const selectedRunTalentIds = useGameStore((state) => state.runTalentState.selectedTalentIds)
   const [villageModal, setVillageModal] = useState<VillageModal>(null)
   const [moveKeys, setMoveKeys] = useState('WASD')
   const [inventorySlot, setInventorySlot] = useState<EquipmentSlot>('weapon')
   const [reforgeRequest, setReforgeRequest] = useState<{ itemId: string; mode: EquipmentReforgeMode } | null>(null)
-  const [guideCampaign, setGuideCampaign] = useState(1)
   const [guideTab, setGuideTab] = useState<GuideTab>('monsters')
-  const [runTalentCandidates, setRunTalentCandidates] = useState<RunTalentCandidate[]>([])
-  const [runTalentSeed, setRunTalentSeed] = useState('hunter-home-preview')
-  const [runTalentRerollBlockedReason, setRunTalentRerollBlockedReason] = useState('')
+  const [hunterHomeTab, setHunterHomeTab] = useState<HunterHomeTab>('functional-talents')
+  const [villageClickAreas, setVillageClickAreas] = useState<VillageClickAreaConfig[]>(defaultVillageClickAreas)
+  const [villageBackgroundMedia, setVillageBackgroundMedia] = useState<VillageBackgroundMediaConfig>(defaultVillageBackgroundMedia)
   const skillSections = useMemo(() => {
     return [
       { buildTag: 'pierce' as const, label: SKILL_BUILD_LABELS.pierce, items: ARCHER_ACTIVE_SKILLS.filter((skill) => skill.buildTag === 'pierce') },
@@ -781,8 +1673,29 @@ export function GameOverlay() {
     ]
   }, [])
 
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch(GODOT_HOMEPAGE_LAYOUT_URL, { cache: 'no-store', signal: controller.signal })
+      .then((response) => response.ok ? response.json() : undefined)
+      .then((payload) => {
+        const homepageConfig = normalizeGodotVillageLayout(payload)
+        if (homepageConfig?.clickAreas) {
+          setVillageClickAreas(homepageConfig.clickAreas)
+        }
+        if (homepageConfig?.backgroundMedia) {
+          setVillageBackgroundMedia(homepageConfig.backgroundMedia)
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setVillageClickAreas(defaultVillageClickAreas)
+          setVillageBackgroundMedia(defaultVillageBackgroundMedia)
+        }
+      })
+    return () => controller.abort()
+  }, [])
+
   if (phase === 'idle') {
-    const equippedWeaponName = equippedItems.weapon?.name ?? '林地短弓'
     const equipmentSlotCounts = EQUIPMENT_SLOTS.reduce<Record<EquipmentSlot, number>>((counts, slot) => {
       counts[slot] = equipmentInventory.filter((item) => item.slot === slot).length
       return counts
@@ -795,33 +1708,30 @@ export function GameOverlay() {
     const equipmentBonus = getEquipmentBonusSummary(equippedItems)
     const equipmentSetCounts = getEquipmentSetCounts(equippedItems)
     const equipmentContext = getActiveEquipmentContext(activeSkills)
-    const metaTalentSummary = getMetaTalentBonusSummary(unlockedMetaTalentIds)
-    const runTalentSummary = getRunTalentBonusSummary(runTalentState.selectedTalentIds)
     const canResetMetaTalents = unlockedMetaTalentIds.length > 0
       && currency >= TALENT_RESET_GOLD_COST
       && (equipmentMaterials.buildShard ?? 0) >= TALENT_RESET_BUILD_SHARD_COST
-    const metaTalentResetHint = unlockedMetaTalentIds.length === 0
-      ? '需要先解锁天赋'
-      : canResetMetaTalents
-        ? `消耗 ${TALENT_RESET_GOLD_COST} 金币 + ${TALENT_RESET_BUILD_SHARD_COST} 流派碎片`
-        : `不足：${TALENT_RESET_GOLD_COST} 金币 + ${TALENT_RESET_BUILD_SHARD_COST} 流派碎片`
-    const metaTalentModules = Array.from(new Set(META_TALENT_NODES.map((node) => node.module)))
     const getMetaUnlockState = (nodeId: string) => getMetaTalentUnlockState(nodeId, {
       talentPoints,
       unlockedMetaTalentIds,
+      metaTalentRanks,
       unlockedCampaignDifficulties,
       completedCampaignDifficulties,
     })
-    const generateRunTalentPreview = () => {
-      const candidates = generateRunTalentCandidatesAction(runTalentSeed)
-      setRunTalentCandidates(candidates)
-      setRunTalentRerollBlockedReason('')
-    }
-    const rerollRunTalentPreview = () => {
-      const result = rerollRunTalentCandidatesAction(runTalentCandidates, `${runTalentSeed}:ui`)
-      setRunTalentCandidates(result.candidates)
-      setRunTalentRerollBlockedReason(result.blockedReason ?? '')
-    }
+    const metaTalentTabStats = metaTalentTreeTabs.map((tab) => {
+      const nodes = META_TALENT_NODES.filter((node) => tab.modules.includes(node.module))
+      return {
+        ...tab,
+        unlocked: nodes.filter((node) => getMetaTalentRank(node.id, metaTalentRanks, unlockedMetaTalentIds) >= 1).length,
+        total: nodes.length,
+      }
+    })
+    const metaTalentRows = metaTalentTabStats.map((tab) => ({
+      ...tab,
+      nodes: META_TALENT_NODES
+        .filter((node) => tab.modules.includes(node.module))
+        .sort((a, b) => a.order - b.order),
+    }))
     const batchLabels: Array<[EquipmentDismantleCategory, string]> = [
       ['low-rarity', '分解灰白绿'],
       ['low-score-rare', '分解低分蓝装'],
@@ -871,42 +1781,58 @@ export function GameOverlay() {
 
     return (
       <div className="pointer-events-none absolute inset-0 z-10">
-        <div className="absolute left-1/2 top-1/2 aspect-[1672/941] h-auto w-full max-w-[calc(100vh*1.5)] -translate-x-1/2 -translate-y-1/2">
-          <img
-            src={`${import.meta.env.BASE_URL}assets/village-main-menu-concept-image2.png`}
-            alt=""
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 h-full w-full object-cover"
-            draggable={false}
-          />
-          <VillageClickArea label="开始游戏" className="z-20 left-[2.4%] top-[50.7%] h-[7.9%] w-[16.8%]" onClick={() => setVillageModal('campaign')} />
-          <VillageClickArea label="角色选择" className="z-20 left-[2.4%] top-[59.7%] h-[7.9%] w-[16.8%]" onClick={() => setVillageModal('character')} />
-          <VillageClickArea label="物品仓库" className="z-20 left-[2.4%] top-[68.8%] h-[7.9%] w-[16.8%]" onClick={() => setVillageModal('inventory')} />
-          <VillageClickArea label="设置" className="z-20 left-[2.4%] top-[77.8%] h-[7.9%] w-[16.8%]" onClick={() => setVillageModal('settings')} />
-          <VillageClickArea
-            label="铁匠铺"
-            className="z-10 left-[10.5%] top-[31.5%] h-[38%] w-[24%]"
-            onClick={() => setVillageModal('shop')}
-          />
-          <VillageClickArea
-            label="猎手之家"
-            className="z-10 left-[35.5%] top-[20%] h-[45%] w-[30%]"
-            onClick={() => setVillageModal('hunter-home')}
-          />
-          <VillageClickArea
-            label="传送门"
-            className="z-10 left-[69%] top-[27%] h-[40%] w-[15%]"
-            onClick={() => setVillageModal('campaign')}
-          />
-          <VillageClickArea
-            label="告示牌"
-            className="z-10 left-[83%] top-[42%] h-[34%] w-[16%]"
-            onClick={() => setVillageModal('guide')}
-          />
+        <div className="absolute left-1/2 top-1/2 aspect-[3/2] h-auto w-full max-w-[calc(100vh*1.5)] -translate-x-1/2 -translate-y-1/2">
+          {villageBackgroundMedia.videoSrc ? (
+            <video
+              key={villageBackgroundMedia.videoSrc}
+              src={villageBackgroundMedia.videoSrc}
+              poster={villageBackgroundMedia.posterSrc}
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+              autoPlay
+              loop
+              muted
+              preload="auto"
+              playsInline
+              data-testid="godot-village-background-video"
+            />
+          ) : (
+            <img
+              src={villageBackgroundMedia.posterSrc}
+              alt=""
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+              draggable={false}
+              data-testid="godot-village-background-poster"
+            />
+          )}
+          {villageClickAreas.map((area) => (
+            <VillageClickArea
+              key={area.id}
+              label={area.label}
+              testId={`godot-village-click-area-${area.id}`}
+              style={{
+                left: `${area.rect.leftPct}%`,
+                top: `${area.rect.topPct}%`,
+                width: `${area.rect.widthPct}%`,
+                height: `${area.rect.heightPct}%`,
+                zIndex: area.zIndex,
+              }}
+              onClick={() => setVillageModal(area.modal)}
+            />
+          ))}
         </div>
 
         {villageModal === 'campaign' ? (
-          <VillageModalShell title="关卡" onClose={() => setVillageModal(null)}>
+          <VillageModalShell
+            title="关卡"
+            onClose={() => setVillageModal(null)}
+            stickyHeader
+            fixedFrame
+            testId="campaign-modal-shell"
+            headerTestId="campaign-modal-header"
+            contentTestId="campaign-modal-scroll"
+          >
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
               <SectionPanel eyebrow="" title="">
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -1018,7 +1944,15 @@ export function GameOverlay() {
         ) : null}
 
         {villageModal === 'character' ? (
-          <VillageModalShell title="角色选择" onClose={() => setVillageModal(null)}>
+          <VillageModalShell
+            title="角色选择"
+            onClose={() => setVillageModal(null)}
+            stickyHeader
+            fixedFrame
+            testId="character-modal-shell"
+            headerTestId="character-modal-header"
+            contentTestId="character-modal-scroll"
+          >
             <div className="grid gap-4 md:grid-cols-[320px_minmax(0,1fr)]">
               <SectionPanel eyebrow="可用职业" title="弓箭手">
                 <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
@@ -1046,7 +1980,15 @@ export function GameOverlay() {
         ) : null}
 
         {villageModal === 'inventory' ? (
-          <VillageModalShell title="仓库" onClose={() => setVillageModal(null)}>
+          <VillageModalShell
+            title="仓库"
+            onClose={() => setVillageModal(null)}
+            stickyHeader
+            fixedFrame
+            testId="inventory-modal-shell"
+            headerTestId="inventory-modal-header"
+            contentTestId="inventory-modal-scroll"
+          >
             <div className="grid gap-4 xl:grid-cols-[minmax(360px,0.92fr)_minmax(0,1.08fr)]">
               <SectionPanel eyebrow="" title="装备">
                 <div className="grid gap-4">
@@ -1328,212 +2270,121 @@ export function GameOverlay() {
 
         {villageModal === 'hunter-home' ? (
           <VillageModalShell title="猎手之家" onClose={() => setVillageModal(null)}>
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-              <SectionPanel eyebrow="当前猎人" title="弓箭手">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
-                    <p className="font-pixel text-[8px] text-[#9dd5ac]">最高层</p>
-                    <p className="mt-3 font-pixel text-sm text-amber-300">{bestLevel}</p>
-                  </div>
-                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
-                    <p className="font-pixel text-[8px] text-[#9dd5ac]">当前装备</p>
-                    <p className="mt-3 font-pixel text-[10px] text-amber-300">{equippedWeaponName}</p>
-                  </div>
-                </div>
-                <p className="mt-4 text-xl text-[#dfe7d5]">
-                  当前成长：生命 {skillAllocations.vitality} / 力量 {skillAllocations.power} / 急速 {skillAllocations.haste} / 灵巧 {skillAllocations.agility}
-                </p>
-              </SectionPanel>
-              <SectionPanel eyebrow="长期成长" title="天赋">
-                <div className="grid gap-3 md:grid-cols-4">
-                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
-                    <p className="font-pixel text-[8px] text-[#9dd5ac]">余额</p>
-                    <p className="mt-3 font-pixel text-sm text-amber-300" data-testid="hunter-home-talent-balance">{talentPoints}</p>
-                  </div>
-                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
-                    <p className="font-pixel text-[8px] text-[#9dd5ac]">已解锁</p>
-                    <p className="mt-3 font-pixel text-sm text-amber-300" data-testid="hunter-home-meta-unlocked-count">{unlockedMetaTalentIds.length}/84</p>
-                  </div>
-                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
-                    <p className="font-pixel text-[8px] text-[#9dd5ac]">重掷</p>
-                    <p className="mt-3 font-pixel text-sm text-amber-300" data-testid="hunter-home-meta-rerolls">+{metaTalentSummary.extraSkillRerolls}</p>
-                  </div>
-                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
-                    <p className="font-pixel text-[8px] text-[#9dd5ac]">局内</p>
-                    <p className="mt-3 font-pixel text-sm text-amber-300" data-testid="hunter-home-run-talent-count">{runTalentState.selectedTalentIds.length}</p>
-                  </div>
-                </div>
-                <div className="mt-3 grid gap-3 md:grid-cols-2">
-                  {talentPointRecords.length === 0 ? (
-                    <p className="border-2 border-[#08100b] bg-[#121b16] p-4 text-xl text-[#dfe7d5]" data-testid="hunter-home-talent-empty">暂无天赋记录</p>
-                  ) : (
-                    talentPointRecords.slice(0, 4).map((record) => (
-                      <div key={record.id} className="border-2 border-[#08100b] bg-[#121b16] p-4" data-testid="hunter-home-talent-record">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="font-pixel text-[9px] text-amber-300">+{record.points}</p>
-                          <p className="font-pixel text-[8px] text-[#f4f0d7]">{talentPointSourceLabels[record.source]}</p>
-                        </div>
-                        <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">第 {record.campaign} 关 · 到达 {record.reachedLevel} 层</p>
-                        <p className="mt-1 text-lg leading-tight text-[#9dd5ac]">
-                          经验 {record.cumulativeExp} / 局内 Lv.{record.highestContractLevel} / 精英 {record.eliteKills} / Boss {record.bossKills}
-                          {record.firstClear ? ' / 首通' : ''}
-                        </p>
-                      </div>
-                    ))
-                  )}
-                </div>
-                <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4" data-testid="hunter-home-meta-talent-tree">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="font-pixel text-[10px] text-[#f4f0d7]">局外 84</p>
-                      <button
-                        className={`pixel-button ${canResetMetaTalents ? '' : 'opacity-55'}`}
-                        type="button"
-                        disabled={!canResetMetaTalents}
-                        onClick={resetMetaTalentTreeAction}
-                        data-testid="hunter-home-meta-reset"
-                      >
-                        重置
-                      </button>
-                    </div>
-                    <p className="mt-2 text-lg leading-tight text-[#9dd5ac]" data-testid="hunter-home-meta-reset-hint">{metaTalentResetHint}</p>
-                    <div className="mt-3 max-h-[420px] space-y-3 overflow-y-auto pr-2">
-                      {metaTalentModules.map((module) => (
-                        <div key={module} className="border border-[rgba(157,213,172,0.18)] p-3">
-                          <p className="font-pixel text-[8px] text-amber-300">{module}</p>
-                          <div className="mt-2 grid gap-2 md:grid-cols-2">
-                            {META_TALENT_NODES.filter((node) => node.module === module).map((node) => {
-                              const unlocked = unlockedMetaTalentIds.includes(node.id)
-                              const state = getMetaUnlockState(node.id)
-                              const prerequisiteText = node.prerequisites.length > 0
-                                ? node.prerequisites.map((id) => META_TALENT_NODE_BY_ID.get(id)?.name ?? id).join(' / ')
-                                : '无'
-                              return (
-                                <div key={node.id} className="border border-[rgba(157,213,172,0.16)] bg-[#0d1711] p-3" data-testid={`meta-talent-${node.id}`}>
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div>
-                                      <p className="font-pixel text-[8px] text-[#f4f0d7]">{node.name}</p>
-                                      <p className="mt-1 font-pixel text-[7px] text-[#9dd5ac]">{node.id} · {node.cost} 点</p>
-                                    </div>
-                                    <span className={`font-pixel text-[7px] ${unlocked ? 'text-[#86efac]' : state.canUnlock ? 'text-amber-300' : 'text-[#f87171]'}`}>
-                                      {unlocked ? '已解锁' : state.canUnlock ? '可解锁' : '锁定'}
-                                    </span>
-                                  </div>
-                                  <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">{node.description}</p>
-                                  <p className="mt-1 text-lg leading-tight text-[#9dd5ac]">前置：{prerequisiteText}</p>
-                                  {!unlocked && !state.canUnlock ? <p className="mt-1 text-lg leading-tight text-[#fca5a5]">{state.reason}</p> : null}
-                                  <button
-                                    type="button"
-                                    className={`mt-3 border px-3 py-2 font-pixel text-[8px] ${!unlocked && state.canUnlock ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.22)] text-[#9dd5ac] opacity-55'}`}
-                                    disabled={unlocked || !state.canUnlock}
-                                    onClick={() => unlockMetaTalentAction(node.id)}
-                                  >
-                                    {unlocked ? '已解锁' : '解锁'}
-                                  </button>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+            <div className="grid gap-4">
+              <div className="flex flex-wrap gap-2" role="tablist" aria-label="猎手之家栏目">
+                {hunterHomeTabs.map((tab) => {
+                  const active = hunterHomeTab === tab.id
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      className={`border-2 px-4 py-3 font-pixel text-sm ${active ? 'border-amber-300 bg-[rgba(251,191,36,0.16)] text-amber-200' : 'border-[#08100b] bg-[#101913] text-[#9dd5ac] hover:border-[rgba(246,200,111,0.5)] hover:text-[#f4f0d7]'}`}
+                      onClick={() => setHunterHomeTab(tab.id)}
+                    >
+                      {tab.label}
+                    </button>
+                  )
+                })}
+              </div>
 
-                  <div className="space-y-3">
-                    <div className="border-2 border-[#08100b] bg-[#121b16] p-4" data-testid="hunter-home-run-talent-panel">
-                      <p className="font-pixel text-[10px] text-[#f4f0d7]">局内候选</p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {runTalentBuilds.map((build) => (
-                          <button
-                            key={build}
-                            type="button"
-                            className={`border px-3 py-2 font-pixel text-[8px] ${runTalentState.selectedBuild === build ? 'border-[#facc15] text-[#facc15]' : 'border-[rgba(157,213,172,0.28)] text-[#9dd5ac]'}`}
-                            onClick={() => {
-                              setRunTalentBuild(build)
-                              setRunTalentCandidates([])
-                            }}
-                          >
-                            {getTalentBuildLabel(build)}
-                          </button>
-                        ))}
-                      </div>
-                      <label className="mt-3 block font-pixel text-[8px] text-[#9dd5ac]">
-                        Seed
-                        <input
-                          className="mt-2 w-full border border-[rgba(157,213,172,0.24)] bg-[#08100b] px-2 py-2 text-[#f4f0d7]"
-                          value={runTalentSeed}
-                          onChange={(event) => setRunTalentSeed(event.currentTarget.value)}
-                          data-testid="hunter-home-run-talent-seed"
-                        />
-                      </label>
-                      <div className="mt-3 flex gap-2">
-                        <button type="button" className="pixel-button" onClick={generateRunTalentPreview} data-testid="hunter-home-run-talent-generate">生成候选</button>
-                        <button type="button" className="pixel-button" onClick={rerollRunTalentPreview} data-testid="hunter-home-run-talent-reroll" disabled={runTalentCandidates.length === 0 || runTalentState.rerollsRemaining <= 0}>重掷</button>
-                      </div>
-                      {runTalentRerollBlockedReason ? <p className="mt-2 text-lg text-[#fca5a5]">{runTalentRerollBlockedReason}</p> : null}
-                      <div className="mt-3 grid gap-2" data-testid="hunter-home-run-talent-candidates">
-                        {runTalentCandidates.length === 0 ? (
-                          <p className="text-xl text-[#dfe7d5]">暂无候选</p>
-                        ) : runTalentCandidates.map((candidate) => (
-                          <div key={candidate.node.id} className="border border-[rgba(157,213,172,0.18)] bg-[#0d1711] p-3" data-testid={`run-talent-candidate-${candidate.node.id}`}>
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="font-pixel text-[8px] text-[#f4f0d7]">{candidate.node.name}</p>
-                              <p className="font-pixel text-[7px] text-amber-300">{candidate.guaranteed ? '保底' : `权重 ${candidate.weight}`}</p>
-                            </div>
-                            <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">{candidate.node.description}</p>
-                            <p className="mt-1 text-lg leading-tight text-[#9dd5ac]">{candidate.reasons.join(' / ') || '基础池'}</p>
-                            <button
-                              type="button"
-                              className="mt-3 border border-[#facc15] px-3 py-2 font-pixel text-[8px] text-[#facc15]"
-                              disabled={runTalentState.selectedTalentIds.includes(candidate.node.id)}
-                              onClick={() => {
-                                selectRunTalent(candidate.node.id)
-                                setRunTalentCandidates([])
-                              }}
-                            >
-                              {runTalentState.selectedTalentIds.includes(candidate.node.id) ? '已选择' : '选择'}
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="border-2 border-[#08100b] bg-[#121b16] p-4" data-testid="hunter-home-talent-summary">
-                      <p className="font-pixel text-[10px] text-[#f4f0d7]">效果汇总</p>
-                      <p className="mt-3 text-lg leading-tight text-[#dfe7d5]">候选权重：{Object.keys(metaTalentSummary.candidateWeights).length}</p>
-                      <p className="mt-1 text-lg leading-tight text-[#dfe7d5]">局内机制：{Object.keys(runTalentSummary.mechanics).length}</p>
-                      <p className="mt-1 text-lg leading-tight text-[#9dd5ac]">重置：{TALENT_RESET_GOLD_COST} 金币 + {TALENT_RESET_BUILD_SHARD_COST} 流派碎片。</p>
-                    </div>
-                    <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
-                      <p className="font-pixel text-[10px] text-[#f4f0d7]">解锁记录</p>
-                      {talentUnlockRecords.length === 0 ? (
-                        <p className="mt-3 text-xl text-[#dfe7d5]">暂无解锁</p>
-                      ) : talentUnlockRecords.slice(0, 5).map((record) => (
-                        <p key={record.id} className="mt-2 text-lg text-[#dfe7d5]">{META_TALENT_NODE_BY_ID.get(record.talentId)?.name ?? record.talentId} · -{record.cost}</p>
-                      ))}
-                      <p className="mt-3 text-lg text-[#9dd5ac]">流水 {talentPointLedger.length} 条</p>
-                    </div>
-                  </div>
-                </div>
-              </SectionPanel>
-              <SectionPanel eyebrow="通关记录" title="历史冒险">
-                <div className="grid gap-3 md:grid-cols-2">
-                  {runHistory.length === 0 ? (
-                    <p className="text-xl text-[#dfe7d5]">暂无记录。完成一次冒险后会显示层数与所用技能。</p>
-                  ) : (
-                    runHistory.map((record, index) => (
-                      <div key={record.id} className="border-2 border-[#08100b] bg-[#121b16] p-4">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="font-pixel text-[10px] text-amber-300">#{index + 1}</p>
-                          <p className="font-pixel text-[9px] text-[#f4f0d7]">第 {record.level} 层</p>
+              {hunterHomeTab === 'functional-talents' ? (
+                <SectionPanel eyebrow="" title="">
+                  <div className="mt-1 overflow-hidden border-2 border-[#08100b] bg-[radial-gradient(circle_at_45%_38%,rgba(250,204,21,0.12),transparent_32%),linear-gradient(135deg,#10170f,#070b08)] shadow-[inset_0_0_0_1px_rgba(244,240,215,0.08)]" data-testid="hunter-home-meta-talent-tree">
+                    <div className="space-y-3 p-4" data-testid="meta-talent-shelf">
+                      <div className="grid gap-3 border-t border-b border-[rgba(157,213,172,0.2)] bg-[rgba(5,8,6,0.76)] p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" data-testid="hunter-home-talent-summary">
+                        <div className="flex items-baseline gap-3">
+                          <p className="font-pixel text-xs text-[#9dd5ac]" data-testid="hunter-home-talent-balance-label">天赋点</p>
+                          <p className="font-pixel text-xl text-amber-300" data-testid="hunter-home-talent-balance">{talentPoints}</p>
                         </div>
-                        <p className="mt-2 text-lg text-[#dfe7d5]">击杀 {record.kills} / 金币 {record.gold}</p>
-                        <p className="mt-2 text-lg text-[#9dd5ac]">技能：{record.activeSkillNames?.join(' / ') || '默认弓术'}</p>
-                        <p className="mt-1 text-lg text-[#9dd5ac]">{record.statSummary || '属性记录：旧版本未记录'}</p>
+                        <div className="flex items-baseline gap-3">
+                          <p className="font-pixel text-xs text-[#9dd5ac]" data-testid="hunter-home-meta-unlocked-label">已解锁</p>
+                          <p className="font-pixel text-xl text-amber-300" data-testid="hunter-home-meta-unlocked-count">{unlockedMetaTalentIds.length}/84</p>
+                        </div>
+                        <div className="flex items-center justify-end gap-3">
+                          <p className="font-pixel text-sm text-[#9dd5ac]">重置：{TALENT_RESET_GOLD_COST} 金币 + {TALENT_RESET_BUILD_SHARD_COST} 流派碎片</p>
+                          <button
+                            className={`pixel-button ${canResetMetaTalents ? '' : 'opacity-55'}`}
+                            type="button"
+                            disabled={!canResetMetaTalents}
+                            onClick={resetMetaTalentTreeAction}
+                            data-testid="hunter-home-meta-reset"
+                          >
+                            重置天赋
+                          </button>
+                        </div>
                       </div>
-                    ))
-                  )}
-                </div>
-              </SectionPanel>
+                      {metaTalentRows.map((row) => {
+                        const firstModuleKey = metaTalentModuleTestIds[row.modules[0]] ?? row.modules[0]
+                        return (
+                          <section
+                            key={row.id}
+                            className={`border bg-transparent p-3 ${row.anchorClass.replace(/ bg-\[[^\]]+\]/, '')}`}
+                            data-testid={`meta-talent-row-${row.id}`}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[rgba(157,213,172,0.2)] pb-3" data-testid={`meta-talent-row-header-${row.id}`}>
+                              <div className="flex min-w-0 items-center gap-3">
+                                <p className={`font-pixel text-base ${row.colorClass}`} data-testid={`meta-talent-row-title-${row.id}`}>{row.label}</p>
+                                <span className="font-pixel text-lg leading-tight text-[#9dd5ac]" data-testid={`meta-talent-row-progress-${row.id}`}>{row.unlocked}/{row.total}</span>
+                              </div>
+                            </div>
+                            <div
+                              className="mt-4 flex flex-wrap gap-x-3 gap-y-4"
+                              data-testid={`meta-talent-group-${firstModuleKey}`}
+                            >
+                              {row.nodes.map((node) => {
+                                const rank = getMetaTalentRank(node.id, metaTalentRanks, unlockedMetaTalentIds)
+                                const state = getMetaUnlockState(node.id)
+                                return (
+                                  <MetaTalentShelfNode
+                                    key={node.id}
+                                    node={node}
+                                    tab={row}
+                                    rank={rank}
+                                    canUnlock={state.canUnlock}
+                                    unlockReason={state.reason}
+                                    onUnlock={unlockMetaTalentAction}
+                                  />
+                                )
+                              })}
+                            </div>
+                          </section>
+                        )
+                      })}
+                    </div>
+
+                  </div>
+                </SectionPanel>
+              ) : null}
+
+              {hunterHomeTab === 'combat-talents' ? (
+                <SectionPanel eyebrow="" title="">
+                  <RunTalentGuideShelf selectedTalentIds={selectedRunTalentIds} />
+                </SectionPanel>
+              ) : null}
+
+              {hunterHomeTab === 'history' ? (
+                <SectionPanel eyebrow="通关记录" title="历史冒险">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {runHistory.length === 0 ? (
+                      <p className="text-xl text-[#dfe7d5]">暂无记录。完成一次冒险后会显示层数与所用技能。</p>
+                    ) : (
+                      runHistory.map((record, index) => (
+                        <div key={record.id} className="border-2 border-[#08100b] bg-[#121b16] p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="font-pixel text-[10px] text-amber-300">#{index + 1}</p>
+                            <p className="font-pixel text-[9px] text-[#f4f0d7]">第 {record.level} 层</p>
+                          </div>
+                          <p className="mt-2 text-lg text-[#dfe7d5]">击杀 {record.kills} / 金币 {record.gold}</p>
+                          <p className="mt-2 text-lg text-[#9dd5ac]">技能：{record.activeSkillNames?.join(' / ') || '默认弓术'}</p>
+                          <p className="mt-1 text-lg text-[#9dd5ac]">{record.statSummary || '属性记录：旧版本未记录'}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </SectionPanel>
+              ) : null}
             </div>
           </VillageModalShell>
         ) : null}
@@ -1715,6 +2566,9 @@ export function GameOverlay() {
             title="图鉴"
             onClose={() => setVillageModal(null)}
             stickyHeader
+            fixedFrame
+            testId="guide-modal-shell"
+            contentTestId="guide-modal-scroll"
             headerExtra={(
               <div className="flex flex-wrap gap-2" role="tablist" aria-label="图鉴栏目">
                 {guideTabs.map((tab) => {
@@ -1725,7 +2579,7 @@ export function GameOverlay() {
                       type="button"
                       role="tab"
                       aria-selected={active}
-                      className={`border-2 px-4 py-3 font-pixel text-[9px] uppercase tracking-[0.14em] ${active ? 'border-amber-300 bg-[rgba(251,191,36,0.16)] text-amber-200' : 'border-[#08100b] bg-[#101913] text-[#9dd5ac] hover:border-[rgba(246,200,111,0.5)] hover:text-[#f4f0d7]'}`}
+                      className={`border-2 px-4 py-3 font-pixel text-sm uppercase tracking-[0.12em] ${active ? 'border-amber-300 bg-[rgba(251,191,36,0.16)] text-amber-200' : 'border-[#08100b] bg-[#101913] text-[#9dd5ac] hover:border-[rgba(246,200,111,0.5)] hover:text-[#f4f0d7]'}`}
                       onClick={() => setGuideTab(tab.id)}
                     >
                       {tab.label}
@@ -1748,44 +2602,20 @@ export function GameOverlay() {
 
               {guideTab === 'skills' ? (
                 <SectionPanel eyebrow="" title="技能">
-                  <div className="space-y-4">
-                    <div className="border-2 border-[#08100b] bg-[#121b16] p-4 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]">
-                      <p className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#f4f0d7] md:text-[10px]">固定被动</p>
-                      <p className="mt-2 text-xl text-[#dfe7d5]">{ARCHER_FIXED_PASSIVE.name}</p>
-                      <p className="mt-2 text-lg leading-tight text-[#9dd5ac]">{ARCHER_FIXED_PASSIVE.description}</p>
-                      <div className="mt-4 grid gap-2 text-[1rem] leading-tight text-[#dfe7d5] md:grid-cols-2">
-                        {ARCHER_FIXED_PASSIVE_LEVELS.map((passiveLevel) => (
-                          <p key={passiveLevel.level}>Lv.{passiveLevel.level}：{passiveLevel.description}</p>
-                        ))}
-                      </div>
-                    </div>
-
+                  <div className="space-y-5" data-testid="skill-guide-icon-shelves">
+                    <section>
+                      <p className="mb-3 font-pixel text-xs uppercase tracking-[0.14em] text-[#f4f0d7]">固定被动</p>
+                      <div className="flex flex-wrap gap-3"><SkillGuideIcon /></div>
+                    </section>
                     {skillSections.map((section) => (
-                      <div key={section.buildTag}>
-                        <p className="mb-3 font-pixel text-[9px] uppercase tracking-[0.18em] text-[#9dd5ac] md:text-[10px]">{section.label}</p>
-                        <p className="mb-3 text-lg leading-tight text-[#dfe7d5]">{SKILL_BUILD_DESCRIPTIONS[section.buildTag]}</p>
-                        <div className="grid gap-3 md:grid-cols-2">
+                      <section key={section.buildTag}>
+                        <p className="mb-3 font-pixel text-xs uppercase tracking-[0.14em] text-[#9dd5ac]">{section.label}</p>
+                        <div className="flex flex-wrap gap-3">
                           {section.items.map((skill) => (
-                            <div key={skill.id} className="border-2 border-[#08100b] bg-[#121b16] px-3 py-3 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]">
-                              <p className="font-pixel text-[9px] uppercase tracking-[0.18em] text-[#f4f0d7] md:text-[10px]">{skill.name}</p>
-                              <p className="mt-2 text-lg leading-tight text-[#dfe7d5]">{skill.description}</p>
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                {Array.from(new Set(skill.tacticalTags)).map((tag, index) => (
-                                  <span key={`${tag}-${index}`} className="border border-[rgba(157,213,172,0.22)] bg-[rgba(8,16,11,0.5)] px-2 py-1 font-pixel text-[7px] uppercase tracking-[0.12em] text-[#9dd5ac]">
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-                              <div className="mt-3 space-y-1 text-[1rem] leading-tight text-[#9dd5ac]">
-                                <p>流派：{SKILL_BUILD_LABELS[skill.buildTag]}</p>
-                                <p>Lv.1 伤害：{formatScaledDamage(skill.levels[0].damage)}</p>
-                                <p>Lv.5 伤害：{formatScaledDamage(skill.levels[4].damage)}</p>
-                                <p>冷却：{skill.levels[0].cooldown}s 到 {skill.levels[4].cooldown}s</p>
-                              </div>
-                            </div>
+                            <SkillGuideIcon key={skill.id} skill={skill} />
                           ))}
                         </div>
-                      </div>
+                      </section>
                     ))}
                   </div>
                 </SectionPanel>
@@ -1794,42 +2624,20 @@ export function GameOverlay() {
               {guideTab === 'monsters' ? (
                 <SectionPanel eyebrow="" title="怪物" contentClassName="guide-monster-section">
                   <div className="space-y-5">
-                    {(() => {
-                      const selectedTheme = CAMPAIGN_MONSTER_THEMES[guideCampaign - 1] ?? CAMPAIGN_MONSTER_THEMES[0]
-                      const lootProfile = getCampaignLootProfile(selectedTheme.campaign)
-                      return (
-                        <div data-testid="campaign-guide-detail" className="grid gap-2 border-2 border-[#08100b] bg-[#0d1711] p-3 text-[0.95rem] leading-tight text-[#dfe7d5] md:grid-cols-3">
-                          <p><span className="font-pixel text-[8px] text-[#9dd5ac]">掉落</span> {lootProfile.primaryLootReason}</p>
-                          <p><span className="font-pixel text-[8px] text-[#9dd5ac]">威胁</span> {lootProfile.themeThreat}</p>
-                          <p><span className="font-pixel text-[8px] text-[#9dd5ac]">推荐</span> {lootProfile.recommendedState}</p>
-                        </div>
-                      )
-                    })()}
                     {CAMPAIGN_MONSTER_THEMES.map((theme) => {
                       const previewMonsters = getUniqueCampaignMonsters(theme)
-                      const active = guideCampaign === theme.campaign
 
                       return (
                         <article
                           key={theme.campaign}
                           data-testid={`campaign-guide-${theme.campaign}`}
-                          className={`border-2 bg-[#121b16] p-4 shadow-[0_0_0_2px_rgba(157,213,172,0.08)] ${active ? 'border-amber-300' : 'border-[#08100b]'}`}
+                          className="border-2 border-[#08100b] bg-[#121b16] p-4 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]"
                         >
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
-                              <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#9dd5ac] md:text-[10px]">第 {theme.campaign} 关</p>
+                              <p className="font-pixel text-xs uppercase tracking-[0.12em] text-[#9dd5ac]">第 {theme.campaign} 关</p>
                               <h4 className="mt-2 font-pixel text-sm uppercase tracking-[0.16em] text-[#f4f0d7] md:text-base">{theme.name}</h4>
-                              <p className="mt-2 text-[0.95rem] leading-tight text-[#9dd5ac]">Boss：{theme.boss.name}</p>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <span className="border border-[rgba(246,200,111,0.35)] px-2 py-1 font-pixel text-[7px] text-amber-300">精英 3/6/9/12/15/18/21</span>
-                              <button
-                                type="button"
-                                className="border border-[rgba(246,200,111,0.35)] px-2 py-1 font-pixel text-[7px] text-amber-300 hover:bg-[rgba(251,191,36,0.12)]"
-                                onClick={() => setGuideCampaign(theme.campaign)}
-                              >
-                                详情
-                              </button>
+                              <p className="mt-2 text-base leading-tight text-[#9dd5ac]">Boss：{theme.boss.name}</p>
                             </div>
                           </div>
 
@@ -1847,6 +2655,28 @@ export function GameOverlay() {
             </div>
           </VillageModalShell>
         ) : null}
+      </div>
+    )
+  }
+
+  if (localBattleTest?.active && localBattleTest.status === 'failed') {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center bg-[rgba(8,16,11,0.62)]" data-testid="local-battle-failed">
+        <div className="pointer-events-auto pixel-panel mx-4 w-full max-w-[720px] p-5 text-center md:p-6">
+          <p className="font-pixel text-sm uppercase tracking-[0.18em] text-amber-300">开发测试</p>
+          <h2 className="mt-3 font-pixel text-xl text-[#f4f0d7] md:text-2xl">本地战斗测试结束</h2>
+          <p className="mt-4 text-lg leading-relaxed text-[#dfe7d5]">{message || '本地测试会话已结束。'}</p>
+          <p className="mt-3 text-base leading-relaxed text-[#9dd5ac]">本次测试未产生正式收益、掉落、天赋点或存档记录。</p>
+          <button
+            type="button"
+            className="pixel-button mt-6 inline-flex items-center gap-2 px-5 py-3 font-pixel text-sm"
+            data-testid="local-battle-exit-after-failure"
+            onClick={exitLocalBattleTest}
+          >
+            <RotateCcw size={18} />
+            退出测试并返回首页
+          </button>
+        </div>
       </div>
     )
   }

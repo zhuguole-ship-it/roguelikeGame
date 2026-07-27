@@ -7,16 +7,31 @@ import { useGameLoop } from '../../hooks/useGameLoop'
 import { useKeyboard } from '../../hooks/useKeyboard'
 import { useGameStore } from '../../store/useGameStore'
 import { DeveloperAssetPanel, isDeveloperAssetPanelVisible } from './DeveloperAssetPanel'
+import { CombatDamageLog } from './CombatDamageLog'
 import { GameOverlay } from './GameOverlay'
 import { GamePauseOverlay } from './GamePauseOverlay'
 import { GameStatusBar } from './GameStatusBar'
+import { LocalBattleTestPanel } from './LocalBattleTestPanel'
+import type { LocalBattleSessionController, LocalBattleSessionView } from './LocalBattleTestPanel'
+import type { LocalBattleTestSpawnOption } from '../../game/types'
 
-function LocalTestControls({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+function LocalTestControls({
+  onOpenChange,
+  controller,
+  session,
+  spawnOptions,
+}: {
+  onOpenChange: (open: boolean) => void
+  controller: LocalBattleSessionController
+  session: LocalBattleSessionView
+  spawnOptions: LocalBattleTestSpawnOption[]
+}) {
   const [open, setOpen] = useState(false)
+  const [battleOpen, setBattleOpen] = useState(false)
 
   useEffect(() => {
-    onOpenChange(open)
-  }, [onOpenChange, open])
+    onOpenChange(open || battleOpen)
+  }, [battleOpen, onOpenChange, open])
 
   if (!isDeveloperAssetPanelVisible()) {
     return null
@@ -31,7 +46,16 @@ function LocalTestControls({ onOpenChange }: { onOpenChange: (open: boolean) => 
       >
         测试
       </button>
+      <button
+        type="button"
+        className="mt-2 block w-full border-2 border-[#080b0a] bg-[#0f2a1b] px-4 py-2 font-pixel text-[10px] text-[#f4f0d7] shadow-[0_0_0_1px_rgba(157,213,172,0.52),0_4px_0_rgba(0,0,0,0.34)]"
+        data-testid="local-battle-entry"
+        onClick={() => setBattleOpen((value) => !value)}
+      >
+        战斗
+      </button>
       {open ? <DeveloperAssetPanel onClose={() => setOpen(false)} /> : null}
+      {battleOpen ? <LocalBattleTestPanel controller={controller} session={session} spawnOptions={spawnOptions} onClose={() => setBattleOpen(false)} /> : null}
     </div>
   )
 }
@@ -49,6 +73,28 @@ export function GameCanvas() {
   const triggerActiveSkill = useGameStore((state) => state.triggerActiveSkill)
   const triggerDash = useGameStore((state) => state.triggerDash)
   const updateAimPoint = useGameStore((state) => state.updateAimPoint)
+  const localBattleTest = useGameStore((state) => state.localBattleTest)
+  const localBattleTestEnemyCount = useGameStore((state) => state.enemies.length)
+  const localBattleTestMessage = useGameStore((state) => state.message)
+  const startLocalBattleTest = useGameStore((state) => state.startLocalBattleTest)
+  const applyLocalBattleTestMonsterConfig = useGameStore((state) => state.applyLocalBattleTestMonsterConfig)
+  const clearLocalBattleTestMonsters = useGameStore((state) => state.clearLocalBattleTestMonsters)
+  const exitLocalBattleTest = useGameStore((state) => state.exitLocalBattleTest)
+  const getLocalBattleTestSpawnOptions = useGameStore((state) => state.getLocalBattleTestSpawnOptions)
+
+  const localBattleSpawnOptions = useMemo(() => getLocalBattleTestSpawnOptions(), [getLocalBattleTestSpawnOptions])
+  const localBattleController = useMemo<LocalBattleSessionController>(() => ({
+    start: startLocalBattleTest,
+    applyMonsterConfig: applyLocalBattleTestMonsterConfig,
+    clearMonsters: clearLocalBattleTestMonsters,
+    exit: exitLocalBattleTest,
+  }), [applyLocalBattleTestMonsterConfig, clearLocalBattleTestMonsters, exitLocalBattleTest, startLocalBattleTest])
+  const localBattleSession = useMemo<LocalBattleSessionView>(() => ({
+    active: Boolean(localBattleTest?.active),
+    paused: developerPanelOpen,
+    enemyCount: localBattleTestEnemyCount,
+    message: localBattleTestMessage,
+  }), [developerPanelOpen, localBattleTest?.active, localBattleTestEnemyCount, localBattleTestMessage])
 
   const renderCurrentState = useMemo(() => {
     return () => {
@@ -157,7 +203,13 @@ export function GameCanvas() {
       <GameStatusBar />
       <GameOverlay />
       <GamePauseOverlay />
-      <LocalTestControls onOpenChange={setDeveloperPanelOpen} />
+      <CombatDamageLog />
+      <LocalTestControls
+        controller={localBattleController}
+        onOpenChange={setDeveloperPanelOpen}
+        session={localBattleSession}
+        spawnOptions={localBattleSpawnOptions}
+      />
     </div>
   )
 }

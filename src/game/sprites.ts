@@ -1,6 +1,49 @@
 import { PALETTE, TILE_SIZE } from './config'
 import { getCampaignThemeForLevel } from './campaignThemes'
 import { EQUIPMENT_RARITY_COLORS } from './equipment'
+import {
+  HELLHOUND_IMAGE2_ACTIONS,
+  getHellhoundImage2FrameUrls,
+  type HellhoundImage2ActionSlot,
+} from './hellhoundAssetFrames'
+import {
+  SKELETON_ARCHER_IMAGE2_ACTIONS,
+  SKELETON_ARCHER_IMAGE2_ARROW_MIN_DRAW_WIDTH,
+  SKELETON_ARCHER_IMAGE2_ARROW_MIN_VISIBLE_HEIGHT,
+  SKELETON_ARCHER_IMAGE2_ARROW_OUTLINE_BLUR,
+  SKELETON_ARCHER_IMAGE2_ARROW_OUTLINE_COLOR,
+  SKELETON_ARCHER_IMAGE2_ARROW_RENDER_FILTER,
+  SKELETON_ARCHER_IMAGE2_ARROW_SCALE,
+  SKELETON_ARCHER_IMAGE2_COMBAT_SCALE,
+  getSkeletonArcherImage2FrameUrls,
+  getSkeletonArcherImage2PublicArrowUrl,
+  type SkeletonArcherImage2ActionSlot,
+} from './skeletonArcherAssetFrames'
+import {
+  SKELETON_WARRIOR_PT_ACTIONS,
+  SKELETON_WARRIOR_PT_FRAME_SIZE,
+  getSkeletonWarriorPtFrameUrls,
+  getSkeletonWarriorPtPublicFrameUrls,
+  type SkeletonWarriorPtActionSlot,
+} from './skeletonWarriorPtAssetFrames'
+import {
+  DUNGEON_WARDEN_ACTIONS,
+  getDungeonWardenFrameUrls,
+  type DungeonWardenActionSlot,
+} from './dungeonWardenAssetFrames'
+import {
+  CORROSIVE_SLIME_ACTIONS,
+  CORROSIVE_SLIME_FRAME_SIZE,
+  getCorrosiveSlimeFrameUrls,
+  getCorrosiveSlimePublicFrameUrls,
+  type CorrosiveSlimeActionSlot,
+} from './corrosiveSlimeAssetFrames'
+import {
+  C1_SLIME_VARIANT_ACTIONS,
+  getC1SlimeVariantFrameUrls,
+  type C1SlimeVariantAssetId,
+  type C1SlimeVariantActionSlot,
+} from './c1SlimeVariantAssetFrames'
 import { drawReferenceArt } from './referenceArt'
 import { getRuntimeAssetActionOverride, getRuntimeAssetActionOverrideWithFallback, hasRuntimeAssetEntityOverride } from './runtimeAssetOverrides'
 import type { BeastCompanion, Enemy, EnemyKind, MapObstacle, Pickup, Player, Projectile, WeaponId } from './types'
@@ -720,19 +763,19 @@ const drawEnemyShadow = (ctx: CanvasRenderingContext2D, x: number, y: number, si
   pixel(ctx, x - size * 0.32, y + size * 0.22, size * 0.64, 2, 'rgba(0, 0, 0, 0.18)')
 }
 
-const drawEnemyFlash = (
-  ctx: CanvasRenderingContext2D,
-  enemy: Enemy,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-) => {
-  if (enemy.hitFlash <= 0) {
-    return
-  }
+export const getEnemySpriteGroundY = (enemy: Pick<Enemy, 'size'>, y: number) => y + enemy.size * 0.08
 
-  pixel(ctx, x - width * 0.5, y - height * 0.82, width, height, 'rgba(253, 224, 71, 0.34)')
+const drawEnemyFlash = (
+  _ctx: CanvasRenderingContext2D,
+  _enemy: Enemy,
+  _x: number,
+  _y: number,
+  _width: number,
+  _height: number,
+) => {
+  // Hit readability comes from the actual hit action, health bar, and damage
+  // feedback. A translucent rectangle obscures the sprite and is not part of
+  // the documented enemy hit presentation.
 }
 
 const drawCampaignEnemyOverlay = (
@@ -834,16 +877,8 @@ const getEnemyIdentity = (enemy: Pick<Enemy, 'archetypeId' | 'displayName'>) => 
 }
 
 export const isExplicitCorruptGreenSlime = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displayName'>) => {
-  if (enemy.kind !== 'melee') {
-    return false
-  }
-
-  if (!enemy.archetypeId && !enemy.displayName) {
-    return true
-  }
-
-  const identity = getEnemyIdentity(enemy)
-  return identity.includes('slime') || identity.includes('史莱姆') || identity.includes('腐绿') || identity.includes('软泥')
+  return enemy.kind === 'melee'
+    && (enemy.archetypeId === 'corrosive-slime' || (!enemy.archetypeId && enemy.displayName === '腐蚀史莱姆'))
 }
 
 const isExplicitSkeletonWarrior = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displayName'>) => {
@@ -872,7 +907,7 @@ const isExplicitSkeletonArcher = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'd
   return identity.includes('dungeon-skeleton-archer') || identity.includes('skeleton-archer') || identity.includes('骷髅弓手')
 }
 
-export const isExplicitSkeletonKnight = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displayName'>) => {
+export const isExplicitDungeonWarden = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displayName'>) => {
   if (enemy.kind !== 'boss') {
     return false
   }
@@ -882,23 +917,14 @@ export const isExplicitSkeletonKnight = (enemy: Pick<Enemy, 'kind' | 'archetypeI
     return false
   }
 
-  return identity.includes('skeleton-knight') || identity.includes('dungeon-warden') || identity.includes('骷髅骑士') || identity.includes('地牢典狱长')
+  return identity.includes('dungeon-warden') || identity.includes('典狱长')
 }
 
-export const isExplicitSplittingOoze = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displayName'>) => {
-  if (enemy.kind !== 'splitter') {
-    return false
+export const getC1SlimeVariantAssetId = (enemy: Pick<Enemy, 'archetypeId'>): C1SlimeVariantAssetId | undefined => {
+  if (enemy.archetypeId === 'dungeon-splitting-ooze' || enemy.archetypeId === 'dungeon-explosive-fire-sac') {
+    return enemy.archetypeId
   }
-  const identity = getEnemyIdentity(enemy)
-  return identity.includes('splitting-ooze') || identity.includes('ooze') || identity.includes('slime') || identity.includes('裂变软泥') || identity.includes('软泥')
-}
-
-export const isExplicitFireSac = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displayName'>) => {
-  if (enemy.kind !== 'bomber') {
-    return false
-  }
-  const identity = getEnemyIdentity(enemy)
-  return identity.includes('fire-sac') || identity.includes('explosive-fire') || identity.includes('爆裂火囊')
+  return undefined
 }
 
 const getCampaignFallbackColors = (enemy: Enemy) => {
@@ -945,6 +971,7 @@ export const drawCampaignFallbackEnemy = (ctx: CanvasRenderingContext2D, enemy: 
       drawSize,
       flipX,
       time,
+      getEnemySpriteGroundY(enemy, y),
     )) {
       drawEnemyFlash(ctx, enemy, x, y, s * 1.2, s * 1.05)
       return
@@ -1045,99 +1072,6 @@ const drawBomber = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: number, y: n
   drawEnemyFlash(ctx, enemy, x, y, s, s)
 }
 
-const drawSkeletonKnight = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: number, y: number, time: number) => {
-  const s = enemy.size
-  const fire = Math.sin(time * 10) * 1.3
-  drawEnemyShadow(ctx, x, y, s)
-  drawEllipse(ctx, x, y - s * 0.2, s * 0.68, s * 0.55, 'rgba(249, 115, 22, 0.18)')
-  pixel(ctx, x - s * 0.55, y - s * 0.2, s * 0.9, s * 0.32, '#1f1b24')
-  pixel(ctx, x - s * 0.44, y - s * 0.33, s * 0.62, s * 0.28, '#312b35')
-  pixel(ctx, x + s * 0.12, y - s * 0.37, s * 0.25, s * 0.2, '#d8c8aa')
-  pixel(ctx, x + s * 0.32, y - s * 0.29, s * 0.18, s * 0.12, '#10131a')
-  pixel(ctx, x + s * 0.2, y - s * 0.31, 3, 3, '#ef4444')
-  pixel(ctx, x + s * 0.42, y - s * 0.28, 3, 3, '#f8fafc')
-  pixel(ctx, x - s * 0.65, y - s * 0.25, s * 0.16, s * 0.12, '#3f1d24')
-  pixel(ctx, x - s * 0.73, y - s * 0.33, s * 0.12, s * 0.18, '#7f1d1d')
-  pixel(ctx, x - s * 0.52, y + s * 0.06, s * 0.11, s * 0.32, '#111827')
-  pixel(ctx, x - s * 0.19, y + s * 0.08, s * 0.1, s * 0.33, '#111827')
-  pixel(ctx, x + s * 0.13, y + s * 0.04, s * 0.1, s * 0.29, '#111827')
-  pixel(ctx, x + s * 0.36, y - s * 0.01, s * 0.1, s * 0.27, '#111827')
-  pixel(ctx, x - s * 0.56, y + s * 0.34, s * 0.17, 2, '#94a3b8')
-  pixel(ctx, x - s * 0.21, y + s * 0.38, s * 0.16, 2, '#94a3b8')
-  pixel(ctx, x + s * 0.1, y + s * 0.34, s * 0.15, 2, '#94a3b8')
-  pixel(ctx, x + s * 0.34, y + s * 0.25, s * 0.15, 2, '#94a3b8')
-
-  pixel(ctx, x - s * 0.05, y - s * 0.8, s * 0.3, s * 0.14, '#111827')
-  pixel(ctx, x + s * 0.01, y - s * 0.87, s * 0.18, s * 0.08, '#d8a24d')
-  pixel(ctx, x - s * 0.14, y - s * 0.72, s * 0.48, s * 0.34, '#1f2937')
-  pixel(ctx, x - s * 0.08, y - s * 0.7, s * 0.34, s * 0.26, '#334155')
-  pixel(ctx, x + s * 0.03, y - s * 0.67, s * 0.17, s * 0.18, '#d8c8aa')
-  pixel(ctx, x + s * 0.06, y - s * 0.62, s * 0.05, s * 0.06, '#ef4444')
-  pixel(ctx, x + s * 0.17, y - s * 0.62, s * 0.05, s * 0.06, '#ef4444')
-  pixel(ctx, x - s * 0.22, y - s * 0.82, s * 0.16, s * 0.08, '#d8a24d')
-  pixel(ctx, x + s * 0.26, y - s * 0.82, s * 0.16, s * 0.08, '#d8a24d')
-  pixel(ctx, x - s * 0.2, y - s * 0.75, s * 0.08, s * 0.14, '#fef3c7')
-  pixel(ctx, x + s * 0.34, y - s * 0.75, s * 0.08, s * 0.14, '#fef3c7')
-  pixel(ctx, x - s * 0.05, y - s * 0.42, s * 0.38, s * 0.09, '#9a3412')
-  pixel(ctx, x - s * 0.07, y - s * 0.34, s * 0.42, s * 0.2, '#4b1116')
-  pixel(ctx, x - s * 0.52, y - s * 0.61, 4, s * 1.02, '#d1d5db')
-  pixel(ctx, x - s * 0.6, y - s * 0.67, 15, 5, '#fef3c7')
-  pixel(ctx, x - s * 0.44, y - s * 0.49, s * 0.4, 4, '#7c2d12')
-  pixel(ctx, x - s * 0.55, y - s * 0.56, 5, 13, '#f97316')
-  pixel(ctx, x - s * 0.31, y - s * 0.23, s * 0.13, s * 0.22, '#94a3b8')
-  pixel(ctx, x + s * 0.24, y - s * 0.25, s * 0.14, s * 0.23, '#94a3b8')
-  pixel(ctx, x - s * 0.74, y - s * 0.68 + fire, s * 0.09, s * 0.2, '#7f1d1d')
-  pixel(ctx, x - s * 0.7, y - s * 0.78 + fire, s * 0.06, s * 0.12, '#f97316')
-  pixel(ctx, x - s * 0.5, y - s * 0.28, s * 0.55, 2, '#94a3b8')
-  pixel(ctx, x - s * 0.37, y - s * 0.17, s * 0.48, 2, '#0f172a')
-  pixel(ctx, x - s * 0.35, y - s * 0.34, s * 0.35, 2, '#d8a24d')
-  pixel(ctx, x - s * 0.14, y - s * 0.4, s * 0.32, 2, '#d8a24d')
-  pixel(ctx, x + s * 0.14, y - s * 0.16, s * 0.15, 2, '#d8a24d')
-  pixel(ctx, x + s * 0.17, y - s * 0.28, s * 0.13, 2, '#d8a24d')
-  pixel(ctx, x - s * 0.49, y - s * 0.42, s * 0.08, s * 0.08, '#cbd5e1')
-  pixel(ctx, x - s * 0.28, y - s * 0.45, s * 0.08, s * 0.08, '#cbd5e1')
-  pixel(ctx, x - s * 0.08, y - s * 0.49, s * 0.08, s * 0.08, '#cbd5e1')
-  pixel(ctx, x - s * 0.08, y - s * 0.77, s * 0.14, 2, '#fef3c7')
-  pixel(ctx, x + s * 0.18, y - s * 0.77, s * 0.14, 2, '#fef3c7')
-  pixel(ctx, x - s * 0.03, y - s * 0.56, s * 0.29, 2, '#0f172a')
-  pixel(ctx, x + s * 0.09, y - s * 0.51, s * 0.1, 2, '#f97316')
-  pixel(ctx, x - s * 0.44, y - s * 0.72, 3, s * 1.13, '#f8fafc')
-  pixel(ctx, x - s * 0.4, y - s * 0.61, 3, s * 1.03, '#64748b')
-  pixel(ctx, x - s * 0.5, y - s * 0.67, 9, 3, '#d8a24d')
-  pixel(ctx, x - s * 0.54, y - s * 0.73, 6, 3, '#fef3c7')
-  pixel(ctx, x - s * 0.18, y - s * 0.09, s * 0.12, s * 0.18, '#4b1116')
-  pixel(ctx, x - s * 0.08, y - s * 0.07, s * 0.12, s * 0.16, '#7f1d1d')
-  pixel(ctx, x + s * 0.01, y - s * 0.05, s * 0.11, s * 0.14, '#991b1b')
-  pixel(ctx, x - s * 0.55, y + s * 0.02, s * 0.1, 2, '#d8a24d')
-  pixel(ctx, x - s * 0.22, y + s * 0.04, s * 0.1, 2, '#d8a24d')
-  pixel(ctx, x + s * 0.11, y, s * 0.1, 2, '#d8a24d')
-  pixel(ctx, x + s * 0.35, y - s * 0.05, s * 0.1, 2, '#d8a24d')
-  pixel(ctx, x - s * 0.57, y + s * 0.23, s * 0.12, 2, '#d1d5db')
-  pixel(ctx, x - s * 0.2, y + s * 0.27, s * 0.12, 2, '#d1d5db')
-  pixel(ctx, x + s * 0.1, y + s * 0.22, s * 0.11, 2, '#d1d5db')
-  pixel(ctx, x + s * 0.34, y + s * 0.14, s * 0.1, 2, '#d1d5db')
-  for (let trim = 0; trim < 7; trim += 1) {
-    pixel(ctx, x - s * 0.45 + trim * s * 0.14, y - s * (0.28 + (trim % 2) * 0.08), 2, 2, trim % 2 === 0 ? '#fbbf24' : '#ef4444')
-  }
-
-  if ((enemy.blockTimer ?? 0) > 0) {
-    const facingX = enemy.facingDirection?.x ?? 0
-    const facingY = enemy.facingDirection?.y ?? 1
-    drawEllipse(
-      ctx,
-      x + facingX * s * 0.5,
-      y + facingY * s * 0.42 - s * 0.08,
-      s * 0.22,
-      s * 0.28,
-      'rgba(254, 243, 199, 0.62)',
-      '#fbbf24',
-    )
-    pixel(ctx, x + facingX * s * 0.5 - 6, y + facingY * s * 0.42 - s * 0.1, 12, 2, '#431407')
-  }
-
-  drawEnemyFlash(ctx, enemy, x, y, s * 1.15, s * 1.2)
-}
-
 export const drawEnemySprite = (
   ctx: CanvasRenderingContext2D,
   enemy: Enemy,
@@ -1146,14 +1080,22 @@ export const drawEnemySprite = (
   options: { campaignOverlay?: boolean } = {},
 ) => {
   const x = enemy.position.x
-  const y = enemy.position.y + Math.sin(time * 10 + enemy.position.x * 0.1) * 1.2
+  const y = enemy.position.y + (isExplicitDungeonWarden(enemy) ? 0 : Math.sin(time * 10 + enemy.position.x * 0.1) * 1.2)
   const drawOverlay = () => {
     if (options.campaignOverlay ?? true) {
       drawCampaignEnemyOverlay(ctx, enemy, x, y, time, level)
     }
   }
 
-  if (isExplicitSkeletonWarrior(enemy) && drawSkeletonWarriorAtlasEnemy(ctx, enemy, x, y, time)) {
+  if (isExplicitSkeletonWarrior(enemy)) {
+    if (drawSkeletonWarriorAtlasEnemy(ctx, enemy, x, y, time)) {
+      drawOverlay()
+    }
+    return
+  }
+
+  if (getC1SlimeVariantAssetId(enemy)) {
+    drawC1SlimeVariantEnemy(ctx, enemy, x, y, time)
     drawOverlay()
     return
   }
@@ -1175,21 +1117,13 @@ export const drawEnemySprite = (
   }
 
   if (enemy.kind === 'splitter') {
-    if (!drawSplittingOozeAtlasEnemy(ctx, enemy, x, y, time) && isExplicitSplittingOoze(enemy)) {
-      drawSplitterSlime(ctx, enemy, x, y, time)
-    } else if (!isExplicitSplittingOoze(enemy)) {
-      drawCampaignFallbackEnemy(ctx, enemy, x, y, time)
-    }
+    drawSplitterSlime(ctx, enemy, x, y, time)
     drawOverlay()
     return
   }
 
   if (enemy.kind === 'bomber') {
-    if (!drawFireSacAtlasEnemy(ctx, enemy, x, y, time) && isExplicitFireSac(enemy)) {
-      drawBomber(ctx, enemy, x, y, time)
-    } else if (!isExplicitFireSac(enemy)) {
-      drawCampaignFallbackEnemy(ctx, enemy, x, y, time)
-    }
+    drawBomber(ctx, enemy, x, y, time)
     drawOverlay()
     return
   }
@@ -1201,9 +1135,7 @@ export const drawEnemySprite = (
   }
 
   if (enemy.kind === 'boss') {
-    if (!drawSkeletonKnightAtlasEnemy(ctx, enemy, x, y, time) && isExplicitSkeletonKnight(enemy)) {
-      drawSkeletonKnight(ctx, enemy, x, y, time)
-    } else if (!isExplicitSkeletonKnight(enemy)) {
+    if (!drawDungeonWardenAssetEnemy(ctx, enemy, x, y, time) && !isExplicitDungeonWarden(enemy)) {
       drawCampaignFallbackEnemy(ctx, enemy, x, y, time)
     }
     drawOverlay()
@@ -1216,7 +1148,7 @@ export const drawEnemySprite = (
   drawOverlay()
 }
 
-export type MonsterFrameAction = 'idle' | 'move' | 'attack' | 'skill' | 'skill2' | 'hit' | 'phase' | 'death'
+export type MonsterFrameAction = 'idle' | 'move' | 'attack' | 'cast' | 'skill' | 'skill2' | 'hit' | 'phase' | 'death'
 
 type MonsterFrameSpec = {
   frameSize: 32 | 64 | 96
@@ -1242,7 +1174,7 @@ export const MONSTER_FRAME_SPECS = {
     frameSize: 64,
     spriteSize: 34,
     tint: '#fb7185',
-    actions: ['idle', 'move', 'attack', 'skill', 'hit', 'death'],
+    actions: ['idle', 'move', 'attack', 'cast', 'skill', 'hit', 'death'],
   },
   splitter: {
     frameSize: 32,
@@ -1280,7 +1212,7 @@ export type MonsterSpriteAtlas = {
   previewSrc: string
   guidePreviewSrc?: string
   guidePreviewAction?: MonsterFrameAction
-  frameSize: 32 | 64 | 96
+  frameSize: 32 | 64 | 96 | 192
   columns?: number
   anchor: 'bottom-center'
   actions: Partial<Record<MonsterFrameAction, MonsterAtlasAction>>
@@ -1312,19 +1244,6 @@ export const MONSTER_SKILL_ANCHORS: Partial<Record<EnemyKind, Partial<Record<Mon
 const publicAsset = (path: string) => `${import.meta.env.BASE_URL}${path}`
 
 export const MONSTER_SPRITE_ATLASES: Partial<Record<EnemyKind, MonsterSpriteAtlas>> = {
-  melee: {
-    src: publicAsset('assets/monsters/corrupt-green-slime-sheet.png'),
-    previewSrc: publicAsset('assets/monsters/corrupt-green-slime-preview.png'),
-    frameSize: 32,
-    anchor: 'bottom-center',
-    actions: {
-      idle: { start: 0, count: 5 },
-      move: { start: 5, count: 5 },
-      attack: { start: 10, count: 5 },
-      hit: { start: 15, count: 4 },
-      death: { start: 19, count: 4 },
-    },
-  },
   ranged: {
     src: publicAsset('assets/monsters/frost-ranged-slime-sheet.png'),
     previewSrc: publicAsset('assets/monsters/frost-ranged-slime-preview.png'),
@@ -1336,20 +1255,6 @@ export const MONSTER_SPRITE_ATLASES: Partial<Record<EnemyKind, MonsterSpriteAtla
       attack: { start: 10, count: 5 },
       hit: { start: 15, count: 4 },
       death: { start: 19, count: 4 },
-    },
-  },
-  charger: {
-    src: publicAsset('assets/monsters/hellhound-sheet.png'),
-    previewSrc: publicAsset('assets/monsters/hellhound-preview.png'),
-    frameSize: 64,
-    anchor: 'bottom-center',
-    actions: {
-      idle: { start: 0, count: 6 },
-      move: { start: 6, count: 6 },
-      attack: { start: 12, count: 6 },
-      skill: { start: 18, count: 6 },
-      hit: { start: 24, count: 5 },
-      death: { start: 29, count: 5 },
     },
   },
   elite: {
@@ -1364,48 +1269,6 @@ export const MONSTER_SPRITE_ATLASES: Partial<Record<EnemyKind, MonsterSpriteAtla
       skill: { start: 17, count: 5 },
       hit: { start: 22, count: 4 },
       death: { start: 26, count: 5 },
-    },
-  },
-  splitter: {
-    src: publicAsset('assets/monsters/splitting-ooze-sheet.png'),
-    previewSrc: publicAsset('assets/monsters/splitting-ooze-preview.png'),
-    frameSize: 32,
-    anchor: 'bottom-center',
-    actions: {
-      idle: { start: 0, count: 5 },
-      move: { start: 5, count: 5 },
-      attack: { start: 10, count: 5 },
-      hit: { start: 15, count: 4 },
-      death: { start: 19, count: 5 },
-    },
-  },
-  bomber: {
-    src: publicAsset('assets/monsters/explosive-fire-sac-sheet.png'),
-    previewSrc: publicAsset('assets/monsters/explosive-fire-sac-preview.png'),
-    frameSize: 32,
-    anchor: 'bottom-center',
-    actions: {
-      idle: { start: 0, count: 5 },
-      move: { start: 5, count: 5 },
-      attack: { start: 10, count: 5 },
-      hit: { start: 15, count: 4 },
-      death: { start: 19, count: 5 },
-    },
-  },
-  boss: {
-    src: publicAsset('assets/monsters/skeleton-knight-sheet.png'),
-    previewSrc: publicAsset('assets/monsters/skeleton-knight-preview.png'),
-    frameSize: 96,
-    anchor: 'bottom-center',
-    actions: {
-      idle: { start: 0, count: 6 },
-      move: { start: 6, count: 6 },
-      attack: { start: 12, count: 5 },
-      skill: { start: 17, count: 6 },
-      skill2: { start: 23, count: 5 },
-      hit: { start: 28, count: 4 },
-      phase: { start: 32, count: 4 },
-      death: { start: 36, count: 6 },
     },
   },
 }
@@ -1426,22 +1289,48 @@ export const SKELETON_ARCHER_SPRITE_ATLAS: MonsterSpriteAtlas = {
 }
 
 export const SKELETON_WARRIOR_SPRITE_ATLAS: MonsterSpriteAtlas = {
-  src: publicAsset('assets/monsters/skeleton-warrior-image2/skeleton_warrior_sheet_4x3.png'),
-  previewSrc: publicAsset('assets/monsters/skeleton-warrior-image2/skeleton_warrior_sheet_4x3_preview_4x.png'),
-  guidePreviewSrc: publicAsset('assets/monsters/skeleton-warrior-image2/move_01.png'),
+  src: getSkeletonWarriorPtPublicFrameUrls('move')[0],
+  previewSrc: getSkeletonWarriorPtPublicFrameUrls('move')[0],
+  guidePreviewSrc: getSkeletonWarriorPtPublicFrameUrls('move')[0],
   guidePreviewAction: 'move',
-  frameSize: 64,
-  columns: 4,
+  frameSize: SKELETON_WARRIOR_PT_FRAME_SIZE,
   anchor: 'bottom-center',
   actions: {
-    idle: { start: 0, count: 4 },
-    move: { start: 4, count: 4 },
-    attack: { start: 8, count: 4 },
+    idle: { start: 0, count: SKELETON_WARRIOR_PT_ACTIONS.idle.frameCount },
+    move: { start: 0, count: SKELETON_WARRIOR_PT_ACTIONS.move.frameCount },
+    attack: { start: 0, count: SKELETON_WARRIOR_PT_ACTIONS.attack.frameCount },
+    hit: { start: 0, count: SKELETON_WARRIOR_PT_ACTIONS.hit.frameCount },
+    death: { start: 0, count: SKELETON_WARRIOR_PT_ACTIONS.death.frameCount },
+    skill: { start: 0, count: SKELETON_WARRIOR_PT_ACTIONS.skill_1.frameCount },
+    skill2: { start: 0, count: SKELETON_WARRIOR_PT_ACTIONS.skill_2.frameCount },
+  },
+}
+
+export const CORROSIVE_SLIME_SPRITE_ATLAS: MonsterSpriteAtlas = {
+  src: getCorrosiveSlimePublicFrameUrls('idle')[0],
+  previewSrc: getCorrosiveSlimePublicFrameUrls('idle')[0],
+  guidePreviewSrc: getCorrosiveSlimePublicFrameUrls('idle')[0],
+  guidePreviewAction: 'idle',
+  frameSize: CORROSIVE_SLIME_FRAME_SIZE,
+  anchor: 'bottom-center',
+  actions: {
+    idle: { start: 0, count: CORROSIVE_SLIME_ACTIONS.idle.frameCount },
+    move: { start: 0, count: CORROSIVE_SLIME_ACTIONS.move.frameCount },
+    attack: { start: 0, count: CORROSIVE_SLIME_ACTIONS.attack.frameCount },
+    hit: { start: 0, count: CORROSIVE_SLIME_ACTIONS.hit.frameCount },
+    death: { start: 0, count: CORROSIVE_SLIME_ACTIONS.death.frameCount },
   },
 }
 
 const monsterAtlasImages = new Map<string, HTMLImageElement>()
 const runtimeAssetWarnings = new Set<string>()
+type ImageAlphaBounds = {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+const imageAlphaBoundsCache = new WeakMap<HTMLImageElement, Map<string, ImageAlphaBounds | null>>()
 
 const normalizeRuntimeAssetUrl = (src: string, revision?: string) => {
   if (src.startsWith('data:') || src.startsWith('blob:')) {
@@ -1492,6 +1381,98 @@ const isAtlasImageReady = (image: HTMLImageElement | null | undefined): image is
   return Boolean(image?.complete && image.naturalWidth > 0)
 }
 
+const getImageAlphaBounds = (
+  image: HTMLImageElement,
+  sourceX = 0,
+  sourceY = 0,
+  sourceWidth = image.naturalWidth,
+  sourceHeight = image.naturalHeight,
+) => {
+  let imageCache = imageAlphaBoundsCache.get(image)
+  if (!imageCache) {
+    imageCache = new Map<string, ImageAlphaBounds | null>()
+    imageAlphaBoundsCache.set(image, imageCache)
+  }
+
+  const cacheKey = `${sourceX}:${sourceY}:${sourceWidth}:${sourceHeight}`
+  if (imageCache.has(cacheKey)) {
+    return imageCache.get(cacheKey) ?? null
+  }
+
+  if (typeof document === 'undefined' || sourceWidth <= 0 || sourceHeight <= 0) {
+    imageCache.set(cacheKey, null)
+    return null
+  }
+
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = sourceWidth
+    canvas.height = sourceHeight
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) {
+      imageCache.set(cacheKey, null)
+      return null
+    }
+    context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight)
+    const { data } = context.getImageData(0, 0, sourceWidth, sourceHeight)
+    let left = sourceWidth
+    let top = sourceHeight
+    let right = -1
+    let bottom = -1
+
+    for (let y = 0; y < sourceHeight; y += 1) {
+      for (let x = 0; x < sourceWidth; x += 1) {
+        const alpha = data[(y * sourceWidth + x) * 4 + 3]
+        if (alpha > 8) {
+          left = Math.min(left, x)
+          top = Math.min(top, y)
+          right = Math.max(right, x + 1)
+          bottom = Math.max(bottom, y + 1)
+        }
+      }
+    }
+
+    const bounds = right >= 0 && bottom >= 0 ? { left, top, right, bottom } : null
+    imageCache.set(cacheKey, bounds)
+    return bounds
+  } catch {
+    imageCache.set(cacheKey, null)
+    return null
+  }
+}
+
+export const alignDrawYToVisibleBottom = (
+  image: HTMLImageElement,
+  drawY: number,
+  drawSize: number,
+  visibleBottomY?: number,
+  sourceX = 0,
+  sourceY = 0,
+  sourceWidth = image.naturalWidth,
+  sourceHeight = image.naturalHeight,
+) => {
+  if (visibleBottomY === undefined) {
+    return drawY
+  }
+
+  const bounds = getImageAlphaBounds(image, sourceX, sourceY, sourceWidth, sourceHeight)
+  if (!bounds) {
+    return drawY
+  }
+
+  return Math.round(visibleBottomY - (bounds.bottom / sourceHeight) * drawSize)
+}
+
+export const getCenteredVisibleFrameDrawX = (
+  baseX: number,
+  drawSize: number,
+  imageWidth: number,
+  bounds: Pick<ImageAlphaBounds, 'left' | 'right'>,
+) => {
+  const visibleCenter = ((bounds.left + bounds.right) / 2 / imageWidth) * drawSize
+  return Math.round(baseX + drawSize / 2 - visibleCenter)
+}
+
 const getAtlasSourceFrame = (atlas: MonsterSpriteAtlas, action: MonsterFrameAction, frameIndex: number) => {
   const actionMeta = atlas.actions[action] ?? atlas.actions.idle
   if (!actionMeta) {
@@ -1510,6 +1491,7 @@ const drawAtlasFrame = (
   y: number,
   size: number,
   flipX = false,
+  visibleBottomY?: number,
 ) => {
   const previousSmoothing = ctx.imageSmoothingEnabled
   ctx.imageSmoothingEnabled = false
@@ -1517,8 +1499,8 @@ const drawAtlasFrame = (
   const sourceX = atlas.columns ? (sourceFrame % atlas.columns) * atlas.frameSize : sourceFrame * atlas.frameSize
   const sourceY = atlas.columns ? Math.floor(sourceFrame / atlas.columns) * atlas.frameSize : 0
   const drawX = Math.round(x)
-  const drawY = Math.round(y)
   const drawSize = Math.round(size)
+  const drawY = alignDrawYToVisibleBottom(image, Math.round(y), drawSize, visibleBottomY, sourceX, sourceY, atlas.frameSize, atlas.frameSize)
   if (flipX) {
     ctx.save()
     ctx.translate(drawX + drawSize, drawY)
@@ -1561,6 +1543,9 @@ const drawRuntimeAssetOverrideFrame = (
   size: number,
   flipX = false,
   animationTime?: number,
+  visibleBottomY?: number,
+  stabilizeVisibleBounds = false,
+  claimPendingFrame = true,
 ) => {
   const resolved = getRuntimeAssetActionOverrideWithFallback(entityId, action)
   const override = resolved?.override
@@ -1592,7 +1577,7 @@ const drawRuntimeAssetOverrideFrame = (
       `missing-frame-url:${entityId}:${action}`,
       `[asset] ${entityId} action "${action}" has an override but no usable frame URL.`,
     )
-    return true
+    return claimPendingFrame
   }
   const frameCount = Math.max(1, override.frameCount || configuredFrameUrls.length)
   const configuredFrameIndex = typeof animationTime === 'number'
@@ -1611,16 +1596,22 @@ const drawRuntimeAssetOverrideFrame = (
         `failed-frame:${entityId}:${action}:${frameUrl}`,
         `[asset] ${entityId} action "${action}" could not load configured frame: ${frameUrl}`,
       )
+      return false
     }
-    return true
+    return claimPendingFrame
   }
 
   const previousSmoothing = ctx.imageSmoothingEnabled
   ctx.imageSmoothingEnabled = false
   const scale = Number.isFinite(override.combatScale) ? Math.max(0.2, override.combatScale ?? 1) : 1
   const drawSize = Math.round(size * scale)
-  const drawX = Math.round(x + (size - drawSize) / 2)
-  const drawY = Math.round(y + (size - drawSize) / 2)
+  const baseX = x + (size - drawSize) / 2
+  const bounds = stabilizeVisibleBounds ? getImageAlphaBounds(image) : null
+  const drawX = bounds
+    ? getCenteredVisibleFrameDrawX(baseX, drawSize, image.naturalWidth, bounds)
+    : Math.round(baseX)
+  let drawY = Math.round(y + (size - drawSize) / 2)
+  drawY = alignDrawYToVisibleBottom(image, drawY, drawSize, visibleBottomY)
   const shouldFlipX = Boolean(flipX) !== Boolean(override.flipX)
   if (shouldFlipX) {
     ctx.save()
@@ -1692,7 +1683,10 @@ const getGenericRuntimeAssetDrawSize = (enemy: Enemy) => {
   return Math.max(48, Math.round(enemy.size * 2.2))
 }
 
-const getMeleeAtlasAction = (enemy: Enemy): MonsterFrameAction => {
+export const getCorrosiveSlimeAtlasAction = (enemy: Enemy): MonsterFrameAction => {
+  if (enemy.hp <= 0) {
+    return 'death'
+  }
   if (enemy.hitFlash > 0) {
     return 'hit'
   }
@@ -1705,22 +1699,60 @@ const getMeleeAtlasAction = (enemy: Enemy): MonsterFrameAction => {
   return 'idle'
 }
 
-const getMeleeAtlasFrame = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
-  const atlas = MONSTER_SPRITE_ATLASES.melee
-  if (!atlas) {
-    return 0
-  }
-  const frameCount = atlas.actions[action]?.count ?? 1
+// Combat-only presentation cadence. Asset metadata remains at 8 fps for previews.
+export const CORROSIVE_SLIME_MOVE_FRAME_RATE = 0.4
+
+export const getCorrosiveSlimeAtlasFrame = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
+  const slot = corrosiveSlimeSlotByAction[action] ?? 'idle'
+  const frameCount = CORROSIVE_SLIME_ACTIONS[slot].frameCount
   if (action === 'hit') {
     return Math.min(frameCount - 1, Math.max(0, Math.floor((0.5 - enemy.hitFlash) * frameCount * 2)))
   }
   if (action === 'move') {
-    return Math.floor((enemy.walkTimer ?? 0) * 0.8) % frameCount
+    return Math.floor((enemy.walkTimer ?? 0) * CORROSIVE_SLIME_MOVE_FRAME_RATE) % frameCount
   }
   if (action === 'attack') {
     return Math.floor((0.45 - enemy.behaviorTimer) * frameCount * 3) % frameCount
   }
+  if (action === 'death') {
+    return Math.min(frameCount - 1, Math.floor(time * CORROSIVE_SLIME_ACTIONS.death.fps))
+  }
   return Math.floor(time * 3) % frameCount
+}
+
+export const getC1SlimeVariantAtlasAction = (enemy: Enemy): MonsterFrameAction => getCorrosiveSlimeAtlasAction(enemy)
+
+export const getC1SlimeVariantAtlasFrame = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
+  const slot = c1SlimeVariantSlotByAction[action] ?? 'idle'
+  const frameCount = C1_SLIME_VARIANT_ACTIONS[slot].frameCount
+  if (action === 'death') {
+    const duration = Math.max(0.01, enemy.deathAnimationDuration ?? 3)
+    const progress = Math.min(1, Math.max(0, enemy.deathAnimationElapsed ?? 0) / duration)
+    return Math.min(frameCount - 1, Math.floor(progress * frameCount))
+  }
+  return getCorrosiveSlimeAtlasFrame(enemy, action, time)
+}
+
+// This is presentation-only: gameplay size and every collision-related value remain unchanged.
+export const CORROSIVE_SLIME_COMBAT_VISIBLE_SIZE_MULTIPLIER = 2
+
+export const getCorrosiveSlimeCombatDrawSize = (enemy: Pick<Enemy, 'size'>) => (
+  Math.max(32, Math.round(enemy.size * 2)) * CORROSIVE_SLIME_COMBAT_VISIBLE_SIZE_MULTIPLIER
+)
+
+// C1 variants are four-thirds the approved corrosive-slime combat presentation
+// at the same gameplay size. Split children use their actual parent-size ratio
+// instead of a minimum-size clamp, so they remain visibly smaller than parent.
+export const C1_SLIME_VARIANT_COMBAT_VISIBLE_SIZE_MULTIPLIER = 4 / 3
+
+export const getC1SlimeVariantCombatDrawSize = (enemy: Pick<Enemy, 'size' | 'c1SlimeVariantParentSize'>) => {
+  const parentSize = enemy.c1SlimeVariantParentSize
+  if (parentSize && parentSize > enemy.size) {
+    return getCorrosiveSlimeCombatDrawSize({ size: parentSize })
+      * C1_SLIME_VARIANT_COMBAT_VISIBLE_SIZE_MULTIPLIER
+      * (enemy.size / parentSize)
+  }
+  return getCorrosiveSlimeCombatDrawSize(enemy) * C1_SLIME_VARIANT_COMBAT_VISIBLE_SIZE_MULTIPLIER
 }
 
 const drawMeleeAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: number, y: number, time: number) => {
@@ -1728,24 +1760,19 @@ const drawMeleeAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: num
     return false
   }
 
-  const atlas = MONSTER_SPRITE_ATLASES.melee
-  const action = getMeleeAtlasAction(enemy)
-  const frameIndex = getMeleeAtlasFrame(enemy, action, time)
-  const drawSize = Math.max(32, Math.round(enemy.size * 2))
+  const action = getCorrosiveSlimeAtlasAction(enemy)
+  const frameIndex = getCorrosiveSlimeAtlasFrame(enemy, action, time)
+  const drawSize = getCorrosiveSlimeCombatDrawSize(enemy)
   drawEnemyShadow(ctx, x, y, enemy.size)
-  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize, (enemy.facingDirection?.x ?? 0) < -0.05, time)) {
+  // Move overrides must consume the same combat frame index as project-local slime frames.
+  const overrideAnimationTime = action === 'move' ? undefined : time
+  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize, (enemy.facingDirection?.x ?? 0) < -0.05, overrideAnimationTime, getEnemySpriteGroundY(enemy, y))) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
     return true
   }
-  if (!atlas) {
+  if (!drawCorrosiveSlimeFrame(ctx, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize, (enemy.facingDirection?.x ?? 0) < -0.05, getEnemySpriteGroundY(enemy, y))) {
     return false
   }
-  const image = getRuntimeAtlasImage(atlas.src)
-  if (!isAtlasImageReady(image)) {
-    return false
-  }
-
-  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize)
   drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
   return true
 }
@@ -1804,7 +1831,7 @@ const drawRangedAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: nu
   const frameIndex = getRangedAtlasFrame(enemy, action, time)
   const drawSize = Math.max(32, Math.round(enemy.size * 2))
   drawEnemyShadow(ctx, x, y, enemy.size)
-  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize, (enemy.facingDirection?.x ?? 0) < -0.05, time)) {
+  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize, (enemy.facingDirection?.x ?? 0) < -0.05, time, getEnemySpriteGroundY(enemy, y))) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
     return true
   }
@@ -1816,16 +1843,50 @@ const drawRangedAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: nu
     return false
   }
 
-  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize)
+  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize, false, getEnemySpriteGroundY(enemy, y))
   drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
   return true
 }
 
-const SKELETON_ARCHER_ATTACK_WINDUP = 0.42
 export const SKELETON_ARCHER_MOVE_FPS = 7
 export const SKELETON_WARRIOR_MOVE_FPS = 6
+export const HELLHOUND_MOVE_FRAME_RATE = 0.4
 const SKELETON_MOVE_HOLD_THRESHOLD = 0.08
 const SKELETON_WARRIOR_MELEE_WINDUP = 0.42
+
+const skeletonArcherImage2SlotByAction: Partial<Record<MonsterFrameAction, SkeletonArcherImage2ActionSlot>> = {
+  idle: 'idle',
+  move: 'move',
+  attack: 'attack',
+  hit: 'hit',
+  death: 'death',
+}
+
+const corrosiveSlimeSlotByAction: Partial<Record<MonsterFrameAction, CorrosiveSlimeActionSlot>> = {
+  idle: 'idle',
+  move: 'move',
+  attack: 'attack',
+  hit: 'hit',
+  death: 'death',
+}
+
+const c1SlimeVariantSlotByAction: Partial<Record<MonsterFrameAction, C1SlimeVariantActionSlot>> = {
+  idle: 'idle',
+  move: 'move',
+  attack: 'attack',
+  hit: 'hit',
+  death: 'death',
+}
+
+const skeletonWarriorPtSlotByAction: Partial<Record<MonsterFrameAction, SkeletonWarriorPtActionSlot>> = {
+  idle: 'idle',
+  move: 'move',
+  attack: 'attack',
+  hit: 'hit',
+  death: 'death',
+  skill: 'skill_1',
+  skill2: 'skill_2',
+}
 
 const getFixedRateLoopFrame = (time: number, frameCount: number, frameRate: number) => {
   return Math.floor(Math.max(0, time) * frameRate) % frameCount
@@ -1845,12 +1906,16 @@ export const getSkeletonArcherAtlasAction = (enemy: Enemy): MonsterFrameAction =
 }
 
 export const getSkeletonArcherAtlasFrame = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
-  const frameCount = SKELETON_ARCHER_SPRITE_ATLAS.actions[action]?.count ?? 1
+  const image2Slot = skeletonArcherImage2SlotByAction[action]
+  const image2Meta = image2Slot ? SKELETON_ARCHER_IMAGE2_ACTIONS[image2Slot] : undefined
+  const frameCount = image2Meta?.frameCount ?? SKELETON_ARCHER_SPRITE_ATLAS.actions[action]?.count ?? 1
   if (action === 'move') {
     return getFixedRateLoopFrame(time, frameCount, SKELETON_ARCHER_MOVE_FPS)
   }
   if (action === 'attack') {
-    return Math.floor(Math.max(0, SKELETON_ARCHER_ATTACK_WINDUP - (enemy.rangedAttackWindup ?? 0)) * frameCount * 3) % frameCount
+    const attackMeta = SKELETON_ARCHER_IMAGE2_ACTIONS.attack
+    const elapsed = Math.max(0, attackMeta.durationSeconds - (enemy.rangedAttackWindup ?? 0))
+    return Math.min(frameCount - 1, Math.floor(elapsed * attackMeta.fps))
   }
   return Math.floor(time * 3) % frameCount
 }
@@ -1863,10 +1928,15 @@ const drawSkeletonArcherAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enem
   const atlas = SKELETON_ARCHER_SPRITE_ATLAS
   const action = getSkeletonArcherAtlasAction(enemy)
   const frameIndex = getSkeletonArcherAtlasFrame(enemy, action, time)
-  const drawSize = Math.max(48, Math.round(enemy.size * 2.7))
+  const drawSize = Math.max(64, Math.round(enemy.size * 3.7 * SKELETON_ARCHER_IMAGE2_COMBAT_SCALE))
   const flipX = (enemy.facingDirection?.x ?? 0) < -0.05
   drawEnemyShadow(ctx, x, y, enemy.size * 1.1)
-  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX, time)) {
+  const drawY = y - drawSize * 0.84
+  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, drawY, drawSize, flipX, time, getEnemySpriteGroundY(enemy, y))) {
+    drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.25, enemy.size)
+    return true
+  }
+  if (drawSkeletonArcherImage2Frame(ctx, action, frameIndex, x - drawSize / 2, drawY, drawSize, flipX, getEnemySpriteGroundY(enemy, y))) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.25, enemy.size)
     return true
   }
@@ -1875,7 +1945,7 @@ const drawSkeletonArcherAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enem
     return false
   }
 
-  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX)
+  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX, getEnemySpriteGroundY(enemy, y))
   drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.25, enemy.size)
   return true
 }
@@ -1889,30 +1959,43 @@ const isExplicitHellhound = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displa
   return identity.includes('hellhound') || identity.includes('地狱犬')
 }
 
+const hellhoundImage2SlotByAction: Partial<Record<MonsterFrameAction, HellhoundImage2ActionSlot>> = {
+  idle: 'idle',
+  move: 'move',
+  attack: 'attack',
+  cast: 'cast',
+  skill: 'skill_1',
+  hit: 'hit',
+  death: 'death',
+}
+
+const dungeonWardenSlotByAction: Partial<Record<MonsterFrameAction, DungeonWardenActionSlot>> = {
+  idle: 'idle',
+  move: 'move',
+  attack: 'attack',
+  cast: 'attack',
+  skill: 'skill_1',
+  skill2: 'skill_2',
+  phase: 'skill_3',
+  hit: 'hit',
+  death: 'death',
+}
+
 export const getMonsterSpriteAtlasForEnemy = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displayName'>) => {
+  if (getC1SlimeVariantAssetId(enemy)) {
+    return undefined
+  }
   if (isExplicitSkeletonWarrior(enemy)) {
     return SKELETON_WARRIOR_SPRITE_ATLAS
   }
   if (isExplicitCorruptGreenSlime(enemy)) {
-    return MONSTER_SPRITE_ATLASES.melee
+    return CORROSIVE_SLIME_SPRITE_ATLAS
   }
   if (isExplicitSkeletonArcher(enemy)) {
     return SKELETON_ARCHER_SPRITE_ATLAS
   }
   if (isExplicitFrostRangedSlime(enemy)) {
     return MONSTER_SPRITE_ATLASES.ranged
-  }
-  if (isExplicitHellhound(enemy)) {
-    return MONSTER_SPRITE_ATLASES.charger
-  }
-  if (isExplicitSplittingOoze(enemy)) {
-    return MONSTER_SPRITE_ATLASES.splitter
-  }
-  if (isExplicitFireSac(enemy)) {
-    return MONSTER_SPRITE_ATLASES.bomber
-  }
-  if (isExplicitSkeletonKnight(enemy)) {
-    return MONSTER_SPRITE_ATLASES.boss
   }
   return undefined
 }
@@ -1933,17 +2016,18 @@ const getHellhoundAtlasAction = (enemy: Enemy): MonsterFrameAction => {
   return 'idle'
 }
 
-const getHellhoundAtlasFrame = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
+export const getHellhoundAtlasFrame = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
   const atlas = MONSTER_SPRITE_ATLASES.charger
-  if (!atlas) {
+  const image2Slot = hellhoundImage2SlotByAction[action]
+  if (!atlas && !image2Slot) {
     return 0
   }
-  const frameCount = atlas.actions[action]?.count ?? 1
+  const frameCount = image2Slot ? HELLHOUND_IMAGE2_ACTIONS[image2Slot].frameCount : atlas?.actions[action]?.count ?? 1
   if (action === 'hit') {
     return Math.min(frameCount - 1, Math.max(0, Math.floor((0.5 - enemy.hitFlash) * frameCount * 2)))
   }
   if (action === 'move') {
-    return Math.floor((enemy.walkTimer ?? 0) * 0.9) % frameCount
+    return Math.floor((enemy.walkTimer ?? 0) * HELLHOUND_MOVE_FRAME_RATE) % frameCount
   }
   if (action === 'attack') {
     return Math.floor((0.42 - enemy.behaviorTimer) * frameCount * 3) % frameCount
@@ -1952,6 +2036,226 @@ const getHellhoundAtlasFrame = (enemy: Enemy, action: MonsterFrameAction, time: 
     return Math.floor((1.1 - (enemy.breathTimer ?? 0)) * frameCount * 2) % frameCount
   }
   return Math.floor(time * 3) % frameCount
+}
+
+const drawStandaloneImageFrame = (
+  ctx: CanvasRenderingContext2D,
+  frameUrl: string,
+  x: number,
+  y: number,
+  size: number,
+  flipX = false,
+  visibleBottomY?: number,
+  stabilizeVisibleBounds = false,
+) => {
+  const image = getRuntimeAtlasImage(normalizeRuntimeAssetUrl(frameUrl))
+  if (!isAtlasImageReady(image)) {
+    return true
+  }
+
+  const previousSmoothing = ctx.imageSmoothingEnabled
+  ctx.imageSmoothingEnabled = false
+  const drawSize = Math.round(size)
+  const bounds = stabilizeVisibleBounds ? getImageAlphaBounds(image) : null
+  const drawX = bounds
+    ? getCenteredVisibleFrameDrawX(x, drawSize, image.naturalWidth, bounds)
+    : Math.round(x)
+  const drawY = alignDrawYToVisibleBottom(image, Math.round(y), drawSize, visibleBottomY)
+  if (flipX) {
+    ctx.save()
+    ctx.translate(drawX + drawSize, drawY)
+    ctx.scale(-1, 1)
+    ctx.drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight, 0, 0, drawSize, drawSize)
+    ctx.restore()
+  } else {
+    ctx.drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight, drawX, drawY, drawSize, drawSize)
+  }
+  ctx.imageSmoothingEnabled = previousSmoothing
+  return true
+}
+
+const drawSkeletonArcherImage2Frame = (
+  ctx: CanvasRenderingContext2D,
+  action: MonsterFrameAction,
+  frameIndex: number,
+  x: number,
+  y: number,
+  size: number,
+  flipX = false,
+  visibleBottomY?: number,
+) => {
+  const slot = skeletonArcherImage2SlotByAction[action] ?? 'idle'
+  const frameUrls = getSkeletonArcherImage2FrameUrls(slot)
+  const frameUrl = frameUrls[((Math.floor(frameIndex) % frameUrls.length) + frameUrls.length) % frameUrls.length]
+  return drawStandaloneImageFrame(ctx, frameUrl, x, y, size, flipX, visibleBottomY)
+}
+
+const drawCorrosiveSlimeFrame = (
+  ctx: CanvasRenderingContext2D,
+  action: MonsterFrameAction,
+  frameIndex: number,
+  x: number,
+  y: number,
+  size: number,
+  flipX = false,
+  visibleBottomY?: number,
+) => {
+  const slot = corrosiveSlimeSlotByAction[action] ?? 'idle'
+  const frameUrls = getCorrosiveSlimeFrameUrls(slot)
+  const frameUrl = frameUrls[((Math.floor(frameIndex) % frameUrls.length) + frameUrls.length) % frameUrls.length]
+  return drawStandaloneImageFrame(ctx, frameUrl, x, y, size, flipX, visibleBottomY)
+}
+
+const drawC1SlimeVariantFrame = (
+  ctx: CanvasRenderingContext2D,
+  entityId: C1SlimeVariantAssetId,
+  action: MonsterFrameAction,
+  frameIndex: number,
+  x: number,
+  y: number,
+  size: number,
+  flipX = false,
+  visibleBottomY?: number,
+) => {
+  const slot = c1SlimeVariantSlotByAction[action] ?? 'idle'
+  const frameUrls = getC1SlimeVariantFrameUrls(entityId, slot)
+  const frameUrl = frameUrls[((Math.floor(frameIndex) % frameUrls.length) + frameUrls.length) % frameUrls.length]
+  return drawStandaloneImageFrame(ctx, frameUrl, x, y, size, flipX, visibleBottomY)
+}
+
+const drawC1SlimeVariantEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: number, y: number, time: number) => {
+  const entityId = getC1SlimeVariantAssetId(enemy)
+  if (!entityId) {
+    return false
+  }
+
+  const action = getC1SlimeVariantAtlasAction(enemy)
+  const frameIndex = getC1SlimeVariantAtlasFrame(enemy, action, time)
+  const drawSize = getC1SlimeVariantCombatDrawSize(enemy)
+  drawEnemyShadow(ctx, x, y, enemy.size * 1.05)
+  drawC1SlimeVariantFrame(
+    ctx,
+    entityId,
+    action,
+    frameIndex,
+    x - drawSize / 2,
+    getEnemySpriteGroundY(enemy, y) - drawSize,
+    drawSize,
+    (enemy.facingDirection?.x ?? 0) < -0.05,
+    getEnemySpriteGroundY(enemy, y),
+  )
+  drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
+  return true
+}
+
+const drawSkeletonWarriorPtFrame = (
+  ctx: CanvasRenderingContext2D,
+  action: MonsterFrameAction,
+  frameIndex: number,
+  x: number,
+  y: number,
+  size: number,
+  flipX = false,
+  visibleBottomY?: number,
+) => {
+  const slot = skeletonWarriorPtSlotByAction[action] ?? 'idle'
+  const frameUrls = getSkeletonWarriorPtFrameUrls(slot)
+  const frameUrl = frameUrls[((Math.floor(frameIndex) % frameUrls.length) + frameUrls.length) % frameUrls.length]
+  return drawStandaloneImageFrame(ctx, frameUrl, x, y, size, flipX, visibleBottomY)
+}
+
+const drawSkeletonArcherArrowAsset = (
+  ctx: CanvasRenderingContext2D,
+  projectile: Projectile,
+) => {
+  const image = getRuntimeAtlasImage(normalizeRuntimeAssetUrl(getSkeletonArcherImage2PublicArrowUrl()))
+  if (!image) {
+    return false
+  }
+  if (image.complete !== true || image.naturalWidth <= 0) {
+    return !image.complete
+  }
+
+  const drawWidth = Math.max(
+    SKELETON_ARCHER_IMAGE2_ARROW_MIN_DRAW_WIDTH,
+    Math.round(projectile.size * 4 * SKELETON_ARCHER_IMAGE2_ARROW_SCALE),
+  )
+  const alphaBounds = getImageAlphaBounds(image)
+  const sourceX = alphaBounds?.left ?? 0
+  const sourceY = alphaBounds?.top ?? 0
+  const sourceWidth = alphaBounds ? alphaBounds.right - alphaBounds.left : image.naturalWidth
+  const sourceHeight = alphaBounds ? alphaBounds.bottom - alphaBounds.top : image.naturalHeight
+  const drawHeight = Math.max(
+    SKELETON_ARCHER_IMAGE2_ARROW_MIN_VISIBLE_HEIGHT,
+    Math.round(drawWidth * (sourceHeight / Math.max(1, sourceWidth))),
+  )
+  const angle = Math.atan2(projectile.velocity.y, projectile.velocity.x)
+  const previousSmoothing = ctx.imageSmoothingEnabled
+  const previousFilter = ctx.filter
+  const previousShadowColor = ctx.shadowColor
+  const previousShadowBlur = ctx.shadowBlur
+  const previousShadowOffsetX = ctx.shadowOffsetX
+  const previousShadowOffsetY = ctx.shadowOffsetY
+  ctx.imageSmoothingEnabled = false
+  ctx.save()
+  ctx.translate(Math.round(projectile.position.x), Math.round(projectile.position.y))
+  ctx.rotate(angle)
+  ctx.filter = 'none'
+  ctx.shadowColor = SKELETON_ARCHER_IMAGE2_ARROW_OUTLINE_COLOR
+  ctx.shadowBlur = SKELETON_ARCHER_IMAGE2_ARROW_OUTLINE_BLUR
+  ctx.shadowOffsetX = 0
+  ctx.shadowOffsetY = 0
+  ctx.globalAlpha = 0.92
+  ctx.drawImage(
+    image,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    -drawWidth / 2,
+    -drawHeight / 2,
+    drawWidth,
+    drawHeight,
+  )
+  ctx.shadowColor = 'transparent'
+  ctx.shadowBlur = 0
+  ctx.filter = SKELETON_ARCHER_IMAGE2_ARROW_RENDER_FILTER
+  ctx.globalAlpha = 1
+  ctx.drawImage(
+    image,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    -drawWidth / 2,
+    -drawHeight / 2,
+    drawWidth,
+    drawHeight,
+  )
+  ctx.restore()
+  ctx.filter = previousFilter
+  ctx.shadowColor = previousShadowColor
+  ctx.shadowBlur = previousShadowBlur
+  ctx.shadowOffsetX = previousShadowOffsetX
+  ctx.shadowOffsetY = previousShadowOffsetY
+  ctx.imageSmoothingEnabled = previousSmoothing
+  return true
+}
+
+const drawHellhoundImage2Frame = (
+  ctx: CanvasRenderingContext2D,
+  action: MonsterFrameAction,
+  frameIndex: number,
+  x: number,
+  y: number,
+  size: number,
+  flipX = false,
+  visibleBottomY?: number,
+) => {
+  const slot = hellhoundImage2SlotByAction[action] ?? 'idle'
+  const frameUrls = getHellhoundImage2FrameUrls(slot)
+  const frameUrl = frameUrls[((Math.floor(frameIndex) % frameUrls.length) + frameUrls.length) % frameUrls.length]
+  return drawStandaloneImageFrame(ctx, frameUrl, x, y, size, flipX, visibleBottomY)
 }
 
 const drawHellhoundAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: number, y: number, time: number) => {
@@ -1964,7 +2268,12 @@ const drawHellhoundAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x:
   const drawSize = Math.max(64, Math.round(enemy.size * 3.7))
   const flipX = (enemy.facingDirection?.x ?? 0) < -0.05
   drawEnemyShadow(ctx, x, y, enemy.size * 1.3)
-  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize * 0.84, drawSize, flipX, time)) {
+  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize * 0.84, drawSize, flipX, time, getEnemySpriteGroundY(enemy, y))) {
+    drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.7, enemy.size * 1.1)
+    return true
+  }
+
+  if (drawHellhoundImage2Frame(ctx, action, frameIndex, x - drawSize / 2, y - drawSize * 0.84, drawSize, flipX, getEnemySpriteGroundY(enemy, y))) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.7, enemy.size * 1.1)
     return true
   }
@@ -1978,20 +2287,23 @@ const drawHellhoundAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x:
     return false
   }
 
-  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize * 0.84, drawSize, flipX)
+  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize * 0.84, drawSize, flipX, getEnemySpriteGroundY(enemy, y))
   drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.7, enemy.size * 1.1)
   return true
 }
 
 export const getSkeletonWarriorAtlasAction = (enemy: Enemy): MonsterFrameAction => {
+  if ((enemy.skeletonWarriorDefenseTimer ?? 0) > 0) {
+    return 'skill'
+  }
   if (enemy.hitFlash > 0) {
-    return 'idle'
+    return 'hit'
   }
   if ((enemy.meleeAttackWindup ?? 0) > 0 || enemy.meleeAttackReady) {
     return 'attack'
   }
   if (enemy.behaviorTimer > 0) {
-    return 'attack'
+    return (enemy.walkTimer ?? 0) > SKELETON_MOVE_HOLD_THRESHOLD ? 'skill2' : 'attack'
   }
   if ((enemy.walkTimer ?? 0) > SKELETON_MOVE_HOLD_THRESHOLD) {
     return 'move'
@@ -2005,12 +2317,19 @@ export const getSkeletonWarriorAtlasFrame = (enemy: Enemy, action: MonsterFrameA
   if (action === 'move') {
     return getFixedRateLoopFrame(time, frameCount, SKELETON_WARRIOR_MOVE_FPS)
   }
+  if (action === 'hit') {
+    return Math.min(frameCount - 1, Math.max(0, Math.floor((0.5 - enemy.hitFlash) * frameCount * 2)))
+  }
   if (action === 'attack') {
     if ((enemy.meleeAttackWindup ?? 0) > 0 || enemy.meleeAttackReady) {
       const elapsed = enemy.meleeAttackReady ? SKELETON_WARRIOR_MELEE_WINDUP : SKELETON_WARRIOR_MELEE_WINDUP - (enemy.meleeAttackWindup ?? 0)
       return Math.min(frameCount - 1, Math.max(0, Math.floor((elapsed / SKELETON_WARRIOR_MELEE_WINDUP) * frameCount)))
     }
     const duration = 0.82
+    return Math.floor(Math.max(0, duration - enemy.behaviorTimer) * frameCount * 3) % frameCount
+  }
+  if (action === 'skill2') {
+    const duration = SKELETON_WARRIOR_PT_ACTIONS.skill_2.durationSeconds
     return Math.floor(Math.max(0, duration - enemy.behaviorTimer) * frameCount * 3) % frameCount
   }
   return Math.floor(time * 3) % frameCount
@@ -2021,111 +2340,36 @@ const drawSkeletonWarriorAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Ene
     return false
   }
 
-  const atlas = SKELETON_WARRIOR_SPRITE_ATLAS
   const action = getSkeletonWarriorAtlasAction(enemy)
   const frameIndex = getSkeletonWarriorAtlasFrame(enemy, action, time)
   const drawSize = Math.max(64, Math.round(enemy.size * 2.2))
   const flipX = (enemy.facingDirection?.x ?? 0) < -0.05
   drawEnemyShadow(ctx, x, y, enemy.size * 1.25)
-  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX, time)) {
+  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX, time, getEnemySpriteGroundY(enemy, y))) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.35, enemy.size * 1.2)
     return true
   }
-  const image = getRuntimeAtlasImage(atlas.src)
-  if (!isAtlasImageReady(image)) {
-    return false
-  }
-
-  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX)
-  drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.35, enemy.size * 1.2)
-  return true
-}
-
-const getSmallSpecialAtlasAction = (enemy: Enemy): MonsterFrameAction => {
-  if (enemy.hitFlash > 0) {
-    return 'hit'
-  }
-  if (enemy.behaviorTimer > 0) {
-    return 'attack'
-  }
-  if ((enemy.walkTimer ?? 0) > 0.15) {
-    return 'move'
-  }
-  return 'idle'
-}
-
-const getSmallSpecialAtlasFrame = (atlas: MonsterSpriteAtlas | undefined, enemy: Enemy, action: MonsterFrameAction, time: number) => {
-  if (!atlas) {
-    return 0
-  }
-  const frameCount = atlas.actions[action]?.count ?? 1
-  if (action === 'hit') {
-    return Math.min(frameCount - 1, Math.max(0, Math.floor((0.5 - enemy.hitFlash) * frameCount * 2)))
-  }
-  if (action === 'move') {
-    return Math.floor((enemy.walkTimer ?? 0) * 0.9) % frameCount
-  }
-  if (action === 'attack') {
-    return Math.floor(Math.max(0, 0.45 - enemy.behaviorTimer) * frameCount * 3) % frameCount
-  }
-  return Math.floor(time * 3) % frameCount
-}
-
-const drawSplittingOozeAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: number, y: number, time: number) => {
-  if (!isExplicitSplittingOoze(enemy)) {
-    return false
-  }
-
-  const atlas = MONSTER_SPRITE_ATLASES.splitter
-  const action = getSmallSpecialAtlasAction(enemy)
-  const frameIndex = getSmallSpecialAtlasFrame(atlas, enemy, action, time)
-  const drawSize = Math.max(32, Math.round(enemy.size * 2))
-  drawEnemyShadow(ctx, x, y, enemy.size * 1.05)
-  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize, (enemy.facingDirection?.x ?? 0) < -0.05, time)) {
-    drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
+  if (drawSkeletonWarriorPtFrame(ctx, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX, getEnemySpriteGroundY(enemy, y))) {
+    drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.35, enemy.size * 1.2)
     return true
   }
-  if (!atlas) {
-    return false
-  }
-  const image = getRuntimeAtlasImage(atlas.src)
-  if (!isAtlasImageReady(image)) {
-    return false
-  }
 
-  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize)
-  drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
-  return true
+  return false
 }
 
-const drawFireSacAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: number, y: number, time: number) => {
-  if (!isExplicitFireSac(enemy)) {
-    return false
+export const getDungeonWardenAssetAction = (enemy: Enemy): MonsterFrameAction => {
+  if ((enemy.wardenActionSlot ?? '') === 'skill_1' && (enemy.wardenActionTimer ?? 0) > 0) {
+    return 'skill'
   }
-
-  const atlas = MONSTER_SPRITE_ATLASES.bomber
-  const action = getSmallSpecialAtlasAction(enemy)
-  const frameIndex = getSmallSpecialAtlasFrame(atlas, enemy, action, time)
-  const drawSize = Math.max(32, Math.round(enemy.size * 2.05))
-  drawEnemyShadow(ctx, x, y, enemy.size)
-  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize, (enemy.facingDirection?.x ?? 0) < -0.05, time)) {
-    drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
-    return true
+  if ((enemy.wardenActionSlot ?? '') === 'skill_2' && (enemy.wardenActionTimer ?? 0) > 0) {
+    return 'skill2'
   }
-  if (!atlas) {
-    return false
+  if ((enemy.wardenActionSlot ?? '') === 'skill_3' && (enemy.wardenActionTimer ?? 0) > 0) {
+    return 'phase'
   }
-  const image = getRuntimeAtlasImage(atlas.src)
-  if (!isAtlasImageReady(image)) {
-    return false
+  if ((enemy.meleeAttackWindup ?? 0) > 0 || enemy.meleeAttackReady) {
+    return enemy.wardenLastAttackCrit ? 'skill' : 'attack'
   }
-
-  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize)
-  drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
-  return true
-}
-
-const getSkeletonKnightAtlasAction = (enemy: Enemy): MonsterFrameAction => {
   if ((enemy.blockTimer ?? 0) > 0) {
     return 'phase'
   }
@@ -2141,17 +2385,29 @@ const getSkeletonKnightAtlasAction = (enemy: Enemy): MonsterFrameAction => {
   return 'idle'
 }
 
-const getSkeletonKnightAtlasFrame = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
-  const atlas = MONSTER_SPRITE_ATLASES.boss
-  if (!atlas) {
-    return 0
+export const getDungeonWardenAssetSlot = (enemy: Enemy, action: MonsterFrameAction): DungeonWardenActionSlot => {
+  if (
+    (enemy.wardenActionSlot === 'skill_1' || enemy.wardenActionSlot === 'skill_2' || enemy.wardenActionSlot === 'skill_3') &&
+    (enemy.wardenActionTimer ?? 0) > 0
+  ) {
+    return enemy.wardenActionSlot
   }
-  const frameCount = atlas.actions[action]?.count ?? 1
+  if (action === 'phase') {
+    return 'move'
+  }
+  return dungeonWardenSlotByAction[action] ?? 'idle'
+}
+
+export const getDungeonWardenAssetFrame = (enemy: Enemy, action: MonsterFrameAction, slot: DungeonWardenActionSlot, time: number) => {
+  const frameCount = DUNGEON_WARDEN_ACTIONS[slot].frameCount
   if (action === 'hit') {
     return Math.min(frameCount - 1, Math.max(0, Math.floor((0.5 - enemy.hitFlash) * frameCount * 2)))
   }
   if (action === 'phase') {
-    return Math.floor(Math.max(0, 0.72 - (enemy.blockTimer ?? 0)) * frameCount * 4) % frameCount
+    const { durationSeconds, fps } = DUNGEON_WARDEN_ACTIONS[slot]
+    const cycleDuration = Math.max(durationSeconds, frameCount / Math.max(1, fps))
+    const cycleProgress = (Math.max(0, time) % cycleDuration) / cycleDuration
+    return Math.floor(cycleProgress * frameCount) % frameCount
   }
   if (action === 'move') {
     return Math.floor((enemy.walkTimer ?? 0) * 0.8) % frameCount
@@ -2162,30 +2418,73 @@ const getSkeletonKnightAtlasFrame = (enemy: Enemy, action: MonsterFrameAction, t
   return Math.floor(time * 2.6) % frameCount
 }
 
-const drawSkeletonKnightAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: number, y: number, time: number) => {
-  if (!isExplicitSkeletonKnight(enemy)) {
+const getDungeonWardenRuntimeAnimationTime = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
+  if (action !== 'phase') {
+    return time
+  }
+
+  const slot = getDungeonWardenAssetSlot(enemy, action)
+  const override = getRuntimeAssetActionOverride(enemy.archetypeId, slot)
+  if (!override || override.loop) {
+    return time
+  }
+
+  const cycleDuration = override.durationSeconds ?? override.frameCount / Math.max(1, override.fps || 1)
+  return cycleDuration > 0 ? Math.max(0, time) % cycleDuration : time
+}
+
+const drawDungeonWardenImageFrame = (
+  ctx: CanvasRenderingContext2D,
+  slot: DungeonWardenActionSlot,
+  frameIndex: number,
+  x: number,
+  y: number,
+  size: number,
+  flipX = false,
+  visibleBottomY?: number,
+  stabilizeVisibleBounds = false,
+) => {
+  const frameUrls = getDungeonWardenFrameUrls(slot)
+  const frameUrl = frameUrls[((Math.floor(frameIndex) % frameUrls.length) + frameUrls.length) % frameUrls.length]
+  const image = getRuntimeAtlasImage(normalizeRuntimeAssetUrl(frameUrl))
+  if (isAtlasImageReady(image)) {
+    return drawStandaloneImageFrame(ctx, frameUrl, x, y, size, flipX, visibleBottomY, stabilizeVisibleBounds)
+  }
+
+  const continuitySlots: DungeonWardenActionSlot[] = [slot, 'move', 'idle', 'attack', 'skill_1', 'hit']
+  const fallbackUrl = continuitySlots
+    .flatMap((candidateSlot) => getDungeonWardenFrameUrls(candidateSlot))
+    .find((candidateUrl) => isAtlasImageReady(getRuntimeAtlasImage(normalizeRuntimeAssetUrl(candidateUrl))))
+
+  if (fallbackUrl) {
+    return drawStandaloneImageFrame(ctx, fallbackUrl, x, y, size, flipX, visibleBottomY, stabilizeVisibleBounds)
+  }
+
+  // The explicit Warden never falls back to procedural art. Claim the frame while
+  // its real PNGs load; once any valid Warden frame is ready it becomes the bridge.
+  return true
+}
+
+const drawDungeonWardenAssetEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: number, y: number, time: number) => {
+  if (!isExplicitDungeonWarden(enemy)) {
     return false
   }
 
-  const atlas = MONSTER_SPRITE_ATLASES.boss
-  const action = getSkeletonKnightAtlasAction(enemy)
-  const frameIndex = getSkeletonKnightAtlasFrame(enemy, action, time)
+  const action = getDungeonWardenAssetAction(enemy)
+  const slot = getDungeonWardenAssetSlot(enemy, action)
+  const frameIndex = getDungeonWardenAssetFrame(enemy, action, slot, time)
+  const runtimeAnimationTime = getDungeonWardenRuntimeAnimationTime(enemy, action, time)
   const drawSize = Math.max(96, Math.round(enemy.size * 3.25))
   const flipX = (enemy.facingDirection?.x ?? 0) < -0.05
+  const stabilizeVisibleBounds = slot === 'skill_3'
   drawEnemyShadow(ctx, x, y, enemy.size * 1.45)
-  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize * 0.87, drawSize, flipX, time)) {
+  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, slot, frameIndex, x - drawSize / 2, y - drawSize * 0.87, drawSize, flipX, runtimeAnimationTime, getEnemySpriteGroundY(enemy, y), stabilizeVisibleBounds, false)) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.9, enemy.size * 1.35)
     return true
   }
-  if (!atlas) {
+  if (!drawDungeonWardenImageFrame(ctx, slot, frameIndex, x - drawSize / 2, y - drawSize * 0.87, drawSize, flipX, getEnemySpriteGroundY(enemy, y), stabilizeVisibleBounds)) {
     return false
   }
-  const image = getRuntimeAtlasImage(atlas.src)
-  if (!isAtlasImageReady(image)) {
-    return false
-  }
-
-  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize * 0.87, drawSize, flipX)
   drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.9, enemy.size * 1.35)
   return true
 }
@@ -2198,6 +2497,12 @@ const createGuideEnemy = (
   tint: string,
   action: MonsterFrameAction,
   frameIndex: number,
+  details: {
+    archetypeId?: string
+    displayName?: string
+    campaignIndex?: number
+    tint?: string
+  } = {},
 ): Enemy => ({
   id: `guide-${kind}-${action}-${frameIndex}`,
   kind,
@@ -2207,7 +2512,10 @@ const createGuideEnemy = (
   maxHp: 100,
   speed: 0,
   size,
-  tint,
+  tint: details.tint ?? tint,
+  archetypeId: details.archetypeId,
+  displayName: details.displayName,
+  campaignIndex: details.campaignIndex,
   hitFlash: action === 'hit' ? 0.5 : 0,
   attackCooldown: 0,
   behaviorCooldown: 0,
@@ -2572,9 +2880,17 @@ export const drawMonsterGuideFrame = (
   frameIndex: number,
   x: number,
   y: number,
-  options: { atlasImage?: HTMLImageElement | null; atlas?: MonsterSpriteAtlas } = {},
+  options: {
+    atlasImage?: HTMLImageElement | null
+    atlas?: MonsterSpriteAtlas
+    useKindAtlas?: boolean
+    fallbackTint?: string
+    archetypeId?: string
+    displayName?: string
+    campaignIndex?: number
+  } = {},
 ) => {
-  const atlas = options.atlas ?? MONSTER_SPRITE_ATLASES[kind]
+  const atlas = options.atlas ?? (options.useKindAtlas === false ? undefined : MONSTER_SPRITE_ATLASES[kind])
   const spec = atlas
     ? { ...MONSTER_FRAME_SPECS[kind], frameSize: atlas.frameSize, actions: Object.keys(atlas.actions) as MonsterFrameAction[] }
     : MONSTER_FRAME_SPECS[kind]
@@ -2610,6 +2926,12 @@ export const drawMonsterGuideFrame = (
     spec.tint,
     action,
     frameIndex,
+    {
+      archetypeId: options.archetypeId,
+      displayName: options.displayName,
+      campaignIndex: options.campaignIndex,
+      tint: options.fallbackTint,
+    },
   )
 
   ctx.save()
@@ -2670,6 +2992,7 @@ export const drawBeastCompanionSprite = (
     runtimeSize,
     commandDx < -1,
     time,
+    beast.position.y + beast.size * 0.08,
   )) {
     return
   }
@@ -2745,6 +3068,10 @@ export const drawProjectileSprite = (
   const x = projectile.position.x
   const y = projectile.position.y
   if (projectile.owner === 'enemy') {
+    if (projectile.sourceSkillId === 'enemy-ranged-shot' && drawSkeletonArcherArrowAsset(ctx, projectile)) {
+      return
+    }
+
     const angle = Math.atan2(projectile.velocity.y, projectile.velocity.x)
     const pulse = 0.55 + Math.sin(time * 14 + x * 0.03) * 0.2
     const isBossShot = projectile.sourceSkillId === 'boss-fan-shot'
