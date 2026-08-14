@@ -10,13 +10,22 @@ import {
   getMetaTalentBonusSummary,
   getMetaTalentRank,
   getMetaTalentUnlockState,
+  getFocusedRunTalentMinimumTotalAngleDegrees,
+  getRunTalentTrajectoryBranch,
+  getRunTalentTrajectorySkillState,
   getRunTalentBonusSummary,
+  getRunTalentPresentationItems,
+  normalizeRunTalentTrajectoryBranches,
   rerollRunTalentCandidates,
+  RUN_TALENT_TRAJECTORY_CONFIG,
+  RUN_TALENT_NODE_BY_ID,
+  RUN_TALENT_RUNTIME_NODES,
   resetMetaTalentTree,
   unlockMetaTalent,
   type MetaTalentRanks,
   type MetaTalentUnlockContext,
 } from './talents'
+import { RUN_TALENT_FORM_DEFINITIONS } from './runTalentForms'
 
 const emptyUnlockContext: MetaTalentUnlockContext = {
   talentPoints: 0,
@@ -43,6 +52,121 @@ describe('talent data definitions', () => {
     expect(THREE_RANK_META_TALENT_IDS).toHaveLength(42)
     expect(new Set(META_TALENT_NODES.filter((node) => node.maxRank === 3).map((node) => node.id))).toEqual(new Set(THREE_RANK_META_TALENT_IDS))
     expect(META_TALENT_NODES.filter((node) => node.maxRank === 1)).toHaveLength(42)
+  })
+
+  it('defines explicit original death and blood trajectory identities without expanding the candidate pool', () => {
+    const deathConfigs = Array.from({ length: 8 }, (_, index) => RUN_TALENT_TRAJECTORY_CONFIG[`run_death_${String(index + 1).padStart(2, '0')}`])
+    const bloodConfigs = Array.from({ length: 8 }, (_, index) => RUN_TALENT_TRAJECTORY_CONFIG[`run_blood_${String(index + 1).padStart(2, '0')}`])
+
+    expect(deathConfigs.filter((config) => config.applicability === 'applicable').map((config) => config.talentId)).toEqual([
+      'run_death_03',
+      'run_death_06',
+    ])
+    expect(deathConfigs.filter((config) => config.applicability === 'not-applicable')).toHaveLength(6)
+    expect(RUN_TALENT_TRAJECTORY_CONFIG.run_death_01).toMatchObject({
+      kind: 'not-applicable',
+      applicability: 'not-applicable',
+      applicableSkillIds: [],
+      supportsBranchSelection: false,
+    })
+    expect(RUN_TALENT_TRAJECTORY_CONFIG.run_death_02).toMatchObject({
+      kind: 'not-applicable',
+      applicability: 'not-applicable',
+      applicableSkillIds: [],
+      supportsBranchSelection: false,
+    })
+    expect(RUN_TALENT_TRAJECTORY_CONFIG.run_blood_03).toMatchObject({
+      kind: 'blood-fan',
+      applicability: 'applicable',
+      applicableSkillIds: ['fan-burst'],
+      supportsBranchSelection: true,
+    })
+    expect(bloodConfigs.filter((config) => config.applicability === 'not-applicable')).toHaveLength(7)
+
+    expect(getRunTalentTrajectoryBranch('run_blood_03')).toBe('wide')
+    expect(normalizeRunTalentTrajectoryBranches({ run_blood_03: 'focused', run_blood_02: 'wide' }, ['run_blood_03'])).toEqual({
+      run_blood_03: 'focused',
+    })
+    expect(getFocusedRunTalentMinimumTotalAngleDegrees(1)).toBe(12)
+    expect(getFocusedRunTalentMinimumTotalAngleDegrees(4)).toBe(14)
+    expect(getFocusedRunTalentMinimumTotalAngleDegrees(6)).toBe(16)
+
+    expect(getRunTalentTrajectorySkillState(['run_blood_03'], { run_blood_03: 'focused' }, 'fan-burst', 5)).toMatchObject({
+      talentId: 'run_blood_03',
+      talentIds: ['run_blood_03'],
+      bloodTalentIds: ['run_blood_03'],
+      branch: 'focused',
+      focusedMinimumTotalAngleDegrees: 14,
+      deathTrajectoryTakeover: false,
+      baseTrajectory: 'configured',
+      baseTotalAngleDegrees: null,
+    })
+    expect(getRunTalentTrajectorySkillState(['run_death_01'], {}, 'pierce-arrow', 1)).toMatchObject({
+      talentId: null,
+      deathTalentIds: [],
+      deathTrajectoryTakeover: false,
+      baseTrajectory: 'straight',
+      baseTotalAngleDegrees: 0,
+    })
+    expect(getRunTalentTrajectorySkillState(['run_death_03'], {}, 'pierce-arrow', 1)).toMatchObject({
+      talentId: 'run_death_03',
+      deathTalentIds: ['run_death_03'],
+      deathTrajectoryTakeover: true,
+      baseTrajectory: 'straight',
+      baseTotalAngleDegrees: 0,
+    })
+
+    // Base straight identity is present on the first cast, before any death
+    // node is selected.  The 0.08 second queue remains a separate takeover.
+    expect(getRunTalentTrajectorySkillState([], {}, 'heavy-snipe', 3)).toMatchObject({
+      baseTrajectory: 'straight',
+      baseTotalAngleDegrees: 0,
+      deathTrajectoryTakeover: false,
+      deathTalentIds: [],
+    })
+    expect(getRunTalentTrajectorySkillState(['run_death_06'], {}, 'heavy-snipe', 3)).toMatchObject({
+      baseTrajectory: 'straight',
+      baseTotalAngleDegrees: 0,
+      deathTrajectoryTakeover: true,
+      deathTalentIds: ['run_death_06'],
+    })
+    expect(getRunTalentTrajectorySkillState([], {}, 'fan-burst', 3)).toMatchObject({
+      baseTrajectory: 'configured',
+      baseTotalAngleDegrees: null,
+      deathTrajectoryTakeover: false,
+    })
+  })
+
+  it('keeps the runtime talent catalogue strictly to the original forty plus thirty-two forms', () => {
+    const baseContext = {
+      openingBuild: 'beast' as const,
+      ownedSkillTags: ['beast'],
+      equipmentTags: [],
+      campaignTags: [],
+      currentLevel: 5,
+      selectedTalentIds: RUN_TALENT_NODES.map((node) => node.id),
+      rerollsUsed: 0,
+      guaranteeState: getDefaultRunTalentGuaranteeState(),
+      seed: 'legendary-beast-hunt',
+    }
+
+    const eligible = generateRunTalentCandidates({
+      ...baseContext,
+      ownedBeastFamilyIds: ['ring-volley', 'raptor-dive'],
+      evolvedFamilyIds: ['ring-volley'],
+      candidateCount: 4,
+    })
+    expect(RUN_TALENT_NODES).toHaveLength(40)
+    expect(RUN_TALENT_FORM_DEFINITIONS).toHaveLength(32)
+    expect(RUN_TALENT_RUNTIME_NODES).toHaveLength(72)
+    expect(RUN_TALENT_NODE_BY_ID).toHaveLength(72)
+    expect(RUN_TALENT_NODE_BY_ID.has('run_beast_legendary_hunt')).toBe(false)
+    expect(eligible.candidates.some((candidate) => candidate.node.id === 'run_beast_legendary_hunt')).toBe(false)
+    expect(getRunTalentPresentationItems({
+      ...baseContext,
+      ownedBeastFamilyIds: ['ring-volley', 'raptor-dive'],
+      evolvedFamilyIds: ['ring-volley'],
+    })).toHaveLength(72)
   })
 
   it('enforces meta talent costs, prerequisites, campaign clears and difficulty gates', () => {
@@ -254,7 +378,7 @@ describe('in-run talent candidates', () => {
     equipmentTags: ['death', 'pierce'],
     campaignTags: [],
     currentLevel: 5,
-    selectedTalentIds: [],
+    selectedTalentIds: ['run_death_01'],
     rerollsUsed: 0,
     guaranteeState: getDefaultRunTalentGuaranteeState(),
     seed: 'talent-test',
@@ -282,5 +406,26 @@ describe('in-run talent candidates', () => {
     expect(rerolled.rerollBlockedReason).toBeUndefined()
     expect(rerolled.candidates.some((candidate) => candidate.node.id === 'run_common_01')).toBe(false)
     expect(rerolled.candidates.map((candidate) => candidate.node.id)).not.toEqual(first.candidates.map((candidate) => candidate.node.id))
+  })
+
+  it('anchors every new form candidate to a matching latest Lv4 core and locks its sibling after selection', () => {
+    expect(RUN_TALENT_FORM_DEFINITIONS).toHaveLength(32)
+    const formContext = {
+      ...context,
+      currentLevel: 17,
+      selectedTalentIds: ['run_death_09'],
+      evolvedCoreSkills: [
+        { familyId: 'pierce-arrow', evolutionId: 'wind-cut', tags: ['line-projectile'], completedAt: 4 },
+        { familyId: 'fan-burst', evolutionId: 'hawk-wing', tags: ['spread-projectile'], completedAt: 9 },
+        { familyId: 'raptor-dive', evolutionId: 'sky-raptor-king', tags: ['beast-command'], completedAt: 12 },
+        { familyId: 'arrow-rain', evolutionId: 'meteor-cluster', tags: ['area-field'], completedAt: 15 },
+      ],
+    }
+    const presentation = getRunTalentPresentationItems(formContext)
+    expect(presentation.find((item) => item.id === 'run_death_10')?.status).toBe('unavailable')
+    const blood = presentation.find((item) => item.id === 'run_blood_09')
+    expect(blood?.form?.anchor).toEqual({ familyId: 'fan-burst', evolutionId: 'hawk-wing', anchoredAt: 9 })
+    expect(blood?.form?.group).toBe(1)
+    expect(blood?.form?.values.projectileBonus).toBe(3)
   })
 })

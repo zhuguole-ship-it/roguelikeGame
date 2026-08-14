@@ -1,14 +1,33 @@
 import type { CSSProperties, ReactNode } from 'react'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
-import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, ARCHER_FIXED_PASSIVE, SKILL_BUILD_LABELS } from '../../game/archerSkills'
+import { ARCHER_FIXED_PASSIVE, SKILL_BUILD_LABELS } from '../../game/archerSkills'
+import { ARCHER_CORE_SKILLS, getActiveSkillRuntimePresentation, getRuntimeSkillDefinitionById } from '../../game/archerSkillEvolution'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
 import { EQUIPMENT_RARITY_COLORS, EQUIPMENT_RARITY_LABELS, EQUIPMENT_SET_LABELS, EQUIPMENT_SLOT_LABELS, getEquipmentSetCounts } from '../../game/equipment'
+import { getCampaignRewardPresentationSnapshot, getRunTalentPresentationSnapshot } from '../../game/engine'
 import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
-import { RUN_TALENT_NODE_BY_ID, type RunTalentNode, type TalentEffect } from '../../game/talents'
-import type { EquipmentBonus, EquipmentItem } from '../../game/types'
+import {
+  getRunTalentTrajectoryBranch,
+  getRunTalentTrajectoryConfig,
+  getRunTalentTrajectorySkillState,
+  RUN_TALENT_NODE_BY_ID,
+  type RunTalentNode,
+  type RunTalentPresentationItem,
+  type TalentEffect,
+} from '../../game/talents'
+import type { ActiveSkillInstance, CampaignActiveRewardPresentation, CampaignRewardPresentationSnapshot, EquipmentBonus, EquipmentItem, RunTalentTrajectoryBranch } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
 import { CombatDamageLog } from './CombatDamageLog'
+import { RunTalentFormDetails, RunTalentFormPlaceholder } from './RunTalentFormPresentation'
+import { CAMPAIGN_REWARD_SOURCE_LABEL, CampaignRewardSnapshotSummary, getCampaignRewardSourceDetail } from './CampaignRewardPresentation'
+import {
+  COMBAT_UI_LAYER,
+  getCombatUiLayerAccessibilityProps,
+  getCombatUiLayerStyle,
+  useCombatUiLayerInitialFocus,
+  useCombatUiLayerState,
+} from './combatUiLayers'
 
 const Panel = ({ title, children }: { title: string; children: ReactNode }) => {
   return (
@@ -18,22 +37,6 @@ const Panel = ({ title, children }: { title: string; children: ReactNode }) => {
     </section>
   )
 }
-
-const StatPill = ({ label, value }: { label: string; value: string }) => {
-  return (
-    <div className="border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 md:px-5 md:py-4">
-      <p className="font-pixel text-[9px] uppercase tracking-[0.14em] text-[#9dd5ac] md:text-[10px]">{label}</p>
-      <p className="mt-2 font-pixel text-[11px] uppercase tracking-[0.1em] text-[#f4f0d7] md:text-sm">{value}</p>
-    </div>
-  )
-}
-
-const rewardModeLabel = {
-  'new-active': '新技能',
-  'upgrade-active': '升级',
-  'upgrade-passive': '被动',
-  'in-run-talent': '局内天赋',
-} as const
 
 const rewardBrief = {
   'new-active': '加入技能槽',
@@ -45,6 +48,7 @@ const rewardBrief = {
 const REWARD_CARD_TEXT_SIZE_CLASS = 'text-[1.25rem]'
 const REWARD_CARD_TEXT_SIZE_STYLE = { fontSize: '1.25rem' } satisfies CSSProperties
 const SKILL_REWARD_CARD_HEIGHT_CLASS = 'min-h-[18rem] md:min-h-[22rem] xl:min-h-[28rem]'
+const REWARD_CHOICE_ICON_SHELL_CLASS = 'relative z-10 -mt-[72px] mb-3 mx-auto h-24 w-24 shrink-0 overflow-hidden border-2 border-[rgba(244,240,215,0.3)] bg-[#08100b]'
 const rewardCardTextProps = {
   'data-reward-card-text': 'true',
   style: REWARD_CARD_TEXT_SIZE_STYLE,
@@ -159,27 +163,48 @@ const getRewardChoiceGridClass = (choiceCount: number) => {
 
 const getRewardChoiceShellClass = (choiceCount: number) => {
   if (choiceCount >= 5) {
-    return 'md:max-w-[720px] xl:max-w-[1180px]'
+    return 'md:max-w-[920px] xl:max-w-[1560px]'
   }
   if (choiceCount === 4) {
-    return 'md:max-w-[720px] xl:max-w-[960px]'
+    return 'md:max-w-[920px] xl:max-w-[1500px]'
   }
   if (choiceCount === 3) {
-    return 'md:max-w-[720px] xl:max-w-[1080px]'
+    return 'md:max-w-[920px] xl:max-w-[1320px]'
   }
   if (choiceCount === 2) {
-    return 'md:max-w-[720px]'
+    return 'md:max-w-[840px] xl:max-w-[1040px]'
   }
-  return ''
+  return 'md:max-w-[720px] xl:max-w-[760px]'
 }
 
-const getAffectedSkillNames = (buildTag: keyof typeof SKILL_BUILD_LABELS | 'general') => {
-  if (buildTag === 'general') {
-    return []
-  }
-  return ARCHER_ACTIVE_SKILLS
+type AffectedSkillPresentation = ReturnType<typeof getActiveSkillRuntimePresentation>
+
+const getRuntimeAffectedSkillPresentation = (skill: Pick<ActiveSkillInstance, 'skillId' | 'familyId' | 'evolutionId' | 'level'>) => (
+  getActiveSkillRuntimePresentation(skill)
+)
+
+const getAffectedSkillPresentations = (
+  activeSkills: readonly ActiveSkillInstance[],
+  buildTag: keyof typeof SKILL_BUILD_LABELS | 'general',
+  applicableSkillIds?: readonly string[],
+) => {
+  if (buildTag === 'general' && !applicableSkillIds?.length) return []
+
+  const activeByFamilyId = new Map(activeSkills.map((skill) => {
+    const presentation = getRuntimeAffectedSkillPresentation(skill)
+    return [presentation.familyId, presentation] as const
+  }))
+  const configuredSkillIds = applicableSkillIds ?? ARCHER_CORE_SKILLS
     .filter((skill) => skill.buildTag === buildTag)
-    .map((skill) => skill.name)
+    .map((skill) => skill.id)
+  const seenFamilyIds = new Set<string>()
+
+  return configuredSkillIds.flatMap((skillId) => {
+    const configuredPresentation = getRuntimeAffectedSkillPresentation({ skillId, level: 1 })
+    if (seenFamilyIds.has(configuredPresentation.familyId)) return []
+    seenFamilyIds.add(configuredPresentation.familyId)
+    return [activeByFamilyId.get(configuredPresentation.familyId) ?? configuredPresentation]
+  })
 }
 
 const formatRunTalentRewardTitle = (title: string) => title.replace(/^Lv\d+\s*/i, '')
@@ -310,10 +335,10 @@ const formatTalentEffectBrief = (effect: TalentEffect) => {
 
 const AffectedSkillsTooltip = ({
   choiceId,
-  skillNames,
+  skills,
 }: {
   choiceId: string
-  skillNames: string[]
+  skills: AffectedSkillPresentation[]
 }) => {
   const anchorRef = useRef<HTMLSpanElement>(null)
   const tooltipRef = useRef<HTMLSpanElement>(null)
@@ -394,32 +419,83 @@ const AffectedSkillsTooltip = ({
       >
         <span className="block font-pixel text-[8px] uppercase tracking-[0.14em] text-amber-300">影响技能</span>
         <span className="mt-2 flex flex-wrap gap-x-2 gap-y-1">
-          {skillNames.map((skillName, index) => (
-            <span key={skillName} className="inline-flex whitespace-nowrap">
-              {skillName}
-              {index < skillNames.length - 1 ? <span className="ml-2 text-[#6f7f73]">/</span> : null}
-            </span>
-          ))}
+          {skills.map((skill, index) => {
+            const iconUrl = getArcherSkillIconAssetUrl(skill.displayId) ?? getArcherSkillIconAssetUrl(skill.behaviorSkillId)
+            return (
+              <span key={skill.displayId} className="inline-flex items-center whitespace-nowrap" data-runtime-display-id={skill.displayId}>
+                <span className="mr-1 inline-grid h-4 w-4 shrink-0 overflow-hidden border border-[#6f7f73] bg-[#0c1510] [image-rendering:pixelated]">
+                  {iconUrl ? (
+                    <img
+                      src={iconUrl}
+                      alt=""
+                      className="block h-full w-full object-cover [image-rendering:pixelated]"
+                      data-testid={`affected-skill-icon-${choiceId}-${skill.displayId}`}
+                    />
+                  ) : (
+                    <span aria-hidden="true" className="grid h-full w-full place-items-center px-px text-center font-pixel text-[5px] leading-none text-amber-200">
+                      {skill.name}
+                    </span>
+                  )}
+                </span>
+                {skill.name}
+                {index < skills.length - 1 ? <span className="ml-2 text-[#6f7f73]">/</span> : null}
+              </span>
+            )
+          })}
         </span>
       </span>
     </span>
   )
 }
 
-const getSelectedRunTalentNodes = (
-  runTalentState: ReturnType<typeof useGameStore.getState>['runTalentState'],
-  legacyTalentIds: readonly string[],
-) => {
-  const ids = [...new Set([...(runTalentState.selectedTalentIds ?? []), ...legacyTalentIds])]
-  return ids
-    .map((id) => RUN_TALENT_NODE_BY_ID.get(id))
-    .filter((node): node is RunTalentNode => Boolean(node))
+const getRunTalentPresentationModule = (id: string): RunTalentNode['module'] => {
+  const module = id.split('_')[1]
+  return ['common', 'death', 'blood', 'beast', 'crystal'].includes(module)
+    ? module as RunTalentNode['module']
+    : 'common'
 }
 
-const RunTalentPreviewIcon = ({ node }: { node: RunTalentNode }) => {
+const runTalentPresentationStatusLabels: Record<RunTalentPresentationItem['status'], string> = {
+  selected: '本局已选',
+  candidate: '当前候选',
+  eligible: '满足前置（当前可用）',
+  unavailable: '前置未满足（当前不可用）',
+}
+
+const RunTalentPreviewIcon = ({
+  item,
+  selectedTalentIds,
+  trajectoryBranches,
+}: {
+  item: RunTalentPresentationItem
+  selectedTalentIds: string[]
+  trajectoryBranches: Partial<Record<string, RunTalentTrajectoryBranch>> | undefined
+}) => {
   const anchorRef = useRef<HTMLSpanElement>(null)
   const [tooltipPlacement, setTooltipPlacement] = useState<RunTalentTooltipPlacement | null>(null)
-  const iconUrl = getRunTalentIconAssetUrl(node)
+  const node = RUN_TALENT_NODE_BY_ID.get(item.id)
+  const module = node?.module ?? getRunTalentPresentationModule(item.id)
+  const iconUrl = item.form ? undefined : getRunTalentIconAssetUrl({ module, name: item.name })
+  const trajectoryConfig = getRunTalentTrajectoryConfig(item.id)
+  const trajectoryBranch = getRunTalentTrajectoryBranch(item.id, trajectoryBranches)
+  const trajectoryDetails = trajectoryConfig?.applicability === 'applicable'
+    ? trajectoryConfig.applicableSkillIds.map((skillId) => {
+      const skill = getRuntimeSkillDefinitionById(skillId)
+      const state = getRunTalentTrajectorySkillState(
+        selectedTalentIds,
+        trajectoryBranches,
+        skillId,
+        skill?.levels[0]?.projectileCount ?? 1,
+      )
+      if (trajectoryConfig.kind === 'blood-fan') {
+        if (state.deathTrajectoryTakeover) {
+          return `${skill?.name ?? skillId}：死契直线已接管该技能轨迹；本天赋的非弹道效果仍有效。`
+        }
+        return `${skill?.name ?? skillId}：${trajectoryBranch === 'focused' ? '束羽集火' : '宽扇覆盖'}。`
+      }
+      return `${skill?.name ?? skillId}：死契直线优先。`
+    })
+    : []
 
   const showTooltip = useCallback(() => {
     const rect = anchorRef.current?.getBoundingClientRect()
@@ -453,27 +529,34 @@ const RunTalentPreviewIcon = ({ node }: { node: RunTalentNode }) => {
   return (
     <span
       ref={anchorRef}
-      key={node.id}
+      key={item.id}
       tabIndex={0}
       role="img"
-      aria-label={node.name}
-      aria-describedby={`pause-run-talent-tooltip-${node.id}`}
+      aria-label={item.name}
+      aria-describedby={`pause-run-talent-tooltip-${item.id}`}
       title=""
-      className={`group/run-talent relative grid h-14 w-14 place-items-center overflow-hidden border-2 p-0 font-pixel text-lg shadow-[0_0_0_2px_rgba(8,16,11,0.86)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 ${runTalentIconClasses[node.module]}`}
-      data-testid={`pause-run-talent-icon-${node.id}`}
+      className={`group/run-talent relative grid h-14 w-14 place-items-center overflow-hidden border-2 p-0 font-pixel text-lg shadow-[0_0_0_2px_rgba(8,16,11,0.86)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 ${runTalentIconClasses[module]}`}
+      data-icon-id={item.iconId}
+      data-status={item.status}
+      data-unmet-prerequisite-ids={item.unmetPrerequisiteIds.join(' ')}
+      data-testid={`pause-run-talent-icon-${item.id}`}
       onMouseEnter={showTooltip}
       onFocus={showTooltip}
       onMouseLeave={() => setTooltipPlacement(null)}
       onBlur={() => setTooltipPlacement(null)}
     >
-      <img
-        src={iconUrl}
-        alt=""
-        className="block h-full w-full object-cover [image-rendering:pixelated]"
-        data-testid={`pause-run-talent-image-${node.id}`}
-      />
+      {item.form ? (
+        <RunTalentFormPlaceholder item={item} testId={`pause-run-talent-placeholder-${item.id}`} />
+      ) : (
+        <img
+          src={iconUrl}
+          alt=""
+          className="block h-full w-full object-cover [image-rendering:pixelated]"
+          data-testid={`pause-run-talent-image-${item.id}`}
+        />
+      )}
       <span
-        id={`pause-run-talent-tooltip-${node.id}`}
+        id={`pause-run-talent-tooltip-${item.id}`}
         role="tooltip"
         className={`pointer-events-none fixed z-[120] whitespace-normal break-words border-2 border-[#fbbf24] bg-[#08100b] p-4 text-left font-sans text-sm leading-relaxed text-[#dfe7d5] shadow-[0_14px_28px_rgba(0,0,0,0.48)] ${tooltipPlacement ? 'block' : 'hidden'}`}
         style={tooltipPlacement
@@ -486,13 +569,33 @@ const RunTalentPreviewIcon = ({ node }: { node: RunTalentNode }) => {
             transform: tooltipPlacement.verticalPlacement === 'above' ? 'translateY(-100%)' : undefined,
           }
           : undefined}
-        data-testid={`pause-run-talent-tooltip-${node.id}`}
+        data-testid={`pause-run-talent-tooltip-${item.id}`}
       >
-        <span className="block font-pixel text-[9px] uppercase tracking-[0.14em] text-amber-300">{node.name}</span>
-        <span className="mt-2 block text-[#9dd5ac]">{runTalentModuleLabels[node.module]} / {runTalentTierLabels[node.tier]}</span>
-        <span className="mt-2 block">{node.description}</span>
-        <span className="mt-2 block text-[#9dd5ac]">标签：{node.tags.map(formatRunTalentTag).join(' / ') || '无'}</span>
-        <span className="mt-1 block text-[#f4f0d7]">效果：{node.effects.map(formatTalentEffectBrief).join('；') || '无'}</span>
+        <span className="block font-pixel text-[9px] uppercase tracking-[0.14em] text-amber-300">{item.name}</span>
+        <span className="mt-2 block text-[#9dd5ac]">{runTalentModuleLabels[module]}{node ? ` / ${runTalentTierLabels[node.tier]}` : ''}</span>
+        <span className="mt-2 block">{item.description}</span>
+        <span className="mt-2 block text-[#9dd5ac]">状态：{runTalentPresentationStatusLabels[item.status]}</span>
+        <span className="mt-1 block text-[#f4f0d7]">未满足前置：{item.unmetPrerequisiteIds.length ? item.unmetPrerequisiteIds.join(' / ') : '无'}</span>
+        {item.runtime ? (
+          <span className="mt-1 block text-[#f4f0d7]">运行状态：野兽指令 {item.runtime.commandCount}/3 · 冷却 {item.runtime.cooldownRemaining} 秒</span>
+        ) : null}
+        {item.form ? <RunTalentFormDetails item={item} testIdPrefix={`pause-run-talent-tooltip-${item.id}`} /> : null}
+        {node ? (
+          <>
+            <span className="mt-2 block text-[#9dd5ac]">标签：{node.tags.map(formatRunTalentTag).join(' / ') || '无'}</span>
+            <span className="mt-1 block text-[#f4f0d7]">效果：{node.effects.map(formatTalentEffectBrief).join('；') || '无'}</span>
+          </>
+        ) : null}
+        {trajectoryConfig?.applicability === 'not-applicable' ? (
+          <span className="mt-2 block text-[#fbbf24]" data-testid={`pause-run-talent-trajectory-${item.id}`}>
+            弹道二选一：不适用。{trajectoryConfig.notApplicableReason}
+          </span>
+        ) : null}
+        {trajectoryDetails.length > 0 ? (
+          <span className="mt-2 block text-[#fbbf24]" data-testid={`pause-run-talent-trajectory-${item.id}`}>
+            弹道：{trajectoryDetails.join('；')}
+          </span>
+        ) : null}
       </span>
     </span>
   )
@@ -539,10 +642,16 @@ const getLootDiffs = (item: EquipmentItem, current?: EquipmentItem) => {
 
 const RewardChoices = ({
   choices,
+  campaignReward,
+  activeSkills,
+  presentationItems,
   onAccept,
 }: {
-  choices: NonNullable<ReturnType<typeof useGameStore.getState>['pendingSkillReward']>['choices']
-  onAccept: (choiceId: string) => void
+  choices: readonly CampaignActiveRewardPresentation['candidates'][number][]
+  campaignReward?: CampaignActiveRewardPresentation | null
+  activeSkills: readonly ActiveSkillInstance[]
+  presentationItems: readonly RunTalentPresentationItem[]
+  onAccept: (choiceId: string, trajectoryBranch?: RunTalentTrajectoryBranch) => void
 }) => {
   const gridClass = getRewardChoiceGridClass(choices.length)
 
@@ -553,27 +662,47 @@ const RewardChoices = ({
   )
 
   return (
-    <div data-testid="reward-choice-grid" className={`grid w-full gap-3 ${gridClass}`}>
+    <div
+      data-testid="reward-choice-grid"
+      data-campaign-reward-source={campaignReward?.source ?? ''}
+      data-campaign-reward-choice-ids={campaignReward?.candidateChoiceIds.join(' ') ?? ''}
+      data-campaign-reward-allowed-modes={campaignReward?.allowedModes.join(' ') ?? ''}
+      className={`grid w-full gap-3 ${gridClass}`}
+    >
       {choices.map((choice) => {
         const isRunTalent = choice.mode === 'in-run-talent'
         const runTalentNode = choice.talentId ? RUN_TALENT_NODE_BY_ID.get(choice.talentId) : undefined
-        const iconUrl = isRunTalent
+        const runTalentPresentationItem = choice.talentId
+          ? presentationItems.find((item) => item.id === choice.talentId)
+          : undefined
+        const isFormTalent = Boolean(runTalentPresentationItem?.form || choice.formAnchor)
+        const runTalentModuleLabel = runTalentNode
+          ? runTalentModuleLabels[runTalentNode.module]
+          : rewardBuildLabel[choice.buildTag]
+        const iconUrl = isRunTalent && !isFormTalent
           ? runTalentNode ? getRunTalentIconAssetUrl(runTalentNode) : undefined
           : getArcherSkillIconAssetUrl(choice.skillId)
-        const affectedSkillNames = isRunTalent ? getAffectedSkillNames(choice.buildTag) : []
         const visibleLevelText = choice.mode === 'new-active' && choice.levelText.includes('新技能') ? null : choice.levelText
         const talentSourceLabels = getTalentSourceLabels(choice.talentSourceIds)
+        const trajectoryConfig = runTalentNode ? getRunTalentTrajectoryConfig(runTalentNode.id) : undefined
+        const affectedSkills = isRunTalent
+          ? getAffectedSkillPresentations(
+            activeSkills,
+            choice.buildTag,
+            trajectoryConfig?.applicability === 'applicable' ? trajectoryConfig.applicableSkillIds : undefined,
+          )
+          : []
+        const supportsTrajectoryBranch = Boolean(trajectoryConfig?.supportsBranchSelection)
+        const rewardCardClass = `flex min-w-0 flex-col justify-start overflow-visible ${isRunTalent ? '' : SKILL_REWARD_CARD_HEIGHT_CLASS} border-2 border-[#08100b] bg-[#121b16] px-4 py-4 text-left shadow-[0_0_0_2px_rgba(157,213,172,0.08)] transition motion-reduce:transition-none hover:border-amber-300 hover:bg-[#2a1d12] focus-visible:border-amber-300 focus-visible:bg-[#2a1d12] focus-visible:outline-none active:bg-[#352313]`
 
-        return (
-          <button
-            key={choice.choiceId}
-            type="button"
-            className={`${isRunTalent ? 'min-w-0 overflow-hidden' : `flex min-w-0 flex-col overflow-visible ${SKILL_REWARD_CARD_HEIGHT_CLASS}`} border-2 border-[#08100b] bg-[#121b16] px-4 py-4 text-left shadow-[0_0_0_2px_rgba(157,213,172,0.08)] transition hover:border-amber-300 hover:bg-[#2a1d12] focus-visible:border-amber-300 focus-visible:bg-[#2a1d12] focus-visible:outline-none active:bg-[#352313]`}
-            data-testid={isRunTalent ? undefined : 'skill-reward-card'}
-            onClick={() => onAccept(choice.choiceId)}
-          >
-            {iconUrl ? (
-              <div className="mb-3 h-12 w-12 shrink-0 overflow-hidden border-2 border-[rgba(244,240,215,0.3)] bg-[#08100b]" data-testid={`reward-choice-icon-shell-${choice.choiceId}`}>
+        const choiceContent = (
+          <>
+            {isFormTalent && runTalentPresentationItem ? (
+              <div className={REWARD_CHOICE_ICON_SHELL_CLASS} data-testid={`reward-choice-icon-shell-${choice.choiceId}`}>
+                <RunTalentFormPlaceholder item={runTalentPresentationItem} testId={`reward-choice-placeholder-${choice.choiceId}`} />
+              </div>
+            ) : iconUrl ? (
+              <div className={REWARD_CHOICE_ICON_SHELL_CLASS} data-testid={`reward-choice-icon-shell-${choice.choiceId}`}>
                 <img
                   src={iconUrl}
                   alt=""
@@ -583,46 +712,51 @@ const RewardChoices = ({
               </div>
             ) : null}
             {isRunTalent ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className={`max-w-full whitespace-normal break-words border border-[rgba(251,191,36,0.35)] bg-[rgba(251,191,36,0.12)] px-2 py-1 font-pixel ${REWARD_CARD_TEXT_SIZE_CLASS} uppercase leading-snug tracking-[0.12em] text-amber-300`}
-                  {...rewardCardTextProps}
-                >
-                  {rewardModeLabel[choice.mode]}
-                </span>
-                <span
-                  className={`max-w-full whitespace-normal break-words border border-[rgba(157,213,172,0.2)] px-2 py-1 font-pixel ${REWARD_CARD_TEXT_SIZE_CLASS} uppercase leading-snug tracking-[0.12em] text-[#9dd5ac]`}
-                  {...rewardCardTextProps}
-                >
-                  {rewardBuildLabel[choice.buildTag]}
-                </span>
-              </div>
-            ) : null}
-            <p
-              className={`${isRunTalent ? 'mt-4' : ''} break-words font-pixel ${REWARD_CARD_TEXT_SIZE_CLASS} uppercase leading-snug tracking-[0.14em] text-[#f4f0d7]`}
-              {...rewardCardTextProps}
-            >
-              {isRunTalent ? formatRunTalentRewardTitle(choice.title) : choice.title}
-            </p>
-            {isRunTalent ? (
               <>
+                <span
+                  className={`max-w-full whitespace-normal break-words font-pixel ${REWARD_CARD_TEXT_SIZE_CLASS} uppercase leading-snug tracking-[0.12em] text-[#9dd5ac]`}
+                  data-testid={`run-talent-module-${choice.choiceId}`}
+                  {...rewardCardTextProps}
+                >
+                  {runTalentModuleLabel}
+                </span>
+                <p
+                  className="mt-4 break-words font-pixel text-[1.25rem] uppercase leading-snug tracking-[0.14em] text-[#f4f0d7]"
+                  {...rewardCardTextProps}
+                >
+                  {formatRunTalentRewardTitle(choice.title)}
+                </p>
                 <p
                   className={`mt-4 min-h-[4.5rem] break-words ${REWARD_CARD_TEXT_SIZE_CLASS} leading-relaxed text-[#dfe7d5]`}
                   {...rewardCardTextProps}
                 >
                   {formatRunTalentRewardDescription(choice.description || choice.tacticalText)}
                 </p>
-                {affectedSkillNames.length > 0 ? (
-                  <AffectedSkillsTooltip choiceId={choice.choiceId} skillNames={affectedSkillNames} />
+                {runTalentPresentationItem?.form ? (
+                  <RunTalentFormDetails
+                    item={runTalentPresentationItem}
+                    anchor={choice.formAnchor ?? runTalentPresentationItem.form.anchor}
+                    testIdPrefix={`reward-choice-${choice.choiceId}`}
+                    className="mt-3 space-y-1 break-words text-[#f4f0d7]"
+                  />
+                ) : null}
+                {affectedSkills.length > 0 ? (
+                  <AffectedSkillsTooltip choiceId={choice.choiceId} skills={affectedSkills} />
                 ) : null}
               </>
             ) : (
               <>
                 <p
-                  className={`mt-3 break-words ${REWARD_CARD_TEXT_SIZE_CLASS} leading-tight text-[#dfe7d5]`}
+                  className={`break-words ${REWARD_CARD_TEXT_SIZE_CLASS} leading-tight text-[#dfe7d5]`}
                   {...rewardCardTextProps}
                 >
                   {rewardBrief[choice.mode]}
+                </p>
+                <p
+                  className="mt-4 break-words font-pixel text-[1.25rem] uppercase leading-snug tracking-[0.14em] text-[#f4f0d7]"
+                  {...rewardCardTextProps}
+                >
+                  {choice.title}
                 </p>
                 <p
                   className={`mt-2 whitespace-normal break-words ${REWARD_CARD_TEXT_SIZE_CLASS} leading-relaxed text-[#dfe7d5]`}
@@ -661,6 +795,44 @@ const RewardChoices = ({
                 来源：{talentSourceLabels.join(' / ')}
               </p>
             ) : null}
+          </>
+        )
+
+        if (isRunTalent && supportsTrajectoryBranch) {
+          return (
+            <article key={choice.choiceId} className={rewardCardClass} data-testid={`run-talent-branch-card-${choice.choiceId}`}>
+              {choiceContent}
+              <div className="mt-4 grid gap-2 sm:grid-cols-2" data-testid={`run-talent-branch-actions-${choice.choiceId}`}>
+                <button
+                  type="button"
+                  className="min-w-0 whitespace-nowrap border-2 border-[#0f5132] bg-[#10261a] px-3 py-3 font-pixel text-[1rem] leading-snug text-[#b7f7ce] hover:border-[#86efac] focus-visible:border-[#86efac] focus-visible:outline-none"
+                  data-testid={`run-talent-branch-wide-${choice.choiceId}`}
+                  onClick={() => onAccept(choice.choiceId, 'wide')}
+                >
+                  宽扇覆盖
+                </button>
+                <button
+                  type="button"
+                  className="min-w-0 whitespace-nowrap border-2 border-[#7c2d12] bg-[#2b160f] px-3 py-3 font-pixel text-[1rem] leading-snug text-[#fed7aa] hover:border-[#fdba74] focus-visible:border-[#fdba74] focus-visible:outline-none"
+                  data-testid={`run-talent-branch-focused-${choice.choiceId}`}
+                  onClick={() => onAccept(choice.choiceId, 'focused')}
+                >
+                  束羽集火
+                </button>
+              </div>
+            </article>
+          )
+        }
+
+        return (
+          <button
+            key={choice.choiceId}
+            type="button"
+            className={rewardCardClass}
+            data-testid={isRunTalent ? `run-talent-reward-card-${choice.choiceId}` : 'skill-reward-card'}
+            onClick={() => onAccept(choice.choiceId)}
+          >
+            {choiceContent}
           </button>
         )
       })}
@@ -760,14 +932,32 @@ const LootReviewPanel = ({
   )
 }
 
-const RunTalentPreviewPanel = ({ nodes }: { nodes: RunTalentNode[] }) => {
+const RunTalentPreviewPanel = ({
+  items,
+  selectedTalentIds,
+  trajectoryBranches,
+  campaignRewardSnapshot,
+}: {
+  items: RunTalentPresentationItem[]
+  selectedTalentIds: string[]
+  trajectoryBranches: Partial<Record<string, RunTalentTrajectoryBranch>> | undefined
+  campaignRewardSnapshot: CampaignRewardPresentationSnapshot
+}) => {
   return (
     <Panel title="天赋（局内）预览">
-      {nodes.length === 0 ? (
-        <p className="text-lg leading-tight text-[#dfe7d5]">暂无已选择局内天赋。</p>
+      <CampaignRewardSnapshotSummary snapshot={campaignRewardSnapshot} testId="pause-campaign-reward-summary" compact />
+      {items.length === 0 ? (
+        <p className="mt-4 text-lg leading-tight text-[#dfe7d5]">暂无已选择局内天赋。</p>
       ) : (
-        <div className="flex flex-wrap gap-3" data-testid="pause-run-talent-preview">
-          {nodes.map((node) => <RunTalentPreviewIcon key={node.id} node={node} />)}
+        <div className="mt-4 flex flex-wrap gap-3" data-testid="pause-run-talent-preview">
+          {items.map((item) => (
+            <RunTalentPreviewIcon
+              key={item.id}
+              item={item}
+              selectedTalentIds={selectedTalentIds}
+              trajectoryBranches={trajectoryBranches}
+            />
+          ))}
         </div>
       )}
     </Panel>
@@ -779,6 +969,9 @@ const RewardScreen = ({
   lootItems,
   equippedItems,
   pendingSkillReward,
+  campaignRewardSnapshot,
+  activeSkills,
+  runTalentPresentationItems,
   onAccept,
   onDecline,
   onReroll,
@@ -792,7 +985,10 @@ const RewardScreen = ({
   lootItems: EquipmentItem[]
   equippedItems: ReturnType<typeof useGameStore.getState>['equippedItems']
   pendingSkillReward: ReturnType<typeof useGameStore.getState>['pendingSkillReward']
-  onAccept: (choiceId: string) => void
+  campaignRewardSnapshot: CampaignRewardPresentationSnapshot
+  activeSkills: readonly ActiveSkillInstance[]
+  runTalentPresentationItems: readonly RunTalentPresentationItem[]
+  onAccept: (choiceId: string, trajectoryBranch?: RunTalentTrajectoryBranch) => void
   onDecline: () => void
   onReroll: () => void
   rerollsRemaining: number
@@ -801,35 +997,77 @@ const RewardScreen = ({
   onDeferLoot: (itemId?: string) => void
   onContinue: () => void
 }) => {
+  const campaignReward = campaignRewardSnapshot.currentReward
   const showSkillOnly = pendingSkillReward !== null
   const showLoot = !showSkillOnly && lootItems.length > 0
-  const rewardShellClass = pendingSkillReward ? getRewardChoiceShellClass(pendingSkillReward.choices.length) : ''
+  // Campaign choices intentionally come only from the readonly A1 projection.
+  // The legacy fallback keeps non-campaign rewards mountable without assigning
+  // them a campaign source or inferring campaign semantics from pending cards.
+  const visibleChoices = campaignReward?.candidates ?? pendingSkillReward?.choices ?? []
+  const rewardShellClass = showSkillOnly ? getRewardChoiceShellClass(visibleChoices.length) : ''
+  const rewardOverlayRef = useRef<HTMLDivElement | null>(null)
+  const { highestLayer } = useCombatUiLayerState()
+  useCombatUiLayerInitialFocus(rewardOverlayRef, COMBAT_UI_LAYER.reward, highestLayer)
 
   if (showSkillOnly && pendingSkillReward) {
     return (
-      <div data-testid="reward-screen-overlay" className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(3,8,6,0.74)] p-4 md:p-6">
+      <div
+        ref={rewardOverlayRef}
+        {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.reward, highestLayer)}
+        data-testid="reward-screen-overlay"
+        className="absolute inset-0 overflow-x-hidden overflow-y-auto bg-[rgba(3,8,6,0.74)] px-2 sm:px-4 md:px-6"
+        style={getCombatUiLayerStyle(COMBAT_UI_LAYER.reward)}
+        role="dialog"
+        aria-modal="true"
+        aria-label="奖励选择"
+        tabIndex={-1}
+      >
         <div
-          data-testid="reward-choice-shell"
-          className={`pointer-events-auto flex max-h-[92vh] w-[calc(100vw-48px)] max-w-[360px] flex-col items-start justify-center gap-4 overflow-y-auto ${rewardShellClass}`}
+          data-testid="reward-choice-layout"
+          className="flex min-h-full w-full min-w-0 items-center justify-center py-2 sm:py-4 md:py-6"
         >
-          <RewardChoices choices={pendingSkillReward.choices} onAccept={onAccept} />
-          <div className="flex w-full flex-wrap justify-center gap-3">
-            <button
-              type="button"
-              className="border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 font-pixel text-[10px] uppercase tracking-[0.14em] text-[#9dd5ac] disabled:opacity-45"
-              onClick={onReroll}
-              disabled={rerollsRemaining <= 0}
-              data-testid="run-upgrade-reroll"
-            >
-              重掷 · {rerollsRemaining}
-            </button>
-            <button
-              type="button"
-              className="border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 font-pixel text-[10px] uppercase tracking-[0.14em] text-[#9dd5ac]"
-              onClick={onDecline}
-            >
-              放弃奖励
-            </button>
+          <div
+            data-testid="reward-choice-shell"
+            className={`pointer-events-auto flex w-full min-w-0 max-w-[360px] flex-col gap-4 ${rewardShellClass}`}
+          >
+            {campaignReward ? (
+              <div
+                className="border border-[#c89938] bg-[rgba(25,18,7,0.9)] px-3 py-2 text-sm text-[#f4f0d7]"
+                data-testid="campaign-reward-choice-contract"
+                data-source={campaignReward.source}
+                data-semantics={campaignReward.semantics}
+                data-choice-count={campaignReward.choiceCount}
+                data-candidate-family-ids={campaignReward.candidateFamilyIds.join(' ')}
+              >
+                <p className="font-pixel text-[#f4d47a]">{CAMPAIGN_REWARD_SOURCE_LABEL[campaignReward.source]}</p>
+                <p>{getCampaignRewardSourceDetail(campaignReward)} · {campaignReward.choiceCount} 项安全候选</p>
+              </div>
+            ) : null}
+            <RewardChoices
+              choices={visibleChoices}
+              campaignReward={campaignReward}
+              activeSkills={activeSkills}
+              presentationItems={runTalentPresentationItems}
+              onAccept={onAccept}
+            />
+            <div className="flex w-full flex-wrap justify-center gap-3">
+              <button
+                type="button"
+                className="border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 font-pixel text-[10px] uppercase tracking-[0.14em] text-[#9dd5ac] disabled:opacity-45"
+                onClick={onReroll}
+                disabled={rerollsRemaining <= 0}
+                data-testid="run-upgrade-reroll"
+              >
+                重掷 · {rerollsRemaining}
+              </button>
+              <button
+                type="button"
+                className="border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 font-pixel text-[10px] uppercase tracking-[0.14em] text-[#9dd5ac]"
+                onClick={onDecline}
+              >
+                放弃奖励
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -837,8 +1075,18 @@ const RewardScreen = ({
   }
 
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(3,8,6,0.74)] p-2 md:p-4">
-      <div className="pointer-events-auto pixel-panel max-h-[94vh] w-[min(95vw,1480px)] overflow-y-auto p-5 md:p-7">
+    <div
+      ref={rewardOverlayRef}
+      {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.reward, highestLayer)}
+      data-testid="reward-screen-overlay"
+      className="absolute inset-0 flex items-start justify-center overflow-x-hidden overflow-y-auto bg-[rgba(3,8,6,0.74)] p-2 md:p-4"
+      style={getCombatUiLayerStyle(COMBAT_UI_LAYER.reward)}
+      role="dialog"
+      aria-modal="true"
+      aria-label="奖励结算"
+      tabIndex={-1}
+    >
+      <div className="pointer-events-auto my-2 min-w-0 pixel-panel max-h-[calc(100vh-1rem)] w-[min(95vw,1480px)] overflow-y-auto p-5 md:p-7">
         {showLoot ? (
           <div className="mb-5">
             <LootReviewPanel
@@ -882,19 +1130,35 @@ export function GamePauseOverlay() {
   const hasForcedReward = state.pendingSkillReward !== null
   const skillSummary = [
     `${ARCHER_FIXED_PASSIVE.name} Lv.${state.fixedPassiveLevel}`,
-    ...state.activeSkills.map((skill) => `${ARCHER_ACTIVE_SKILL_MAP[skill.skillId].name} Lv.${skill.level}`),
+    ...state.activeSkills.map((skill) => {
+      const presentation = getActiveSkillRuntimePresentation(skill)
+      return `${presentation.name} Lv.${presentation.level}`
+    }),
   ].join(' / ')
   const equippedItems = Object.values(state.equippedItems).filter(Boolean) as EquipmentItem[]
   const equipmentSetCounts = getEquipmentSetCounts(state.equippedItems)
   const levelLootItems = (state.pendingBossLoot.length > 0 ? state.pendingBossLoot : state.equipmentInventory
     .filter((item) => item.isNew && item.acquiredLevel === state.level)
     .sort((a, b) => b.score - a.score))
-  const contractBuilds = Object.entries(state.contractBoons)
-    .filter(([, value]) => value > 0)
-    .map(([tag, value]) => `${tag === 'general' ? '通用' : SKILL_BUILD_LABELS[tag as keyof typeof SKILL_BUILD_LABELS]} +${value}`)
-  const selectedRunTalentNodes = getSelectedRunTalentNodes(state.runTalentState, state.inRunTalentIds)
+  const runTalentPresentationItems = getRunTalentPresentationSnapshot(state)
+  const campaignRewardSnapshot = getCampaignRewardPresentationSnapshot(state)
+  const selectedRunTalentPresentationItems = runTalentPresentationItems.filter((item) => item.status === 'selected')
+  const selectedRunTalentIds = selectedRunTalentPresentationItems.map((item) => item.id)
+  const pauseOverlayRef = useRef<HTMLDivElement | null>(null)
+  const { highestLayer } = useCombatUiLayerState()
+  useCombatUiLayerInitialFocus(pauseOverlayRef, COMBAT_UI_LAYER.pause, highestLayer)
+  const isLocalTestFailure = state.localBattleTest?.active === true && state.localBattleTest.status === 'failed'
+  // The authoritative level-22 campaign path switches to game-over after the
+  // final death animation. Keep the legacy Top3 loot processor unmountable
+  // for a completed first-campaign boss so it can never cover the Top2
+  // settlement should a transitional snapshot briefly be observed.
+  const isCompletedFirstCampaignBoss = state.level === 22 && state.bossDefeatedThisLevel === true
+  const shouldShowRewardScreen = !isLocalTestFailure
+    && state.phase !== 'game-over'
+    && !isCompletedFirstCampaignBoss
+    && (state.phase === 'level-clear' || (state.phase === 'paused' && state.pendingSkillReward !== null))
 
-  if (state.phase !== 'paused' && state.phase !== 'level-clear') {
+  if (state.phase !== 'paused' && !shouldShowRewardScreen) {
     return null
   }
 
@@ -905,6 +1169,9 @@ export function GamePauseOverlay() {
         lootItems={levelLootItems}
         equippedItems={state.equippedItems}
         pendingSkillReward={state.pendingSkillReward}
+        campaignRewardSnapshot={campaignRewardSnapshot}
+        activeSkills={state.activeSkills}
+        runTalentPresentationItems={runTalentPresentationItems}
         onAccept={acceptSkillReward}
         onDecline={declineSkillReward}
         onReroll={rerollPendingRunTalentReward}
@@ -927,6 +1194,9 @@ export function GamePauseOverlay() {
         lootItems={levelLootItems}
         equippedItems={state.equippedItems}
         pendingSkillReward={state.pendingSkillReward}
+        campaignRewardSnapshot={campaignRewardSnapshot}
+        activeSkills={state.activeSkills}
+        runTalentPresentationItems={runTalentPresentationItems}
         onAccept={acceptSkillReward}
         onDecline={declineSkillReward}
         onReroll={rerollPendingRunTalentReward}
@@ -947,8 +1217,18 @@ export function GamePauseOverlay() {
   }
 
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(3,8,6,0.74)] p-2 md:p-4">
-      <div className="pointer-events-auto pixel-panel max-h-[94vh] w-[min(97vw,1740px)] overflow-y-auto p-6 md:p-8">
+    <div
+      ref={pauseOverlayRef}
+      {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.pause, highestLayer)}
+      className="absolute inset-0 flex items-start justify-center overflow-x-hidden overflow-y-auto bg-[rgba(3,8,6,0.74)] p-2 md:p-4"
+      style={getCombatUiLayerStyle(COMBAT_UI_LAYER.pause)}
+      data-testid="pause-screen-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="游戏暂停"
+      tabIndex={-1}
+    >
+      <div className="pointer-events-auto my-2 min-w-0 pixel-panel max-h-[calc(100vh-1rem)] w-[min(97vw,1740px)] overflow-y-auto p-6 md:p-8">
         <div className="mb-5 flex items-center justify-between gap-4">
           <div>
             <p className="font-pixel text-[10px] uppercase tracking-[0.22em] text-[#9dd5ac] md:text-xs">
@@ -975,31 +1255,23 @@ export function GamePauseOverlay() {
           </div>
         </div>
 
-        <CombatDamageLog placement="pause" />
-
-        <div className="mb-5 flex flex-wrap items-stretch gap-3">
-          <StatPill label="层数" value={`第 ${state.level} 层`} />
-          <StatPill label="契约等级" value={`Lv.${state.contractLevel} (${Math.round(state.exp)}/${state.expToNext})`} />
-          <div className="min-w-[min(100%,32rem)] flex-1 border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 md:px-5 md:py-4">
+        <div
+          className="mb-5 grid min-w-0 grid-cols-1 gap-5 md:grid-cols-2"
+          data-testid="pause-information-row"
+        >
+          <div className="min-h-[152px] min-w-0" data-testid="pause-damage-log-region">
+            <CombatDamageLog placement="pause" />
+          </div>
+          <section className="min-w-0 border-2 border-[#08100b] bg-[#0d1711] px-4 py-3 md:px-5 md:py-4" data-testid="pause-skill-summary-panel">
             <p className="font-pixel text-[9px] uppercase tracking-[0.14em] text-[#9dd5ac] md:text-[10px]">技能</p>
             <p className="mt-2 truncate font-pixel text-[10px] uppercase tracking-[0.1em] text-[#f4f0d7] md:text-xs" data-testid="pause-skill-summary">
               {skillSummary || '暂无主动技能'}
             </p>
-          </div>
+          </section>
         </div>
 
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(460px,1.05fr)]">
-          <div className="space-y-5">
-            <Panel title="契约构筑">
-              <div className="border-2 border-[#08100b] bg-[#121b16] px-4 py-4">
-                <p className="font-pixel text-[9px] uppercase tracking-[0.14em] text-[#9dd5ac]">契约强化</p>
-                <p className="mt-3 text-xl leading-tight text-[#dfe7d5]">{contractBuilds.length > 0 ? contractBuilds.join(' / ') : '每 5 级按当前流派自动强化'}</p>
-              </div>
-            </Panel>
-          </div>
-
-          <div className="space-y-5">
-            <RunTalentPreviewPanel nodes={selectedRunTalentNodes} />
+        <div className="grid min-w-0 grid-cols-1 gap-5 md:grid-cols-2" data-testid="pause-detail-columns">
+          <div className="min-w-0 space-y-5">
             <Panel title="已装备">
               {equippedItems.length === 0 ? (
                 <p className="text-xl leading-tight text-[#dfe7d5]">暂无地下城装备，Boss 会保底掉落传承装备。</p>
@@ -1013,6 +1285,15 @@ export function GamePauseOverlay() {
                 </div>
               )}
             </Panel>
+          </div>
+
+          <div className="min-w-0 space-y-5">
+            <RunTalentPreviewPanel
+              items={selectedRunTalentPresentationItems}
+              selectedTalentIds={selectedRunTalentIds}
+              trajectoryBranches={state.runTalentState.trajectoryBranches}
+              campaignRewardSnapshot={campaignRewardSnapshot}
+            />
             <Panel title="套装效果">
               <p className="text-xl leading-tight text-[#dfe7d5]">
                 {Object.entries(equipmentSetCounts).length > 0

@@ -39,7 +39,7 @@ export type TalentBuildTag = 'death' | 'blood' | 'beast' | 'crystal'
 export type BeastKind = 'hawk' | 'wolf' | 'boar' | 'bear' | 'snake' | 'deer'
 export type CampaignDifficulty = 'normal' | 'hard' | 'hell' | 'nightmare'
 export type RewardChoiceMode = 'new-active' | 'upgrade-active' | 'upgrade-passive' | 'in-run-talent'
-export type RewardPoolKind = 'skill' | 'run-talent'
+export type RewardPoolKind = 'skill' | 'skill-evolution' | 'run-talent' | 'crystal-talent' | 'fixed-skill' | 'raid-skill'
 export type ObstacleKind = 'pillar' | 'crate' | 'wagon' | 'ruin'
 export type PickupKind = 'health-pack' | 'soul-crystal' | 'equipment'
 export type EquipmentSlot = 'weapon' | 'helmet' | 'chest' | 'shoulders' | 'wrists' | 'hands' | 'legs' | 'boots' | 'ring1' | 'ring2' | 'cloak' | 'necklace'
@@ -77,6 +77,12 @@ export type WeaponId =
   | 'moonshadow-arc-bow'
   | 'yang-birch-bow'
   | 'skybreaker-judgement-bow'
+
+import type {
+  RunSettlementDamageEntry as RunSettlementUiDamageEntry,
+  RunSettlementDisplayEntry as RunSettlementUiDisplayEntry,
+  RunSettlementSummary as RunSettlementUiSummary,
+} from './runSettlementSummary'
 
 export type Vector2 = {
   x: number
@@ -155,115 +161,106 @@ export type EquipmentBonus = WeaponBonus & {
   pierceProjectileBonus?: number
 }
 
-export type EquipmentSkillModifier =
+/** Family/evolution targets are the runtime authority. skillIds only decodes legacy items. */
+export type EquipmentSkillModifierTarget = {
+  familyIds?: string[]
+  evolutionIds?: string[]
+  /** @deprecated old item migration compatibility; new equipment must not write this. */
+  skillIds?: string[]
+}
+
+export type EquipmentSkillModifier = EquipmentSkillModifierTarget & (
   | {
       type: 'projectile-count'
       buildTag?: SkillBuildTag
-      skillIds?: string[]
       amount: number
     }
   | {
       type: 'ricochet-bounces'
-      skillIds?: string[]
       amount: number
     }
   | {
       type: 'pierce-echo'
-      skillIds?: string[]
       everyHits: number
       damageMultiplier: number
       radius: number
     }
   | {
       type: 'elite-parallel-line'
-      skillIds?: string[]
       damageMultiplier: number
     }
   | {
       type: 'double-line'
-      skillIds?: string[]
       cooldownMultiplier: number
     }
   | {
       type: 'spread-slow'
       buildTag?: SkillBuildTag
-      skillIds?: string[]
       slowFactor: number
       duration: number
     }
   | {
       type: 'spread-speed'
       buildTag?: SkillBuildTag
-      skillIds?: string[]
       multiplier: number
     }
   | {
       type: 'spread-angle'
       buildTag?: SkillBuildTag
-      skillIds?: string[]
       multiplier: number
     }
   | {
       type: 'spread-double-next'
       buildTag?: SkillBuildTag
-      skillIds?: string[]
       everyCasts: number
     }
   | {
       type: 'field-duration'
-      skillIds?: string[]
       buildTag?: SkillBuildTag
       multiplier: number
     }
   | {
       type: 'field-end-burst'
-      skillIds?: string[]
       buildTag?: SkillBuildTag
       damageMultiplier: number
       radiusMultiplier: number
     }
   | {
       type: 'beast-shield'
-      skillIds?: string[]
       shieldAmount: number
       duration: number
     }
   | {
       type: 'beast-taunt'
-      skillIds?: string[]
       radius: number
       duration: number
     }
   | {
       type: 'beast-extra-summon'
-      skillIds?: string[]
       triggerSlot: number
       duration: number
     }
   | {
       type: 'beast-duration'
-      skillIds?: string[]
       multiplier: number
     }
   | {
       type: 'beast-on-hit-haste'
-      skillIds?: string[]
       duration: number
       attackIntervalMultiplier: number
     }
   | {
       type: 'beast-dual-bond'
-      skillIds?: string[]
       damageMultiplier: number
       durationMultiplier: number
     }
   | {
       type: 'beast-death-trigger'
-      skillIds?: string[]
       shieldAmount: number
       burstDamage: number
       burstRadius: number
     }
+)
 
 export type EquipmentItem = {
   id: string
@@ -304,6 +301,12 @@ export type WeaponDefinition = {
 
 export type ActiveSkillInstance = {
   skillId: string
+  /** Stable 21-skill runtime family. skillId mirrors this after migration. */
+  familyId?: string
+  /** The Lv.4 mutually exclusive branch selected for this family in this run. */
+  evolutionId?: string
+  /** Runtime order for form-talent auto-anchoring; absent legacy values sort before current evolutions. */
+  evolutionCompletedAt?: number
   level: number
   cooldownRemaining: number
   /** Actual total duration written by the most recent successful cast. */
@@ -325,13 +328,31 @@ export type SkillRewardChoice = {
   tacticalText: string
   talentId?: string
   talentSourceIds?: string[]
+  familyId?: string
+  evolutionId?: string
+  /** Captured when a form talent enters the reward pool; selection must not retarget it. */
+  formAnchor?: { familyId: string; evolutionId: string; anchoredAt: number }
 }
 
 export type PendingSkillReward = {
   poolKind: RewardPoolKind
   choices: SkillRewardChoice[]
   replacementSkillId?: string
-  source?: 'level-clear' | 'elite'
+  source?: 'level-clear' | 'elite' | 'crystal-talent' | 'fixed-skill' | 'elite-raid'
+  /** Core-owned UI contract for the 2026-08-14 campaign cadence. */
+  campaignRewardNodeId?: string
+  campaignRewardSemantics?: 'talent-choice' | 'five-choice-skill'
+  campaignRewardCategory?: 'universal' | 'specialized'
+  /** A Lv.4 branch selection cannot be declined or replaced by a normal reward. */
+  mandatoryEvolutionFamilyId?: string
+  /** Fixed candidate bookkeeping for a real in-run-talent reward. */
+  runTalentOffer?: {
+    guarantee: {
+      noMainBuildStreak: number
+      mainBuildOffersLv3To4: number
+      lv5GuaranteeConsumed: boolean
+    }
+  }
 }
 
 export type Player = {
@@ -348,10 +369,45 @@ export type Player = {
   hurtCooldown: number
   /** Runtime-only damage shield. Only damage that reaches hp enters the combat log. */
   shield?: number
+  /** Core-owned dash resource. HUD consumers read this value directly. */
+  stamina: number
   stunTimer?: number
   dashCooldown: number
   dashTimer: number
   dashDirection: Vector2
+  /**
+   * Core-owned presentation state for the imported archer actions. Rendering
+   * consumes these values directly and never infers an action from inputs or
+   * projectile presence.
+   */
+  archerAction?: {
+    kind: 'attack' | 'skill'
+    elapsed: number
+    duration: number
+    aimDirection: Vector2
+    isMoving: boolean
+  }
+  archerHurt?: {
+    elapsed: number
+    duration: number
+  }
+  archerDeath?: {
+    elapsed: number
+    duration: number
+  }
+  /** Last legal non-zero world movement, retained while idle to avoid flip jitter. */
+  archerMovementDirection?: Vector2
+  /** Runtime-only jailer bind. Render consumes this same timer and foot anchor. */
+  jailerChiefBind?: {
+    remaining: number
+    anchor: Vector2
+    sourceEnemyId: string
+    /** Keeps the chain visible through the final effective three-second update. */
+    releasePending?: boolean
+  }
+  /** Runtime-only movement slow from the chain wraith pull. */
+  chainWraithSlowTimer?: number
+  chainWraithSlowFactor?: number
   facing: Facing
   animationState?: 'idle' | 'move'
 }
@@ -360,6 +416,8 @@ export type Enemy = {
   id: string
   kind: EnemyKind
   grantsEliteReward: boolean
+  /** An independent 25% campaign raid. It never consumes the fixed elite lane. */
+  campaignRewardSource?: 'elite-raid'
   position: Vector2
   hp: number
   maxHp: number
@@ -448,6 +506,7 @@ export type Enemy = {
   affixCooldown?: number
   bossSkillIndex?: number
   bossLastSkillId?: string
+  pendingGuardSummons?: number
   bossPhase?: 1 | 2 | 3
   bossTransitionTimer?: number
   bossPendingPhase?: 2 | 3
@@ -459,6 +518,69 @@ export type Enemy = {
   wardenActionSlot?: 'skill_1' | 'skill_2' | 'skill_3' | 'skill_4'
   wardenActionTimer?: number
   wardenLastAttackCrit?: boolean
+  jailerChiefPhase?: 'waiting' | 'casting' | 'pursuing' | 'retreating'
+  jailerChiefCastTimer?: number
+  jailerChiefCastTarget?: Vector2
+  jailerChiefCooldown?: number
+  /** Runtime-only waiting-ring projectile dodge state for B1's Run/Idle selector. */
+  jailerChiefDodgeActive?: boolean
+  jailerChiefDodgeCooldown?: number
+  jailerChiefDodgeDirection?: -1 | 1
+  jailerChiefDodgeTargetY?: number
+  chainCaptainSlash?: {
+    strikesRemaining: number
+    nextStrikeIn: number
+  }
+  /**
+   * Core-owned visual window for the first or second chain-slash segment.
+   * Rendering may select Move+Attack from this state, but combat damage keeps
+   * using chainCaptainSlash.nextStrikeIn.
+   */
+  chainCaptainSlashWindow?: {
+    strikeIndex: 1 | 2
+    remaining: number
+  }
+  /** Purely visual Move+Attack lifetime; never participates in slash damage timing. */
+  chainCaptainSlashVisualTimer?: number
+  chainCaptainSlashCooldown?: number
+  chainCaptainCommandTimer?: number
+  chainCaptainCommandCooldown?: number
+  chainWraithPullPhase?: 'warning' | 'pull'
+  chainWraithPullTimer?: number
+  chainWraithPullWarningTarget?: Vector2
+  chainWraithPullCooldown?: number
+}
+
+/**
+ * A one-generation splitting-ooze child that has earned a spawn slot but is
+ * waiting for a collision-safe position near its parent's final location.
+ */
+export type PendingSplitterChildSpawn = {
+  id: string
+  origin: Vector2
+  hp: number
+  speed: number
+  size: number
+  parentSize: number
+  campaignIndex?: number
+  retryTimer: number
+  searchStep: number
+}
+
+/**
+ * An elite split child that has earned a spawn slot but is waiting for a
+ * collision-safe position near the elite's final location.
+ */
+export type PendingEliteSplitChildSpawn = {
+  id: string
+  origin: Vector2
+  kind: EnemyKind
+  hp: number
+  size: number
+  campaignIndex?: number
+  difficulty: CampaignDifficulty
+  retryTimer: number
+  searchStep: number
 }
 
 export type RunRecord = {
@@ -513,6 +635,11 @@ export type TalentPointLedgerEntry = TalentPointRecord | TalentResetLedgerEntry
 export type RunTalentState = {
   selectedBuild: TalentBuildTag
   selectedTalentIds: string[]
+  /**
+   * Per-run UI selection for trajectory-capable original talents.  Older
+   * saves omit this field; consumers resolve an omitted branch as `wide`.
+   */
+  trajectoryBranches?: Partial<Record<string, RunTalentTrajectoryBranch>>
   rerollsRemaining: number
   rerollsUsed: number
   guarantee: {
@@ -521,7 +648,29 @@ export type RunTalentState = {
     lv5GuaranteeConsumed: boolean
   }
   lastOfferedCandidateIds: string[]
+  /** Counts actual newly generated run-talent offers; rerolls do not consume it. */
+  offerCount?: number
+  /** Retired legacy payload. Runtime normalization drops it before gameplay or presentation. */
+  legendaryBeastHunt?: {
+    commandCount: number
+    cooldownRemaining: number
+  }
+  /** Runtime-only bindings for the 2026-08-14 core-skill form talents. */
+  formAnchors?: Partial<Record<string, {
+    familyId: string
+    evolutionId: string
+    anchoredAt: number
+  }>>
+  /** Manual, three-distinct-core form loop. It is deliberately independent from cooldown echo. */
+  formCycle?: {
+    casts: Array<{ familyId: string; evolutionId: string; at: number }>
+    chargedUntil?: number
+  }
+  /** Form-area cooldowns begin only when the actual area is created. */
+  formCooldowns?: Partial<Record<string, number>>
 }
+
+export type RunTalentTrajectoryBranch = 'wide' | 'focused'
 
 /**
  * A finalized life-loss event for the combat HUD.  The engine owns these
@@ -532,6 +681,8 @@ export type CombatDamageLogEvent = {
   id: string
   occurredAt: number
   side: 'player' | 'enemy'
+  /** Resolved by combat damage calculation; presentation must never infer it. */
+  isCritical?: boolean
   attackerId: string
   attackerName: string
   sourceId: string
@@ -540,6 +691,26 @@ export type CombatDamageLogEvent = {
   targetName: string
   damage: number
   mergeKey: string
+}
+
+/** A UI-ready item that was actually owned by the player during this run. */
+export type RunSettlementDisplayEntry = RunSettlementUiDisplayEntry & {
+  order: number
+  level?: number
+}
+
+/** Damage accumulated from real life loss, independent of the capped combat HUD log. */
+export type RunSettlementDamageStat = RunSettlementUiDamageEntry
+
+/**
+ * Frozen once for a formal run outcome. This is the single UI contract for
+ * the success/failure settlement page and is never created for local tests.
+ */
+export type RunSettlementSummary = Omit<RunSettlementUiSummary, 'displayEntries' | 'damageEntries'> & {
+  carriedEquipmentCount: number
+  talentPointsEarned: number
+  displayEntries: readonly RunSettlementDisplayEntry[]
+  damageEntries: readonly RunSettlementDamageStat[]
 }
 
 export type TalentCombatState = {
@@ -593,6 +764,14 @@ export type Projectile = {
   effect: SkillEffectTag
   effectStrength: number
   sourceSkillId: string
+  /** Canonical 21-skill family and optional Lv.4 branch captured at cast time. */
+  sourceSkillFamilyId?: string
+  sourceEvolutionId?: string
+  /**
+   * Provenance set only for arrows released directly by the player archer.
+   * Player-owned fields, beasts, and other summons deliberately omit it.
+   */
+  playerDirectArrow?: boolean
   attackerId?: string
   attackerName?: string
   sourceName?: string
@@ -642,6 +821,32 @@ export type Projectile = {
   talentOverloadTempo?: boolean
   talentPierceJudgmentReady?: boolean
   talentCooldownEcho?: boolean
+  /**
+   * A projectile created from a real cast but not yet released at its archer
+   * animation's confirmed bow-string frame. It is neither rendered nor
+   * simulated until this reaches zero.
+   */
+  releaseDelayRemaining?: number
+  /**
+   * Captured when the player starts a direct bow release. The engine consumes
+   * it exactly once at the release frame to resolve the shared bow-mouth
+   * origin, then clears it so later split/return stages keep their own origin.
+   */
+  playerArcherReleaseAction?: 'attack' | 'move-attack' | 'skill'
+  playerArcherReleaseAimDirection?: Vector2
+  /** Form effects captured from a single manual core cast; never inferred later. */
+  formTalentIds?: string[]
+  formBaseDamage?: number
+  formDirection?: Vector2
+  formFirstHitResolved?: boolean
+  formImpactResolved?: boolean
+  formAreaTalentIds?: string[]
+}
+
+/** A primary skill arrow that has been created from a cast snapshot but is not due to render or move yet. */
+export type PendingProjectileLaunch = {
+  projectile: Projectile
+  delayRemaining: number
 }
 
 export type SkillField = {
@@ -661,6 +866,9 @@ export type SkillField = {
   spread: number
   projectileSpeed: number
   sourceSkillId: string
+  /** Canonical 21-skill family and optional Lv.4 branch captured at cast time. */
+  sourceSkillFamilyId?: string
+  sourceEvolutionId?: string
   sourceEnemyId?: string
   sourceEnemyName?: string
   sourceName?: string
@@ -676,6 +884,13 @@ export type SkillField = {
   talentCrystalOverload?: boolean
   talentOverloadTempo?: boolean
   talentCooldownEcho?: boolean
+  /** Core form area metadata. It permits the max-two lifecycle without touching normal fields. */
+  formTalentId?: string
+  formBaseDamage?: number
+  formCreatedAt?: number
+  formTargetHitCounts?: Record<string, number>
+  formIsArea?: boolean
+  formTalentIds?: string[]
 }
 
 export type BeastCompanion = {
@@ -701,6 +916,9 @@ export type BeastCompanion = {
   tauntRadius?: number
   durationTimer?: number
   isAlpha?: boolean
+  /** Presentation-only evolution contract. It never changes simulation size or ranges. */
+  evolutionId?: string
+  visualScale?: number
   shieldPulseCooldown?: number
   poisonStacks?: Record<string, number>
   lastAttackTargetId?: string
@@ -712,6 +930,30 @@ export type Burst = {
   ttl: number
   color: string
   radius: number
+}
+
+/** Read-only runtime signal for B2 evolution-specific procedural presentation. */
+export type SkillEvolutionEffectEvent = {
+  /** Stable event id. `id` remains for existing consumers during the transition. */
+  eventId: string
+  id: string
+  familyId: string
+  evolutionId: string
+  /** Legacy broad event kind retained for existing renderer consumers. */
+  kind: 'cast' | 'evolve' | 'hit'
+  /** The procedural visual layer is explicit; UI/rendering never infers it. */
+  layer: 'warning' | 'body' | 'hit' | 'evolve'
+  position: Vector2
+  origin: Vector2
+  direction?: Vector2
+  targetPosition?: Vector2
+  targetId?: string
+  hitCount?: number
+  radius?: number
+  length?: number
+  startedAt: number
+  duration: number
+  ttl: number
 }
 
 export type FloatingText = {
@@ -825,6 +1067,82 @@ export type Pickup = {
   expValue?: number
   equipment?: EquipmentItem
   magnetized?: boolean
+  /** Core-owned lifetime for crystal rewards. It is frozen while the game is paused. */
+  createdAt?: number
+  fadeStartsAt?: number
+}
+
+export type CampaignRewardSource = 'crystal-talent' | 'fixed-skill' | 'elite-raid'
+
+/**
+ * The single runtime contract for campaign reward cadence. UI reads this
+ * directly; it never infers quotas or source counts from pending cards.
+ */
+export type CampaignRewardProgress = {
+  crystalTalentQuota: number
+  universalTalentQuota: number
+  crystalRewardTotal: number
+  crystalExperienceTargetLevel: number
+  crystalExperienceBudget: number
+  replacementRewardQuota: number
+  crystalExperienceCollected: number
+  crystalTalentAwardsGranted: number
+  universalTalentAwardsGranted: number
+  crystalNextAwardAt: number
+  fixedSkillNodesClaimed: string[]
+  /** Floors whose independent 25% raid roll has been resolved for this run. */
+  eliteRaidRollResolvedLevels: number[]
+  /** Successful raid rolls awaiting a legal spawn point. */
+  eliteRaidPendingLevels: number[]
+  eliteRaidLevels: number[]
+  eliteRaidSkillAwardsGranted: number
+  replacementRewardsUsed: number
+}
+
+/** UI-safe projection of the only active campaign reward, without exposing reward internals. */
+export type CampaignActiveRewardPresentation = {
+  source: 'crystal-talent' | 'fixed-skill-node' | 'elite-raid-skill'
+  nodeId?: string
+  semantics: 'talent-choice' | 'five-choice-skill'
+  category?: 'universal' | 'specialized'
+  choiceCount: number
+  candidateChoiceIds: readonly string[]
+  allowedModes: readonly RewardChoiceMode[]
+  candidateFamilyIds: readonly string[]
+  candidates: readonly Pick<SkillRewardChoice, 'choiceId' | 'mode' | 'skillId' | 'title' | 'description' | 'buildTag' | 'tacticalTags' | 'levelText' | 'tacticalText' | 'talentId' | 'talentSourceIds' | 'familyId' | 'evolutionId' | 'formAnchor'>[]
+  raidLevel?: number
+}
+
+export type CampaignRewardPresentationSnapshot = {
+  crystal: {
+    talentQuota: number
+    universalQuota: number
+    rewardTotal: number
+    experienceTargetLevel: number
+    experienceBudget: number
+    experienceCollected: number
+    talentAwardsGranted: number
+    universalAwardsGranted: number
+    nextAwardAt: number
+    remainingTalentAwards: number
+  }
+  fixedSkill: {
+    total: number
+    claimedNodeIds: readonly string[]
+    claimed: number
+    remaining: number
+    replacementRewardsUsed: number
+    replacementRewardQuota: number
+  }
+  eliteRaid: {
+    chance: number
+    resolvedLevelNumbers: readonly number[]
+    pendingLevelNumbers: readonly number[]
+    levelNumbers: readonly number[]
+    count: number
+    skillAwardsGranted: number
+  }
+  currentReward: CampaignActiveRewardPresentation | null
 }
 
 export type EnemySkillEffect = {
@@ -842,6 +1160,8 @@ export type EnemySkillEffect = {
     | 'dungeon-warden-crit'
     | 'ooze-split'
     | 'fire-sac-explosion'
+    | 'jailer-chief-warning'
+    | 'chain-captain-command'
   position: Vector2
   direction?: Vector2
   targetPosition?: Vector2
@@ -853,6 +1173,23 @@ export type EnemySkillEffect = {
   range?: number
   halfAngle?: number
   sourceEnemySize?: number
+}
+
+/**
+ * The only renderer-facing source for the chain wraith's warning and pull.
+ * It is driven by the combat state machine, never inferred from cooldown or
+ * positions by the visual layer.
+ */
+export type ChainWraithPullVisualState = {
+  casterId: string
+  targetId: 'player'
+  phase: 'warning' | 'pull'
+  remaining: number
+  warningTarget: Vector2
+  /** Fixed at a confirmed pull hit; rendering only observes this core state. */
+  pullStart?: Vector2
+  /** Fixed legal destination for the active 0.24s pull, never inferred by rendering. */
+  pullTarget?: Vector2
 }
 
 export type InputState = {
@@ -951,6 +1288,8 @@ export type GameSnapshot = {
   exp: number
   expToNext: number
   runExpGained: number
+  /** Runtime-only 2026-08-14 reward cadence, reset for every formal/local session. */
+  campaignRewardProgress: CampaignRewardProgress
   runHighestContractLevel: number
   runEliteKills: number
   runBossKills: number
@@ -960,6 +1299,8 @@ export type GameSnapshot = {
   levelTargetKills: number
   remainingToSpawn: number
   eliteSpawnedThisLevel: boolean
+  /** First-campaign elite draw is fixed across legal-spawn retries. */
+  firstCampaignEliteArchetypeId?: string
   /** Formal Boss-layer evidence; only the real Boss death pipeline may set this. */
   bossDefeatedThisLevel?: boolean
   spawnCooldown: number
@@ -983,6 +1324,8 @@ export type GameSnapshot = {
   localBattleTest?: LocalBattleTestState
   fixedPassiveLevel: number
   activeSkills: ActiveSkillInstance[]
+  /** Permanent formal-run codex state. Never grants combat power. */
+  discoveredSkillEvolutionIds: string[]
   pendingSkillReward: PendingSkillReward | null
   floorTransition?: FloorTransitionState
   levelClearConfirmed: boolean
@@ -993,14 +1336,25 @@ export type GameSnapshot = {
   mapDecorations: MapDecoration[]
   pickups: Pickup[]
   enemies: Enemy[]
+  pendingSplitterChildSpawns?: PendingSplitterChildSpawn[]
+  pendingEliteSplitChildSpawns?: PendingEliteSplitChildSpawn[]
   projectiles: Projectile[]
+  pendingProjectileLaunches?: PendingProjectileLaunch[]
   enemyProjectiles: Projectile[]
   skillFields: SkillField[]
   beastCompanions: BeastCompanion[]
   enemySkillEffects: EnemySkillEffect[]
+  chainWraithPullVisual?: ChainWraithPullVisualState
   bursts: Burst[]
+  skillEvolutionEffectEvents: SkillEvolutionEffectEvent[]
   floatingTexts: FloatingText[]
   combatDamageLog: CombatDamageLogEvent[]
+  /** Formal-run baseline; used only to exclude pre-run inventory from settlement rewards. */
+  runStartingEquipmentIds?: string[]
+  /** Internal, uncapped aggregation which is frozen into runSettlementSummary at formal exit. */
+  runSettlementDamageStats?: RunSettlementDamageStat[]
+  /** Present only while the formal game-over settlement page is readable. */
+  runSettlementSummary?: RunSettlementSummary
   lastBasicAttackId?: string
   lastTalentCooldownRefund?: {
     slotIndex: number

@@ -4,7 +4,6 @@ import type { PersistStorage } from 'zustand/middleware'
 
 import { playGameSound } from '../game/audio'
 import type { GameSoundId } from '../game/audio'
-import { ARCHER_ACTIVE_SKILL_MAP } from '../game/archerSkills'
 import {
   acceptSkillRewardSnapshot,
   advanceGame,
@@ -21,7 +20,9 @@ import {
   exitLocalBattleTestSnapshot,
   forfeitRunSnapshot,
   getLocalBattleTestSpawnOptions as getEngineLocalBattleTestSpawnOptions,
+  getRunTalentCandidateContextForSnapshot,
   migrateLegacyWeaponsToEquipment,
+  migrateArcherSkillEvolutionSnapshot,
   reforgeEquipmentSnapshot,
   restartRunSnapshot,
   selectCampaignDifficultySnapshot,
@@ -84,14 +85,16 @@ import {
   getMetaTalentBonusSummary,
   getUnlockedMetaTalentIdsFromRanks,
   getRunTalentBonusSummary,
+  normalizeRunTalentTrajectoryBranches,
   normalizeMetaTalentRanks,
   rerollRunTalentCandidates,
   unlockMetaTalent,
+  withRunTalentTrajectoryBranch,
   resetMetaTalentTree,
   type RunTalentCandidate,
   type RunTalentBuild,
 } from '../game/talents'
-import type { AudioSettings, CampaignDifficulty, DebugControlState, EquipmentDismantleCategory, EquipmentItem, EquipmentReforgeMode, EquipmentSlot, GameSnapshot, InputState, LocalBattleTestApplyResult, LocalBattleTestMonsterConfig, LocalBattleTestSpawnOption, SkillBuildTag, SkillRewardChoice, TalentPointLedgerEntry, Vector2, WeaponId } from '../game/types'
+import type { AudioSettings, CampaignDifficulty, DebugControlState, EquipmentDismantleCategory, EquipmentItem, EquipmentReforgeMode, EquipmentSlot, GameSnapshot, InputState, LocalBattleTestApplyResult, LocalBattleTestMonsterConfig, LocalBattleTestSpawnOption, RunTalentTrajectoryBranch, SkillBuildTag, SkillRewardChoice, TalentPointLedgerEntry, Vector2, WeaponId } from '../game/types'
 
 type GameStore = GameSnapshot & {
   startGame: () => void
@@ -109,7 +112,7 @@ type GameStore = GameSnapshot & {
   toggleTargetPriority: () => void
   togglePause: () => void
   updateAimPoint: (aimPoint: Vector2) => void
-  acceptSkillReward: (choiceId: string) => void
+  acceptSkillReward: (choiceId: string, trajectoryBranch?: RunTalentTrajectoryBranch) => void
   declineSkillReward: () => void
   confirmLevelClear: () => void
   dismissBossLoot: (itemId?: string) => void
@@ -125,7 +128,7 @@ type GameStore = GameSnapshot & {
   unlockMetaTalent: (nodeId: string) => void
   resetMetaTalentTree: () => void
   setRunTalentBuild: (build: RunTalentBuild) => void
-  selectRunTalent: (nodeId: string) => void
+  selectRunTalent: (nodeId: string, trajectoryBranch?: RunTalentTrajectoryBranch) => void
   openRunTalentUpgradeReward: (seed?: string | number) => void
   rerollPendingRunTalentReward: (seed?: string | number) => void
   generateRunTalentCandidates: (seed?: string | number) => RunTalentCandidate[]
@@ -164,6 +167,7 @@ type PersistedGameState = Pick<
   | 'equipmentInventory'
   | 'equippedItems'
   | 'discoveredHighRarityEquipmentIds'
+  | 'discoveredSkillEvolutionIds'
   | 'equipmentMaterials'
   | 'unsealedEquipmentSlots'
   | 'audioSettings'
@@ -207,6 +211,7 @@ export const extractPersistedGameState = (state: GameSnapshot): PersistedGameSta
   equipmentInventory: clonePersistedValue(state.equipmentInventory),
   equippedItems: clonePersistedValue(state.equippedItems),
   discoveredHighRarityEquipmentIds: clonePersistedValue(state.discoveredHighRarityEquipmentIds),
+  discoveredSkillEvolutionIds: clonePersistedValue(state.discoveredSkillEvolutionIds),
   equipmentMaterials: clonePersistedValue(state.equipmentMaterials),
   unsealedEquipmentSlots: clonePersistedValue(state.unsealedEquipmentSlots),
   audioSettings: clonePersistedValue(state.audioSettings),
@@ -431,6 +436,12 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
           lastOfferedCandidateIds: Array.isArray(persisted.runTalentState.lastOfferedCandidateIds)
             ? clonePersistedValue(persisted.runTalentState.lastOfferedCandidateIds)
             : fallback.runTalentState.lastOfferedCandidateIds,
+          trajectoryBranches: normalizeRunTalentTrajectoryBranches(
+            persisted.runTalentState.trajectoryBranches,
+            Array.isArray(persisted.runTalentState.selectedTalentIds)
+              ? clonePersistedValue(persisted.runTalentState.selectedTalentIds)
+              : fallback.runTalentState.selectedTalentIds,
+          ),
         }
       : fallback.runTalentState,
     unlockedWeapons: Array.isArray(persisted.unlockedWeapons) && persisted.unlockedWeapons.length > 0
@@ -438,6 +449,9 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
       : [],
     equippedWeaponId: persisted.equippedWeaponId ?? null,
     discoveredHighRarityEquipmentIds: normalizeDiscoveredHighRarityEquipmentIds(persisted.discoveredHighRarityEquipmentIds),
+    discoveredSkillEvolutionIds: Array.isArray(persisted.discoveredSkillEvolutionIds)
+      ? Array.from(new Set(persisted.discoveredSkillEvolutionIds.filter((id): id is string => typeof id === 'string')))
+      : fallback.discoveredSkillEvolutionIds,
     equipmentInventory: Array.isArray(persisted.equipmentInventory) ? clonePersistedValue(persisted.equipmentInventory) : fallback.equipmentInventory,
     equippedItems: isRecord(persisted.equippedItems) ? clonePersistedValue(persisted.equippedItems) : fallback.equippedItems,
     equipmentMaterials: isRecord(persisted.equipmentMaterials)
@@ -456,7 +470,7 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
     message: '村庄篝火旁苏醒，长期成长已恢复',
   }
 
-  return migrateLegacyWeaponsToEquipment(restored)
+  return migrateArcherSkillEvolutionSnapshot(migrateLegacyWeaponsToEquipment(restored))
 }
 
 const initialState: GameSnapshot = {
@@ -511,22 +525,7 @@ const playSimulationSounds = (previous: GameSnapshot, next: GameSnapshot) => {
   getSimulationSoundEvents(previous, next).forEach((id) => playSnapshotSound(previous, id))
 }
 
-const createRunTalentContext = (state: GameSnapshot, seed: string | number) => ({
-  openingBuild: state.runTalentState.selectedBuild,
-  ownedSkillTags: state.activeSkills.flatMap((skill) => {
-    const definition = ARCHER_ACTIVE_SKILL_MAP[skill.skillId]
-    return [skill.skillId, definition?.buildTag, ...(definition?.tacticalTags ?? [])].filter(Boolean)
-  }),
-  ownedSkillLevels: Object.fromEntries(state.activeSkills.map((skill) => [skill.skillId, skill.level])),
-  equipmentTags: Object.values(state.equippedItems).flatMap((item) => [item?.buildTag, item?.setId, item?.affix].filter(Boolean) as string[]),
-  campaignTags: getTalentCampaignTags(state.selectedCampaign),
-  currentLevel: state.contractLevel,
-  selectedTalentIds: state.runTalentState.selectedTalentIds,
-  rerollsUsed: state.runTalentState.rerollsUsed,
-  guaranteeState: state.runTalentState.guarantee,
-  seed,
-  candidateCount: (getMetaTalentBonusSummary(state.unlockedMetaTalentIds, state.metaTalentRanks).extraCandidateCount > 0 ? 4 : 3) as 3 | 4,
-})
+const createRunTalentContext = getRunTalentCandidateContextForSnapshot
 
 const runTalentBuildToSkillBuildTag = (build: RunTalentBuild | undefined): SkillBuildTag | 'general' => {
   if (build === 'blood') return 'spread'
@@ -547,6 +546,7 @@ const createRunTalentRewardChoice = (candidate: RunTalentCandidate): SkillReward
   tacticalTags: candidate.node.tags.slice(0, 4),
   levelText: candidate.guaranteed ? 'Lv5 保底' : candidate.node.tier === 'breakthrough' ? 'Lv5 质变' : `局内 Lv.${candidate.node.requiredLevel}+`,
   tacticalText: candidate.reasons.join(' / ') || '局内天赋',
+  formAnchor: candidate.formAnchor,
 })
 
 const getRewardChoiceStableKey = (choice: SkillRewardChoice) => [
@@ -640,6 +640,7 @@ const createRunTalentUpgradeRewardSnapshot = (state: GameSnapshot, seed: string 
       ...state.runTalentState,
       guarantee: result.guaranteeState,
       lastOfferedCandidateIds: result.candidates.map((candidate) => candidate.node.id),
+      offerCount: (state.runTalentState.offerCount ?? 0) + 1,
     },
     message: '局内等级提升：选择 1 项构筑奖励',
   }
@@ -661,7 +662,11 @@ const getStateAfterRunTalentReward = (state: GameSnapshot) => {
   } satisfies Pick<GameSnapshot, 'phase' | 'phaseBeforePause' | 'pauseMenuOpen' | 'levelClearConfirmed' | 'floorTransition'>
 }
 
-const acceptRunTalentRewardChoiceSnapshot = (state: GameSnapshot, choice: SkillRewardChoice): GameSnapshot => {
+const acceptRunTalentRewardChoiceSnapshot = (
+  state: GameSnapshot,
+  choice: SkillRewardChoice,
+  trajectoryBranch?: RunTalentTrajectoryBranch,
+): GameSnapshot => {
   const resumedState = getStateAfterRunTalentReward(state)
   if (!choice.talentId || state.runTalentState.selectedTalentIds.includes(choice.talentId)) {
     return {
@@ -672,6 +677,12 @@ const acceptRunTalentRewardChoiceSnapshot = (state: GameSnapshot, choice: SkillR
     }
   }
   const selectedTalentIds = [...state.runTalentState.selectedTalentIds, choice.talentId]
+  const trajectoryBranches = withRunTalentTrajectoryBranch(
+    state.runTalentState.trajectoryBranches,
+    selectedTalentIds,
+    choice.talentId,
+    trajectoryBranch,
+  )
   return {
     ...state,
     ...resumedState,
@@ -680,6 +691,10 @@ const acceptRunTalentRewardChoiceSnapshot = (state: GameSnapshot, choice: SkillR
     runTalentState: {
       ...state.runTalentState,
       selectedTalentIds,
+      trajectoryBranches,
+      formAnchors: choice.formAnchor
+        ? { ...(state.runTalentState.formAnchors ?? {}), [choice.talentId]: choice.formAnchor }
+        : state.runTalentState.formAnchors,
       lastOfferedCandidateIds: [],
     },
     message: `已选择局内天赋：${RUN_TALENT_NODE_BY_ID.get(choice.talentId)?.name ?? choice.talentId}`,
@@ -772,9 +787,6 @@ export const useGameStore = create<GameStore>()(
           set((state) => {
             const next = advanceGame(state, input, delta)
             playSimulationSounds(state, next)
-            if (!next.localBattleTest?.active && next.phase === 'running' && next.contractLevel > state.contractLevel && !next.pendingSkillReward) {
-              return createRunTalentUpgradeRewardSnapshot(next, `level-up-${next.level}-${next.contractLevel}-${next.elapsedTime}`)
-            }
             return next
           })
         }
@@ -797,12 +809,12 @@ export const useGameStore = create<GameStore>()(
       updateAimPoint: (aimPoint) => {
         set((state) => updateAimPointSnapshot(state, aimPoint))
       },
-      acceptSkillReward: (choiceId) => {
+      acceptSkillReward: (choiceId, trajectoryBranch) => {
         set((state) => {
           const choice = state.pendingSkillReward?.choices.find((item) => item.choiceId === choiceId)
           if (choice?.mode === 'in-run-talent') {
             playSnapshotSound(state, 'reward-confirm')
-            return acceptRunTalentRewardChoiceSnapshot(state, choice)
+            return acceptRunTalentRewardChoiceSnapshot(state, choice, trajectoryBranch)
           }
           const next = acceptSkillRewardSnapshot(state, choiceId)
           if (next !== state && next.pendingSkillReward !== state.pendingSkillReward) {
@@ -969,18 +981,26 @@ export const useGameStore = create<GameStore>()(
           message: `局内天赋流派预览：${build}`,
         }))
       },
-      selectRunTalent: (nodeId) => {
+      selectRunTalent: (nodeId, trajectoryBranch) => {
         set((state) => {
           if (state.runTalentState.selectedTalentIds.includes(nodeId)) {
             return { ...state, message: '该局内天赋本局已选择' }
           }
           const nextIds = [...state.runTalentState.selectedTalentIds, nodeId]
+          const trajectoryBranches = withRunTalentTrajectoryBranch(
+            state.runTalentState.trajectoryBranches,
+            nextIds,
+            nodeId,
+            trajectoryBranch,
+          )
           return {
             ...state,
             inRunTalentIds: nextIds,
             runTalentState: {
               ...state.runTalentState,
               selectedTalentIds: nextIds,
+              trajectoryBranches,
+              formAnchors: state.runTalentState.formAnchors,
               lastOfferedCandidateIds: [],
             },
             message: '已记录局内天赋；战斗效果等待内核接入',
@@ -1037,6 +1057,7 @@ export const useGameStore = create<GameStore>()(
             ...state.runTalentState,
             guarantee: result.guaranteeState,
             lastOfferedCandidateIds: result.candidates.map((candidate) => candidate.node.id),
+            offerCount: (state.runTalentState.offerCount ?? 0) + 1,
           },
         })
         return result.candidates
@@ -1572,7 +1593,7 @@ const createE2EBossSummary = (): RoguelikeE2EBossSummary => {
     playerDamage,
     warningShown,
     pendingBossLoot: state.pendingBossLoot.length > 0,
-    settlementEntered: state.phase === 'level-clear',
+    settlementEntered: state.phase === 'level-clear' || state.runSettlementSummary?.result === 'success',
     returnedToVillage,
     diagnosis,
     consoleErrors: [...e2eConsoleErrors],
@@ -2053,7 +2074,9 @@ const killBossForE2E = () => {
       enemy.id === boss.id ? { ...enemy, hp: 0 } : enemy
     )),
   }
-  for (let attempts = 0; attempts < 20 && next.phase === 'running'; attempts += 1) {
+  // The warden's real death lifecycle is three seconds; local E2E observes it
+  // rather than skipping straight to a settlement state.
+  for (let attempts = 0; attempts < 80 && next.phase === 'running'; attempts += 1) {
     next = advanceGame(next, { up: false, down: false, left: false, right: false }, 0.05)
     recordE2EBossObservedPlayerDamage(next)
   }

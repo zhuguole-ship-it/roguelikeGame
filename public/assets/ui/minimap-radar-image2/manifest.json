@@ -1,0 +1,22 @@
+{
+  "displayName": "像素风金属金边雷达小地图 UI 概念图",
+  "size": [
+    512,
+    512
+  ],
+  "format": "RGBA PNG",
+  "background": "transparent outside minimap UI",
+  "containsTextOrNumbers": false,
+  "source": "minimap_radar_image2_source.png",
+  "output": "minimap_radar_gold_frame_512.png",
+  "emptyCenterOutput": "minimap_radar_gold_frame_512_empty_center.png",
+  "emptyCenter": true,
+  "innerTransparentCircle": {
+    "center": [
+      256,
+      257
+    ],
+    "radius": 166
+  },
+  "runtimeUsage": "draw live minimap/player/enemy radar content under this frame; center is transparent"
+}

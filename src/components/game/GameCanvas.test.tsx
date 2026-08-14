@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSnapshot } from '../../game/engine'
@@ -12,6 +12,7 @@ import {
 import { useGameStore } from '../../store/useGameStore'
 import { GameCanvas } from './GameCanvas'
 import { getHellhoundImage2FrameUrls } from '../../game/hellhoundAssetFrames'
+import type { RunSettlementSummary } from '../../game/types'
 
 const createCanvasContext = () => ({
   setTransform: vi.fn(),
@@ -87,6 +88,101 @@ describe('GameCanvas', () => {
     expect(triggerActiveSkill).toHaveBeenCalledWith(0)
   })
 
+  it('keeps modal Top1 input exclusive and restores canvas input only after the pause layer closes', () => {
+    const paused = createInitialSnapshot('paused')
+    const triggerActiveSkill = vi.fn()
+    useGameStore.setState({
+      ...paused,
+      pauseMenuOpen: true,
+      triggerActiveSkill,
+    })
+
+    render(<GameCanvas />)
+
+    const canvasShell = screen.getByLabelText('游戏画布').parentElement!
+    expect(canvasShell.getAttribute('tabindex')).toBe('-1')
+    expect(screen.getByTestId('pause-screen-overlay').getAttribute('data-combat-ui-layer')).toBe('top-1')
+    expect(screen.queryByTestId('combat-minimap')).toBeNull()
+    expect(screen.queryByTestId('combat-damage-log')).toBeNull()
+    expect(screen.queryByTestId('combat-vitals-hud')).toBeNull()
+
+    fireEvent.keyDown(canvasShell, { key: 'q' })
+    expect(triggerActiveSkill).not.toHaveBeenCalled()
+
+    act(() => {
+      useGameStore.setState((state) => ({ ...state, phase: 'running', pauseMenuOpen: false }))
+    })
+    expect(canvasShell.getAttribute('tabindex')).toBe('0')
+    fireEvent.keyDown(canvasShell, { key: 'q' })
+    expect(triggerActiveSkill).toHaveBeenCalledWith(0)
+  })
+
+  it('keeps Top4 and Top5 HUD mounted during a formal boss battle while no higher page is visible', () => {
+    const bossBattle = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...bossBattle,
+      level: 22,
+      pendingSkillReward: null,
+      pauseMenuOpen: false,
+    })
+
+    render(<GameCanvas />)
+
+    expect(screen.getByTestId('combat-minimap').getAttribute('data-combat-ui-layer')).toBe('top-4')
+    expect(screen.getByTestId('combat-hud-layer').getAttribute('data-combat-ui-layer')).toBe('top-5')
+    expect(screen.getByTestId('combat-vitals-hud')).toBeTruthy()
+    expect(screen.getByTestId('combat-skills-hud')).toBeTruthy()
+    expect(screen.queryByTestId('reward-screen-overlay')).toBeNull()
+    expect(screen.queryByTestId('game-over-settlement')).toBeNull()
+  })
+
+  it('goes directly from the completed first-campaign Boss to the operable Top2 settlement without a loot processor', () => {
+    const settlement: RunSettlementSummary = {
+      result: 'success',
+      reachedLevel: 22,
+      finalCarriedEquipmentIds: ['boss-bow'],
+      carriedEquipmentCount: 1,
+      talentPointsEarned: 3,
+      displayEntries: [{ kind: 'active-skill', sourceId: 'pierce-arrow', name: '穿刺箭', order: 0, level: 4 }],
+      damageEntries: [{ sourceId: 'pierce-arrow', sourceName: '穿刺箭', totalDamage: 600, maxHitDamage: 120 }],
+    }
+    useGameStore.setState({
+      ...createInitialSnapshot('game-over'),
+      level: 22,
+      bossDefeatedThisLevel: true,
+      runSettlementSummary: settlement,
+      mapObstacles: [],
+    })
+
+    render(<GameCanvas />)
+
+    expect(screen.getByTestId('game-over-settlement').getAttribute('data-combat-ui-layer')).toBe('top-2')
+    expect(screen.getByTestId('run-settlement-return-button')).toBeTruthy()
+    expect(screen.queryByTestId('reward-screen-overlay')).toBeNull()
+    expect(screen.queryByText('Boss 战利品处理')).toBeNull()
+    expect(screen.queryByRole('button', { name: '锁定' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '稍后处理' })).toBeNull()
+    expect(screen.getByLabelText('游戏画布').parentElement?.getAttribute('tabindex')).toBe('-1')
+
+    fireEvent.click(screen.getByTestId('run-settlement-return-button'))
+    expect(useGameStore.getState().phase).toBe('idle')
+  })
+
+  it('keeps the final battle canvas behind settlement instead of remounting village or developer UI', () => {
+    useGameStore.setState({
+      ...createInitialSnapshot('game-over'),
+      mapObstacles: [],
+    })
+
+    render(<GameCanvas />)
+
+    expect(screen.getByLabelText('游戏画布')).toBeTruthy()
+    expect(screen.getByTestId('game-over-settlement').getAttribute('data-settlement-background')).toBe('frozen-battle-frame-glass')
+    expect(screen.queryByTestId('godot-village-background-poster')).toBeNull()
+    expect(screen.queryByTestId('village-compact-actions')).toBeNull()
+    expect(screen.queryByTestId('local-test-controls')).toBeNull()
+  })
+
   it('shows local test controls and toggles player debug states', () => {
     useGameStore.setState({
       ...createInitialSnapshot('running'),
@@ -95,12 +191,52 @@ describe('GameCanvas', () => {
 
     render(<GameCanvas />)
 
+    expect(screen.getByTestId('local-test-controls')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '测试' }))
     fireEvent.click(screen.getByLabelText('生命无限'))
     fireEvent.click(screen.getByLabelText('不攻击'))
 
     expect(useGameStore.getState().debugControls.infiniteHealth).toBe(true)
     expect(useGameStore.getState().debugControls.disableAttacks).toBe(true)
+  })
+
+  it('unmounts development controls while Top1 through Top3 own the combat screen', () => {
+    const highLayerSnapshots = [
+      { ...createInitialSnapshot('paused'), pauseMenuOpen: true },
+      createInitialSnapshot('level-clear'),
+      createInitialSnapshot('game-over'),
+    ]
+
+    for (const snapshot of highLayerSnapshots) {
+      useGameStore.setState({ ...snapshot, mapObstacles: [] })
+      const view = render(<GameCanvas />)
+
+      expect(screen.queryByTestId('local-test-controls')).toBeNull()
+      expect(screen.queryByRole('button', { name: '测试' })).toBeNull()
+      expect(screen.queryByTestId('local-battle-entry')).toBeNull()
+
+      view.unmount()
+    }
+  })
+
+  it('unmounts development controls while a compact village modal is open', () => {
+    const mediaQuery = {
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }
+    vi.stubGlobal('matchMedia', vi.fn(() => mediaQuery))
+    useGameStore.setState({ ...createInitialSnapshot('idle'), mapObstacles: [] })
+
+    render(<GameCanvas />)
+
+    expect(screen.getByTestId('local-test-controls')).toBeTruthy()
+    fireEvent.click(within(screen.getByTestId('village-compact-actions')).getByRole('button', { name: '传送门' }))
+
+    expect(screen.getByTestId('campaign-modal-shell')).toBeTruthy()
+    expect(screen.queryByTestId('local-test-controls')).toBeNull()
+    expect(screen.queryByRole('button', { name: '测试' })).toBeNull()
+    expect(screen.queryByTestId('local-battle-entry')).toBeNull()
   })
 
   it('hides test and local battle entries for a remote development host', () => {
@@ -137,8 +273,11 @@ describe('GameCanvas', () => {
 
     render(<GameCanvas />)
 
-    expect(screen.getByTestId('combat-damage-log').className).toContain('left-4')
-    expect(screen.getByTestId('combat-damage-log').className).toContain('z-40')
+    expect(screen.getByTestId('combat-damage-log').className).toContain('max-w-[21rem]')
+    expect(screen.getByTestId('combat-damage-log').className).toContain('xl:left-4')
+    expect(screen.getByTestId('combat-damage-log').getAttribute('data-combat-ui-layer')).toBe('top-4')
+    expect(screen.getByTestId('combat-damage-log').style.zIndex).toBe('200')
+    expect(screen.getByRole('button', { name: '隐藏伤害日志' })).toBeTruthy()
     expect(screen.getByText('玩家使用 穿刺箭 攻击 腐蚀史莱姆 造成伤害12')).toBeTruthy()
   })
 

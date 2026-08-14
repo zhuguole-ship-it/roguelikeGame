@@ -7,9 +7,6 @@ const documentedArchetypeIds = [
   'corrosive-slime',
   'dungeon-skeleton-warrior',
   'dungeon-skeleton-archer',
-  'dungeon-jailer',
-  'dungeon-rat-swarm',
-  'dungeon-chain-wraith',
   'dungeon-hellhound',
   'dungeon-splitting-ooze',
   'dungeon-explosive-fire-sac',
@@ -123,6 +120,30 @@ describe('monster data card drop profiles', () => {
     expect(card?.skill).toBeUndefined()
     expect(card?.behaviorTags).not.toContain('冲锋')
     expect(card?.behaviorTags).not.toContain('火焰吐息')
+  })
+
+  it('keeps the current C1 fire-sac and jailer data truth while removing retired C1 identities', () => {
+    const theme = CAMPAIGN_MONSTER_THEMES[0]
+    const fireSac = theme.normalPool.find((entry) => entry.id === 'dungeon-explosive-fire-sac')
+    const fireSacCard = getMonsterDataCard('dungeon-explosive-fire-sac')
+    const jailerChief = getMonsterDataCard('dungeon-jailer-chief')
+
+    expect(fireSac).toMatchObject({ movementTrait: 'direct', skillTrait: 'none' })
+    expect(fireSacCard).toMatchObject({
+      basicAttack: { label: '火囊爆炸' },
+      skill: { label: '最终死亡自爆' },
+    })
+    expect(jailerChief).toMatchObject({
+      basicAttack: { label: '长剑挥击' },
+      skill: { label: '牢锁禁锢' },
+    })
+
+    ;['dungeon-jailer', 'corrupted-jailer', 'dungeon-rat-swarm', 'dungeon-chain-wraith'].forEach((entityId) => {
+      expect(getMonsterDataCard(entityId)).toBeUndefined()
+      expect(DOCUMENTED_MONSTER_DROP_PROFILES).not.toHaveProperty(entityId)
+      expect(CAMPAIGN_MONSTER_THEMES[0].normalPool.some((entry) => entry.id === entityId)).toBe(false)
+      expect(CAMPAIGN_MONSTER_THEMES[0].elitePool.some((entry) => entry.id === entityId)).toBe(false)
+    })
   })
 
   it('matches the documented corrected crystal and equipment rows for known edge cases', () => {

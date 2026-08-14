@@ -48,6 +48,32 @@ export const CONTRACT_RIFT_AUTO_SETTLE_TIME = 1.2
 export const BOSS_ARENA_RADIUS = 620
 export const BOSS_ARENA_SOFT_MARGIN = 120
 
+/**
+ * The 2026-08-14 campaign reward cadence.  These values are intentionally
+ * gameplay-owned so every consumer reads the same per-difficulty budget.
+ */
+export type CampaignRewardCadence = {
+  crystalTalentQuota: number
+  universalTalentQuota: number
+  crystalRewardTotal: number
+  crystalExperienceTargetLevel: number
+  crystalExperienceBudget: number
+  replacementRewardQuota: number
+}
+
+export const CAMPAIGN_REWARD_CADENCE: Readonly<Record<CampaignDifficulty, CampaignRewardCadence>> = {
+  normal: { crystalTalentQuota: 15, universalTalentQuota: 8, crystalRewardTotal: 23, crystalExperienceTargetLevel: 24, crystalExperienceBudget: 8694, replacementRewardQuota: 1 },
+  hard: { crystalTalentQuota: 20, universalTalentQuota: 8, crystalRewardTotal: 28, crystalExperienceTargetLevel: 29, crystalExperienceBudget: 12544, replacementRewardQuota: 1 },
+  hell: { crystalTalentQuota: 26, universalTalentQuota: 8, crystalRewardTotal: 34, crystalExperienceTargetLevel: 35, crystalExperienceBudget: 18088, replacementRewardQuota: 0 },
+  nightmare: { crystalTalentQuota: 30, universalTalentQuota: 8, crystalRewardTotal: 38, crystalExperienceTargetLevel: 39, crystalExperienceBudget: 22344, replacementRewardQuota: 0 },
+}
+
+export const CRYSTAL_PICKUP_TTL_SECONDS = 30
+export const CRYSTAL_PICKUP_FADE_START_SECONDS = 25
+export const ELITE_RAID_CHANCE = 0.25
+
+export const getCampaignRewardCadence = (difficulty: CampaignDifficulty = 'normal') => CAMPAIGN_REWARD_CADENCE[difficulty]
+
 export const TORCHES: Vector2[] = [
   { x: 44, y: 36 },
   { x: WORLD_WIDTH / 2 - 12, y: 30 },
@@ -127,6 +153,9 @@ export const isBossPreludeLevel = (level: number) => getCampaignFloorPhase(level
 export const isGatekeeperLevel = (level: number) => getCampaignFloorPhase(level) === 'gatekeeper'
 export const isEliteLevel = (level: number) => {
   const floor = getCampaignFloor(level)
+  if (getCampaignIndex(level) === 1) {
+    return [3, 6, 9, 12, 15, 18, 21].includes(floor)
+  }
   return floor > 0 && floor < FLOORS_PER_CAMPAIGN && floor % 3 === 0
 }
 export const getLegacyHordeMultiplier = (level: number) => {

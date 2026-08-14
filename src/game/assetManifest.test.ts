@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { CAMPAIGN_MONSTER_THEMES } from './campaignMonsters'
-import { developerAssetEntities, getEnemyDeathAnimationTiming } from './assetManifest'
+import {
+  developerAssetEntities,
+  FIRST_CAMPAIGN_MONSTER_BODY_IDS,
+  getEnemyDeathAnimationTiming,
+  getFirstCampaignMonsterBodyAssetReadiness,
+  getMonsterBodyAssetReadiness,
+} from './assetManifest'
 import {
   exportRuntimeAssetDraftConfig,
   restoreRuntimeAssetOverrideSnapshot,
@@ -20,6 +26,37 @@ afterEach(() => {
 })
 
 describe('getEnemyDeathAnimationTiming', () => {
+  it('publishes one C1 body-resource gate for formal generation, local selection, and renderer protection', () => {
+    expect(FIRST_CAMPAIGN_MONSTER_BODY_IDS).toEqual([
+      'corrosive-slime',
+      'dungeon-skeleton-warrior',
+      'dungeon-skeleton-archer',
+      'dungeon-hellhound',
+      'dungeon-splitting-ooze',
+      'dungeon-explosive-fire-sac',
+      'dungeon-chain-captain',
+      'dungeon-jailer-chief',
+      'dungeon-chain-wraith-elite',
+      'dungeon-warden',
+    ])
+
+    expect(getMonsterBodyAssetReadiness('dungeon-jailer-chief')).toEqual({
+      entityId: 'dungeon-jailer-chief',
+      ready: true,
+    })
+    ;['dungeon-chain-captain', 'dungeon-chain-wraith-elite'].forEach((entityId) => {
+      expect(getMonsterBodyAssetReadiness(entityId)).toEqual({
+        entityId,
+        ready: true,
+      })
+    })
+    expect(getFirstCampaignMonsterBodyAssetReadiness('blood-noble')).toBeUndefined()
+
+    const hellhound = developerAssetEntities.find((entity) => entity.id === 'dungeon-hellhound')
+    expect(hellhound?.actions.map((action) => action.slot)).toEqual(['idle', 'move', 'attack', 'hit', 'death'])
+    expect(hellhound?.actions.flatMap((action) => action.frameUrls ?? []).join('\n')).not.toContain('/Users/')
+  })
+
   it('audits every formal C1 entity by its generation ID without inventing death timing for missing assets', () => {
     const campaignOne = CAMPAIGN_MONSTER_THEMES.find((theme) => theme.campaign === 1)
     expect(campaignOne).toBeTruthy()
@@ -80,14 +117,12 @@ describe('getEnemyDeathAnimationTiming', () => {
       durationSeconds: 3,
     })
     expect(getEnemyDeathAnimationTiming('dungeon-jailer-chief', 'elite')).toEqual({
-      frameCount: 8,
-      fps: 4,
+      frameCount: 6,
+      fps: 6,
       durationSeconds: 3,
     })
 
-    ;['dungeon-jailer-chief'].forEach((entityId) => {
-      expect(developerAssetEntities.find((entity) => entity.id === entityId)?.assetStatus).toBe('missing-resource')
-    })
+    expect(developerAssetEntities.find((entity) => entity.id === 'dungeon-jailer-chief')?.assetStatus).toBe('complete')
 
     const splitterDeath = developerAssetEntities.find((entity) => entity.id === 'dungeon-splitting-ooze')?.actions.find((action) => action.slot === 'death')
     expect(splitterDeath).toMatchObject({
@@ -115,26 +150,43 @@ describe('getEnemyDeathAnimationTiming', () => {
 
     const jailerDeath = developerAssetEntities.find((entity) => entity.id === 'dungeon-jailer-chief')?.actions.find((action) => action.slot === 'death')
     expect(jailerDeath).toMatchObject({
-      frameWidth: 256,
-      frameHeight: 256,
-      frameCount: 8,
+      frameWidth: 192,
+      frameHeight: 192,
+      frameCount: 6,
+      fps: 6,
       loop: false,
       combatAction: 'death',
       exists: true,
     })
     expect(jailerDeath?.frameUrls).toEqual(expect.arrayContaining([
-      expect.stringContaining('dungeon-jailer-chief/Death/frame_01.png'),
-      expect.stringContaining('dungeon-jailer-chief/Death/frame_08.png'),
+      expect.stringContaining('dungeon-jailer-chief/Dead/Death-1.png'),
+      expect.stringContaining('dungeon-jailer-chief/Dead/Death-6.png'),
     ]))
-    expect(jailerDeath?.frameUrls).toHaveLength(8)
+    expect(jailerDeath?.frameUrls).toHaveLength(6)
 
-    ;[
-      'dungeon-chain-captain',
-      'dungeon-chain-wraith-elite',
-    ].forEach((entityId) => {
-      const entity = developerAssetEntities.find((candidate) => candidate.id === entityId)
-      expect(entity?.assetStatus).toBe('missing-resource')
-      expect(getEnemyDeathAnimationTiming(entityId, entity?.kind)).toBeUndefined()
+    const captain = developerAssetEntities.find((entity) => entity.id === 'dungeon-chain-captain')
+    expect(captain?.assetStatus).toBe('complete')
+    expect(captain?.actions.map((action) => action.slot)).toEqual(['idle', 'move', 'attack', 'hit', 'cast', 'death'])
+    expect(captain?.actions.flatMap((action) => action.frameUrls ?? []).join('\n')).toContain('assets/monsters/dungeon-chain-captain/Move-Attack/Move+Attack-1.png')
+    expect(getEnemyDeathAnimationTiming('dungeon-chain-captain', captain?.kind)).toEqual({
+      frameCount: 3,
+      fps: 3,
+      durationSeconds: 3,
+    })
+
+    const wraith = developerAssetEntities.find((entity) => entity.id === 'dungeon-chain-wraith-elite')
+    expect(wraith?.assetStatus).toBe('complete')
+    expect(wraith?.actions.map((action) => action.slot)).toEqual(['idle', 'move', 'attack', 'hit', 'cast', 'death', 'skill_1'])
+    expect(wraith?.actions.find((action) => action.slot === 'skill_1')).toMatchObject({
+      label: 'Iron Chain 拉拽视觉',
+      frameCount: 4,
+      loop: true,
+    })
+    expect(wraith?.actions.flatMap((action) => action.frameUrls ?? []).join('\n')).toContain('assets/monsters/dungeon-chain-wraith-elite/Iron-Chain/Iron Chain-4.png')
+    expect(getEnemyDeathAnimationTiming('dungeon-chain-wraith-elite', wraith?.kind)).toEqual({
+      frameCount: 4,
+      fps: 4,
+      durationSeconds: 3,
     })
 
     expect(developerAssetEntities.some((entity) => entity.id === 'dungeon-broken-chain-captain')).toBe(false)

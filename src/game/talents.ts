@@ -1,4 +1,15 @@
-import type { CampaignDifficulty, EquipmentMaterialInventory, SkillBuildTag } from './types'
+import type {
+  CampaignDifficulty,
+  EquipmentMaterialInventory,
+  RunTalentTrajectoryBranch,
+  SkillBuildTag,
+} from './types'
+import {
+  RUN_TALENT_FORM_NODES,
+  RUN_TALENT_FORM_BY_ID,
+  getRunTalentFormGroupIds,
+  isRunTalentFormId,
+} from './runTalentForms'
 
 export const TALENT_SCHEMA_VERSION = 3
 export const TALENT_RESET_GOLD_COST = 200
@@ -103,6 +114,44 @@ export type RunTalentNode = {
   unique: true
 }
 
+export type RunTalentTrajectoryApplicability = 'applicable' | 'not-applicable'
+export type RunTalentTrajectoryKind = 'death-line' | 'blood-fan' | 'not-applicable'
+export type RunTalentBaseTrajectory = 'configured' | 'straight'
+
+/**
+ * B-owned data contract for A's projectile consumer.  The mapping is
+ * deliberately explicit: a later skill may not inherit a trajectory rule
+ * merely by sharing a build tag.
+ */
+export type RunTalentTrajectoryConfig = {
+  talentId: string
+  kind: RunTalentTrajectoryKind
+  applicability: RunTalentTrajectoryApplicability
+  applicableSkillIds: readonly string[]
+  supportsBranchSelection: boolean
+  notApplicableReason?: string
+}
+
+export type RunTalentTrajectorySkillState = {
+  /** The sole matching id, or null when no selected original node affects this skill. */
+  talentId: string | null
+  skillId: string
+  primaryProjectileCount: number
+  talentIds: string[]
+  deathTalentIds: string[]
+  bloodTalentIds: string[]
+  /**
+   * The explicit skill identity that applies before any in-run node is
+   * selected.  `straight` is intentionally independent from death takeover.
+   */
+  baseTrajectory: RunTalentBaseTrajectory
+  /** The total angle across the primary arrows when the base identity is straight. */
+  baseTotalAngleDegrees: number | null
+  branch: RunTalentTrajectoryBranch | null
+  focusedMinimumTotalAngleDegrees: number | null
+  deathTrajectoryTakeover: boolean
+}
+
 export type RunTalentBuild = TalentBuild
 
 export const TALENT_CAMPAIGN_TAGS = {
@@ -170,6 +219,14 @@ export type RunTalentCandidateContext = {
   guaranteeState: RunTalentGuaranteeState
   seed: string | number
   candidateCount?: 3 | 4
+  ownedBeastFamilyIds?: string[]
+  ownedControlFamilyIds?: string[]
+  evolvedFamilyIds?: string[]
+  /** Opening-build bias is intentionally limited to the first two real offers. */
+  openingOfferCount?: number
+  /** Latest-first completed Lv.4 cores, provided by the combat runtime. */
+  evolvedCoreSkills?: Array<{ familyId: string; evolutionId: string; tags: string[]; completedAt: number }>
+  now?: number
 }
 
 export type RunTalentCandidate = {
@@ -177,6 +234,7 @@ export type RunTalentCandidate = {
   weight: number
   reasons: string[]
   guaranteed?: boolean
+  formAnchor?: { familyId: string; evolutionId: string; anchoredAt: number }
 }
 
 export type RunTalentCandidateResult = {
@@ -184,6 +242,31 @@ export type RunTalentCandidateResult = {
   guaranteeState: RunTalentGuaranteeState
   guaranteeApplied: 'lv5' | 'main-build-streak' | null
   rerollBlockedReason?: string
+}
+
+export type RunTalentPresentationStatus = 'selected' | 'candidate' | 'eligible' | 'unavailable'
+
+export type RunTalentPresentationItem = {
+  id: string
+  name: string
+  description: string
+  /** Stable presentation lookup key. It deliberately never derives from a translated name. */
+  iconId: string
+  status: RunTalentPresentationStatus
+  unmetPrerequisiteIds: string[]
+  runtime?: {
+    commandCount: number
+    cooldownRemaining: number
+  }
+  form?: {
+    group: 1 | 2 | 3 | 4
+    requiredLevel: 5 | 9 | 13 | 17
+    anchorTag: 'line-projectile' | 'spread-projectile' | 'beast-command' | 'area-field'
+    values: Readonly<Record<string, number>>
+    anchor?: { familyId: string; evolutionId: string; anchoredAt: number }
+    cycle?: { progress: number; windowSeconds: number; enhancementRemaining: number }
+    cooldownRemaining?: number
+  }
 }
 
 export type MetaTalentUnlockContext = {
@@ -558,8 +641,188 @@ const createRunNodes = () => {
 
 export const RUN_TALENT_NODES = createRunNodes()
 
+/** The only selectable/presentable runtime talent catalogue: original forty plus 32 forms. */
+export const RUN_TALENT_RUNTIME_NODES: readonly RunTalentNode[] = [
+  ...RUN_TALENT_NODES,
+  ...RUN_TALENT_FORM_NODES,
+]
+
 export const META_TALENT_NODE_BY_ID = new Map(META_TALENT_NODES.map((node) => [node.id, node]))
-export const RUN_TALENT_NODE_BY_ID = new Map(RUN_TALENT_NODES.map((node) => [node.id, node]))
+export const RUN_TALENT_NODE_BY_ID = new Map(
+  RUN_TALENT_RUNTIME_NODES.map((node) => [node.id, node]),
+)
+
+/**
+ * Stable, explicit skill identities for the original death-contract nodes.
+ * These are the explicitly authorized trajectory skills. Keeping this list
+ * here prevents a future `buildTag === 'pierce'` check from silently widening
+ * the affected projectile set.
+ */
+export const DEATH_CONTRACT_TRAJECTORY_SKILL_IDS = [
+  'pierce-arrow',
+  'quick-triple',
+  'heavy-snipe',
+  'curve-return',
+  'ricochet-feather',
+  'armor-pin',
+  'fire-feather',
+  'frost-bite',
+  'thunder-chain',
+  'wind-cut',
+  'shadow-erosion',
+  'dawn-bolt',
+  'shock-bolt',
+  'double-star',
+  'sun-piercer',
+  'hunter-mark',
+  'weakness-trace',
+  'sky-judgement',
+  'celestial-feather',
+] as const
+
+const deathTrajectoryConfig = (talentId: string): RunTalentTrajectoryConfig => ({
+  talentId,
+  kind: 'death-line',
+  applicability: 'applicable',
+  applicableSkillIds: DEATH_CONTRACT_TRAJECTORY_SKILL_IDS,
+  supportsBranchSelection: false,
+})
+
+const notApplicableTrajectoryConfig = (talentId: string, notApplicableReason: string): RunTalentTrajectoryConfig => ({
+  talentId,
+  kind: 'not-applicable',
+  applicability: 'not-applicable',
+  applicableSkillIds: [],
+  supportsBranchSelection: false,
+  notApplicableReason,
+})
+
+/**
+ * The original 40-node pool only has one evidence-backed primary fan mapping:
+ * 散射织网 -> 扇形散射.  The other blood nodes keep their existing secondary
+ * effects but must not invent a projectile-angle choice.
+ */
+export const RUN_TALENT_TRAJECTORY_CONFIG: Record<string, RunTalentTrajectoryConfig> = {
+  run_death_01: notApplicableTrajectoryConfig('run_death_01', '死契标记只保留命中附加标记，不改变任何技能弹道。'),
+  run_death_02: notApplicableTrajectoryConfig('run_death_02', '处刑线只保留低血增伤与 Boss 易伤，不改变任何技能弹道。'),
+  run_death_03: deathTrajectoryConfig('run_death_03'),
+  run_death_04: notApplicableTrajectoryConfig('run_death_04', '标记扩散没有可确认的主箭轨迹。'),
+  run_death_05: notApplicableTrajectoryConfig('run_death_05', '魂爆为击杀后效果，没有可确认的主箭轨迹。'),
+  run_death_06: deathTrajectoryConfig('run_death_06'),
+  run_death_07: notApplicableTrajectoryConfig('run_death_07', '精英破契为魂爆后效，没有可确认的主箭轨迹。'),
+  run_death_08: notApplicableTrajectoryConfig('run_death_08', '死契连锁为标记链路，没有可确认的主箭轨迹。'),
+  run_blood_01: notApplicableTrajectoryConfig('run_blood_01', '血羽碎片为命中后效果，没有可确认的主扇形技能。'),
+  run_blood_02: notApplicableTrajectoryConfig('run_blood_02', '流血叠加不对应单一主扇形技能。'),
+  run_blood_03: {
+    talentId: 'run_blood_03',
+    kind: 'blood-fan',
+    applicability: 'applicable',
+    applicableSkillIds: ['fan-burst'],
+    supportsBranchSelection: true,
+  },
+  run_blood_04: notApplicableTrajectoryConfig('run_blood_04', '暴击羽裂为暴击后效果，没有可确认的主扇形技能。'),
+  run_blood_05: notApplicableTrajectoryConfig('run_blood_05', '血羽连射为命中后效果，没有可确认的主扇形技能。'),
+  run_blood_06: notApplicableTrajectoryConfig('run_blood_06', '血裂追击为流血满层后效果，没有可确认的主扇形技能。'),
+  run_blood_07: notApplicableTrajectoryConfig('run_blood_07', '精英放血为持续效果，没有可确认的主扇形技能。'),
+  run_blood_08: notApplicableTrajectoryConfig('run_blood_08', '血羽风暴为命中阈值后效果，没有可确认的主扇形技能。'),
+}
+
+export const RUN_TALENT_DEATH_SHOT_INTERVAL_SECONDS = 0.08
+
+export const getRunTalentTrajectoryConfig = (talentId: string) => RUN_TALENT_TRAJECTORY_CONFIG[talentId]
+
+export const getFocusedRunTalentMinimumTotalAngleDegrees = (primaryProjectileCount: number) => {
+  const count = Math.max(1, Math.trunc(primaryProjectileCount))
+  if (count <= 3) return 12
+  if (count <= 5) return 14
+  return 16
+}
+
+export const getRunTalentTrajectoryBranch = (
+  talentId: string,
+  trajectoryBranches?: Partial<Record<string, RunTalentTrajectoryBranch>>,
+): RunTalentTrajectoryBranch | null => {
+  const config = getRunTalentTrajectoryConfig(talentId)
+  if (!config?.supportsBranchSelection) return null
+  return trajectoryBranches?.[talentId] === 'focused' ? 'focused' : 'wide'
+}
+
+export const normalizeRunTalentTrajectoryBranches = (
+  rawBranches: unknown,
+  selectedTalentIds: readonly string[],
+): Partial<Record<string, RunTalentTrajectoryBranch>> => {
+  if (!rawBranches || typeof rawBranches !== 'object' || Array.isArray(rawBranches)) return {}
+
+  const selectedIds = new Set(selectedTalentIds)
+  const normalized: Partial<Record<string, RunTalentTrajectoryBranch>> = {}
+  Object.entries(rawBranches as Record<string, unknown>).forEach(([talentId, branch]) => {
+    if (!selectedIds.has(talentId) || !getRunTalentTrajectoryConfig(talentId)?.supportsBranchSelection) return
+    if (branch === 'wide' || branch === 'focused') {
+      normalized[talentId] = branch
+    }
+  })
+  return normalized
+}
+
+export const withRunTalentTrajectoryBranch = (
+  trajectoryBranches: Partial<Record<string, RunTalentTrajectoryBranch>> | undefined,
+  selectedTalentIds: readonly string[],
+  talentId: string,
+  branch?: RunTalentTrajectoryBranch,
+) => {
+  const selected = selectedTalentIds.includes(talentId) ? selectedTalentIds : [...selectedTalentIds, talentId]
+  const normalized = normalizeRunTalentTrajectoryBranches(trajectoryBranches, selected)
+  if (!getRunTalentTrajectoryConfig(talentId)?.supportsBranchSelection) return normalized
+  return {
+    ...normalized,
+    [talentId]: branch === 'focused' ? 'focused' : 'wide',
+  } satisfies Partial<Record<string, RunTalentTrajectoryBranch>>
+}
+
+/**
+ * A1's stable query point.  This state reports identities and the focused
+ * lower angle bound only; A owns cast timing, aim snapshots and final angle
+ * calculation in the battle runtime.
+ */
+export const getRunTalentTrajectorySkillState = (
+  selectedTalentIds: readonly string[],
+  trajectoryBranches: Partial<Record<string, RunTalentTrajectoryBranch>> | undefined,
+  skillId: string,
+  primaryProjectileCount: number,
+): RunTalentTrajectorySkillState => {
+  const baseTrajectory: RunTalentBaseTrajectory = DEATH_CONTRACT_TRAJECTORY_SKILL_IDS.includes(
+    skillId as typeof DEATH_CONTRACT_TRAJECTORY_SKILL_IDS[number],
+  )
+    ? 'straight'
+    : 'configured'
+  const matchingConfigs = Array.from(new Set(selectedTalentIds))
+    .map((talentId) => getRunTalentTrajectoryConfig(talentId))
+    .filter((config): config is RunTalentTrajectoryConfig => Boolean(config?.applicableSkillIds.includes(skillId)))
+  const deathTalentIds = matchingConfigs
+    .filter((config) => config.kind === 'death-line')
+    .map((config) => config.talentId)
+  const bloodTalentIds = matchingConfigs
+    .filter((config) => config.kind === 'blood-fan')
+    .map((config) => config.talentId)
+  const bloodTalentId = bloodTalentIds[0]
+  const branch = bloodTalentId ? getRunTalentTrajectoryBranch(bloodTalentId, trajectoryBranches) : null
+
+  return {
+    talentId: matchingConfigs[0]?.talentId ?? null,
+    skillId,
+    primaryProjectileCount: Math.max(1, Math.trunc(primaryProjectileCount)),
+    talentIds: matchingConfigs.map((config) => config.talentId),
+    deathTalentIds,
+    bloodTalentIds,
+    baseTrajectory,
+    baseTotalAngleDegrees: baseTrajectory === 'straight' ? 0 : null,
+    branch,
+    focusedMinimumTotalAngleDegrees: branch === 'focused'
+      ? getFocusedRunTalentMinimumTotalAngleDegrees(primaryProjectileCount)
+      : null,
+    deathTrajectoryTakeover: deathTalentIds.length > 0,
+  }
+}
 
 export const getTalentCampaignTags = (campaignId: number): TalentCampaignTag[] => {
   const key = Math.max(1, Math.min(10, Math.round(campaignId))) as TalentCampaignId
@@ -896,7 +1159,7 @@ export const getRunTalentBonusSummary = (selectedTalentIds: readonly string[]): 
   selectedTalentIds.forEach((id) => {
     const node = RUN_TALENT_NODE_BY_ID.get(id)
     node?.effects.forEach((effect) => {
-      const consumer = RUN_TALENT_EFFECT_CONSUMERS[id]
+      const consumer = isRunTalentFormId(id) ? 'runTalentForms.ts -> engine.ts form cast/impact/area consumer' : RUN_TALENT_EFFECT_CONSUMERS[id]
       if (consumer) {
         summary.consumedEffects.push({ nodeId: id, effect, consumer })
       } else {
@@ -962,14 +1225,139 @@ const isNodeOpenForLevel = (node: RunTalentNode, level: number) => {
   return level >= node.requiredLevel
 }
 
+const getFormCandidateAnchor = (node: RunTalentNode, context: RunTalentCandidateContext) => {
+  if (!isRunTalentFormId(node.id)) return undefined
+  const anchorTag = node.tags.find((tag) => ['line-projectile', 'spread-projectile', 'beast-command', 'area-field'].includes(tag))
+  if (!anchorTag) return undefined
+  const skill = [...(context.evolvedCoreSkills ?? [])]
+    .sort((left, right) => right.completedAt - left.completedAt)
+    .find((skill) => skill.tags.includes(anchorTag))
+  return skill ? { familyId: skill.familyId, evolutionId: skill.evolutionId, anchoredAt: skill.completedAt } : undefined
+}
+
+export const getRunTalentUnmetPrerequisiteIds = (node: RunTalentNode, context: RunTalentCandidateContext) => {
+  const selected = normalizeSet(context.selectedTalentIds)
+  const has = (id: string) => selected.has(id)
+  const beastCount = new Set(context.ownedBeastFamilyIds ?? []).size
+  const hasBeast = beastCount > 0
+  const hasControl = (context.ownedControlFamilyIds?.length ?? 0) > 0
+  const hasEvolvedBeast = (context.evolvedFamilyIds ?? []).some((familyId) => (context.ownedBeastFamilyIds ?? []).includes(familyId))
+  const unmet: string[] = []
+  const requireTalent = (id: string) => {
+    if (!has(id)) unmet.push(id)
+  }
+  if (isRunTalentFormId(node.id)) {
+    const group = Math.ceil((node.order - 8) / 2) as 1 | 2 | 3 | 4
+    const siblingIds = getRunTalentFormGroupIds(node.module as Exclude<TalentBuild, 'common'>, group)
+    if (siblingIds.some((id) => id !== node.id && has(id))) {
+      unmet.push(`form-group-${node.module}-${group}-locked`)
+    }
+    if (!getFormCandidateAnchor(node, context)) {
+      unmet.push(`form-anchor-${node.id}`)
+    }
+    return unmet
+  }
+  if (node.module === 'common') return unmet
+  if (node.module === 'death') {
+    if (['run_death_02', 'run_death_03', 'run_death_04', 'run_death_05', 'run_death_06'].includes(node.id)) requireTalent('run_death_01')
+    if (node.id === 'run_death_07') requireTalent('run_death_05')
+    if (node.id === 'run_death_08') {
+      requireTalent('run_death_04')
+      requireTalent('run_death_05')
+    }
+  }
+  if (node.module === 'blood') {
+    if (node.id === 'run_blood_03' && !context.ownedSkillTags.some((tag) => normalizeTag(tag) === 'blood')) unmet.push('blood-skill')
+    if (['run_blood_04', 'run_blood_05', 'run_blood_08'].includes(node.id)) requireTalent('run_blood_01')
+    if (['run_blood_06', 'run_blood_07'].includes(node.id)) requireTalent('run_blood_02')
+    if (node.id === 'run_blood_08') requireTalent('run_blood_05')
+  }
+  if (node.module === 'beast') {
+    if (!hasBeast) unmet.push('beast-family')
+    if (['run_beast_02', 'run_beast_03', 'run_beast_06'].includes(node.id)) requireTalent('run_beast_01')
+    if (node.id === 'run_beast_04' && beastCount < 2) unmet.push('beast-family-count-2')
+    if (node.id === 'run_beast_05') {
+      requireTalent('run_beast_01')
+      if (!hasEvolvedBeast) unmet.push('evolved-beast-family')
+    }
+    if (node.id === 'run_beast_07') requireTalent('run_beast_05')
+    if (node.id === 'run_beast_08') {
+      requireTalent('run_beast_04')
+      if (beastCount < 3) unmet.push('beast-family-count-3')
+    }
+  }
+  if (node.module === 'crystal') {
+    if (['run_crystal_03', 'run_crystal_05'].includes(node.id)) requireTalent('run_crystal_01')
+    if (node.id === 'run_crystal_06') requireTalent('run_crystal_05')
+    if (['run_crystal_04', 'run_crystal_07', 'run_crystal_08'].includes(node.id) && !hasControl) unmet.push('control-skill')
+    if (node.id === 'run_crystal_07') requireTalent('run_crystal_04')
+  }
+  return Array.from(new Set(unmet))
+}
+
+const isImmediatelyApplicableRunTalent = (node: RunTalentNode, context: RunTalentCandidateContext) => (
+  getRunTalentUnmetPrerequisiteIds(node, context).length === 0
+)
+
+export const getRunTalentPresentationItems = (
+  context: RunTalentCandidateContext,
+  options: {
+    offeredTalentIds?: readonly string[]
+    formAnchors?: Partial<Record<string, { familyId: string; evolutionId: string; anchoredAt: number }>>
+    formCycle?: { casts: Array<{ familyId: string; evolutionId: string; at: number }>; chargedUntil?: number }
+    formCooldowns?: Partial<Record<string, number>>
+  } = {},
+): RunTalentPresentationItem[] => {
+  const selected = normalizeSet(context.selectedTalentIds)
+  const offered = normalizeSet(options.offeredTalentIds)
+  return RUN_TALENT_RUNTIME_NODES.map((node) => {
+    const unmetPrerequisiteIds = getRunTalentUnmetPrerequisiteIds(node, context)
+    const status: RunTalentPresentationStatus = selected.has(node.id)
+      ? 'selected'
+      : offered.has(node.id) && unmetPrerequisiteIds.length === 0
+        ? 'candidate'
+        : unmetPrerequisiteIds.length === 0
+          ? 'eligible'
+          : 'unavailable'
+    const definition = isRunTalentFormId(node.id) ? RUN_TALENT_FORM_NODES.find((candidate) => candidate.id === node.id) : undefined
+    const formAnchor = definition ? options.formAnchors?.[node.id] ?? getFormCandidateAnchor(node, context) : undefined
+    return {
+      id: node.id,
+      name: node.name,
+      description: node.description,
+      iconId: node.id,
+      status,
+      unmetPrerequisiteIds,
+      form: definition
+        ? {
+            group: Math.ceil((definition.order - 8) / 2) as 1 | 2 | 3 | 4,
+            requiredLevel: definition.requiredLevel as 5 | 9 | 13 | 17,
+            anchorTag: definition.tags.find((tag) => ['line-projectile', 'spread-projectile', 'beast-command', 'area-field'].includes(tag)) as 'line-projectile' | 'spread-projectile' | 'beast-command' | 'area-field',
+            values: RUN_TALENT_FORM_BY_ID.get(node.id)?.values ?? {},
+            anchor: formAnchor,
+            cycle: {
+              progress: Math.min(3, options.formCycle?.casts.length ?? 0),
+              windowSeconds: 8,
+              enhancementRemaining: Math.max(0, (options.formCycle?.chargedUntil ?? 0) - (context.now ?? 0)),
+            },
+            cooldownRemaining: options.formCooldowns?.[node.id] ?? 0,
+          }
+        : undefined,
+    }
+  })
+}
+
 const getWeightedCandidates = (context: RunTalentCandidateContext) => {
   const selected = normalizeSet(context.selectedTalentIds)
-  return RUN_TALENT_NODES
-    .filter((node) => !selected.has(node.id) && isNodeOpenForLevel(node, context.currentLevel))
+  return RUN_TALENT_RUNTIME_NODES
+    // Form nodes are injected as a fixed mutually-exclusive pair by the
+    // reward pipeline. They must never displace an original-node candidate.
+    .filter((node) => !isRunTalentFormId(node.id))
+    .filter((node) => !selected.has(node.id) && isNodeOpenForLevel(node, context.currentLevel) && isImmediatelyApplicableRunTalent(node, context))
     .map((node) => {
       let weight = 100
       const reasons: string[] = []
-      if (node.module === context.openingBuild) {
+      if (node.module === context.openingBuild && (context.openingOfferCount ?? 0) < 2) {
         weight += 35
         reasons.push('开局流派 +35')
       }
@@ -985,13 +1373,50 @@ const getWeightedCandidates = (context: RunTalentCandidateContext) => {
         weight += 10
         reasons.push('关卡掉落 +10')
       }
-      const weakCross = node.module !== 'common' && node.module !== context.openingBuild
-      if (weakCross) {
-        weight -= 25
-        reasons.push('弱关联跨流派 -25')
+      const anchor = getFormCandidateAnchor(node, context)
+      if (anchor) {
+        weight += 45
+        reasons.push(`锚定 ${anchor.familyId}/${anchor.evolutionId}`)
       }
-      return { node, weight: Math.max(1, weight), reasons }
+      return {
+        node,
+        weight: Math.max(1, weight),
+        reasons,
+        formAnchor: anchor ? { familyId: anchor.familyId, evolutionId: anchor.evolutionId, anchoredAt: anchor.anchoredAt } : undefined,
+      }
     })
+}
+
+/**
+ * Returns the next unresolved form pair for the run's chosen build. The pair
+ * is deliberately not weighted: the reward pipeline keeps both choices
+ * stable while ordinary candidates reroll around them.
+ */
+export const getNextRunTalentFormCandidates = (context: RunTalentCandidateContext): RunTalentCandidate[] => {
+  const selected = normalizeSet(context.selectedTalentIds)
+  const definitions = RUN_TALENT_FORM_NODES
+    .filter((node) => node.module === context.openingBuild)
+    .sort((left, right) => left.order - right.order)
+
+  for (const group of [1, 2, 3, 4] as const) {
+    const nodes = definitions.filter((node) => Math.ceil((node.order - 8) / 2) === group)
+    if (nodes.some((node) => selected.has(node.id))) continue
+    if (nodes.length !== 2) continue
+
+    const candidates = nodes.map((node) => ({
+      node,
+      weight: 1,
+      reasons: ['形态组固定候选'],
+      formAnchor: getFormCandidateAnchor(node, context),
+    }))
+    if (candidates.every((candidate) => candidate.formAnchor && isNodeOpenForLevel(candidate.node, context.currentLevel) && isImmediatelyApplicableRunTalent(candidate.node, context))) {
+      return candidates
+    }
+    // Later groups must wait for the first unresolved group to become legal.
+    return []
+  }
+
+  return []
 }
 
 const pickWeighted = (pool: RunTalentCandidate[], count: number, seed: string | number) => {
@@ -1036,26 +1461,6 @@ export const generateRunTalentCandidates = (context: RunTalentCandidateContext):
   } else if (context.guaranteeState.noMainBuildStreak >= 2) {
     candidates = ensureCandidate(candidates, mainBuildPool[0], candidateCount)
     guaranteeApplied = 'main-build-streak'
-  }
-
-  const weakCross = candidates.filter((candidate) => candidate.node.module !== 'common' && candidate.node.module !== context.openingBuild)
-  if (weakCross.length > 1) {
-    const keepWeakCrossId = weakCross[0].node.id
-    const replacementPool = pool.filter((candidate) => (
-      (candidate.node.module === 'common' || candidate.node.module === context.openingBuild)
-      && !candidates.some((selected) => selected.node.id === candidate.node.id)
-    ))
-    candidates = candidates.map((candidate) => {
-      if (candidate.node.module === 'common' || candidate.node.module === context.openingBuild || candidate.node.id === keepWeakCrossId) {
-        return candidate
-      }
-      return replacementPool.shift() ?? candidate
-    })
-    candidates = candidates.filter((candidate, index, array) => array.findIndex((item) => item.node.id === candidate.node.id) === index).slice(0, candidateCount)
-    const fillPool = pool.filter((candidate) => !candidates.some((selected) => selected.node.id === candidate.node.id))
-    while (candidates.length < candidateCount && fillPool.length > 0) {
-      candidates.push(fillPool.shift()!)
-    }
   }
 
   const hasMainBuildCandidate = candidates.some((candidate) => candidate.node.module === context.openingBuild)

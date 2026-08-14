@@ -1,7 +1,14 @@
-import { useLayoutEffect, useRef } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
+import { useLayoutEffect, useRef, useState, type MutableRefObject } from 'react'
 
 import type { CombatDamageLogEvent, GamePhase } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
+import {
+  COMBAT_UI_LAYER,
+  getCombatUiLayerAccessibilityProps,
+  getCombatUiLayerStyle,
+  useCombatUiLayerState,
+} from './combatUiLayers'
 
 export const COMBAT_DAMAGE_LOG_VIEWPORT_SIZE = 8
 export const COMBAT_DAMAGE_LOG_CAPACITY = 120
@@ -10,6 +17,11 @@ export const COMBAT_DAMAGE_LOG_PAUSE_VIEWPORT_CLASS = 'box-border h-[152px] py-1
 export const COMBAT_DAMAGE_LOG_REWARD_VIEWPORT_CLASS = 'box-border h-[152px] py-1'
 export const COMBAT_DAMAGE_LOG_BACKGROUND_CLASS = 'bg-[rgba(4,10,7,0.6)]'
 export const COMBAT_DAMAGE_LOG_BOTTOM_EPSILON = 2
+export const COMBAT_DAMAGE_LOG_EVENT_TEXT_CLASS = {
+  enemy: 'text-red-400',
+  player: 'text-white',
+  playerCritical: 'text-orange-400',
+} as const
 
 export type CombatDamageLogLayout = 'standard' | 'reward' | 'pause'
 
@@ -61,6 +73,14 @@ export const formatCombatDamageLogEvent = (event: CombatDamageLogEvent) => {
     : `${event.attackerName} 使用 ${event.sourceName} 攻击玩家造成伤害${damage}`
 }
 
+/** Presentation only: the combat event owns the resolved critical result. */
+export const getCombatDamageLogEventTextClass = (event: CombatDamageLogEvent) => {
+  if (event.side === 'enemy') return COMBAT_DAMAGE_LOG_EVENT_TEXT_CLASS.enemy
+  return event.isCritical
+    ? COMBAT_DAMAGE_LOG_EVENT_TEXT_CLASS.playerCritical
+    : COMBAT_DAMAGE_LOG_EVENT_TEXT_CLASS.player
+}
+
 export const shouldShowCombatDamageLog = (phase: GamePhase, isLocalBattleTestActive: boolean) => (
   isLocalBattleTestActive || phase === 'running' || phase === 'paused' || phase === 'level-clear'
 )
@@ -81,8 +101,10 @@ export function CombatDamageLog({ placement = 'floating' }: { placement?: Combat
   const latestEventSignature = latestEvent ? `${latestEvent.id}:${latestEvent.damage}` : undefined
   const isLevelClear = phase === 'level-clear'
   const isPausePlacement = placement === 'pause'
+  const [isFloatingLogHidden, setIsFloatingLogHidden] = useState(false)
   const isRewardScreenVisible = isLevelClear || pendingSkillReward !== null
   const isManualPauseMenu = phase === 'paused' && isPauseMenuOpen && !isRewardScreenVisible
+  const { highestLayer } = useCombatUiLayerState()
   const layout: CombatDamageLogLayout = isRewardScreenVisible ? 'reward' : isPausePlacement ? 'pause' : 'standard'
   const layoutConfig = COMBAT_DAMAGE_LOG_LAYOUTS[layout]
 
@@ -93,50 +115,122 @@ export function CombatDamageLog({ placement = 'floating' }: { placement?: Combat
   }, [events.length])
 
   useLayoutEffect(() => {
+    if (!isPausePlacement && (events.length === 0 || phase === 'idle' || phase === 'game-over')) {
+      setIsFloatingLogHidden(false)
+    }
+  }, [events.length, isPausePlacement, phase])
+
+  useLayoutEffect(() => {
     const container = scrollRef.current
     if (!container) return
     if (followsBottomRef.current) {
       container.scrollTop = container.scrollHeight
     }
-  }, [latestEventSignature])
+  }, [isFloatingLogHidden, latestEventSignature])
 
-  if (!shouldShowCombatDamageLog(phase, isLocalBattleTestActive) || events.length === 0 || (isPausePlacement && !isManualPauseMenu)) {
+  const isVisibleAtCurrentLayer = isPausePlacement
+    ? highestLayer === COMBAT_UI_LAYER.pause
+    : highestLayer === COMBAT_UI_LAYER.combat
+
+  if (
+    !shouldShowCombatDamageLog(phase, isLocalBattleTestActive)
+    || events.length === 0
+    || (isPausePlacement && !isManualPauseMenu)
+    || !isVisibleAtCurrentLayer
+  ) {
     return null
   }
 
   return (
     <aside
+      {...(isPausePlacement ? {} : getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.combat, highestLayer))}
       className={isPausePlacement
-        ? 'pointer-events-auto w-full md:hidden'
-        : `pointer-events-none absolute bottom-[11.5rem] left-4 z-40 w-[min(92vw,32rem)] md:bottom-[6rem] ${isManualPauseMenu ? 'hidden md:block' : ''}`}
+        ? 'pointer-events-auto min-w-0 w-full'
+        : 'pointer-events-none absolute bottom-[12.5rem] left-2 right-2 w-auto max-w-[21rem] sm:bottom-[12rem] sm:left-3 sm:right-auto sm:w-[min(68vw,21rem)] md:left-3 md:w-[min(52vw,21rem)] xl:bottom-[8rem] xl:left-4 xl:w-[21rem]'}
+      style={isPausePlacement ? undefined : getCombatUiLayerStyle(COMBAT_UI_LAYER.combat)}
       data-testid={isPausePlacement ? 'combat-damage-log-pause' : 'combat-damage-log'}
       aria-label={`伤害记录，默认显示最近 ${COMBAT_DAMAGE_LOG_VIEWPORT_SIZE} 条，可滚动查看当前 ${events.length} 条`}
     >
-      <div
-        className={`pointer-events-auto overflow-hidden border border-[rgba(157,213,172,0.48)] ${COMBAT_DAMAGE_LOG_BACKGROUND_CLASS} px-3 shadow-[0_0_0_1px_rgba(0,0,0,0.44)] ${layoutConfig.viewportClass}`}
-      >
-        <div
-          ref={scrollRef}
-          className="h-full touch-pan-y overscroll-contain overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
-          data-testid={isPausePlacement ? 'combat-damage-log-scroll-pause' : 'combat-damage-log-scroll'}
-          onScroll={(event) => {
-            followsBottomRef.current = isCombatDamageLogAtBottom(event.currentTarget)
-          }}
-          onWheel={(event) => event.stopPropagation()}
-          onTouchMove={(event) => event.stopPropagation()}
+      {isPausePlacement ? (
+        <DamageLogContent
+          events={events}
+          layoutConfig={layoutConfig}
+          placement="pause"
+          scrollRef={scrollRef}
+          followsBottomRef={followsBottomRef}
+        />
+      ) : isFloatingLogHidden ? (
+        <button
+          type="button"
+          className="pointer-events-auto grid h-7 w-7 place-items-center border border-[rgba(157,213,172,0.48)] bg-[rgba(4,10,7,0.6)] text-[#dfe7d5] hover:text-[#ffffff] focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-[#9dd5ac] active:translate-y-px"
+          aria-label="显示伤害日志"
+          title="显示伤害日志"
+          data-testid="combat-damage-log-show"
+          onClick={() => setIsFloatingLogHidden(false)}
         >
-          <ol className={layoutConfig.listClass}>
-            {events.map((event) => (
-              <li
-                key={event.id}
-                className={`overflow-x-auto overflow-y-hidden whitespace-nowrap font-pixel text-[9px] text-[#dfe7d5] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:text-[10px] ${layoutConfig.recordClass}`}
-              >
-                {formatCombatDamageLogEvent(event)}
-              </li>
-            ))}
-          </ol>
+          <Eye size={15} aria-hidden="true" />
+        </button>
+      ) : (
+        <div className={`pointer-events-auto relative overflow-hidden border border-[rgba(157,213,172,0.48)] ${COMBAT_DAMAGE_LOG_BACKGROUND_CLASS} px-3 pb-2 pt-7 shadow-[0_0_0_1px_rgba(0,0,0,0.44)]`}>
+          <button
+            type="button"
+            className="pointer-events-auto absolute left-2 top-1 grid h-5 w-5 place-items-center text-[#dfe7d5] hover:text-[#ffffff] focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-[#9dd5ac] active:translate-y-px"
+            aria-label="隐藏伤害日志"
+            title="隐藏伤害日志"
+            data-testid="combat-damage-log-hide"
+            onClick={() => setIsFloatingLogHidden(true)}
+          >
+            <EyeOff size={14} aria-hidden="true" />
+          </button>
+          <DamageLogContent
+            events={events}
+            layoutConfig={layoutConfig}
+            placement="floating"
+            scrollRef={scrollRef}
+            followsBottomRef={followsBottomRef}
+          />
         </div>
-      </div>
+      )}
     </aside>
+  )
+}
+
+function DamageLogContent({
+  events,
+  layoutConfig,
+  placement,
+  scrollRef,
+  followsBottomRef,
+}: {
+  events: CombatDamageLogEvent[]
+  layoutConfig: (typeof COMBAT_DAMAGE_LOG_LAYOUTS)[CombatDamageLogLayout]
+  placement: CombatDamageLogPlacement
+  scrollRef: MutableRefObject<HTMLDivElement | null>
+  followsBottomRef: MutableRefObject<boolean>
+}) {
+  return (
+    <div className={`${placement === 'pause' ? `overflow-hidden border border-[rgba(157,213,172,0.48)] ${COMBAT_DAMAGE_LOG_BACKGROUND_CLASS} px-3 shadow-[0_0_0_1px_rgba(0,0,0,0.44)]` : ''} ${layoutConfig.viewportClass}`}>
+      <div
+        ref={scrollRef}
+        className="h-full touch-pan-y overscroll-contain overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
+        data-testid={placement === 'pause' ? 'combat-damage-log-scroll-pause' : 'combat-damage-log-scroll'}
+        onScroll={(event) => {
+          followsBottomRef.current = isCombatDamageLogAtBottom(event.currentTarget)
+        }}
+        onWheel={(event) => event.stopPropagation()}
+        onTouchMove={(event) => event.stopPropagation()}
+      >
+        <ol className={layoutConfig.listClass}>
+          {events.map((event) => (
+            <li
+              key={event.id}
+              className={`overflow-x-auto overflow-y-hidden whitespace-nowrap font-pixel text-[9px] ${getCombatDamageLogEventTextClass(event)} [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:text-[10px] ${layoutConfig.recordClass}`}
+            >
+              {formatCombatDamageLogEvent(event)}
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
   )
 }

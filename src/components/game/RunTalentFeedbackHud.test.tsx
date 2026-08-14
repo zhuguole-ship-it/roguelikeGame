@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createInitialSnapshot } from '../../game/engine'
+import { createInitialSnapshot, getRunTalentPresentationSnapshot } from '../../game/engine'
 import { useGameStore } from '../../store/useGameStore'
 import {
   getRecentTalentCooldownRefundFeedback,
@@ -63,9 +63,43 @@ describe('RunTalentFeedbackHud', () => {
     render(<RunTalentFeedbackHud />)
 
     const hud = screen.getByTestId('run-talent-feedback-hud')
+    expect(hud.getAttribute('data-combat-ui-layer')).toBe('top-5')
+    expect(hud.style.zIndex).toBe('100')
+    expect(hud.className).toContain('top-[7.5rem]')
+    expect(hud.className).toContain('sm:top-[9.5rem]')
+    expect(hud.className).toContain('lg:bottom-[5.75rem]')
     expect(hud.textContent).toContain('百兽合围 · 存活主兽 1/3')
     expect(hud.textContent).toContain('晶域连锁 · 2/3')
     expect(hud.textContent).not.toContain('冷却导流')
+  })
+
+  it('shows the active campaign reward as a compact low-obstruction HUD chip from the shared presentation snapshot', () => {
+    const base = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...base,
+      pendingSkillReward: {
+        poolKind: 'raid-skill',
+        source: 'elite-raid',
+        campaignRewardNodeId: 'elite-raid:12',
+        campaignRewardSemantics: 'five-choice-skill',
+        choices: [{
+          choiceId: 'raid-choice', mode: 'upgrade-active', skillId: 'curve-return', familyId: 'curve-return',
+          title: '突袭回箭强化', description: '突袭限定的安全候选。', buildTag: 'general', tacticalTags: [], levelText: 'Lv.3', tacticalText: '',
+        }],
+      },
+    })
+
+    render(<RunTalentFeedbackHud />)
+
+    const chip = screen.getByTestId('campaign-reward-hud-chip')
+    expect(chip.getAttribute('data-source')).toBe('elite-raid-skill')
+    expect(chip.getAttribute('data-semantics')).toBe('five-choice-skill')
+    expect(chip.getAttribute('data-candidate-choice-ids')).toBe('raid-choice')
+    expect(chip.textContent).toContain('精英突袭技能奖励')
+    expect(chip.textContent).toContain('限定技能候选')
+    expect(screen.getByTestId('campaign-reward-hud-progress').textContent).toContain('蓝晶 0/')
+    expect(screen.getByTestId('campaign-reward-hud-progress').textContent).toContain('固定 0/')
+    expect(chip.className).toContain('text-[9px]')
   })
 
   it('keeps blood-feather progress visible with its real window or cooldown state', () => {
@@ -75,6 +109,51 @@ describe('RunTalentFeedbackHud', () => {
       beastCompanions: [],
       activeSkills: [],
     })).toEqual([{ id: 'blood-feather-storm', label: '血羽风暴', detail: '17/30 · 窗口 2.4秒 · 冷却 18.0秒', tone: 'active' }])
+  })
+
+  it('reads the selected group-four form cycle from the runtime presentation snapshot instead of cooldown echo', () => {
+    const base = createInitialSnapshot('running')
+    const snapshot = {
+      ...base,
+      contractLevel: 17,
+      elapsedTime: 20,
+      activeSkills: [
+        { skillId: 'pierce-arrow', familyId: 'pierce-arrow', evolutionId: 'wind-cut', level: 4, cooldownRemaining: 0 },
+        { skillId: 'ring-volley', familyId: 'ring-volley', evolutionId: 'gale-barrage', level: 4, cooldownRemaining: 0 },
+        { skillId: 'raptor-dive', familyId: 'raptor-dive', evolutionId: 'frost-wolf-king', level: 4, cooldownRemaining: 0 },
+      ],
+      runTalentState: {
+        ...base.runTalentState,
+        selectedTalentIds: ['run_death_15'],
+        formAnchors: { run_death_15: { familyId: 'pierce-arrow', evolutionId: 'wind-cut', anchoredAt: 4 } },
+        formCycle: {
+          casts: [
+            { familyId: 'pierce-arrow', evolutionId: 'wind-cut', at: 14 },
+            { familyId: 'ring-volley', evolutionId: 'gale-barrage', at: 16 },
+          ],
+          chargedUntil: 24,
+        },
+        formCooldowns: { run_death_15: 12 },
+      },
+    }
+    const items = getRunTalentFeedbackItems({
+      selectedTalentIds: snapshot.runTalentState.selectedTalentIds,
+      beastCompanions: [],
+      activeSkills: snapshot.activeSkills,
+      presentationItems: getRunTalentPresentationSnapshot(snapshot),
+    })
+
+    expect(items).toEqual([{
+      id: 'form-area-cycle-run_death_15',
+      label: '形态区域强化',
+      detail: '终审地带 · 强化 4.0秒',
+      tone: 'ready',
+    }])
+
+    useGameStore.setState(snapshot)
+    render(<RunTalentFeedbackHud />)
+    expect(screen.getByTestId('run-talent-feedback-hud').textContent).toContain('形态区域强化 · 终审地带 · 强化 4.0秒')
+    expect(screen.getByTestId('run-talent-feedback-hud').textContent).not.toContain('冷却回声')
   })
 
   it('only exposes a sourced cooldown refund during its two-second display lifetime', () => {

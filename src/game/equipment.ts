@@ -446,12 +446,16 @@ export const getEquipmentBonusSummary = (equippedItems: Partial<Record<Equipment
 
 export const getEquipmentRelevance = (
   item: EquipmentItem,
-  context: { activeSkillIds: string[]; activeBuildTags: SkillBuildTag[] },
+  context: { activeSkillIds?: string[]; activeSkillFamilyIds?: string[]; activeEvolutionIds?: string[]; activeBuildTags: SkillBuildTag[] },
 ) => {
-  const activeSkillSet = new Set(context.activeSkillIds)
+  const activeSkillSet = new Set(context.activeSkillIds ?? [])
+  const activeFamilySet = new Set(context.activeSkillFamilyIds ?? [])
+  const activeEvolutionSet = new Set(context.activeEvolutionIds ?? [])
   const activeBuildSet = new Set(context.activeBuildTags)
   const affectsActiveSkill = item.modifiers.some((modifier) => {
-    return 'skillIds' in modifier && modifier.skillIds?.some((skillId) => activeSkillSet.has(skillId))
+    return modifier.familyIds?.some((familyId) => activeFamilySet.has(familyId)) ||
+      modifier.evolutionIds?.some((evolutionId) => activeEvolutionSet.has(evolutionId)) ||
+      modifier.skillIds?.some((skillId) => activeSkillSet.has(skillId))
   })
   const matchesActiveBuild = item.buildTag !== 'general' && activeBuildSet.has(item.buildTag)
 
@@ -533,7 +537,7 @@ export const getBatchDismantleCandidates = (
   inventory: EquipmentItem[],
   equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>,
   category: EquipmentDismantleCategory,
-  context: { activeSkillIds: string[]; activeBuildTags: SkillBuildTag[] },
+  context: { activeSkillIds?: string[]; activeSkillFamilyIds?: string[]; activeEvolutionIds?: string[]; activeBuildTags: SkillBuildTag[] },
 ) => {
   return inventory.filter((item) => {
     if (item.locked || item.isNew || isEquippedItem(item, equippedItems) || isEpicOrHigher(item)) {
@@ -905,31 +909,31 @@ const createBonus = (slot: EquipmentSlot, rarity: EquipmentRarity, buildTag: Ski
 
 export const SKILL_EQUIPMENT_LINKS: Record<SkillBuildTag, EquipmentSkillModifier[]> = {
   pierce: [
-    { type: 'projectile-count', skillIds: ['pierce-arrow', 'double-star', 'sky-judgement'], amount: 1 },
-    { type: 'pierce-echo', skillIds: ['heavy-snipe', 'sun-piercer', 'wind-cut', 'dawn-bolt'], everyHits: 2, damageMultiplier: 0.5, radius: 48 },
-    { type: 'ricochet-bounces', skillIds: ['ricochet-feather'], amount: 2 },
-    { type: 'double-line', skillIds: ['curve-return', 'dawn-bolt', 'weakness-trace'], cooldownMultiplier: 1.04 },
-    { type: 'projectile-count', skillIds: ['fire-feather', 'shadow-erosion', 'celestial-feather'], amount: 1 },
-    { type: 'spread-slow', skillIds: ['armor-pin', 'frost-bite', 'thunder-chain', 'shock-bolt', 'hunter-mark', 'double-star'], slowFactor: 0.18, duration: 0.85 },
+    { type: 'projectile-count', familyIds: ['pierce-arrow'], amount: 1 },
+    { type: 'pierce-echo', familyIds: ['heavy-snipe', 'pierce-arrow'], everyHits: 2, damageMultiplier: 0.5, radius: 48 },
+    { type: 'ricochet-bounces', familyIds: ['ricochet-feather'], amount: 2 },
+    { type: 'double-line', familyIds: ['curve-return', 'heavy-snipe'], cooldownMultiplier: 1.04 },
+    { type: 'projectile-count', familyIds: ['hunter-mark', 'curve-return'], evolutionIds: ['fire-feather', 'sky-judgement'], amount: 1 },
+    { type: 'spread-slow', familyIds: ['hunter-mark', 'ricochet-feather', 'curve-return'], slowFactor: 0.18, duration: 0.85 },
   ],
   spread: [
-    { type: 'spread-speed', skillIds: ['quick-triple', 'gale-barrage', 'final-hunt'], multiplier: 1.18 },
-    { type: 'spread-angle', skillIds: ['fan-burst', 'double-crescent', 'hawk-wing'], multiplier: 1.16 },
-    { type: 'projectile-count', skillIds: ['arrow-screen', 'afterimage-salvo', 'light-split', 'chain-reflect'], amount: 1 },
-    { type: 'spread-slow', skillIds: ['cross-cut', 'blood-scent', 'moonshard-volley', 'sunflare-sweep'], slowFactor: 0.2, duration: 1 },
-    { type: 'spread-double-next', skillIds: ['spiral-break'], everyCasts: 3 },
+    { type: 'spread-speed', familyIds: ['quick-triple'], multiplier: 1.18 },
+    { type: 'spread-angle', familyIds: ['fan-burst'], multiplier: 1.16 },
+    { type: 'projectile-count', familyIds: ['arrow-screen', 'afterimage-salvo'], amount: 1 },
+    { type: 'spread-slow', familyIds: ['spiral-break', 'arrow-screen'], slowFactor: 0.2, duration: 1 },
+    { type: 'spread-double-next', familyIds: ['spiral-break'], everyCasts: 3 },
   ],
   control: [
-    { type: 'field-duration', skillIds: ['arrow-rain', 'meteor-cluster', 'dome-suppression', 'thousand-feathers', 'azure-barrage'], multiplier: 1.18 },
-    { type: 'field-end-burst', skillIds: ['venom-vine', 'hunter-net', 'pit-spikes', 'snare-line'], damageMultiplier: 0.9, radiusMultiplier: 1.1 },
-    { type: 'field-end-burst', skillIds: ['ice-prison', 'feather-storm', 'death-line', 'starfire-fall', 'rift-storm', 'thorn-whistle'], damageMultiplier: 1, radiusMultiplier: 1.08 },
+    { type: 'field-duration', familyIds: ['arrow-rain', 'pit-spikes', 'rift-storm'], multiplier: 1.18 },
+    { type: 'field-end-burst', familyIds: ['venom-vine', 'hunter-net', 'pit-spikes'], damageMultiplier: 0.9, radiusMultiplier: 1.1 },
+    { type: 'field-end-burst', evolutionIds: ['ice-prison', 'feather-storm', 'death-line', 'starfire-fall', 'thorn-whistle'], damageMultiplier: 1, radiusMultiplier: 1.08 },
   ],
   beast: [
-    { type: 'beast-on-hit-haste', skillIds: ['raptor-dive', 'ring-volley'], duration: 0.9, attackIntervalMultiplier: 0.82 },
-    { type: 'beast-shield', skillIds: ['decoy-feather', 'sentry-tower'], shieldAmount: 18, duration: 1.2 },
-    { type: 'beast-death-trigger', skillIds: ['poison-ambush', 'revolving-feather'], shieldAmount: 14, burstDamage: 18, burstRadius: 72 },
-    { type: 'beast-extra-summon', skillIds: ['god-hunt'], triggerSlot: 2, duration: 6 },
-    { type: 'beast-dual-bond', skillIds: ['ring-volley', 'decoy-feather', 'sentry-tower', 'poison-ambush', 'revolving-feather', 'raptor-dive', 'god-hunt'], damageMultiplier: 1.16, durationMultiplier: 1.12 },
+    { type: 'beast-on-hit-haste', familyIds: ['raptor-dive', 'ring-volley'], duration: 0.9, attackIntervalMultiplier: 0.82 },
+    { type: 'beast-shield', familyIds: ['decoy-feather', 'sentry-tower'], shieldAmount: 18, duration: 1.2 },
+    { type: 'beast-death-trigger', familyIds: ['poison-ambush', 'revolving-feather'], shieldAmount: 14, burstDamage: 18, burstRadius: 72 },
+    { type: 'beast-extra-summon', familyIds: ['raptor-dive'], triggerSlot: 2, duration: 6 },
+    { type: 'beast-dual-bond', familyIds: ['ring-volley', 'decoy-feather', 'sentry-tower', 'poison-ambush', 'revolving-feather', 'raptor-dive'], damageMultiplier: 1.16, durationMultiplier: 1.12 },
   ],
 }
 
@@ -966,15 +970,15 @@ const createSkillModifiers = (
     ]
 
     if (affix.includes('贯通') || rarity === 'epic') {
-      modifiers.push({ type: 'pierce-echo', skillIds: ['pierce-arrow', 'heavy-snipe', 'sun-piercer', 'dawn-bolt', 'wind-cut'], everyHits: 3, damageMultiplier: 0.45, radius: 42 })
+      modifiers.push({ type: 'pierce-echo', familyIds: ['pierce-arrow', 'heavy-snipe'], everyHits: 3, damageMultiplier: 0.45, radius: 42 })
     }
 
     if (affix.includes('处刑') || rarity === 'legacy') {
-      modifiers.push({ type: 'elite-parallel-line', skillIds: ['pierce-arrow', 'heavy-snipe', 'wind-cut', 'sun-piercer'], damageMultiplier: 0.55 })
+      modifiers.push({ type: 'elite-parallel-line', familyIds: ['pierce-arrow', 'heavy-snipe'], damageMultiplier: 0.55 })
     }
 
     if (affix.includes('审判') || rarity === 'legendary') {
-      modifiers.push({ type: 'double-line', skillIds: ['pierce-arrow', 'heavy-snipe', 'wind-cut', 'sun-piercer', 'sky-judgement', 'dawn-bolt', 'double-star'], cooldownMultiplier: 1.08 })
+      modifiers.push({ type: 'double-line', familyIds: ['pierce-arrow', 'heavy-snipe', 'curve-return'], cooldownMultiplier: 1.08 })
     }
 
     return appendSkillSpecificModifier(modifiers, rarity, 'pierce')
@@ -1000,7 +1004,7 @@ const createSkillModifiers = (
     }
 
     if (affix.includes('千羽') || rarity === 'legendary') {
-      modifiers.push({ type: 'ricochet-bounces', skillIds: ['ricochet-feather'], amount: 2 })
+      modifiers.push({ type: 'ricochet-bounces', familyIds: ['ricochet-feather'], amount: 2 })
       modifiers.push({ type: 'spread-double-next', buildTag: 'spread', everyCasts: 3 })
     }
 

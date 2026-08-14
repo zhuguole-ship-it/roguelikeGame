@@ -96,7 +96,7 @@ export const CAMPAIGN_MONSTER_THEMES: CampaignMonsterTheme[] = [
       enemy('dungeon-skeleton-archer', '骷髅弓手', 'ranged', 'ranged', 'none', 18, '#9cc7ff', 0.88, 1.04),
       enemy('dungeon-hellhound', '地狱犬', 'charger', 'charger', 'none', 16, '#fb7185', 1.08, 2.03),
       enemy('dungeon-splitting-ooze', '裂变软泥', 'splitter', 'flanker', 'pack-haste', 15, '#94a3b8', 0.78, 1.24),
-      enemy('dungeon-explosive-fire-sac', '爆裂火囊怪', 'bomber', 'caster', 'hex-slow', 10, '#67e8f9', 0.95, 0.96),
+      enemy('dungeon-explosive-fire-sac', '爆裂火囊怪', 'bomber', 'direct', 'none', 10, '#67e8f9', 0.95, 0.96),
     ],
     elitePool: [
       enemy('dungeon-chain-captain', '断链骷髅队长', 'elite', 'direct', 'war-drum', 5, '#c084fc', 1.1, 1.08),

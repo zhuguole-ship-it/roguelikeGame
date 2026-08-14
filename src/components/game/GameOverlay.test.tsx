@@ -1,6 +1,9 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
+import { ARCHER_FIXED_PASSIVE, SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
 import { CAMPAIGN_MONSTER_THEMES, getCampaignLootProfile } from '../../game/campaignMonsters'
 import { createInitialSnapshot } from '../../game/engine'
 import { developerAssetEntities } from '../../game/assetManifest'
@@ -14,7 +17,9 @@ import { DUNGEON_WARDEN_ACTIONS, getDungeonWardenFrameUrls } from '../../game/du
 import { CORROSIVE_SLIME_ACTIONS, getCorrosiveSlimeFrameUrls } from '../../game/corrosiveSlimeAssetFrames'
 import { getHellhoundImage2FrameUrls } from '../../game/hellhoundAssetFrames'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
+import { ARCHER_SKILL_EVOLUTION_MAP } from '../../game/archerSkillEvolution'
 import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
+import type { RunSettlementSummary } from '../../game/types'
 import {
   MONSTER_SPRITE_ATLASES,
   CORROSIVE_SLIME_SPRITE_ATLAS,
@@ -23,13 +28,31 @@ import {
   getMonsterSpriteAtlasForEnemy,
 } from '../../game/sprites'
 import { SKELETON_WARRIOR_PT_ACTIONS, getSkeletonWarriorPtFrameUrls } from '../../game/skeletonWarriorPtAssetFrames'
-import { RUN_TALENT_NODE_BY_ID } from '../../game/talents'
 import { restorePersistedGameState, useGameStore } from '../../store/useGameStore'
-import { GameOverlay } from './GameOverlay'
+import {
+  CHARACTER_SELECTION_ARCHER_IDLE_FPS,
+  CHARACTER_SELECTION_ARCHER_IDLE_FRAME_URLS,
+  CHARACTER_SELECTION_ASSET_URLS,
+  CHARACTER_DETAIL_TRANSITION_DETAIL_FADE_START_MS,
+  CHARACTER_DETAIL_TRANSITION_DURATION_MS,
+  CHARACTER_DETAIL_TRANSITION_SELECTION_FADE_END_MS,
+  CHARACTER_DETAIL_ARCHER_PREVIEW_LAYOUT,
+  CHARACTER_DETAIL_CONTENT_LAYOUT,
+  CHARACTER_DETAIL_STAGE_SIZE,
+  CHARACTER_DETAIL_TEXT_LAYOUT,
+  CHARACTER_SELECTION_FINAL_LAYOUT,
+  CHARACTER_SELECTION_SELECT_LABEL_Y_DELTA,
+  CHARACTER_SELECTION_STAGE_SIZE,
+  GameOverlay,
+} from './GameOverlay'
+
+const defaultStartGame = useGameStore.getState().startGame
 
 afterEach(() => {
+  useGameStore.setState({ ...createInitialSnapshot(), metaTalentRanks: {}, startGame: defaultStartGame })
+  vi.useRealTimers()
   vi.restoreAllMocks()
-  useGameStore.setState({ ...createInitialSnapshot(), metaTalentRanks: {} })
+  vi.unstubAllGlobals()
 })
 
 describe('GameOverlay', () => {
@@ -46,7 +69,10 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    expect(screen.getByTestId('local-battle-failed')).toBeTruthy()
+    const localFailure = screen.getByTestId('local-battle-failed')
+    expect(localFailure).toBeTruthy()
+    expect(localFailure.getAttribute('data-combat-ui-layer')).toBe('top-2')
+    expect(localFailure.style.zIndex).toBe('400')
     expect(screen.getByText('本地战斗测试结束')).toBeTruthy()
     expect(screen.getByText(/未产生正式收益、掉落、天赋点或存档记录/)).toBeTruthy()
     expect(screen.getByTestId('local-battle-exit-after-failure')).toBeTruthy()
@@ -62,18 +88,74 @@ describe('GameOverlay', () => {
     expect(useGameStore.getState().localBattleTest).toBeUndefined()
   })
 
-  it('keeps the formal settlement overlay for a normal game-over state', () => {
-    useGameStore.setState({ ...createInitialSnapshot('game-over'), message: '正式对局结束' })
+  it('replaces the formal game-over history layout with the Top2 black-gold failure settlement', () => {
+    const runSettlementSummary: RunSettlementSummary = {
+      result: 'failure',
+      reachedLevel: 8,
+      finalCarriedEquipmentIds: [],
+      carriedEquipmentCount: 0,
+      talentPointsEarned: 2,
+      displayEntries: [{ kind: 'active-skill', sourceId: 'pierce-arrow', name: '穿刺箭', order: 0, level: 1 }],
+      damageEntries: [{ sourceId: 'pierce-arrow', sourceName: '穿刺箭', totalDamage: 120, maxHitDamage: 40 }],
+    }
+    useGameStore.setState({
+      ...createInitialSnapshot('game-over'),
+      message: '正式对局结束',
+      runSettlementSummary,
+    })
 
     render(<GameOverlay />)
 
-    expect(screen.getByText('冒险结束')).toBeTruthy()
-    expect(screen.getByText('对局结算')).toBeTruthy()
+    const statusBanner = screen.getByTestId('run-settlement-status-banner').querySelector('img')
+    expect(statusBanner?.getAttribute('alt')).toBe('通关失败')
+    expect(statusBanner?.getAttribute('src')).toContain('level-failed-title-v2.png')
+    expect(screen.getByText('抵达层数')).toBeTruthy()
+    expect(screen.getByText('获得装备')).toBeTruthy()
+    expect(screen.getByText('获得天赋点')).toBeTruthy()
+    expect(screen.getByText('第 8 层')).toBeTruthy()
+    expect(screen.getByText('2')).toBeTruthy()
+    expect(screen.queryByText('冒险结束')).toBeNull()
+    expect(screen.queryByText('对局结算')).toBeNull()
+    expect(screen.queryByText('历史排行')).toBeNull()
+    expect(screen.queryByText('长期目标')).toBeNull()
+    expect(screen.getByTestId('game-over-settlement').getAttribute('data-combat-ui-layer')).toBe('top-2')
+    expect(screen.getByTestId('game-over-settlement').getAttribute('data-combat-ui-active')).toBe('true')
+    const settlement = screen.getByTestId('game-over-settlement')
+    expect(settlement.getAttribute('data-settlement-background')).toBe('frozen-battle-frame-glass')
+    expect(settlement.className).toContain('bg-[rgba(3,5,4,0.8)]')
+    expect(settlement.className).not.toContain('bg-[#030504]')
+    expect(settlement.style.backdropFilter).toBe('blur(6px)')
+    expect(screen.queryByTestId('godot-village-background-video')).toBeNull()
+    expect(screen.queryByTestId('village-compact-actions')).toBeNull()
     expect(screen.queryByTestId('local-battle-failed')).toBeNull()
   })
 
+  it('uses the same frozen battle-frame glass for a formal success without mounting village UI', () => {
+    const runSettlementSummary: RunSettlementSummary = {
+      result: 'success',
+      reachedLevel: 22,
+      finalCarriedEquipmentIds: ['boss-bow'],
+      carriedEquipmentCount: 1,
+      talentPointsEarned: 4,
+      displayEntries: [{ kind: 'active-skill', sourceId: 'pierce-arrow', name: '穿刺箭', order: 0, level: 3 }],
+      damageEntries: [{ sourceId: 'pierce-arrow', sourceName: '穿刺箭', totalDamage: 320, maxHitDamage: 80 }],
+    }
+    useGameStore.setState({ ...createInitialSnapshot('game-over'), runSettlementSummary })
+
+    render(<GameOverlay />)
+
+    expect(screen.getByTestId('run-settlement-status-banner').querySelector('img')?.getAttribute('alt')).toBe('通关成功')
+    const settlement = screen.getByTestId('game-over-settlement')
+    expect(settlement.getAttribute('data-settlement-background')).toBe('frozen-battle-frame-glass')
+    expect(settlement.className).toContain('bg-[rgba(3,5,4,0.8)]')
+    expect(settlement.className).not.toContain('bg-[#030504]')
+    expect(settlement.style.backdropFilter).toBe('blur(6px)')
+    expect(screen.queryByTestId('godot-village-background-video')).toBeNull()
+    expect(screen.queryByTestId('village-compact-actions')).toBeNull()
+  })
+
   it('shows the village menu and opens click-based village interactions', () => {
-    useGameStore.setState({ ...createInitialSnapshot('idle') })
+    useGameStore.setState({ ...createInitialSnapshot('idle'), discoveredSkillEvolutionIds: ['wind-cut'] })
 
     render(<GameOverlay />)
 
@@ -83,14 +165,20 @@ describe('GameOverlay', () => {
     expect(defaultBackgroundVideo.getAttribute('src')).not.toContain('assets/village-main-menu-concept-image2.png')
     expect(defaultBackgroundVideo.getAttribute('poster')).not.toContain('assets/village-main-menu-concept-image2.png')
 
-    expect(screen.getByRole('button', { name: '开始游戏' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '角色选择' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '物品仓库' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '设置' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '猎手之家' })).toBeTruthy()
+    const compactActions = screen.getByTestId('village-compact-actions')
+    expect(compactActions.className).toContain('grid-cols-2')
+    expect(compactActions.className).toContain('sm:grid-cols-4')
+    expect(compactActions.className).toContain('lg:hidden')
+    expect(within(compactActions).getByRole('button', { name: '开始游戏' })).toBeTruthy()
+    expect(within(compactActions).getByRole('button', { name: '角色选择' })).toBeTruthy()
+    expect(within(compactActions).getByRole('button', { name: '物品仓库' })).toBeTruthy()
+    expect(within(compactActions).getByRole('button', { name: '设置' })).toBeTruthy()
+    expect(within(compactActions).getByRole('button', { name: '猎手之家' })).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: '传送门' }))
+    fireEvent.click(within(compactActions).getByRole('button', { name: '传送门' }))
     expect(screen.getByTestId('campaign-modal-shell').className).toContain('h-[min(92vh,760px)]')
+    expect(screen.getByTestId('campaign-modal-shell-backdrop').className).toContain('overflow-y-auto')
+    expect(screen.getByTestId('campaign-modal-shell-backdrop').className).toContain('overflow-x-hidden')
     expect(screen.getByTestId('campaign-modal-header').className).toContain('shrink-0')
     expect(screen.getByTestId('campaign-modal-header').className).toContain('bg-[#101913]')
     expect(screen.getByTestId('campaign-modal-scroll').className).toContain('overflow-y-auto')
@@ -101,23 +189,19 @@ describe('GameOverlay', () => {
     fireEvent.click(within(screen.getByTestId('campaign-modal-header')).getByRole('button', { name: '关闭' }))
     expect(screen.queryByTestId('campaign-modal-shell')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: '角色选择' }))
-    expect(screen.getByTestId('character-modal-shell').className).toBe(campaignShellClass)
-    expect(screen.getByTestId('character-modal-shell').className).toContain('h-[min(92vh,760px)]')
-    expect(screen.getByTestId('character-modal-header').className).toContain('shrink-0')
-    expect(screen.getByTestId('character-modal-header').className).toContain('bg-[#101913]')
-    expect(screen.getByTestId('character-modal-scroll').className).toContain('overflow-y-auto')
-    expect(screen.getByTestId('character-modal-scroll').className).toContain('flex-1')
-    expect(within(screen.getByTestId('character-modal-header')).getByText('角色选择')).toBeTruthy()
-    expect(within(screen.getByTestId('character-modal-header')).getByRole('button', { name: '关闭' })).toBeTruthy()
-    expect(screen.getByText('当前职业：弓箭手')).toBeTruthy()
-
-    const characterShellClass = screen.getByTestId('character-modal-shell').className
-    fireEvent.click(within(screen.getByTestId('character-modal-header')).getByRole('button', { name: '关闭' }))
+    fireEvent.click(within(compactActions).getByRole('button', { name: '角色选择' }))
+    expect(screen.getByTestId('character-selection-dialog')).toBeTruthy()
+    expect(screen.getByTestId('character-selection-stage').className).toContain('xl:aspect-[1670/942]')
+    expect(screen.getByTestId('character-selection-background').getAttribute('src')).toBe(CHARACTER_SELECTION_ASSET_URLS.selectionBackground)
+    expect(screen.getByTestId('character-selection-archer-cell')).toBeTruthy()
+    expect(screen.queryByTestId('character-modal-shell')).toBeNull()
+    expect(screen.queryByRole('button', { name: '关闭' })).toBeNull()
     expect(screen.queryByText('当前职业：弓箭手')).toBeNull()
+    fireEvent.click(screen.getByTestId('character-selection-select-button'))
+    expect(screen.queryByTestId('character-selection-dialog')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
-    expect(screen.getByTestId('inventory-modal-shell').className).toBe(characterShellClass)
+    fireEvent.click(within(compactActions).getByRole('button', { name: '物品仓库' }))
+    expect(screen.getByTestId('inventory-modal-shell').className).toBe(campaignShellClass)
     expect(screen.getByTestId('inventory-modal-shell').className).toContain('h-[min(92vh,760px)]')
     expect(screen.getByTestId('inventory-modal-header').className).toContain('shrink-0')
     expect(screen.getByTestId('inventory-modal-header').className).toContain('bg-[#101913]')
@@ -128,7 +212,7 @@ describe('GameOverlay', () => {
     fireEvent.click(within(screen.getByTestId('inventory-modal-header')).getByRole('button', { name: '关闭' }))
     expect(screen.queryByTestId('inventory-modal-shell')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
+    fireEvent.click(within(compactActions).getByRole('button', { name: '告示牌' }))
     expect(screen.getByText('图鉴')).toBeTruthy()
     expect(screen.getByTestId('guide-modal-shell').className).toContain('h-[min(92vh,760px)]')
     expect(screen.getByTestId('guide-modal-scroll').className).toContain('overflow-y-auto')
@@ -158,36 +242,34 @@ describe('GameOverlay', () => {
     expect(screen.getByTestId('guide-modal-shell').className).toContain('h-[min(92vh,760px)]')
     expect(screen.getByTestId('guide-modal-scroll').className).toContain('overflow-y-auto')
     expect(screen.queryByText(/弓箭手技能池/)).toBeNull()
-    const skillShelves = screen.getByTestId('skill-guide-icon-shelves')
-    expect(skillShelves.querySelectorAll('[data-testid^="skill-guide-icon-"]')).toHaveLength(56)
-    expect(screen.getByTestId('skill-guide-image-eagle-eye-focus').getAttribute('src')).toBe(getArcherSkillIconAssetUrl('eagle-eye-focus'))
-    const pierceIcon = screen.getByTestId('skill-guide-icon-pierce-arrow')
-    expect(screen.getByTestId('skill-guide-image-pierce-arrow').getAttribute('src')).toBe(getArcherSkillIconAssetUrl('pierce-arrow'))
-    const pierceTooltip = screen.getByTestId('skill-guide-tooltip-pierce-arrow')
-    expect(pierceTooltip.className).toContain('hidden')
-    expect(pierceTooltip.className).toContain('fixed')
+    const evolutionGuide = screen.getByTestId('archer-evolution-guide')
+    expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-build-"]')).toHaveLength(4)
+    expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-family-"]')).toHaveLength(21)
+    expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-core-image-"]')).toHaveLength(21)
+    expect(screen.getByTestId('archer-evolution-guide-core-image-pierce-arrow').getAttribute('src')).toBe(getArcherSkillIconAssetUrl('pierce-arrow'))
+    expect(screen.getByTestId('archer-evolution-guide-discovered-wind-cut')).toBeTruthy()
+    expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-undiscovered-"]')).toHaveLength(41)
 
-    fireEvent.mouseEnter(pierceIcon)
-    expect(pierceTooltip.className).toContain('block')
-    expect(pierceTooltip.textContent).toContain('穿刺箭')
-    expect(pierceTooltip.textContent).toContain('朝鼠标方向射出高穿透直线箭。')
-    expect(pierceTooltip.textContent).toContain('流派：穿透直线')
-    expect(pierceTooltip.textContent).toContain('Lv.1 伤害')
-    expect(pierceTooltip.textContent).toContain('Lv.5 伤害')
-    expect(pierceTooltip.textContent).toContain('冷却：')
-    fireEvent.mouseLeave(pierceIcon)
-    expect(pierceTooltip.className).toContain('hidden')
+    const windCut = ARCHER_SKILL_EVOLUTION_MAP['wind-cut']
+    const discoveredEvolution = screen.getByTestId('archer-evolution-guide-discovered-wind-cut')
+    fireEvent.mouseEnter(discoveredEvolution)
+    const evolutionTooltip = screen.getByTestId('archer-evolution-guide-tooltip-wind-cut')
+    expect(evolutionTooltip.parentElement).toBe(document.body)
+    expect(evolutionTooltip.className).toContain('fixed')
+    expect(evolutionTooltip.textContent).toContain('所属核心技能：穿刺箭')
+    expect(evolutionTooltip.textContent).toContain(`Lv.4：${windCut.description}`)
+    expect(evolutionTooltip.textContent).toContain('Lv.5：')
+    expect(evolutionTooltip.textContent).toContain('流派：穿透直线')
+    fireEvent.mouseLeave(discoveredEvolution)
+    expect(screen.queryByTestId('archer-evolution-guide-tooltip-wind-cut')).toBeNull()
 
-    fireEvent.focus(pierceIcon)
-    expect(pierceTooltip.className).toContain('block')
-    fireEvent.blur(pierceIcon)
-    expect(pierceTooltip.className).toContain('hidden')
-
-    fireEvent.focus(pierceIcon)
-    fireEvent.click(pierceIcon)
-    expect(pierceTooltip.className).toContain('block')
-    fireEvent.click(pierceIcon)
-    expect(pierceTooltip.className).toContain('hidden')
+    const undiscoveredEvolution = screen.getByTestId('archer-evolution-guide-undiscovered-sun-piercer')
+    expect(undiscoveredEvolution.tagName).toBe('DIV')
+    expect(undiscoveredEvolution.className).toContain('grayscale')
+    fireEvent.mouseEnter(undiscoveredEvolution)
+    fireEvent.focus(undiscoveredEvolution)
+    fireEvent.click(undiscoveredEvolution)
+    expect(screen.queryByTestId('archer-evolution-guide-tooltip-sun-piercer')).toBeNull()
 
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
     expect(screen.queryByText('按战役/层数查看')).toBeNull()
@@ -322,6 +404,11 @@ describe('GameOverlay', () => {
     expect(screen.queryByTestId('hunter-home-meta-talent-tree')).toBeNull()
     expect(screen.queryByTestId('hunter-home-talent-summary')).toBeNull()
     expect(screen.getByTestId('hunter-home-run-talent-tree')).toBeTruthy()
+    expect(screen.getByTestId('hunter-home-campaign-reward-summary').getAttribute('data-current-reward-source')).toBe('')
+    const hunterEvolutionGuide = screen.getByTestId('hunter-home-evolution-guide')
+    expect(hunterEvolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-family-"]')).toHaveLength(21)
+    expect(within(hunterEvolutionGuide).getByTestId('archer-evolution-guide-discovered-wind-cut')).toBeTruthy()
+    expect(hunterEvolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-undiscovered-"]')).toHaveLength(41)
     expect(screen.getByTestId('run-talent-guide').textContent).toContain('契约定向')
     const runTalentReadonlyNote = screen.getByText('战斗天赋只在冒险奖励中选择；这里仅作只读预览，不消耗天赋点，也不提供重置或解锁操作。')
     expect(screen.getAllByText('战斗天赋只在冒险奖励中选择；这里仅作只读预览，不消耗天赋点，也不提供重置或解锁操作。')).toHaveLength(1)
@@ -340,17 +427,22 @@ describe('GameOverlay', () => {
       expect(screen.getByTestId(`run-talent-guide-row-${module}`).textContent).not.toMatch(/\d+\/8/)
     }
     expect(screen.getByTestId('run-talent-guide-shelf-common')).toBeTruthy()
+    expect(screen.getByTestId('run-talent-guide').querySelectorAll('[data-testid^="run-talent-guide-node-"][data-form-group]')).toHaveLength(32)
     expect(screen.getByTestId('run-talent-guide-module-death').textContent).toContain('死契标记')
     expect(screen.getByTestId('run-talent-guide-module-blood').textContent).toContain('血羽印记')
     expect(screen.getByTestId('run-talent-guide-module-beast').textContent).toContain('主兽绑定')
     expect(screen.getByTestId('run-talent-guide-module-crystal').textContent).toContain('蓝晶充能')
-    expect(screen.getByTestId('run-talent-guide-node-run_crystal_05').textContent).toContain('Lv.5')
+    expect(screen.getByTestId('run-talent-guide-node-run_crystal_05').textContent).toContain('Lv5')
+    const deathFormNode = screen.getByTestId('run-talent-guide-node-run_death_09')
+    expect(deathFormNode.getAttribute('data-form-group')).toBe('1')
+    expect(screen.getByTestId('run-talent-guide-placeholder-run_death_09').textContent).toContain('形态')
+    expect(screen.queryByTestId('run-talent-guide-image-run_death_09')).toBeNull()
     expect(screen.getByTestId('run-talent-guide-icon-run_common_01')).toBeTruthy()
     expect(screen.getByTestId('run-talent-guide-image-run_common_01').getAttribute('src')).toBe(
-      getRunTalentIconAssetUrl(RUN_TALENT_NODE_BY_ID.get('run_common_01')!),
+      getRunTalentIconAssetUrl({ module: 'common', name: '契约定向' }),
     )
     expect(screen.getByTestId('run-talent-guide-image-run_blood_02').getAttribute('src')).toBe(
-      getRunTalentIconAssetUrl(RUN_TALENT_NODE_BY_ID.get('run_blood_02')!),
+      getRunTalentIconAssetUrl({ module: 'blood', name: '流血箭簇' }),
     )
     expect(screen.getByTestId('run-talent-guide-image-run_blood_02').getAttribute('src')).toContain(encodeURIComponent('流血箭簇.png'))
     expect(screen.getByTestId('run-talent-guide-image-run_blood_02').getAttribute('src')).not.toContain(encodeURIComponent('流血箭族.png'))
@@ -360,18 +452,23 @@ describe('GameOverlay', () => {
     expect(commonRunTalentTooltip.className).toContain('fixed')
     expect(commonRunTalentTooltip.className).toContain('block')
     expect(screen.getByTestId('run-talent-guide-tooltip-image-run_common_01').getAttribute('src')).toBe(
-      getRunTalentIconAssetUrl(RUN_TALENT_NODE_BY_ID.get('run_common_01')!),
+      getRunTalentIconAssetUrl({ module: 'common', name: '契约定向' }),
     )
     expect(commonRunTalentTooltip.textContent).toContain('契约定向')
-    expect(commonRunTalentTooltip.textContent).toContain('等级：Lv.2 · 基础')
     expect(commonRunTalentTooltip.textContent).toContain('本局后续奖励更容易出现当前流派相关技能 / 装备。')
-    expect(commonRunTalentTooltip.textContent).toContain('标签：流派权重')
-    expect(commonRunTalentTooltip.textContent).toContain('效果：')
-    expect(commonRunTalentTooltip.textContent).not.toContain('run_common_01')
+    expect(screen.getByTestId('run-talent-guide-tooltip-status-run_common_01').textContent).toContain('满足前置（当前可用）')
+    expect(commonRunTalentTooltip.textContent).toContain('run_common_01')
     expect(commonRunTalentTooltip.textContent).not.toContain('天赋点')
     expect(commonRunTalentTooltip.textContent).not.toContain('前置条件')
     expect(commonRunTalentTooltip.textContent).not.toContain('重置天赋')
     expect(commonRunTalentTooltip.textContent).not.toContain('消耗：')
+    fireEvent.focus(screen.getByTestId('run-talent-guide-icon-run_death_09'))
+    const deathFormTooltip = screen.getByTestId('run-talent-guide-tooltip-run_death_09')
+    expect(screen.getByTestId('run-talent-guide-tooltip-placeholder-run_death_09').textContent).toContain('G1')
+    expect(deathFormTooltip.textContent).toContain('形态组：G1 / 局内 Lv.5')
+    expect(deathFormTooltip.textContent).toContain('锚定核心技能：等待最近完成的合法 Lv.4 进化')
+    expect(deathFormTooltip.textContent).toContain('关键数值：宽度 +40%')
+    expect(screen.getByTestId('run-talent-guide-tooltip-sibling-run_death_09').textContent).toContain('冥火爆矢')
     expect(screen.queryByTestId('hunter-home-meta-reset')).toBeNull()
     expect(screen.queryByTestId('hunter-home-run-talent-generate')).toBeNull()
     expect(screen.queryByTestId('hunter-home-run-talent-reroll')).toBeNull()
@@ -385,6 +482,443 @@ describe('GameOverlay', () => {
     expect(screen.queryByTestId('hunter-home-run-talent-tree')).toBeNull()
     expect(screen.queryByTestId('hunter-home-talent-summary')).toBeNull()
     expect(screen.getByText('暂无记录。完成一次冒险后会显示层数与所用技能。')).toBeTruthy()
+  })
+
+  it('uses the live run-talent presentation contract for the strict 72-node hunter-home catalogue', () => {
+    const snapshot = createInitialSnapshot('idle')
+    snapshot.contractLevel = 17
+    snapshot.activeSkills = [
+      { skillId: 'pierce-arrow', familyId: 'pierce-arrow', evolutionId: 'wind-cut', level: 4, cooldownRemaining: 0 },
+      { skillId: 'ring-volley', familyId: 'ring-volley', evolutionId: 'gale-barrage', level: 4, cooldownRemaining: 0 },
+    ]
+    snapshot.runTalentState = {
+      ...snapshot.runTalentState,
+      selectedTalentIds: ['run_common_01', 'run_death_09', 'run_death_15'],
+      lastOfferedCandidateIds: ['run_common_03'],
+      formAnchors: {
+        run_death_09: { familyId: 'pierce-arrow', evolutionId: 'wind-cut', anchoredAt: 3 },
+        run_death_15: { familyId: 'pierce-arrow', evolutionId: 'wind-cut', anchoredAt: 3 },
+      },
+      formCycle: {
+        casts: [
+          { familyId: 'pierce-arrow', evolutionId: 'wind-cut', at: 9 },
+          { familyId: 'ring-volley', evolutionId: 'gale-barrage', at: 10 },
+        ],
+      },
+      formCooldowns: { run_death_15: 12 },
+    }
+    useGameStore.setState(snapshot)
+
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('tab', { name: '战斗天赋' }))
+
+    const guide = screen.getByTestId('run-talent-guide')
+    expect(guide.querySelectorAll('[data-testid^="run-talent-guide-node-"][data-icon-id]')).toHaveLength(72)
+    expect(screen.queryByTestId('run-talent-guide-node-run_beast_legendary_hunt')).toBeNull()
+    expect(screen.queryByText('百兽协猎')).toBeNull()
+    expect(screen.getByTestId('run-talent-guide-node-run_common_01').getAttribute('data-status')).toBe('selected')
+    expect(screen.getByTestId('run-talent-guide-node-run_common_03').getAttribute('data-status')).toBe('candidate')
+    expect(screen.getByTestId('run-talent-guide-node-run_death_09').getAttribute('data-status')).toBe('selected')
+
+    fireEvent.focus(screen.getByTestId('run-talent-guide-icon-run_common_03'))
+    expect(screen.getByTestId('run-talent-guide-tooltip-status-run_common_03').textContent).toContain('当前候选')
+    expect(screen.getByTestId('run-talent-guide-tooltip-prerequisites-run_common_03').textContent).toContain('无')
+
+    fireEvent.focus(screen.getByTestId('run-talent-guide-icon-run_death_15'))
+    const selectedFormTooltip = screen.getByTestId('run-talent-guide-tooltip-run_death_15')
+    expect(selectedFormTooltip.textContent).toContain('锚定核心技能：穿刺箭 / 已选进化：风切箭')
+    expect(selectedFormTooltip.textContent).toContain('形态区域强化：2/3')
+    expect(selectedFormTooltip.textContent).toContain('区域冷却：12 秒')
+  })
+
+  it('uses project-local archer assets for the character selection and returns through selection without starting a run', () => {
+    vi.useFakeTimers()
+    const startGame = vi.fn()
+    useGameStore.setState({ ...createInitialSnapshot('idle'), startGame, discoveredSkillEvolutionIds: ['wind-cut'] })
+
+    render(<GameOverlay />)
+
+    const openCharacterSelection = () => {
+      fireEvent.click(within(screen.getByTestId('village-compact-actions')).getByRole('button', { name: '角色选择' }))
+    }
+
+    openCharacterSelection()
+
+    const selectionDialog = screen.getByTestId('character-selection-dialog')
+    const selectionStage = screen.getByTestId('character-selection-stage')
+    const archerCell = screen.getByTestId('character-selection-archer-cell')
+    const archerNameplate = screen.getByTestId('character-selection-archer-nameplate')
+    const archerContentGroup = screen.getByTestId('character-selection-archer-content-group')
+    const selectionIdlePreview = screen.getByTestId('character-selection-idle-preview')
+    const detailButton = screen.getByTestId('character-selection-detail-button')
+    const selectButton = screen.getByTestId('character-selection-select-button')
+    expect(selectionDialog.getAttribute('aria-label')).toBe('角色选择')
+    expect(selectionDialog.className).toContain('overflow-y-auto')
+    expect(selectionDialog.className).toContain('bg-[#030504]')
+    expect(selectionDialog.className).not.toContain('bg-[rgba(3,8,6,0.74)]')
+    expect(screen.getAllByTestId('character-selection-archer-cell')).toHaveLength(1)
+    expect(selectionStage.querySelectorAll('button')).toHaveLength(2)
+    expect(selectionStage.className).toContain('xl:aspect-[1670/942]')
+    expect(selectionStage.className).toContain('xl:w-[min(100%,calc(177.3885dvh-56.76px))]')
+    expect(selectionStage.className).toContain('pb-12')
+    expect(selectionStage.className).toContain('pt-[calc(56.407vw+1rem)]')
+    expect(selectionStage.className).toContain('[--character-selection-select-label-offset:clamp(2px,0.48vw,8px)]')
+    expect(archerNameplate.className).toContain('absolute')
+    expect(archerNameplate.className).toContain('left-[17.9%]')
+    expect(archerNameplate.className).toContain('top-[11.55%]')
+    expect(archerNameplate.className).toContain('h-[4.45%]')
+    expect(archerNameplate.className).toContain('w-[12.6%]')
+    expect(archerNameplate.className).toContain('items-center')
+    expect(archerNameplate.className).toContain('justify-center')
+    expect(archerNameplate.textContent).toBe('弓箭手')
+    const archerNameplateText = within(archerNameplate).getByText('弓箭手')
+    expect(archerNameplateText.className).toContain('whitespace-nowrap')
+    expect(archerNameplateText.className).toContain('text-[clamp(10px,3.2vw,24px)]')
+    expect(archerNameplateText.className).toContain('leading-none')
+
+    const expectStageRect = (
+      element: HTMLElement,
+      rect: { x: number; y: number; width: number; height: number },
+    ) => {
+      expect(Number(element.dataset.stageX)).toBe(rect.x)
+      expect(Number(element.dataset.stageY)).toBe(rect.y)
+      expect(Number(element.dataset.stageWidth)).toBe(rect.width)
+      expect(Number(element.dataset.stageHeight)).toBe(rect.height)
+      expect(element.style.getPropertyValue('--character-selection-layout-left')).toBe(`${(rect.x / CHARACTER_SELECTION_STAGE_SIZE.width) * 100}%`)
+      expect(element.style.getPropertyValue('--character-selection-layout-top')).toBe(`${(rect.y / CHARACTER_SELECTION_STAGE_SIZE.height) * 100}%`)
+      expect(element.style.getPropertyValue('--character-selection-layout-width')).toBe(`${(rect.width / CHARACTER_SELECTION_STAGE_SIZE.width) * 100}%`)
+      expect(element.style.getPropertyValue('--character-selection-layout-height')).toBe(`${(rect.height / CHARACTER_SELECTION_STAGE_SIZE.height) * 100}%`)
+    }
+
+    expect(CHARACTER_SELECTION_FINAL_LAYOUT.detailButton).toEqual({ x: 341.27, y: 363, width: 115, height: 41.16 })
+    expect(CHARACTER_SELECTION_FINAL_LAYOUT.selectButton).toEqual({ x: 305.27, y: 424.41, width: 190, height: 50 })
+    expect(CHARACTER_SELECTION_FINAL_LAYOUT.archerCanvas).toEqual({ x: 268.27, y: 171.70, width: 240, height: 240 })
+    expect(CHARACTER_SELECTION_FINAL_LAYOUT.idleVisibleBounds).toEqual({ x: 318.27, y: 197.95, width: 135, height: 187.50 })
+
+    expect(archerCell.className).toContain('[--character-selection-select-height:3rem]')
+    expect(archerCell.className).toContain('pt-8')
+    expect(archerCell.className).toContain('xl:contents')
+    expect(archerContentGroup.className).toContain('translate-y-[var(--character-selection-select-height)]')
+    expect(archerContentGroup.className).toContain('items-center')
+    expect(archerContentGroup.className).toContain('xl:contents')
+    expect(selectionIdlePreview.className).toContain('h-80')
+    expect(selectionIdlePreview.className).toContain('z-10')
+    expect(selectionIdlePreview.className).toContain('xl:absolute')
+    expect(selectionIdlePreview.className).toContain('xl:left-[var(--character-selection-layout-left)]')
+    expect(selectionIdlePreview.className).toContain('xl:top-[var(--character-selection-layout-top)]')
+    expect(selectionIdlePreview.className).toContain('xl:w-[var(--character-selection-layout-width)]')
+    expect(selectionIdlePreview.className).toContain('xl:h-[var(--character-selection-layout-height)]')
+    expectStageRect(selectionIdlePreview, CHARACTER_SELECTION_FINAL_LAYOUT.archerCanvas)
+    expect(Number(selectionIdlePreview.dataset.visibleStageX)).toBe(CHARACTER_SELECTION_FINAL_LAYOUT.idleVisibleBounds.x)
+    expect(Number(selectionIdlePreview.dataset.visibleStageY)).toBe(CHARACTER_SELECTION_FINAL_LAYOUT.idleVisibleBounds.y)
+    expect(Number(selectionIdlePreview.dataset.visibleStageWidth)).toBe(CHARACTER_SELECTION_FINAL_LAYOUT.idleVisibleBounds.width)
+    expect(Number(selectionIdlePreview.dataset.visibleStageHeight)).toBe(CHARACTER_SELECTION_FINAL_LAYOUT.idleVisibleBounds.height)
+    expect(selectionIdlePreview.querySelector('img')?.className).toContain('origin-top')
+    expect(selectionIdlePreview.querySelector('img')?.className).not.toContain('xl:scale-[2]')
+    expect(selectionIdlePreview.querySelector('img')?.className).not.toContain('xl:-top-16')
+    expect(detailButton.className).toContain('w-[min(41%,6.5rem)]')
+    expect(detailButton.className).toContain('z-20')
+    expect(detailButton.className).toContain('xl:absolute')
+    expect(detailButton.className).toContain('xl:left-[var(--character-selection-layout-left)]')
+    expect(detailButton.className).toContain('xl:top-[var(--character-selection-layout-top)]')
+    expect(detailButton.className).toContain('xl:w-[var(--character-selection-layout-width)]')
+    expect(detailButton.className).toContain('xl:h-[var(--character-selection-layout-height)]')
+    expectStageRect(detailButton, CHARACTER_SELECTION_FINAL_LAYOUT.detailButton)
+    expect(screen.getByTestId('character-selection-detail-button-image').className).toContain('h-full')
+    expect(selectButton.parentElement).toBe(archerContentGroup)
+    expect(selectButton.className).toContain('z-20')
+    expect(selectButton.className).toContain('xl:absolute')
+    expect(selectButton.className).toContain('xl:left-[var(--character-selection-layout-left)]')
+    expect(selectButton.className).toContain('xl:top-[var(--character-selection-layout-top)]')
+    expect(selectButton.className).toContain('xl:w-[var(--character-selection-layout-width)]')
+    expect(selectButton.className).toContain('xl:h-[var(--character-selection-layout-height)]')
+    expectStageRect(selectButton, CHARACTER_SELECTION_FINAL_LAYOUT.selectButton)
+    expect(detailButton.parentElement).toBe(archerContentGroup)
+    expect(archerContentGroup.compareDocumentPosition(selectionIdlePreview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(selectionIdlePreview.compareDocumentPosition(detailButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(selectionIdlePreview.compareDocumentPosition(selectButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const detailButtonCenterX = CHARACTER_SELECTION_FINAL_LAYOUT.detailButton.x + (CHARACTER_SELECTION_FINAL_LAYOUT.detailButton.width / 2)
+    const selectButtonCenterX = CHARACTER_SELECTION_FINAL_LAYOUT.selectButton.x + (CHARACTER_SELECTION_FINAL_LAYOUT.selectButton.width / 2)
+    expect(detailButtonCenterX).toBe(398.77)
+    expect(selectButtonCenterX).toBe(400.27)
+    expect(selectButtonCenterX - detailButtonCenterX).toBe(1.5)
+    expect(CHARACTER_SELECTION_FINAL_LAYOUT.detailButton.y + CHARACTER_SELECTION_FINAL_LAYOUT.detailButton.height)
+      .toBeLessThan(CHARACTER_SELECTION_FINAL_LAYOUT.selectButton.y)
+    expect(CHARACTER_SELECTION_FINAL_LAYOUT.selectButton.y + CHARACTER_SELECTION_FINAL_LAYOUT.selectButton.height)
+      .toBeLessThan(CHARACTER_SELECTION_STAGE_SIZE.height * 0.51)
+    const selectLabel = selectButton.querySelector('span')
+    expect(selectLabel?.getAttribute('data-label-y-delta')).toBe(String(CHARACTER_SELECTION_SELECT_LABEL_Y_DELTA))
+    expect(selectLabel?.getAttribute('style')).toContain(`translateY(calc(${CHARACTER_SELECTION_SELECT_LABEL_Y_DELTA}px - var(--character-selection-select-label-offset)))`)
+    expect(screen.queryByText('职业档案')).toBeNull()
+    expect(screen.queryByText('使用弓箭手开始')).toBeNull()
+    expect(screen.queryByRole('button', { name: '关闭' })).toBeNull()
+
+    expect(selectionIdlePreview.getAttribute('data-preview-fps')).toBe(String(CHARACTER_SELECTION_ARCHER_IDLE_FPS))
+    expect(CHARACTER_SELECTION_ARCHER_IDLE_FRAME_URLS).toHaveLength(6)
+    expect(selectionIdlePreview.querySelector('img')?.getAttribute('src')).toBe(CHARACTER_SELECTION_ARCHER_IDLE_FRAME_URLS[0])
+
+    Object.values(CHARACTER_SELECTION_ASSET_URLS).forEach((url) => {
+      expect(url).toContain('/assets/')
+      expect(url).not.toContain('/Users/')
+    })
+    expect(screen.getByTestId('character-selection-detail-button-image').getAttribute('src')).toBe(CHARACTER_SELECTION_ASSET_URLS.detailButton)
+    expect(selectButton.textContent).toContain('选择')
+
+    const publicCharacterSelectionDirectory = resolve(process.cwd(), 'public/assets/ui/character-selection')
+    expect(readFileSync(resolve(publicCharacterSelectionDirectory, 'character-selection-background.png')).length).toBeGreaterThan(8)
+    expect(readFileSync(resolve(publicCharacterSelectionDirectory, 'archer-detail-background.png')).length).toBeGreaterThan(8)
+    expect(readFileSync(resolve(publicCharacterSelectionDirectory, 'source/character-detail-button-source.png')).length).toBeGreaterThan(8)
+    const transparentDetailButton = readFileSync(resolve(publicCharacterSelectionDirectory, 'character-detail-button-transparent.png'))
+    expect(transparentDetailButton.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    expect(transparentDetailButton[25]).toBe(6)
+
+    fireEvent.click(screen.getByTestId('character-selection-detail-button'))
+    const transition = screen.getByTestId('character-detail-transition')
+    expect(transition.getAttribute('data-transition-duration')).toBe(String(CHARACTER_DETAIL_TRANSITION_DURATION_MS))
+    expect(transition.getAttribute('data-transition-selection-fade-end')).toBe(String(CHARACTER_DETAIL_TRANSITION_SELECTION_FADE_END_MS))
+    expect(transition.getAttribute('data-transition-detail-fade-start')).toBe(String(CHARACTER_DETAIL_TRANSITION_DETAIL_FADE_START_MS))
+    expect(CHARACTER_DETAIL_TRANSITION_DURATION_MS).toBe(240)
+    expect(CHARACTER_DETAIL_TRANSITION_SELECTION_FADE_END_MS).toBe(140)
+    expect(CHARACTER_DETAIL_TRANSITION_DETAIL_FADE_START_MS).toBe(100)
+    expect(CHARACTER_DETAIL_TRANSITION_DETAIL_FADE_START_MS).toBeLessThan(CHARACTER_DETAIL_TRANSITION_SELECTION_FADE_END_MS)
+    expect(CHARACTER_DETAIL_TRANSITION_SELECTION_FADE_END_MS).toBeLessThan(CHARACTER_DETAIL_TRANSITION_DURATION_MS)
+    expect(selectionStage.className).toContain('character-selection-stage--transitioning')
+    expect(detailButton.className).not.toContain('active:translate-y-px')
+    expect(selectionStage.getAttribute('aria-hidden')).toBe('true')
+    expect(selectionStage.getAttribute('inert')).not.toBeNull()
+    expect(screen.queryByTestId('character-detail-transition-mask')).toBeNull()
+    expect(screen.getByTestId('character-selection-dialog').getAttribute('aria-busy')).toBe('true')
+    expect(screen.getByTestId('character-detail-stage').getAttribute('data-interactive')).toBe('false')
+    expect(screen.getByTestId('character-detail-return-button').getAttribute('disabled')).not.toBeNull()
+    act(() => vi.advanceTimersByTime(CHARACTER_DETAIL_TRANSITION_DURATION_MS))
+    const detailDialog = screen.getByTestId('character-selection-dialog')
+    const detailStage = screen.getByTestId('character-detail-stage')
+    expect(detailDialog.getAttribute('aria-label')).toBe('弓箭手详情')
+    expect(detailDialog.className).toContain('overflow-hidden')
+    expect(detailDialog.className).not.toContain('overflow-y-auto')
+    expect(detailStage.className).toContain('aspect-[2880/1508]')
+    expect(detailStage.className).toContain('w-[min(100%,calc((100dvh-1rem)*1.909814))]')
+    expect(detailStage.className).toContain('[container-type:inline-size]')
+    ;[
+      [2560, 1440],
+      [1600, 1000],
+      [1280, 720],
+      [1024, 768],
+      [768, 1024],
+      [390, 844],
+    ].forEach(([viewportWidth, viewportHeight]) => {
+      const availableWidth = viewportWidth - 16
+      const availableHeight = viewportHeight - 16
+      const stageWidth = Math.min(availableWidth, availableHeight * (CHARACTER_DETAIL_STAGE_SIZE.width / CHARACTER_DETAIL_STAGE_SIZE.height))
+      const stageHeight = stageWidth * (CHARACTER_DETAIL_STAGE_SIZE.height / CHARACTER_DETAIL_STAGE_SIZE.width)
+      expect(stageWidth).toBeGreaterThan(0)
+      expect(stageWidth).toBeLessThanOrEqual(availableWidth)
+      expect(stageHeight).toBeLessThanOrEqual(availableHeight)
+    })
+    expect(screen.getByTestId('character-detail-background').getAttribute('src')).toBe(CHARACTER_SELECTION_ASSET_URLS.detailBackground)
+    expect(screen.getByTestId('character-detail-background').className).toContain('inset-0')
+    expect(screen.getByTestId('character-detail-background').className).toContain('h-full')
+    expect(screen.getByTestId('character-detail-background').className).toContain('object-contain')
+    expect(screen.getByTestId('character-detail-idle-preview').getAttribute('data-preview-fps')).toBe('6')
+    const detailArcherPreview = screen.getByTestId('character-detail-archer-preview')
+    expect(detailArcherPreview.textContent).toBe('')
+    expect(Number(detailArcherPreview.dataset.stageLeft)).toBe(CHARACTER_DETAIL_ARCHER_PREVIEW_LAYOUT.left)
+    expect(detailArcherPreview.style.left).toBe(`${(CHARACTER_DETAIL_ARCHER_PREVIEW_LAYOUT.left / CHARACTER_DETAIL_STAGE_SIZE.width) * 100}%`)
+    expect(detailArcherPreview.className).toContain('top-[14%]')
+    expect(detailArcherPreview.className).toContain('w-[34%]')
+    expect(detailArcherPreview.className).toContain('h-[64%]')
+    expect(detailArcherPreview.className).not.toContain('left-[6%]')
+
+    const expectDetailTextRect = (
+      element: HTMLElement,
+      rect: { x: number; y: number; width: number; height: number },
+    ) => {
+      expect(element.className).toContain('left-[var(--character-selection-layout-left)]')
+      expect(element.className).toContain('top-[var(--character-selection-layout-top)]')
+      expect(element.className).toContain('w-[var(--character-selection-layout-width)]')
+      expect(element.className).toContain('h-[var(--character-selection-layout-height)]')
+      expect(Number(element.dataset.stageX)).toBe(rect.x)
+      expect(Number(element.dataset.stageY)).toBe(rect.y)
+      expect(Number(element.dataset.stageWidth)).toBe(rect.width)
+      expect(Number(element.dataset.stageHeight)).toBe(rect.height)
+      expect(element.style.getPropertyValue('--character-selection-layout-left')).toBe(`${(rect.x / CHARACTER_DETAIL_STAGE_SIZE.width) * 100}%`)
+      expect(element.style.getPropertyValue('--character-selection-layout-top')).toBe(`${(rect.y / CHARACTER_DETAIL_STAGE_SIZE.height) * 100}%`)
+      expect(element.style.getPropertyValue('--character-selection-layout-width')).toBe(`${(rect.width / CHARACTER_DETAIL_STAGE_SIZE.width) * 100}%`)
+      expect(element.style.getPropertyValue('--character-selection-layout-height')).toBe(`${(rect.height / CHARACTER_DETAIL_STAGE_SIZE.height) * 100}%`)
+    }
+
+    expect(CHARACTER_DETAIL_STAGE_SIZE).toEqual({ width: 2880, height: 1508 })
+    expect(CHARACTER_DETAIL_TEXT_LAYOUT.title).toEqual({ x: 1328, y: 64, width: 200, height: 67 })
+    expect(CHARACTER_DETAIL_TEXT_LAYOUT.builds).toEqual({ x: 1852, y: 172, width: 91, height: 45 })
+    expect(CHARACTER_DETAIL_TEXT_LAYOUT.skills).toEqual({ x: 1843, y: 637, width: 92, height: 45 })
+    expect(CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel).toEqual({ x: 1350, y: 1293, width: 133, height: 65 })
+    expect(CHARACTER_DETAIL_CONTENT_LAYOUT.builds).toEqual({ top: 231.6 })
+    expect(CHARACTER_DETAIL_CONTENT_LAYOUT.skills).toEqual({ top: 719.24 })
+    expect(CHARACTER_DETAIL_CONTENT_LAYOUT.builds.top).toBeCloseTo(221.6 + 10, 10)
+    expect(CHARACTER_DETAIL_CONTENT_LAYOUT.skills.top).toBeCloseTo(679.24 + 40, 10)
+    expect(CHARACTER_DETAIL_ARCHER_PREVIEW_LAYOUT).toEqual({ left: 252.8 })
+    expect(CHARACTER_DETAIL_ARCHER_PREVIEW_LAYOUT.left).toBeCloseTo(272.8 - 20, 10)
+    expectDetailTextRect(screen.getByTestId('character-detail-title'), CHARACTER_DETAIL_TEXT_LAYOUT.title)
+    expectDetailTextRect(screen.getByTestId('character-detail-builds-heading'), CHARACTER_DETAIL_TEXT_LAYOUT.builds)
+    expectDetailTextRect(screen.getByTestId('character-detail-skills-heading'), CHARACTER_DETAIL_TEXT_LAYOUT.skills)
+    const returnLabel = screen.getByTestId('character-detail-return-label')
+    const returnButton = screen.getByTestId('character-detail-return-button')
+    expect(returnButton.className).toContain('left-[var(--character-selection-layout-left)]')
+    expect(returnButton.className).toContain('top-[var(--character-selection-layout-top)]')
+    expect(returnButton.className).toContain('w-[var(--character-selection-layout-width)]')
+    expect(returnButton.className).toContain('h-[var(--character-selection-layout-height)]')
+    expect(Number(returnLabel.dataset.stageX)).toBe(CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel.x)
+    expect(Number(returnLabel.dataset.stageY)).toBe(CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel.y)
+    expect(Number(returnLabel.dataset.stageWidth)).toBe(CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel.width)
+    expect(Number(returnLabel.dataset.stageHeight)).toBe(CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel.height)
+    expect(screen.getAllByText('弓箭手')).toHaveLength(1)
+    expect(screen.getByTestId('character-detail-title').textContent).toBe('弓箭手')
+    expect(screen.getByTestId('character-detail-builds-heading').textContent).toBe('流派')
+    expect(screen.getByTestId('character-detail-skills-heading').textContent).toBe('技能')
+    const detailBuilds = screen.getByTestId('character-detail-builds')
+    expect(Number(detailBuilds.dataset.stageTop)).toBe(CHARACTER_DETAIL_CONTENT_LAYOUT.builds.top)
+    expect(detailBuilds.style.top).toBe(`${(CHARACTER_DETAIL_CONTENT_LAYOUT.builds.top / CHARACTER_DETAIL_STAGE_SIZE.height) * 100}%`)
+    expect(detailBuilds.textContent).toContain(ARCHER_FIXED_PASSIVE.name)
+    expect(detailBuilds.textContent).toContain(ARCHER_FIXED_PASSIVE.description)
+    expect(detailBuilds.className).toContain('overflow-y-auto')
+    expect(detailBuilds.className).toContain('overflow-x-hidden')
+    expect(detailBuilds.className).toContain('overscroll-contain')
+    expect(detailBuilds.className).toContain('pb-[2.5%]')
+    expect(within(detailBuilds).getByRole('heading', { level: 4 }).textContent).toBe(ARCHER_FIXED_PASSIVE.name)
+    const buildGrid = detailBuilds.querySelector('div')
+    expect(buildGrid?.className).toContain('grid-cols-2')
+    expect(buildGrid?.className).toContain('max-[900px]:grid-cols-1')
+    for (const buildTag of ['pierce', 'spread', 'control', 'beast'] as const) {
+      expect(detailBuilds.textContent).toContain(SKILL_BUILD_LABELS[buildTag])
+      expect(detailBuilds.textContent).toContain(SKILL_BUILD_DESCRIPTIONS[buildTag])
+    }
+    const detailSkills = screen.getByTestId('character-detail-skills')
+    expect(Number(detailSkills.dataset.stageTop)).toBe(CHARACTER_DETAIL_CONTENT_LAYOUT.skills.top)
+    expect(detailSkills.style.top).toBe(`${(CHARACTER_DETAIL_CONTENT_LAYOUT.skills.top / CHARACTER_DETAIL_STAGE_SIZE.height) * 100}%`)
+    expect(detailSkills).not.toBe(detailBuilds)
+    expect(detailSkills.className).toContain('overflow-y-auto')
+    expect(detailSkills.className).toContain('overflow-x-hidden')
+    expect(detailSkills.className).toContain('overscroll-contain')
+    expect(detailSkills.className).toContain('pb-[2.5%]')
+    detailBuilds.scrollTop = 48
+    expect(detailSkills.scrollTop).toBe(0)
+    detailSkills.scrollTop = 96
+    expect(detailBuilds.scrollTop).toBe(48)
+    expect(detailSkills.querySelectorAll('[data-testid^="character-detail-evolution-family-"]')).toHaveLength(21)
+    expect(detailSkills.querySelectorAll('[data-testid^="character-detail-evolution-discovered-"], [data-testid^="character-detail-evolution-undiscovered-"]')).toHaveLength(42)
+    expect(detailSkills.querySelector('[data-testid="character-detail-evolution-grid"]')?.className).toContain('grid')
+    expect(detailSkills.querySelector('[data-testid^="character-detail-skill-icon-"]')).toBeNull()
+    for (const retiredSkillName of ['百兽协猎', '星羽裁决', '震荡箭', '暗蚀影箭']) {
+      expect(within(detailSkills).queryByText(retiredSkillName, { exact: true })).toBeNull()
+    }
+    const windCut = ARCHER_SKILL_EVOLUTION_MAP['wind-cut']
+    const discoveredEvolution = screen.getByTestId('character-detail-evolution-discovered-wind-cut')
+    const undiscoveredEvolution = screen.getByTestId('character-detail-evolution-undiscovered-sun-piercer')
+    expect(within(detailSkills).getAllByRole('button')).toEqual([discoveredEvolution])
+    expect(discoveredEvolution.getAttribute('aria-label')).toBe(windCut.name)
+    expect(discoveredEvolution.getAttribute('aria-describedby')).toBe('character-detail-evolution-tooltip-wind-cut')
+    expect(screen.getByTestId('character-detail-evolution-name-wind-cut').textContent).toBe(windCut.name)
+    expect(screen.getByTestId('character-detail-evolution-name-sun-piercer').textContent).toBe('贯日长虹')
+    expect(screen.getByTestId('character-detail-evolution-name-sun-piercer').className).toContain('text-slate-500')
+    expect(discoveredEvolution.className).toContain('h-[clamp(1.5rem,3.4cqw,7rem)]')
+    expect(discoveredEvolution.className).toContain('w-[clamp(1.5rem,3.4cqw,7rem)]')
+    expect(screen.getByTestId('character-detail-evolution-image-wind-cut').getAttribute('src')).toBe(getArcherSkillIconAssetUrl('wind-cut'))
+    expect(undiscoveredEvolution.tagName).toBe('DIV')
+    expect(within(undiscoveredEvolution).queryByRole('button')).toBeNull()
+    fireEvent.mouseEnter(undiscoveredEvolution)
+    fireEvent.click(undiscoveredEvolution)
+    expect(screen.queryByTestId('character-detail-evolution-tooltip-sun-piercer')).toBeNull()
+    fireEvent.mouseEnter(discoveredEvolution)
+    const firstDetailSkillTooltip = screen.getByTestId('character-detail-evolution-tooltip-wind-cut')
+    expect(firstDetailSkillTooltip.parentElement).toBe(document.body)
+    expect(firstDetailSkillTooltip.textContent).toContain(windCut.name)
+    expect(firstDetailSkillTooltip.textContent).toContain('所属核心技能：穿刺箭')
+    fireEvent.mouseLeave(discoveredEvolution)
+    expect(screen.queryByTestId('character-detail-evolution-tooltip-wind-cut')).toBeNull()
+    fireEvent.focus(discoveredEvolution)
+    expect(screen.getByTestId('character-detail-evolution-tooltip-wind-cut')).toBeTruthy()
+    fireEvent.blur(discoveredEvolution)
+    expect(screen.queryByTestId('character-detail-evolution-tooltip-wind-cut')).toBeNull()
+    expect(screen.queryByText('专属技能')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '返回' }))
+    expect(screen.getByTestId('character-selection-dialog').getAttribute('aria-label')).toBe('角色选择')
+    fireEvent.click(screen.getByTestId('character-selection-detail-button'))
+    act(() => vi.advanceTimersByTime(CHARACTER_DETAIL_TRANSITION_DURATION_MS))
+    fireEvent.click(screen.getByTestId('character-detail-stage'))
+    expect(screen.getByTestId('character-selection-dialog').getAttribute('aria-label')).toBe('角色选择')
+    fireEvent.click(screen.getByTestId('character-selection-detail-button'))
+    act(() => vi.advanceTimersByTime(CHARACTER_DETAIL_TRANSITION_DURATION_MS))
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.getByTestId('character-selection-dialog').getAttribute('aria-label')).toBe('角色选择')
+
+    fireEvent.click(screen.getByTestId('character-selection-select-button'))
+    expect(screen.queryByTestId('character-selection-dialog')).toBeNull()
+    expect(startGame).not.toHaveBeenCalled()
+    expect(useGameStore.getState().phase).toBe('idle')
+
+    openCharacterSelection()
+    fireEvent.click(screen.getByTestId('character-selection-stage'))
+    expect(screen.queryByTestId('character-selection-dialog')).toBeNull()
+    openCharacterSelection()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByTestId('character-selection-dialog')).toBeNull()
+  })
+
+  it('deduplicates click, Enter, and Space detail triggers and keeps the crossfade non-interactive until 240ms', () => {
+    vi.useFakeTimers()
+    useGameStore.setState({ ...createInitialSnapshot('idle'), discoveredSkillEvolutionIds: ['wind-cut'] })
+    render(<GameOverlay />)
+
+    fireEvent.click(within(screen.getByTestId('village-compact-actions')).getByRole('button', { name: '角色选择' }))
+    const detailButton = screen.getByTestId('character-selection-detail-button')
+    fireEvent.click(detailButton)
+    fireEvent.click(detailButton)
+    fireEvent.keyDown(detailButton, { key: 'Enter' })
+    fireEvent.keyUp(detailButton, { key: 'Enter' })
+    fireEvent.keyDown(detailButton, { key: ' ' })
+    fireEvent.keyUp(detailButton, { key: ' ' })
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    expect(screen.getAllByTestId('character-detail-transition')).toHaveLength(1)
+    expect(screen.getByTestId('character-selection-dialog').getAttribute('aria-label')).toBe('角色选择')
+    expect(screen.getByTestId('character-selection-dialog').getAttribute('aria-busy')).toBe('true')
+    expect(screen.getByTestId('character-detail-stage').getAttribute('data-interactive')).toBe('false')
+    expect(screen.getByTestId('character-detail-return-button').getAttribute('tabindex')).toBe('-1')
+    expect(screen.getByTestId('character-selection-detail-button').getAttribute('disabled')).not.toBeNull()
+    expect(screen.getByTestId('character-selection-select-button').getAttribute('disabled')).not.toBeNull()
+    expect(document.activeElement).not.toBe(screen.getByTestId('character-detail-return-button'))
+
+    act(() => vi.advanceTimersByTime(CHARACTER_DETAIL_TRANSITION_DURATION_MS - 1))
+    expect(screen.getByTestId('character-detail-transition')).toBeTruthy()
+    act(() => vi.advanceTimersByTime(1))
+
+    expect(screen.queryByTestId('character-detail-transition')).toBeNull()
+    expect(screen.getByTestId('character-selection-dialog').getAttribute('aria-label')).toBe('弓箭手详情')
+    expect(screen.getByTestId('character-detail-stage').getAttribute('data-interactive')).toBe('true')
+    expect(document.activeElement).toBe(screen.getByTestId('character-detail-return-button'))
+  })
+
+  it('skips the detail animation for reduced motion while preserving focus and the return path', () => {
+    const mediaQuery = {
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }
+    vi.stubGlobal('matchMedia', vi.fn(() => mediaQuery))
+    useGameStore.setState({ ...createInitialSnapshot('idle'), discoveredSkillEvolutionIds: ['wind-cut'] })
+    render(<GameOverlay />)
+
+    fireEvent.click(within(screen.getByTestId('village-compact-actions')).getByRole('button', { name: '角色选择' }))
+    fireEvent.click(screen.getByTestId('character-selection-detail-button'))
+
+    expect(screen.queryByTestId('character-detail-transition')).toBeNull()
+    expect(screen.getByTestId('character-selection-dialog').getAttribute('aria-label')).toBe('弓箭手详情')
+    expect(screen.getByTestId('character-detail-stage').getAttribute('data-interactive')).toBe('true')
+    expect(document.activeElement).toBe(screen.getByTestId('character-detail-return-button'))
+    fireEvent.click(screen.getByRole('button', { name: '返回' }))
+    expect(screen.getByTestId('character-selection-dialog').getAttribute('aria-label')).toBe('角色选择')
   })
 
   it('uses restored legacy meta talent unlocks for campaign mastery prerequisites', () => {

@@ -9,10 +9,22 @@ import {
   ENEMY_TALENT_STATUS_CHIP_ROW_GAP,
   getInfiniteFloorTileIndex,
   getInfiniteFloorTileIndexForWorldPosition,
+  getPlayerArcherRenderInput,
   getEnemyTalentStateIndicators,
+  getBeastCompanionEvolutionVisualScale,
   getFireSacExplosionFrameIndex,
   getLevelOneDungeonFloorTileRange,
+  CHAIN_CAPTAIN_COMMAND_RING_ALPHA,
+  CHAIN_CAPTAIN_COMMAND_RING_FILL,
+  drawChainCaptainCommandRing,
+  drawEnemySkillEffects,
+  drawJailerChiefBind,
+  drawJailerChiefWarningRing,
+  drawChainWraithPullVisual,
+  drawSkillEvolutionEffectEvents,
   getSmoothedCameraOffset,
+  getRenderableSkillEvolutionEffectEvents,
+  getSkillEvolutionEffectRenderProfile,
   getTerrainAssetImageSrc,
   LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE,
   LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC,
@@ -32,10 +44,17 @@ import {
   getCorrosiveSlimeAtlasFrame,
   getCorrosiveSlimeCombatDrawSize,
   CORROSIVE_SLIME_MOVE_FRAME_RATE,
+  drawChainWraithIronChain,
   drawEnemySprite,
+  getChainEliteAssetAction,
+  getChainEliteAssetFrame,
+  getEnemySpriteVisualPresentation,
+  getChainWraithSkillHandWorldAnchor,
+  getChainWraithSkillHandWorldAnchorForEnemy,
   getDungeonWardenAssetAction,
   getDungeonWardenAssetFrame,
   getDungeonWardenAssetSlot,
+  drawPlayerSprite,
   drawProjectileSprite,
   getMonsterSpriteAtlasForEnemy,
   getHellhoundAtlasFrame,
@@ -45,6 +64,12 @@ import {
   getSkeletonWarriorAtlasFrame,
   HELLHOUND_MOVE_FRAME_RATE,
   MONSTER_SPRITE_ATLASES,
+  PLAYER_ARROW_OUTLINE_ALPHA,
+  PLAYER_ARROW_OUTLINE_OFFSETS,
+  PLAYER_ARROW_OUTLINE_WIDTH,
+  getPlayerArcherCachedRuntimeImage,
+  resetPlayerArcherRuntimeImageCacheForTests,
+  preloadPlayerArcherAssets,
   getPlayerArcherSpriteAction,
   getPlayerArcherSpriteFrameSrc,
   PLAYER_ARCHER_SPRITE_FRAME_COUNT,
@@ -70,6 +95,13 @@ import {
   getSkeletonArcherImage2FrameUrls,
 } from './skeletonArcherAssetFrames'
 import { SKELETON_WARRIOR_PT_ACTIONS, getSkeletonWarriorPtFrameUrls } from './skeletonWarriorPtAssetFrames'
+import {
+  getPlayerArcherFrameAnchor,
+  getPlayerArcherFrameDrawSize,
+  getPlayerArcherFrameRenderScale,
+  getPlayerArcherPublicArrowSrc,
+  getPlayerArcherStableBodyCenter,
+} from './archerAssetFrames'
 import { CAMPAIGN_ONE_DECORATION_ASSETS, CAMPAIGN_ONE_OBSTACLE_ASSETS } from './terrainAssets'
 import {
   exportRuntimeAssetDraftConfig,
@@ -78,7 +110,8 @@ import {
   setRuntimeAssetActionOverride,
   type RuntimeAssetDraftConfig,
 } from './runtimeAssetOverrides'
-import type { Enemy } from './types'
+import type { Enemy, EnemySkillEffect, GameSnapshot, Player, SkillEvolutionEffectEvent } from './types'
+import { ARCHER_SKILL_EVOLUTION_MAP } from './archerSkillEvolution'
 
 let runtimeOverrideSnapshot: RuntimeAssetDraftConfig | undefined
 
@@ -103,6 +136,7 @@ const createMockCanvasContext = () => ({
   shadowBlur: 0,
   shadowOffsetX: 0,
   shadowOffsetY: 0,
+  globalCompositeOperation: 'source-over',
   save: vi.fn(),
   restore: vi.fn(),
   translate: vi.fn(),
@@ -124,9 +158,152 @@ const createMockCanvasContext = () => ({
   setLineDash: vi.fn(),
   fillText: vi.fn(),
   measureText: vi.fn(() => ({ width: 10 })),
-}) as unknown as CanvasRenderingContext2D & { drawImage: ReturnType<typeof vi.fn> }
+}) as unknown as CanvasRenderingContext2D & {
+  drawImage: ReturnType<typeof vi.fn>
+  save: ReturnType<typeof vi.fn>
+  restore: ReturnType<typeof vi.fn>
+}
 
 describe('game render helpers', () => {
+  it('reads A1’s presentation-only companion scale so only a supplied single-beast boss renders 2×', () => {
+    expect(getBeastCompanionEvolutionVisualScale({ visualScale: 2 })).toBe(2)
+    expect(getBeastCompanionEvolutionVisualScale({ visualScale: 1 })).toBe(1)
+    expect(getBeastCompanionEvolutionVisualScale({})).toBe(1)
+  })
+
+  it('renders only A1 warning/body/hit event layers with a capped, distinct, behind-enemy presentation', () => {
+    const event = (eventId: string, layer: SkillEvolutionEffectEvent['layer'], evolutionId = 'wind-cut'): SkillEvolutionEffectEvent => ({
+      eventId,
+      id: eventId,
+      familyId: 'pierce-arrow',
+      evolutionId,
+      kind: layer === 'evolve' ? 'evolve' : layer === 'hit' ? 'hit' : 'cast',
+      layer,
+      position: { x: 160, y: 120 },
+      origin: { x: 120, y: 150 },
+      direction: { x: 1, y: -0.25 },
+      targetPosition: { x: 212, y: 106 },
+      targetId: 'enemy-1',
+      radius: 30,
+      length: 100,
+      startedAt: 4,
+      duration: 1,
+      ttl: 0.6,
+    })
+    const events = [
+      event('warning', 'warning'),
+      event('body', 'body', 'meteor-cluster'),
+      event('hit', 'hit', 'frost-wolf-king'),
+      ...Array.from({ length: 25 }, (_, index) => event(`overflow-${index}`, 'body')),
+    ]
+    const ctx = createMockCanvasContext()
+
+    expect(getRenderableSkillEvolutionEffectEvents(events)).toHaveLength(24)
+    expect(getRenderableSkillEvolutionEffectEvents(events)[0]?.eventId).toBe('overflow-1')
+
+    drawSkillEvolutionEffectEvents(ctx, { elapsedTime: 4.4, skillEvolutionEffectEvents: events.slice(0, 3) })
+
+    expect(ctx.arc).toHaveBeenCalled()
+    expect(ctx.lineTo).toHaveBeenCalled()
+    expect(ctx.stroke).toHaveBeenCalled()
+    expect(ctx.setLineDash).toHaveBeenCalledWith([4, 3])
+    expect(ctx.save.mock.calls.length).toBeGreaterThanOrEqual(3)
+    expect(ctx.restore.mock.calls.length).toBeGreaterThanOrEqual(3)
+
+    const emptyContext = createMockCanvasContext()
+    drawSkillEvolutionEffectEvents(emptyContext, { elapsedTime: 4.4, skillEvolutionEffectEvents: [] })
+    expect(emptyContext.arc).not.toHaveBeenCalled()
+  })
+
+  it('adapts all 42 VFX branches from A1’s contract rather than visualKind or an id hash', () => {
+    const branches = Object.values(ARCHER_SKILL_EVOLUTION_MAP)
+    const profiles = Object.fromEntries(branches.map((contract) => [contract.id, getSkillEvolutionEffectRenderProfile(contract.id)]))
+
+    expect(branches).toHaveLength(42)
+    branches.forEach((contract) => {
+      const profile = profiles[contract.id]
+      expect(profile.contract).toBe(contract)
+      expect(profile.shape).toBe(contract.effectProfile.shape)
+      expect(profile.warning).toBe(contract.effectProfile.warning)
+      expect(profile.body).toBe(contract.effectProfile.body)
+      expect(profile.hit).toBe(contract.effectProfile.hit)
+    })
+
+    // The actual A1 patches determine geometry and cadence, not a renderer
+    // lookup keyed by the branch id.
+    expect(profiles['wind-cut']).toMatchObject({ shape: 'line', range: 540, pierce: 3, tickInterval: 0.5 })
+    expect(profiles['double-crescent']).toMatchObject({ shape: 'fan', projectileCount: 8, spread: 0.5 })
+    expect(profiles['thunder-chain']).toMatchObject({ shape: 'burst', radius: 50, accent: '#67e8f9' })
+    expect(profiles['meteor-cluster']).toMatchObject({ shape: 'field', radius: 100, tickInterval: 0.34 })
+    expect(profiles['frost-wolf-king']).toMatchObject({ shape: 'beast', projectileCount: 1, radius: 120 })
+    expect(profiles['frost-wolf-pack']).toMatchObject({ shape: 'beast', projectileCount: 7, radius: 90 })
+  })
+
+  it('draws contract-distinct warning, body, and hit outlines for line, fan, burst, field, and beast branches', () => {
+    const event = (layer: Extract<SkillEvolutionEffectEvent['layer'], 'warning' | 'body' | 'hit'>, evolutionId: string): SkillEvolutionEffectEvent => ({
+      eventId: `${layer}-${evolutionId}`,
+      id: `${layer}-${evolutionId}`,
+      familyId: ARCHER_SKILL_EVOLUTION_MAP[evolutionId]?.familyId ?? 'pierce-arrow',
+      evolutionId,
+      kind: layer === 'hit' ? 'hit' : 'cast',
+      layer,
+      position: { x: 160, y: 120 },
+      origin: { x: 120, y: 150 },
+      direction: { x: 1, y: -0.25 },
+      targetPosition: { x: 212, y: 106 },
+      startedAt: 4,
+      duration: 1,
+      ttl: 0.6,
+    })
+    const draw = (layer: Extract<SkillEvolutionEffectEvent['layer'], 'warning' | 'body' | 'hit'>, evolutionId: string) => {
+      const ctx = createMockCanvasContext()
+      drawSkillEvolutionEffectEvents(ctx, { elapsedTime: 4.4, skillEvolutionEffectEvents: [event(layer, evolutionId)] })
+      return ctx
+    }
+
+    ;(['warning', 'body', 'hit'] as const).forEach((layer) => {
+      const line = draw(layer, 'wind-cut')
+      const fan = draw(layer, 'double-crescent')
+      const burst = draw(layer, 'thunder-chain')
+      const field = draw(layer, 'meteor-cluster')
+      const beast = draw(layer, 'frost-wolf-king')
+
+      // A field has its contract-driven square/circle contour, while a line
+      // never creates a field rect. Fan and burst introduce arcs; the single
+      // wolf’s triangle silhouette is preserved instead of being a tinted line.
+      expect(field.rect).toHaveBeenCalled()
+      expect(line.rect).not.toHaveBeenCalled()
+      expect(fan.arc).toHaveBeenCalled()
+      expect(burst.arc).toHaveBeenCalled()
+      expect(beast.closePath).toHaveBeenCalled()
+      expect(line.closePath).not.toHaveBeenCalled()
+    })
+  })
+
+  it('draws foot chains only while the authoritative jailer bind state exists', () => {
+    const boundPlayer = {
+      position: { x: 250, y: 160 },
+      size: 30,
+      stunTimer: 0,
+      jailerChiefBind: {
+        remaining: 0,
+        anchor: { x: 246, y: 171 },
+        sourceEnemyId: 'jailer-chief-1',
+        releasePending: true,
+      },
+    } as Player
+    const boundContext = createMockCanvasContext()
+
+    expect(drawJailerChiefBind(boundContext, boundPlayer, 10)).toBe(true)
+    expect(boundContext.ellipse).toHaveBeenCalled()
+    expect(boundContext.ellipse).toHaveBeenCalledWith(expect.any(Number), 171, expect.any(Number), expect.any(Number), expect.any(Number), 0, Math.PI * 2)
+
+    const unboundPlayer = { ...boundPlayer, jailerChiefBind: undefined, stunTimer: 3 } as Player
+    const unboundContext = createMockCanvasContext()
+    expect(drawJailerChiefBind(unboundContext, unboundPlayer, 10)).toBe(false)
+    expect(unboundContext.ellipse).not.toHaveBeenCalled()
+  })
+
   it('maps real enemy talent state ttl and stacks into compact canvas indicators', () => {
     const enemy = {
       id: 'talent-state-enemy',
@@ -210,17 +387,463 @@ describe('game render helpers', () => {
     snapshot.player.hurtCooldown = 0
 
     expect(getPlayerArcherSpriteAction(snapshot.player, false)).toBe('attack')
-    expect(getPlayerArcherSpriteFrameSrc('attack', 0)).toContain('/assets/player/elf-archer/attack/elf_archer_attack_01.png')
+    expect(PLAYER_ARCHER_SPRITE_FRAME_COUNT).toBe(12)
+    expect(getPlayerArcherSpriteFrameSrc('attack', 0)).toContain('/assets/player/archer/attack/Attack-1.png')
 
     snapshot.player.attackCooldown = 0
     expect(getPlayerArcherSpriteAction(snapshot.player, true)).toBe('move')
-    expect(getPlayerArcherSpriteFrameSrc('move', PLAYER_ARCHER_SPRITE_FRAME_COUNT - 1)).toContain(
-      '/assets/player/elf-archer/move/elf_archer_move_04.png',
-    )
+    expect(getPlayerArcherSpriteFrameSrc('move', 6)).toContain('/assets/player/archer/run/Run-7.png')
 
     snapshot.player.hurtCooldown = 0.4
-    expect(getPlayerArcherSpriteAction(snapshot.player, true)).toBe('idle')
-    expect(getPlayerArcherSpriteFrameSrc('idle', 1)).toContain('/assets/player/elf-archer/idle/elf_archer_idle_02.png')
+    expect(getPlayerArcherSpriteAction(snapshot.player, true)).toBe('hurt')
+    expect(getPlayerArcherSpriteFrameSrc('hurt', 1)).toContain('/assets/player/archer/hurt/Hurt-2.png')
+
+    snapshot.player.hurtCooldown = 0
+    expect(getPlayerArcherSpriteAction(snapshot.player, { isMoving: false, isCastingSkill: true })).toBe('skill')
+    expect(getPlayerArcherSpriteAction(snapshot.player, { isMoving: true, isCastingSkill: true })).toBe('move-attack')
+  })
+
+  it('consumes only core-owned archer action, hurt, death, and legal movement state', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.player.archerMovementDirection = { x: -1, y: 0 }
+    snapshot.player.archerAction = {
+      kind: 'skill',
+      elapsed: 0.4,
+      duration: 1,
+      aimDirection: { x: 1, y: 0 },
+      isMoving: true,
+    }
+
+    expect(getPlayerArcherRenderInput(snapshot)).toMatchObject({
+      isDead: false,
+      isHurt: false,
+      isCastingSkill: true,
+      isAttacking: false,
+      isMoving: true,
+      actionProgress: 0.4,
+      movementDirection: { x: -1, y: 0 },
+      aimDirection: { x: 1, y: 0 },
+    })
+
+    snapshot.player.archerHurt = { elapsed: 0.12, duration: 0.3 }
+    expect(getPlayerArcherRenderInput(snapshot)).toMatchObject({ isHurt: true, actionProgress: 0.4 })
+
+    snapshot.player.archerDeath = { elapsed: 0.6, duration: 1 }
+    expect(getPlayerArcherRenderInput(snapshot)).toMatchObject({
+      isDead: true,
+      isHurt: false,
+      isCastingSkill: false,
+      isAttacking: false,
+      actionProgress: 0.6,
+    })
+  })
+
+  it('renders only the project-local archer and arrow image for player actions and every player projectile', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 192
+      naturalHeight = 192
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    resetPlayerArcherRuntimeImageCacheForTests()
+
+    const snapshot = createInitialSnapshot('running')
+    snapshot.player.hurtCooldown = 0
+    snapshot.player.attackCooldown = 0
+    const ctx = createMockCanvasContext()
+
+    drawPlayerSprite(ctx, snapshot.player, 0.25, {
+      isMoving: false,
+      isCastingSkill: true,
+      aimDirection: { x: -1, y: 0 },
+    })
+    const playerImage = ctx.drawImage.mock.calls[0]?.[0] as { src?: string }
+    expect(playerImage.src).toContain('/assets/player/archer/skill/Skill-')
+    expect(playerImage.src).not.toContain('elf-archer')
+    expect(ctx.scale).toHaveBeenCalledWith(-1, 1)
+
+    const sources = ['basic-arrow', 'thunder-chain', 'curve-return', 'arrow-rain', 'talent-extra-arrow']
+    sources.forEach((sourceSkillId) => {
+      ctx.drawImage.mockClear()
+      drawProjectileSprite(ctx, {
+        id: `${sourceSkillId}-arrow`,
+        owner: 'player',
+        position: { x: 100, y: 100 },
+        velocity: { x: 120, y: 24 },
+        damage: 4,
+        ttl: 2,
+        size: 6,
+        color: sourceSkillId === 'thunder-chain' ? '#67e8f9' : '#fde68a',
+        pierceRemaining: 0,
+        explosionRadius: 0,
+        effect: 'none',
+        effectStrength: 0,
+        sourceSkillId,
+      }, 0)
+      const arrowImage = ctx.drawImage.mock.calls.at(-1)?.[0] as { src?: string }
+      expect(arrowImage.src).toBe(getPlayerArcherPublicArrowSrc())
+      expect(ctx.drawImage.mock.calls).toHaveLength(9)
+      expect(ctx.rotate).toHaveBeenLastCalledWith(Math.atan2(24, 120))
+    })
+
+    // Each arrow uses a save/restore scope, so its tint and rotation cannot
+    // leak to the next projectile's render reuse.
+    expect(ctx.save.mock.calls.length).toBeGreaterThanOrEqual(sources.length + 1)
+    expect(ctx.restore.mock.calls.length).toBeGreaterThanOrEqual(sources.length + 1)
+  })
+
+  it('draws a half-opaque hard 1px player-arrow outline without tinting Charge-1 internal pixels', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 192
+      naturalHeight = 192
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    resetPlayerArcherRuntimeImageCacheForTests()
+
+    const maskContexts: Array<{
+      globalAlpha: number
+      globalCompositeOperation: string
+      fillAlphas: number[]
+      fillStyle: string
+      drawImage: ReturnType<typeof vi.fn>
+      fillRect: ReturnType<typeof vi.fn>
+    }> = []
+    const originalCreateElement = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation(((tagName: string, options?: ElementCreationOptions) => {
+      if (tagName !== 'canvas') {
+        return originalCreateElement(tagName, options)
+      }
+      const context = {
+        imageSmoothingEnabled: true,
+        globalCompositeOperation: 'source-over',
+        globalAlpha: 1,
+        fillStyle: '',
+        fillAlphas: [] as number[],
+        drawImage: vi.fn(),
+        fillRect: vi.fn(),
+        getImageData: () => ({ data: new Uint8ClampedArray(192 * 192 * 4).fill(255) }),
+      }
+      context.fillRect.mockImplementation(() => context.fillAlphas.push(context.globalAlpha))
+      maskContexts.push(context)
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => context,
+      } as unknown as HTMLCanvasElement
+    }) as typeof document.createElement)
+
+    const ctx = createMockCanvasContext()
+    const fillRect = ctx.fillRect as unknown as ReturnType<typeof vi.fn>
+    const colors = ['#fde68a', '#67e8f9', '#ef4444']
+    colors.forEach((color, index) => {
+      ctx.drawImage.mockClear()
+      fillRect.mockClear()
+      drawProjectileSprite(ctx, {
+        id: `outlined-arrow-${index}`,
+        owner: 'player',
+        position: { x: 100, y: 100 },
+        velocity: { x: 80 + index * 20, y: 30 - index * 15 },
+        damage: 4,
+        ttl: 2,
+        size: 6,
+        color,
+        pierceRemaining: 0,
+        explosionRadius: 0,
+        effect: 'none',
+        effectStrength: 0,
+        sourceSkillId: `outlined-arrow-${index}`,
+      }, 0)
+
+      const calls = ctx.drawImage.mock.calls
+      const originalArrow = calls.at(-1)?.[0] as { src?: string }
+      expect(calls).toHaveLength(PLAYER_ARROW_OUTLINE_OFFSETS.length + 1)
+      expect(originalArrow.src).toBe(getPlayerArcherPublicArrowSrc())
+      expect(calls.slice(0, -1).every((call) => call[0] !== originalArrow)).toBe(true)
+      expect(fillRect).not.toHaveBeenCalled()
+    })
+
+    const outlineContexts = maskContexts.filter((context) => context.globalCompositeOperation === 'source-in')
+    expect(outlineContexts).toHaveLength(colors.length)
+    expect(outlineContexts.map((context) => context.fillStyle)).toEqual(colors)
+    expect(outlineContexts.map((context) => context.fillAlphas)).toEqual(colors.map(() => [PLAYER_ARROW_OUTLINE_ALPHA]))
+    expect(outlineContexts.every((context) => context.globalAlpha === 1)).toBe(true)
+    expect(maskContexts.some((context) => context.globalCompositeOperation === 'source-atop')).toBe(false)
+    expect(PLAYER_ARROW_OUTLINE_ALPHA).toBe(0.5)
+    expect(PLAYER_ARROW_OUTLINE_WIDTH).toBe(1)
+    expect(PLAYER_ARROW_OUTLINE_OFFSETS).toEqual(expect.arrayContaining([
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+    ]))
+    expect(PLAYER_ARROW_OUTLINE_OFFSETS).toHaveLength(8)
+    expect(PLAYER_ARROW_OUTLINE_OFFSETS.every(([x, y]) => (
+      Math.max(Math.abs(x), Math.abs(y)) === 1
+    ))).toBe(true)
+
+    // Rasterize a single opaque source pixel from the exact renderer offsets:
+    // all skill-colour coverage sits in its one-pixel neighbourhood and the
+    // original source is painted last over the centre.
+    const sourcePixel = { x: 12, y: 12 }
+    const skillColourPixels = new Set(PLAYER_ARROW_OUTLINE_OFFSETS.map(([x, y]) => (
+      `${sourcePixel.x + x},${sourcePixel.y + y}`
+    )))
+    expect(skillColourPixels.has('12,12')).toBe(false)
+    expect([...skillColourPixels].every((entry) => {
+      const [x, y] = entry.split(',').map(Number)
+      return Math.max(Math.abs(x - sourcePixel.x), Math.abs(y - sourcePixel.y)) === 1
+    })).toBe(true)
+    expect(skillColourPixels.has('14,12')).toBe(false)
+    expect(skillColourPixels.has('10,12')).toBe(false)
+    expect(ctx.rotate).toHaveBeenLastCalledWith(Math.atan2(0, 120))
+  })
+
+  it('preloads every archer URL through the drawing cache exactly once', async () => {
+    class MockImage {
+      static instances: MockImage[] = []
+      complete = true
+      naturalWidth = 192
+      naturalHeight = 192
+      decode = vi.fn(async () => undefined)
+      private imageSrc = ''
+
+      constructor() {
+        MockImage.instances.push(this)
+      }
+
+      get src() {
+        return this.imageSrc
+      }
+
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    resetPlayerArcherRuntimeImageCacheForTests()
+
+    await preloadPlayerArcherAssets()
+    expect(MockImage.instances).toHaveLength(44)
+
+    const snapshot = createInitialSnapshot('running')
+    const ctx = createMockCanvasContext()
+    const skillSource = getPlayerArcherSpriteFrameSrc('skill', 1)
+    const cachedSkillImage = getPlayerArcherCachedRuntimeImage(skillSource)
+    drawPlayerSprite(ctx, snapshot.player, 0.25, { isMoving: false, isCastingSkill: true })
+
+    expect(ctx.drawImage.mock.calls[0]?.[0]).toBe(cachedSkillImage)
+    expect(MockImage.instances).toHaveLength(44)
+  })
+
+  it('waits for cached images that are complete before their pixels are available without warning', async () => {
+    type Listener = () => void
+
+    class MockImage {
+      static instances: MockImage[] = []
+      complete = false
+      naturalWidth = 0
+      naturalHeight = 0
+      decode = vi.fn(async () => undefined)
+      private imageSrc = ''
+      private listeners = new Map<string, Listener[]>()
+
+      constructor() {
+        MockImage.instances.push(this)
+      }
+
+      get src() {
+        return this.imageSrc
+      }
+
+      set src(value: string) {
+        this.imageSrc = value
+        // Reproduce the browser-cache transition C observed: `complete` is
+        // true before the cached image has exposed naturalWidth, then load.
+        this.complete = true
+        queueMicrotask(() => {
+          this.naturalWidth = 192
+          this.naturalHeight = 192
+          this.emit('load')
+        })
+      }
+
+      addEventListener(type: string, listener: Listener) {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener])
+      }
+
+      private emit(type: string) {
+        this.listeners.get(type)?.forEach((listener) => listener())
+      }
+    }
+
+    vi.stubGlobal('Image', MockImage)
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    resetPlayerArcherRuntimeImageCacheForTests()
+
+    const firstPreload = preloadPlayerArcherAssets()
+    const strictModePreload = preloadPlayerArcherAssets()
+    expect(strictModePreload).toBe(firstPreload)
+    await Promise.all([firstPreload, strictModePreload])
+    await preloadPlayerArcherAssets()
+
+    expect(MockImage.instances).toHaveLength(44)
+    expect(warning).not.toHaveBeenCalled()
+    expect(getPlayerArcherCachedRuntimeImage(getPlayerArcherSpriteFrameSrc('idle', 0))?.naturalWidth).toBe(192)
+  })
+
+  it('retries only archer URLs that emitted error instead of permanently caching the failed pass', async () => {
+    type Listener = () => void
+
+    class MockImage {
+      static instances: MockImage[] = []
+      static attempts = new Map<string, number>()
+      complete = false
+      naturalWidth = 0
+      naturalHeight = 0
+      decode = vi.fn(async () => undefined)
+      private imageSrc = ''
+      private listeners = new Map<string, Listener[]>()
+
+      constructor() {
+        MockImage.instances.push(this)
+      }
+
+      get src() {
+        return this.imageSrc
+      }
+
+      set src(value: string) {
+        this.imageSrc = value
+        const attempt = (MockImage.attempts.get(value) ?? 0) + 1
+        MockImage.attempts.set(value, attempt)
+        queueMicrotask(() => {
+          this.complete = true
+          if (value.endsWith('/attack/Attack-1.png') && attempt === 1) {
+            this.emit('error')
+            return
+          }
+          this.naturalWidth = 192
+          this.naturalHeight = 192
+          this.emit('load')
+        })
+      }
+
+      addEventListener(type: string, listener: Listener) {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener])
+      }
+
+      private emit(type: string) {
+        this.listeners.get(type)?.forEach((listener) => listener())
+      }
+    }
+
+    vi.stubGlobal('Image', MockImage)
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    resetPlayerArcherRuntimeImageCacheForTests()
+
+    await preloadPlayerArcherAssets()
+    expect(MockImage.instances).toHaveLength(44)
+    expect(warning).toHaveBeenCalledTimes(1)
+    expect(warning).toHaveBeenLastCalledWith(expect.stringContaining('/attack/Attack-1.png'))
+
+    await preloadPlayerArcherAssets()
+    expect(MockImage.instances).toHaveLength(45)
+    expect(MockImage.attempts.get('/assets/player/archer/attack/Attack-1.png')).toBe(2)
+    expect(warning).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the latest project-local frame while a target frame is unreadied and never uses an old fallback', () => {
+    class MockImage {
+      complete = false
+      naturalWidth = 0
+      naturalHeight = 0
+      private imageSrc = ''
+      addEventListener = vi.fn()
+
+      get src() {
+        return this.imageSrc
+      }
+
+      set src(value: string) {
+        this.imageSrc = value
+        if (value.includes('/idle/Idle-1.png')) {
+          this.complete = true
+          this.naturalWidth = 192
+          this.naturalHeight = 192
+        }
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    resetPlayerArcherRuntimeImageCacheForTests()
+
+    const snapshot = createInitialSnapshot('running')
+    const ctx = createMockCanvasContext()
+    drawPlayerSprite(ctx, snapshot.player, 0, { isMoving: false })
+    const idleImage = ctx.drawImage.mock.calls[0]?.[0] as { src?: string }
+    expect(idleImage.src).toContain('/assets/player/archer/idle/Idle-1.png')
+
+    ctx.drawImage.mockClear()
+    drawPlayerSprite(ctx, snapshot.player, 0.25, { isMoving: false, isCastingSkill: true })
+    const retainedImage = ctx.drawImage.mock.calls[0]?.[0] as { src?: string }
+    expect(retainedImage).toBe(idleImage)
+    expect(retainedImage.src).not.toContain('elf-archer')
+    expect(retainedImage.src).not.toContain('data:')
+  })
+
+  it('uses the authored root once for stable same-frame and mirrored player rendering', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 192
+      naturalHeight = 192
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    resetPlayerArcherRuntimeImageCacheForTests()
+
+    const snapshot = createInitialSnapshot('running')
+    snapshot.player.position = { x: 123.4, y: 210.6 }
+    const ctx = createMockCanvasContext()
+    const input = { isMoving: false, isCastingSkill: true, aimDirection: { x: -1, y: 0 } }
+
+    drawPlayerSprite(ctx, snapshot.player, 0.25, input)
+    const firstTranslate = (ctx.translate as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    const firstImageCall = ctx.drawImage.mock.calls[0]
+    const anchor = getPlayerArcherFrameAnchor('skill', 1)
+    const scale = getPlayerArcherFrameRenderScale('skill', 1)
+    const drawSize = getPlayerArcherFrameDrawSize('skill', 1)
+    expect(firstTranslate).toEqual([123, 219])
+    expect(firstImageCall.slice(-4)).toEqual([
+      -anchor.anchorX * scale,
+      -anchor.anchorY * scale,
+      drawSize,
+      drawSize,
+    ])
+    expect(ctx.scale).toHaveBeenCalledWith(-1, 1)
+
+    ;(ctx.translate as unknown as ReturnType<typeof vi.fn>).mockClear()
+    drawPlayerSprite(ctx, snapshot.player, 0.25, input)
+    expect((ctx.translate as unknown as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(firstTranslate)
   })
 
   it('uses skeleton archer attack frames only during ranged windup', () => {
@@ -438,6 +1061,388 @@ describe('game render helpers', () => {
     expect(ctx.drawImage).not.toHaveBeenCalled()
     drawEnemySprite(ctx, genericBomber, 0, 1, { campaignOverlay: false })
     expect(ctx.drawImage).not.toHaveBeenCalled()
+  })
+
+  it('draws imported C1 elite bodies from their dedicated project-local paths instead of generic fallback art', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 192
+      naturalHeight = 192
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    const ctx = createMockCanvasContext()
+    const captain = {
+      id: 'chain-captain',
+      archetypeId: 'dungeon-chain-captain',
+      displayName: '断链骷髅队长',
+      kind: 'elite',
+      hp: 100,
+      position: { x: 120, y: 120 },
+      size: 28,
+      hitFlash: 0,
+      walkTimer: 1,
+      behaviorTimer: 0,
+      facingDirection: { x: 1, y: 0 },
+    } as Enemy
+
+    drawEnemySprite(ctx, captain, 0, 999, { campaignOverlay: false })
+
+    expect((ctx.drawImage.mock.calls[0]?.[0] as { src?: string }).src).toContain('/assets/monsters/dungeon-chain-captain/Move/Move-1.png')
+    expect((ctx.drawImage.mock.calls[0]?.[0] as { src?: string }).src).not.toContain('skeleton-warrior')
+
+    captain.walkTimer = 2
+    ctx.drawImage.mockClear()
+    drawEnemySprite(ctx, captain, 0, 0, { campaignOverlay: false })
+    expect((ctx.drawImage.mock.calls[0]?.[0] as { src?: string }).src).toContain('/assets/monsters/dungeon-chain-captain/Move/Move-2.png')
+
+    captain.walkTimer = 0
+    captain.chainCaptainCommandTimer = 5
+    captain.chainCaptainSlashWindow = { strikeIndex: 1, remaining: 0.18 }
+    captain.chainCaptainSlashVisualTimer = 0.54
+    ctx.drawImage.mockClear()
+    drawEnemySprite(ctx, captain, 0, 999, { campaignOverlay: false })
+    expect((ctx.drawImage.mock.calls[0]?.[0] as { src?: string }).src).toContain('/assets/monsters/dungeon-chain-captain/Move-Attack/Move+Attack-1.png')
+
+    captain.chainCaptainSlashWindow = { strikeIndex: 1, remaining: 0.04 }
+    captain.chainCaptainSlashVisualTimer = 0.4
+    ctx.drawImage.mockClear()
+    drawEnemySprite(ctx, captain, 0, 0, { campaignOverlay: false })
+    expect((ctx.drawImage.mock.calls[0]?.[0] as { src?: string }).src).toContain('/assets/monsters/dungeon-chain-captain/Move-Attack/Move+Attack-2.png')
+
+    captain.chainCaptainSlashWindow = { strikeIndex: 2, remaining: 0.18 }
+    // The second hit is a combat event only; its visual timer is not reset.
+    ctx.drawImage.mockClear()
+    drawEnemySprite(ctx, captain, 0, 0, { campaignOverlay: false })
+    expect((ctx.drawImage.mock.calls[0]?.[0] as { src?: string }).src).toContain('/assets/monsters/dungeon-chain-captain/Move-Attack/Move+Attack-2.png')
+
+    captain.chainCaptainSlashWindow = undefined
+    captain.chainCaptainSlashVisualTimer = 0.04
+    ctx.drawImage.mockClear()
+    drawEnemySprite(ctx, captain, 0, 0, { campaignOverlay: false })
+    expect((ctx.drawImage.mock.calls[0]?.[0] as { src?: string }).src).toContain('/assets/monsters/dungeon-chain-captain/Move-Attack/Move+Attack-4.png')
+
+    const wraith = {
+      ...captain,
+      id: 'chain-wraith',
+      archetypeId: 'dungeon-chain-wraith-elite',
+      displayName: '铁链亡魂',
+      chainWraithPullPhase: 'warning' as const,
+      chainWraithPullTimer: 0.8,
+      walkTimer: 0,
+    } as Enemy
+    ctx.drawImage.mockClear()
+    drawEnemySprite(ctx, wraith, 0, 1, { campaignOverlay: false })
+    expect((ctx.drawImage.mock.calls[0]?.[0] as { src?: string }).src).toContain('/assets/monsters/dungeon-chain-wraith-elite/Skill/Skill-1.png')
+    expect((ctx.drawImage.mock.calls[0]?.[0] as { src?: string }).src).not.toContain('undead-jailer')
+  })
+
+  it('uses real chain-elite combat states and frame progress without generic elite fallback actions', () => {
+    const wraith = {
+      archetypeId: 'dungeon-chain-wraith-elite',
+      displayName: '铁链亡魂',
+      kind: 'elite',
+      hp: 100,
+      hitFlash: 0,
+      walkTimer: 0,
+      behaviorTimer: 9,
+      chainWraithPullPhase: 'warning' as const,
+      chainWraithPullTimer: 0.4,
+    } as Enemy
+    expect(getChainEliteAssetAction(wraith)).toBe('skill')
+    expect(getChainEliteAssetFrame(wraith, 'skill', 99)).toBe(2)
+    wraith.chainWraithPullPhase = undefined
+    expect(getChainEliteAssetAction(wraith)).toBe('idle')
+    wraith.walkTimer = 1
+    expect(getChainEliteAssetAction(wraith)).toBe('move')
+    wraith.hitFlash = 0.25
+    expect(getChainEliteAssetAction(wraith)).toBe('hit')
+  })
+
+  it('renders captain command and jailer warning rings from the current engine effects in world space', () => {
+    const command: EnemySkillEffect & { kind: 'chain-captain-command' } = {
+      id: 'captain-command',
+      kind: 'chain-captain-command',
+      position: { x: 360, y: 260 },
+      color: '#c084fc',
+      age: 4.4,
+      ttl: 0.6,
+      range: 160,
+    }
+    const warning: EnemySkillEffect & { kind: 'jailer-chief-warning' } = {
+      id: 'jailer-warning',
+      kind: 'jailer-chief-warning',
+      // This remains the cast snapshot, not the player's later live position.
+      position: { x: 420, y: 180 },
+      color: '#a78bfa',
+      age: 0.2,
+      ttl: 0.4,
+      range: 17,
+    }
+    const commandContext = createMockCanvasContext()
+    drawChainCaptainCommandRing(commandContext, command)
+    expect(commandContext.arc).toHaveBeenCalledWith(360, 260, 160, 0, Math.PI * 2)
+    expect(commandContext.fill).toHaveBeenCalledTimes(1)
+    expect(commandContext.stroke).not.toHaveBeenCalled()
+    expect(commandContext.fillRect).not.toHaveBeenCalled()
+    expect(commandContext.fillStyle).toBe(CHAIN_CAPTAIN_COMMAND_RING_FILL)
+    expect(CHAIN_CAPTAIN_COMMAND_RING_ALPHA).toBe(0.4)
+    expect(commandContext.globalAlpha).toBeCloseTo(0.4)
+
+    const fadingCommandContext = createMockCanvasContext()
+    drawChainCaptainCommandRing(fadingCommandContext, { ...command, ttl: 0.3 })
+    expect(fadingCommandContext.globalAlpha).toBeCloseTo(0.2)
+
+    const warningContext = createMockCanvasContext()
+    drawJailerChiefWarningRing(warningContext, warning)
+    expect(warningContext.arc).toHaveBeenCalledWith(420, 180, 17, 0, Math.PI * 2)
+
+    const snapshot = createInitialSnapshot('running')
+    snapshot.mapObstacles = []
+    snapshot.mapDecorations = []
+    snapshot.enemies = []
+    snapshot.enemySkillEffects = [command, warning]
+    const cameraContext = createMockCanvasContext()
+    renderGame(cameraContext, snapshot, { x: 80, y: 36 })
+    expect(cameraContext.translate as unknown as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(-80, -36)
+    expect((cameraContext.arc as unknown as ReturnType<typeof vi.fn>).mock.calls).toEqual(expect.arrayContaining([
+      [360, 260, 160, 0, Math.PI * 2],
+      [420, 180, 17, 0, Math.PI * 2],
+    ]))
+  })
+
+  it('removes elite rings in the same render tick and keeps captain visual slash playback independent from hit windows', () => {
+    const effectContext = createMockCanvasContext()
+    const activeState = {
+      enemySkillEffects: [{
+        id: 'captain-command',
+        kind: 'chain-captain-command',
+        position: { x: 100, y: 120 },
+        age: 0,
+        ttl: 0.6,
+        range: 160,
+      }],
+    } as GameSnapshot
+    drawEnemySkillEffects(effectContext, activeState)
+    expect(effectContext.arc).toHaveBeenCalledTimes(1)
+    ;(effectContext.arc as unknown as ReturnType<typeof vi.fn>).mockClear()
+    drawEnemySkillEffects(effectContext, { ...activeState, enemySkillEffects: [] })
+    expect(effectContext.arc).not.toHaveBeenCalled()
+
+    const captain = {
+      archetypeId: 'dungeon-chain-captain',
+      displayName: '断链骷髅队长',
+      kind: 'elite',
+      hp: 100,
+      hitFlash: 0,
+      walkTimer: 0,
+      chainCaptainCommandTimer: 5,
+      chainCaptainSlashWindow: { strikeIndex: 1 as const, remaining: 0.18 },
+      chainCaptainSlashVisualTimer: 0.54,
+    } as Enemy
+    expect(getChainEliteAssetAction(captain)).toBe('attack')
+    captain.chainCaptainSlashWindow = { strikeIndex: 2, remaining: 0.18 }
+    expect(getChainEliteAssetAction(captain)).toBe('attack')
+    captain.chainCaptainSlashWindow = undefined
+    captain.chainCaptainSlashVisualTimer = 0.29
+    expect(getChainEliteAssetAction(captain)).toBe('attack')
+    expect(getChainEliteAssetFrame(captain, 'attack', 999)).toBe(2)
+    expect([0.54, 0.4, 0.29, 0.16].map((chainCaptainSlashVisualTimer) => (
+      getChainEliteAssetFrame({ ...captain, chainCaptainSlashVisualTimer }, 'attack', 999)
+    ))).toEqual([0, 1, 2, 3])
+    captain.chainCaptainSlashVisualTimer = 0
+    expect(getChainEliteAssetAction(captain)).toBe('skill')
+    captain.walkTimer = 1
+    expect(getChainEliteAssetAction(captain)).toBe('move')
+    captain.chainCaptainCommandTimer = 0
+    expect(getChainEliteAssetAction(captain)).toBe('move')
+    captain.walkTimer = 0
+    expect(getChainEliteAssetAction(captain)).toBe('idle')
+    captain.hp = 0
+    captain.chainCaptainSlashVisualTimer = 0.29
+    expect(getChainEliteAssetAction(captain)).toBe('death')
+  })
+
+  it('aligns the wraith hand to the measured Skill frame and tiles one rotated Iron Chain frame without stretching its final piece', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 192
+      naturalHeight = 192
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+
+    expect(getChainWraithSkillHandWorldAnchor({
+      frameIndex: 0,
+      groundRoot: { x: 100, y: 200 },
+      drawSize: 192,
+      flipX: false,
+    })).toEqual({ x: 136, y: 71 })
+    expect(getChainWraithSkillHandWorldAnchor({
+      frameIndex: 0,
+      groundRoot: { x: 100, y: 200 },
+      drawSize: 192,
+      flipX: true,
+    })).toEqual({ x: 64, y: 71 })
+
+    const context = createMockCanvasContext()
+    expect(drawChainWraithIronChain(context, {
+      start: { x: 20, y: 30 },
+      end: { x: 420, y: 30 },
+      frameIndex: 2,
+    })).toBe(true)
+    expect(context.rotate).toHaveBeenCalledWith(0)
+    expect(context.drawImage).toHaveBeenCalledTimes(3)
+    const finalPiece = context.drawImage.mock.calls.at(-1)!
+    expect(finalPiece.slice(1)).toEqual([12, 84, 64, 28, 336, -14, 64, 28])
+    expect((finalPiece[0] as { src?: string }).src).toContain('/assets/monsters/dungeon-chain-wraith-elite/Iron-Chain/Iron Chain-3.png')
+  })
+
+  it('mirrors every formal wraith body action and its Skill hand from the authoritative facing direction', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 192
+      naturalHeight = 192
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+
+    const createWraith = (facingX: number) => ({
+      id: `wraith-${facingX}`,
+      archetypeId: 'dungeon-chain-wraith-elite',
+      displayName: '铁链亡魂',
+      kind: 'elite',
+      hp: 100,
+      position: { x: 120, y: 180 },
+      size: 28,
+      hitFlash: 0,
+      walkTimer: 0,
+      behaviorTimer: 0,
+      facingDirection: { x: facingX, y: 0 },
+      chainWraithPullPhase: 'warning' as const,
+      chainWraithPullTimer: 0.6,
+    } as Enemy)
+    const rightFacing = createWraith(1)
+    const leftFacing = createWraith(-1)
+    const renderRoot = { x: 120, y: 180 }
+
+    for (const action of ['idle', 'move', 'skill', 'attack'] as const) {
+      const right = getEnemySpriteVisualPresentation(rightFacing, 0.25, { actionOverride: action, renderRoot })
+      const left = getEnemySpriteVisualPresentation(leftFacing, 0.25, { actionOverride: action, renderRoot })
+
+      expect(right.kind).toBe('chain-wraith-elite')
+      expect(right.action).toBe(action)
+      expect(left.action).toBe(action)
+      expect(right.flipX).toBe(false)
+      expect(left.flipX).toBe(true)
+      expect(left.frameIndex).toBe(right.frameIndex)
+      expect(left.baseDrawSize).toBe(right.baseDrawSize)
+      expect(left.groundRoot).toEqual(right.groundRoot)
+    }
+
+    const rightContext = createMockCanvasContext()
+    drawEnemySprite(rightContext, rightFacing, 0.25, 1, { campaignOverlay: false })
+    expect(rightContext.scale).not.toHaveBeenCalledWith(-1, 1)
+
+    const leftContext = createMockCanvasContext()
+    drawEnemySprite(leftContext, leftFacing, 0.25, 1, { campaignOverlay: false })
+    expect(leftContext.scale).toHaveBeenCalledWith(-1, 1)
+    expect(leftContext.imageSmoothingEnabled).toBe(true)
+
+    const rightHand = getChainWraithSkillHandWorldAnchorForEnemy(rightFacing, 0.25, true)!
+    const leftHand = getChainWraithSkillHandWorldAnchorForEnemy(leftFacing, 0.25, true)!
+    // Both paths integer-align one final canvas pixel. That permits one pixel
+    // of symmetry quantization while still proving the cast anchor mirrors.
+    expect(Math.abs(leftHand.x + rightHand.x - 2 * rightFacing.position.x)).toBeLessThanOrEqual(1)
+    expect(leftHand.x).toBeLessThan(rightFacing.position.x)
+    expect(rightHand.x).toBeGreaterThan(rightFacing.position.x)
+    expect(leftHand.y).toBe(rightHand.y)
+  })
+
+  it('draws the wraith chain only while the engine-provided pull visual state exists and follows the player during pull', () => {
+    class MockImage {
+      complete = true
+      naturalWidth = 192
+      naturalHeight = 192
+      private imageSrc = ''
+      get src() {
+        return this.imageSrc
+      }
+      set src(value: string) {
+        this.imageSrc = value
+      }
+    }
+    vi.stubGlobal('Image', MockImage)
+    const snapshot = createInitialSnapshot('running')
+    snapshot.elapsedTime = 0.2
+    snapshot.player.position = { x: 220, y: 160 }
+    snapshot.enemies = [{
+      id: 'wraith-pull',
+      archetypeId: 'dungeon-chain-wraith-elite',
+      displayName: '铁链亡魂',
+      kind: 'elite',
+      hp: 100,
+      position: { x: 80, y: 120 },
+      size: 28,
+      hitFlash: 0,
+      facingDirection: { x: 1, y: 0 },
+    } as Enemy]
+    const context = createMockCanvasContext()
+
+    expect(drawChainWraithPullVisual(context, snapshot)).toBe(false)
+    expect(context.drawImage).not.toHaveBeenCalled()
+
+    snapshot.chainWraithPullVisual = {
+      casterId: 'wraith-pull',
+      targetId: 'player',
+      phase: 'pull',
+      remaining: 0.2,
+      warningTarget: { x: 220, y: 160 },
+      // Engine-only pull facts must not freeze the rendered chain endpoint.
+      pullStart: { x: 220, y: 160 },
+      pullTarget: { x: 40, y: 40 },
+    }
+    expect(drawChainWraithPullVisual(context, snapshot)).toBe(true)
+    expect(context.drawImage).toHaveBeenCalled()
+
+    const wraith = snapshot.enemies[0]!
+    const hand = getChainWraithSkillHandWorldAnchorForEnemy(wraith, snapshot.elapsedTime, true)!
+    const initialCenter = getPlayerArcherStableBodyCenter(snapshot.player.position)
+    const initialLength = context.drawImage.mock.calls.reduce((total, call) => total + Number(call[7] ?? 0), 0)
+    expect(initialLength).toBeCloseTo(Math.hypot(initialCenter.x - hand.x, initialCenter.y - hand.y), 5)
+
+    snapshot.player.position = { x: 170, y: 246 }
+    context.drawImage.mockClear()
+    ;(context.rotate as unknown as ReturnType<typeof vi.fn>).mockClear()
+    expect(drawChainWraithPullVisual(context, snapshot)).toBe(true)
+    const movedCenter = getPlayerArcherStableBodyCenter(snapshot.player.position)
+    const movedLength = context.drawImage.mock.calls.reduce((total, call) => total + Number(call[7] ?? 0), 0)
+    expect(context.rotate).toHaveBeenCalledWith(Math.atan2(movedCenter.y - hand.y, movedCenter.x - hand.x))
+    expect(movedLength).toBeCloseTo(Math.hypot(movedCenter.x - hand.x, movedCenter.y - hand.y), 5)
+    expect(movedLength).not.toBeCloseTo(initialLength, 5)
+
+    snapshot.chainWraithPullVisual = undefined
+    context.drawImage.mockClear()
+    expect(drawChainWraithPullVisual(context, snapshot)).toBe(false)
+    expect(context.drawImage).not.toHaveBeenCalled()
   })
 
   it('renders the project-local fire-sac explosion left, center, right once across its existing 0.52-second lifetime', () => {
@@ -998,7 +2003,7 @@ describe('game render helpers', () => {
     expect(imageDraw?.[6]).toBeGreaterThan(38)
   })
 
-  it('flips hellhound skill frames relative to the locked combat facing', () => {
+  it('flips hellhound bite frames relative to the locked combat facing', () => {
     class MockImage {
       complete = true
       naturalWidth = 64
@@ -1006,20 +2011,6 @@ describe('game render helpers', () => {
       src = ''
     }
     vi.stubGlobal('Image', MockImage)
-    setRuntimeAssetActionOverride({
-      entityId: 'dungeon-hellhound',
-      slot: 'skill_1',
-      combatAction: 'skill',
-      frameUrls: [getHellhoundImage2FrameUrls('skill_1')[0]],
-      frameWidth: 192,
-      frameHeight: 192,
-      frameCount: 1,
-      fps: 6,
-      durationSeconds: 0.8,
-      loop: false,
-      flipX: false,
-      combatScale: 1,
-    })
     const enemy = {
       id: 'hellhound',
       archetypeId: 'dungeon-hellhound',
@@ -1028,8 +2019,8 @@ describe('game render helpers', () => {
       position: { x: 100, y: 100 },
       size: 22,
       hitFlash: 0,
-      behaviorTimer: 0,
-      breathTimer: 0.6,
+      behaviorTimer: 0.2,
+      breathTimer: 0,
       walkTimer: 0,
       facingDirection: { x: 1, y: 0 },
     } as Enemy
@@ -1091,7 +2082,7 @@ describe('game render helpers', () => {
     expect((ctx.fillRect as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBeLessThan(3)
   })
 
-  it('falls back to hellhound-image2 frames when a stale hellhound override frame is missing', () => {
+  it('rejects a stale hellhound override before rendering the project bite frames', () => {
     class MockImage {
       complete = true
       private imageSrc = ''
@@ -1140,12 +2131,12 @@ describe('game render helpers', () => {
 
     drawEnemySprite(ctx, enemy, 0.5, 1, { campaignOverlay: false })
 
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('could not load configured frame'))
+    expect(warn).not.toHaveBeenCalled()
     const imageArg = ctx.drawImage.mock.calls[0]?.[0] as { src?: string }
     expect(imageArg.src).toBe(`/${getHellhoundImage2FrameUrls('move')[0]}`)
   })
 
-  it('uses available configured hellhound skill frames even when the action slot is incomplete', () => {
+  it('ignores retired hellhound skill overrides and keeps old breath state on the bite art', () => {
     class MockImage {
       complete = true
       naturalWidth = 64
@@ -1159,21 +2150,21 @@ describe('game render helpers', () => {
       }
     }
     vi.stubGlobal('Image', MockImage)
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     setRuntimeAssetActionOverride({
       entityId: 'dungeon-hellhound',
       slot: 'skill_1',
       combatAction: 'skill',
-      frameUrls: getHellhoundImage2FrameUrls('skill_1').slice(0, 2),
+      frameUrls: ['assets/monsters/hellhound-image2/Skill_1/Skill_1-1@3x.png'],
       frameWidth: 192,
       frameHeight: 192,
-      frameCount: 3,
+      frameCount: 1,
       fps: 7,
       durationSeconds: 0.86,
       loop: false,
       flipX: false,
       combatScale: 1,
     })
+    expect(getRuntimeAssetActionOverride('dungeon-hellhound', 'skill')).toBeUndefined()
     const enemy = {
       id: 'hellhound',
       archetypeId: 'dungeon-hellhound',
@@ -1193,8 +2184,7 @@ describe('game render helpers', () => {
 
     expect(ctx.drawImage).toHaveBeenCalled()
     const imageArg = ctx.drawImage.mock.calls[0]?.[0] as { src?: string }
-    expect(imageArg.src).toBe(`/${getHellhoundImage2FrameUrls('skill_1')[0]}`)
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('2/3 configured frames'))
+    expect(imageArg.src).toContain('/assets/monsters/hellhound-image2/Attack/Attack-')
   })
 
   it('draws generic campaign fallback monsters from developer asset overrides in combat', () => {
@@ -1276,10 +2266,10 @@ describe('game render helpers', () => {
       combatScale: 1,
     })
     setRuntimeAssetActionOverride({
-      entityId: 'corrupted-jailer',
+      entityId: 'blood-noble',
       slot: 'idle',
       combatAction: 'idle',
-      frameUrls: ['assets/developer-assets/corrupted-jailer/idle/frame_01.png'],
+      frameUrls: ['assets/developer-assets/blood-noble/idle/frame_01.png'],
       frameWidth: 64,
       frameHeight: 64,
       frameCount: 1,
@@ -1302,8 +2292,8 @@ describe('game render helpers', () => {
     } as Enemy
     const elite = {
       id: 'elite',
-      archetypeId: 'corrupted-jailer',
-      displayName: '腐化狱卒长',
+      archetypeId: 'blood-noble',
+      displayName: '血宴贵族',
       kind: 'elite',
       position: { x: 180, y: 120 },
       size: 28,
@@ -1319,7 +2309,7 @@ describe('game render helpers', () => {
 
     const drawnSources = ctx.drawImage.mock.calls.map((call) => (call[0] as { src?: string }).src)
     expect(drawnSources).toContain('/assets/monsters/dungeon-warden/Idle/Idle-1@3x.png')
-    expect(drawnSources).toContain('/assets/developer-assets/corrupted-jailer/idle/frame_01.png')
+    expect(drawnSources).toContain('/assets/developer-assets/blood-noble/idle/frame_01.png')
   })
 
   it('uses Walk for ordinary p1 movement instead of treating contempt as RUN', () => {
@@ -1587,6 +2577,12 @@ describe('game render helpers', () => {
     expect(ctx.drawImage).toHaveBeenCalled()
     const imageArg = ctx.drawImage.mock.calls[0]?.[0] as { src?: string }
     expect(imageArg.src).toBe('/assets/developer-assets/beast-frost-wolf/idle/frame_01.png')
+
+    const bossContext = createMockCanvasContext()
+    drawBeastCompanionSprite(bossContext, beast, 0.5, 2)
+    const bossDrawArgs = bossContext.drawImage.mock.calls[0] ?? []
+    expect(bossDrawArgs.at(-1)).toBe(99)
+    expect(bossDrawArgs.at(-2)).toBe(99)
   })
 
   it('maps skeleton warrior PT frames without the old sheet fallback', () => {

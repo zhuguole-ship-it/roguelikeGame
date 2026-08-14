@@ -184,7 +184,7 @@ export const LV5_QUALITATIVE_TEXT: Record<string, string> = {
   'celestial-feather': '爆炸后留下 2 秒星火区域',
   'quick-triple': '变成 5 连快射，最后一箭必定暴击',
   'fan-burst': '扇面缩小，中心 3 支箭 +40% 伤害',
-  'gale-barrage': '疾风箭束速度提高，并额外追加高速细箭',
+  'gale-barrage': '疾风连矢速度提高，并额外追加高速细箭',
   'arrow-screen': '箭幕形成推进墙，命中短暂减速',
   'double-crescent': '双月弧线更密，交汇处附带短暂减速',
   'afterimage-salvo': '复制一次 50% 伤害的残影箭列',

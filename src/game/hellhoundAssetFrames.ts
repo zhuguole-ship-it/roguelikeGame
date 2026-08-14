@@ -1,4 +1,8 @@
-export type HellhoundImage2ActionSlot = 'idle' | 'move' | 'attack' | 'cast' | 'skill_1' | 'hit' | 'death'
+/**
+ * The formal C1 hellhound contract is intentionally bite-only.  The old cast
+ * and fire-breath sheets may still exist on disk, but are not runtime actions.
+ */
+export type HellhoundImage2ActionSlot = 'idle' | 'move' | 'attack' | 'hit' | 'death'
 
 export type HellhoundImage2ActionMeta = {
   slot: HellhoundImage2ActionSlot
@@ -9,7 +13,7 @@ export type HellhoundImage2ActionMeta = {
   fps: number
   durationSeconds?: number
   loop: boolean
-  combatAction: 'idle' | 'move' | 'attack' | 'cast' | 'skill' | 'hit' | 'death'
+  combatAction: 'idle' | 'move' | 'attack' | 'hit' | 'death'
   hitFrameIndex?: number
 }
 
@@ -50,30 +54,6 @@ export const HELLHOUND_IMAGE2_ACTIONS: Record<HellhoundImage2ActionSlot, Hellhou
     loop: false,
     combatAction: 'attack',
     hitFrameIndex: 3,
-  },
-  cast: {
-    slot: 'cast',
-    label: '施法前摇',
-    folder: 'Cast',
-    prefix: 'Cast',
-    frameCount: 10,
-    fps: 10,
-    durationSeconds: 1,
-    loop: false,
-    combatAction: 'cast',
-    hitFrameIndex: 5,
-  },
-  skill_1: {
-    slot: 'skill_1',
-    label: '火焰吐息',
-    folder: 'Skill_1',
-    prefix: 'Skill_1',
-    frameCount: 3,
-    fps: 7,
-    durationSeconds: 0.43,
-    loop: false,
-    combatAction: 'skill',
-    hitFrameIndex: 1,
   },
   hit: {
     slot: 'hit',

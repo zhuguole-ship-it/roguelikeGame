@@ -27,6 +27,22 @@ import {
   type DungeonWardenActionSlot,
 } from './dungeonWardenAssetFrames'
 import {
+  JAILER_CHIEF_ACTIONS,
+  JAILER_CHIEF_ANCHORS,
+  JAILER_CHIEF_FRAME_SIZE,
+  getJailerChiefPublicFrameUrls,
+  type JailerChiefActionSlot,
+} from './jailerChiefAssetFrames'
+import {
+  CHAIN_ELITE_ACTIONS,
+  CHAIN_ELITE_FRAME_SIZE,
+  getChainElitePublicFrameUrls,
+  getChainWraithPublicIronChainFrameUrls,
+  getChainWraithSkillHandAnchor,
+  type ChainEliteActionSlot,
+  type ChainEliteAssetId,
+} from './chainEliteAssetFrames'
+import {
   CORROSIVE_SLIME_ACTIONS,
   CORROSIVE_SLIME_FRAME_SIZE,
   getCorrosiveSlimePublicFrameUrls,
@@ -39,13 +55,6 @@ import {
   type C1SlimeVariantAssetId,
   type C1SlimeVariantActionSlot,
 } from './c1SlimeVariantAssetFrames'
-import {
-  C1_DIRECT_DEATH_ASSETS,
-  getC1DirectDeathPublicFrameUrls,
-  getC1DirectDeathPublicGuideUrl,
-  getC1DirectDeathPublicSheetUrl,
-  type C1DirectDeathAssetId,
-} from './c1DeathAssetFrames'
 import { getRuntimeAssetActionOverride } from './runtimeAssetOverrides'
 import type { BeastKind, EnemyKind } from './types'
 
@@ -122,6 +131,8 @@ export type DeveloperAssetEntity = {
   skillRange: number
   notes: string
   actions: DeveloperAssetAction[]
+  /** Allows entities without a confirmed dedicated hit action to declare their formal action contract. */
+  requiredSlots?: DeveloperAssetSlot[]
   qa: {
     quadrupedSilhouette?: 'pass' | 'manual' | 'not-applicable'
   }
@@ -161,6 +172,22 @@ const corrosiveSlimeAnchors = {
   cast: { x: 0.58, y: 0.60, label: '攻击起点' },
 } satisfies Partial<Record<DeveloperAssetAnchorName, DeveloperAssetAnchor>>
 
+const chainCaptainAnchors = {
+  body: { x: 0.5, y: 0.88, label: '脚底' },
+  weapon: { x: 0.8, y: 0.42, label: '连环斩外缘' },
+  cast: { x: 0.72, y: 0.42, label: '号令表现点' },
+} satisfies Partial<Record<DeveloperAssetAnchorName, DeveloperAssetAnchor>>
+
+const chainWraithAnchors = {
+  body: { x: 0.5, y: 0.87, label: '悬浮根点' },
+  weapon: { x: 0.73, y: 0.36, label: '魂链外缘' },
+  cast: {
+    x: getChainWraithSkillHandAnchor(0).x / CHAIN_ELITE_FRAME_SIZE,
+    y: getChainWraithSkillHandAnchor(0).y / CHAIN_ELITE_FRAME_SIZE,
+    label: 'Skill-1 右手出链点',
+  },
+} satisfies Partial<Record<DeveloperAssetAnchorName, DeveloperAssetAnchor>>
+
 const createHellhoundImage2Action = (slot: HellhoundImage2ActionSlot): DeveloperAssetAction => {
   const meta = HELLHOUND_IMAGE2_ACTIONS[slot]
   const frameUrls = getHellhoundImage2PublicFrameUrls(slot)
@@ -180,7 +207,7 @@ const createHellhoundImage2Action = (slot: HellhoundImage2ActionSlot): Developer
     flipX: false,
     combatAction: meta.combatAction,
     combatScale: 1,
-    required: slot !== 'cast',
+    required: true,
     exists: true,
     anchors: hellhoundAnchors,
   }
@@ -451,46 +478,41 @@ const categoryLabelsByCategory: Record<DeveloperAssetCategory, string> = {
   beast: '野兽召唤物',
 }
 
-const createC1DirectDeathAction = (entityId: C1DirectDeathAssetId): Partial<DeveloperAssetAction> => {
-  const meta = C1_DIRECT_DEATH_ASSETS[entityId]
-  const frameUrls = getC1DirectDeathPublicFrameUrls(entityId)
-  const sheetUrl = getC1DirectDeathPublicSheetUrl(entityId)
-  const guideUrl = getC1DirectDeathPublicGuideUrl(entityId)
-  const assetPath = sheetUrl ?? frameUrls.join(' / ')
-
+const createJailerChiefAction = (assetSlot: JailerChiefActionSlot): DeveloperAssetAction => {
+  const meta = JAILER_CHIEF_ACTIONS[assetSlot]
+  const frameUrls = getJailerChiefPublicFrameUrls(assetSlot)
   return {
-    assetPath,
-    guideFrame: guideUrl ?? frameUrls[0],
-    frameUrls: frameUrls.length > 0 ? frameUrls : undefined,
-    frameWidth: meta.frameWidth,
-    frameHeight: meta.frameHeight,
-    frameCount: meta.frameCount,
+    slot: assetSlot === 'skill' ? 'cast' : assetSlot,
+    label: meta.label,
+    assetPath: frameUrls.join(' / '),
+    guideFrame: frameUrls[0],
+    frameUrls,
+    frameWidth: JAILER_CHIEF_FRAME_SIZE,
+    frameHeight: JAILER_CHIEF_FRAME_SIZE,
+    frameCount: meta.frameNames.length,
     fps: meta.fps,
-    durationSeconds: meta.frameCount / meta.fps,
-    loop: false,
+    durationSeconds: meta.durationSeconds,
+    loop: meta.loop,
     flipX: false,
-    combatAction: 'death',
+    combatAction: meta.combatAction,
     combatScale: 1,
-    sheetFrameStart: meta.sheetFrameStart,
     required: true,
     exists: true,
+    anchors: JAILER_CHIEF_ANCHORS[assetSlot],
   }
 }
 
-const createC1DeathOnlyEntity = (archetypeId: C1DirectDeathAssetId, notes: string): DeveloperAssetEntity => {
+const createJailerChiefEntity = (): DeveloperAssetEntity => {
+  const archetypeId = 'dungeon-jailer-chief'
   const archetype = CAMPAIGN_MONSTER_THEMES
     .flatMap((theme) => [...theme.normalPool, ...theme.elitePool, theme.boss])
     .find((candidate) => candidate.id === archetypeId)
 
   if (!archetype) {
-    throw new Error(`Missing formal C1 archetype for direct death asset: ${archetypeId}`)
+    throw new Error('Missing formal C1 archetype for corrupt jailer chief assets')
   }
 
   const category = enemyCategoryByKind(archetype.kind)
-  const frameSize = enemyFrameSizeByKind(archetype.kind)
-  const actions = completeActionSlots(frameSize, fallbackAnchorsForArchetype(archetype), {
-    death: createC1DirectDeathAction(archetypeId),
-  })
 
   return {
     id: archetype.id,
@@ -498,14 +520,94 @@ const createC1DeathOnlyEntity = (archetypeId: C1DirectDeathAssetId, notes: strin
     category,
     categoryLabel: categoryLabelsByCategory[category],
     kind: archetype.kind,
-    assetStatus: 'missing-resource',
+    assetStatus: 'complete',
     previewTint: archetype.tint,
-    combatSize: frameSize,
+    combatSize: enemyFrameSizeByKind(archetype.kind),
     attackRange: category === 'elite' ? 112 : 92,
     skillRange: category === 'elite' ? 210 : 150,
-    notes,
+    notes: '项目内 192x192 RGBA 逐帧素材已覆盖待机、移动、长剑挥击、牢锁禁锢和死亡；受击沿用当前合法动作与非矩形命中反馈。死亡仅映射新 Dead 六帧。',
+    requiredSlots: ['idle', 'move', 'attack', 'cast', 'death'],
     qa: { quadrupedSilhouette: 'not-applicable' },
-    actions,
+    actions: (['idle', 'move', 'attack', 'skill', 'death'] as const).map(createJailerChiefAction),
+  }
+}
+
+const createChainEliteAction = (entityId: ChainEliteAssetId, assetSlot: ChainEliteActionSlot): DeveloperAssetAction => {
+  const meta = CHAIN_ELITE_ACTIONS[entityId][assetSlot]
+  const frameUrls = getChainElitePublicFrameUrls(entityId, assetSlot)
+  const anchors = entityId === 'dungeon-chain-captain' ? chainCaptainAnchors : chainWraithAnchors
+  return {
+    slot: assetSlot === 'skill' ? 'cast' : assetSlot,
+    label: meta.label,
+    assetPath: frameUrls.join(' / '),
+    guideFrame: frameUrls[0],
+    frameUrls,
+    frameWidth: CHAIN_ELITE_FRAME_SIZE,
+    frameHeight: CHAIN_ELITE_FRAME_SIZE,
+    frameCount: meta.frameNames.length,
+    fps: meta.fps,
+    durationSeconds: meta.frameNames.length / meta.fps,
+    loop: meta.loop,
+    flipX: false,
+    combatAction: meta.combatAction,
+    combatScale: 1,
+    required: true,
+    exists: true,
+    anchors,
+  }
+}
+
+const createChainEliteEntity = (entityId: ChainEliteAssetId, notes: string): DeveloperAssetEntity => {
+  const archetype = CAMPAIGN_MONSTER_THEMES
+    .flatMap((theme) => [...theme.normalPool, ...theme.elitePool, theme.boss])
+    .find((candidate) => candidate.id === entityId)
+
+  if (!archetype) {
+    throw new Error(`Missing formal C1 archetype for ${entityId} assets`)
+  }
+
+  const category = enemyCategoryByKind(archetype.kind)
+  return {
+    id: archetype.id,
+    name: archetype.name,
+    category,
+    categoryLabel: categoryLabelsByCategory[category],
+    kind: archetype.kind,
+    assetStatus: 'complete',
+    previewTint: archetype.tint,
+    combatSize: enemyFrameSizeByKind(archetype.kind),
+    attackRange: 112,
+    skillRange: 210,
+    notes,
+    requiredSlots: ['idle', 'move', 'attack', 'hit', 'cast', 'death'],
+    qa: { quadrupedSilhouette: 'not-applicable' },
+    actions: [
+      ...(['idle', 'move', 'attack', 'hit', 'skill', 'death'] as const).map((slot) => createChainEliteAction(entityId, slot)),
+      ...(entityId === 'dungeon-chain-wraith-elite' ? [createChainWraithIronChainAction()] : []),
+    ],
+  }
+}
+
+const createChainWraithIronChainAction = (): DeveloperAssetAction => {
+  const frameUrls = getChainWraithPublicIronChainFrameUrls()
+  return {
+    slot: 'skill_1',
+    label: 'Iron Chain 拉拽视觉',
+    assetPath: frameUrls.join(' / '),
+    guideFrame: frameUrls[0],
+    frameUrls,
+    frameWidth: CHAIN_ELITE_FRAME_SIZE,
+    frameHeight: CHAIN_ELITE_FRAME_SIZE,
+    frameCount: frameUrls.length,
+    fps: CHAIN_ELITE_ACTIONS['dungeon-chain-wraith-elite'].skill.fps,
+    durationSeconds: frameUrls.length / CHAIN_ELITE_ACTIONS['dungeon-chain-wraith-elite'].skill.fps,
+    loop: true,
+    flipX: false,
+    combatAction: 'chain-pull',
+    combatScale: 1,
+    required: false,
+    exists: true,
+    anchors: chainWraithAnchors,
   }
 }
 
@@ -554,9 +656,14 @@ export const monsterAssetManifest: DeveloperAssetEntity[] = [
     'dungeon-explosive-fire-sac',
     '项目内橙色 192x192 RGBA 派生帧已覆盖待机、移动、攻击、受击和死亡；与图鉴和资产后台共用同一动作配置。',
   ),
-  createC1DeathOnlyEntity(
-    'dungeon-jailer-chief',
-    '项目内已同步专属 8 帧死亡动作；其他动作尚未在正式 manifest 中确认，实体保持缺资源状态。',
+  createChainEliteEntity(
+    'dungeon-chain-captain',
+    '项目内 192x192 RGBA 原字节动作帧已覆盖待机、移动、连环斩、受击、断链号令和死亡；不再使用程序精英身体。',
+  ),
+  createJailerChiefEntity(),
+  createChainEliteEntity(
+    'dungeon-chain-wraith-elite',
+    '项目内 192x192 RGBA 原字节动作帧与 Iron Chain 四帧已登记；拉拽链条仅等待 A1 的唯一视觉状态驱动。',
   ),
   {
     id: 'corrosive-slime',
@@ -634,14 +741,13 @@ export const monsterAssetManifest: DeveloperAssetEntity[] = [
     combatSize: 72,
     attackRange: 118,
     skillRange: 220,
-    notes: '火焰吐息需要 mouth / cast / projectileSpawn 锚点。',
+    notes: '项目内地狱犬逐帧素材已覆盖待机、移动、近战撕咬、受击和死亡；当前正式清单不登记吐息、冲刺或其他主动技能动作。',
+    requiredSlots: ['idle', 'move', 'attack', 'hit', 'death'],
     qa: { quadrupedSilhouette: 'manual' },
     actions: [
       createHellhoundImage2Action('idle'),
       createHellhoundImage2Action('move'),
       createHellhoundImage2Action('attack'),
-      createHellhoundImage2Action('cast'),
-      createHellhoundImage2Action('skill_1'),
       createHellhoundImage2Action('hit'),
       createHellhoundImage2Action('death'),
     ],
@@ -735,6 +841,26 @@ export const campaignFallbackAssetManifest: DeveloperAssetEntity[] = CAMPAIGN_MO
 
 export const developerAssetEntities = [...monsterAssetManifest, ...campaignFallbackAssetManifest, ...beastAssetManifest]
 
+/**
+ * Stable C1 body identities shared by the formal spawn gate, local battle UI,
+ * renderer protection, guide data, and asset management. Split children reuse
+ * their parent's `dungeon-splitting-ooze` body entry.
+ */
+export const FIRST_CAMPAIGN_MONSTER_BODY_IDS = [
+  CORROSIVE_SLIME_ARCHETYPE.id,
+  ...CAMPAIGN_MONSTER_THEMES.find((theme) => theme.campaign === 1)!.normalPool.map((archetype) => archetype.id),
+  ...CAMPAIGN_MONSTER_THEMES.find((theme) => theme.campaign === 1)!.elitePool.map((archetype) => archetype.id),
+  CAMPAIGN_MONSTER_THEMES.find((theme) => theme.campaign === 1)!.boss.id,
+] as const
+
+const firstCampaignMonsterBodyIdSet = new Set<string>(FIRST_CAMPAIGN_MONSTER_BODY_IDS)
+
+export type MonsterBodyAssetReadiness = {
+  entityId: string
+  ready: boolean
+  disabledReason?: string
+}
+
 export type EnemyDeathAnimationTiming = {
   frameCount: number
   fps: number
@@ -825,6 +951,7 @@ export const getEnemyDeathAnimationTiming = (
 
 export const cloneDeveloperAssetEntity = (entity: DeveloperAssetEntity): DeveloperAssetEntity => ({
   ...entity,
+  requiredSlots: entity.requiredSlots ? [...entity.requiredSlots] : undefined,
   actions: entity.actions.map((action) => ({
     ...action,
     anchors: action.anchors ? { ...action.anchors } : undefined,
@@ -868,7 +995,7 @@ export const getDeveloperAssetStatus = (entity: DeveloperAssetEntity) => {
 
 export const validateDeveloperAssetEntity = (entity: DeveloperAssetEntity): DeveloperAssetValidationIssue[] => {
   const issues: DeveloperAssetValidationIssue[] = []
-  const requiredSlots = requiredSlotsByCategory[entity.category]
+  const requiredSlots = entity.requiredSlots ?? requiredSlotsByCategory[entity.category]
   const actionsBySlot = new Map(entity.actions.map((action) => [action.slot, action]))
 
   requiredSlots.forEach((slot) => {
@@ -948,3 +1075,38 @@ export const validateDeveloperAssetEntity = (entity: DeveloperAssetEntity): Deve
 
   return issues
 }
+
+/**
+ * The canonical static body-asset gate. Callers may add their own runtime
+ * registration checks, but must not replace a missing body with program art.
+ */
+export const getMonsterBodyAssetReadiness = (entityId: string): MonsterBodyAssetReadiness => {
+  const entity = developerAssetEntities.find((candidate) => candidate.id === entityId)
+  if (!entity) {
+    return { entityId, ready: false, disabledReason: '资产清单未登记该怪物实体' }
+  }
+
+  if (entity.assetStatus === 'missing-action') {
+    return { entityId, ready: false, disabledReason: '缺少必填动作' }
+  }
+  if (entity.assetStatus === 'missing-anchor') {
+    return { entityId, ready: false, disabledReason: '缺少战斗锚点' }
+  }
+  if (entity.assetStatus === 'missing-resource') {
+    return { entityId, ready: false, disabledReason: '缺少可用素材资源' }
+  }
+
+  const blockingIssue = validateDeveloperAssetEntity(entity).find((issue) => issue.severity === 'error')
+  if (blockingIssue) {
+    return { entityId, ready: false, disabledReason: blockingIssue.message }
+  }
+
+  return { entityId, ready: true }
+}
+
+/** Returns undefined for non-C1 identities so their existing render policy is untouched. */
+export const getFirstCampaignMonsterBodyAssetReadiness = (entityId: string | undefined) => (
+  entityId && firstCampaignMonsterBodyIdSet.has(entityId)
+    ? getMonsterBodyAssetReadiness(entityId)
+    : undefined
+)

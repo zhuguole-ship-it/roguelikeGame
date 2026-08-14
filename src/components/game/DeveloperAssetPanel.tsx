@@ -25,6 +25,12 @@ import {
 import { isLocalDevelopmentRuntime, type LocalRuntimeEnvironment } from '../../game/localRuntime'
 import type { EquipmentItem, EquipmentMaterialInventory } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
+import {
+  COMBAT_UI_LAYER,
+  getCombatUiLayerAccessibilityProps,
+  getCombatUiLayerStyle,
+  useCombatUiLayerState,
+} from './combatUiLayers'
 
 export const isDeveloperAssetPanelVisible = (
   env: LocalRuntimeEnvironment = import.meta.env,
@@ -68,14 +74,21 @@ const qaSlotOrder: DeveloperAssetSlot[] = [
   'leader',
 ]
 
+const getDocumentedSlotsForEntity = (entity: DeveloperAssetEntity): DeveloperAssetSlot[] => (
+  entity.requiredSlots ?? Array.from(new Set([
+    ...visibleSlotsByCategory[entity.category],
+    ...entity.actions.map((action) => action.slot),
+  ]))
+)
+
 const getVisibleSlotsForEntity = (entity: DeveloperAssetEntity): DeveloperAssetSlot[] => {
-  const baseSlots = visibleSlotsByCategory[entity.category]
+  const baseSlots = getDocumentedSlotsForEntity(entity)
   const manifestSlots = entity.actions.map((action) => action.slot)
   return qaSlotOrder.filter((slot) => baseSlots.includes(slot) || manifestSlots.includes(slot))
 }
 
 const isSlotDocumentedForEntity = (entity: DeveloperAssetEntity, slot: DeveloperAssetSlot): boolean => (
-  visibleSlotsByCategory[entity.category].includes(slot) || entity.actions.some((action) => action.slot === slot)
+  getDocumentedSlotsForEntity(entity).includes(slot)
 )
 
 const anchorLabels: Record<DeveloperAssetAnchorName, string> = {
@@ -278,6 +291,9 @@ const applyDraftConfigToEntityMap = (
     }
     const cloned = cloneDeveloperAssetEntity(entity)
     draftEntity.actions.forEach((draftAction) => {
+      if (!getDocumentedSlotsForEntity(cloned).includes(draftAction.slot as DeveloperAssetSlot)) {
+        return
+      }
       const existing = cloned.actions.find((action) => action.slot === draftAction.slot)
       const patch: Partial<DeveloperAssetAction> = {
         assetPath: draftAction.assetPath,
@@ -1092,6 +1108,7 @@ function TalentE2EPanel() {
 }
 
 export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
+  const { highestLayer } = useCombatUiLayerState()
   const [panelTab, setPanelTab] = useState<DeveloperPanelTab>('assets')
   const [savedEntities, setSavedEntities] = useState(() => createEntityMap())
   const [draftEntities, setDraftEntities] = useState(() => createEntityMap())
@@ -1357,7 +1374,13 @@ export function DeveloperAssetPanel({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[rgba(2,6,4,0.78)] p-6" role="dialog" aria-label="开发者资产管理后台">
+    <div
+      {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.developer, highestLayer)}
+      className="fixed inset-0 flex items-center justify-center bg-[rgba(2,6,4,0.78)] p-6"
+      style={getCombatUiLayerStyle(COMBAT_UI_LAYER.developer)}
+      role="dialog"
+      aria-label="开发者资产管理后台"
+    >
       <div className="h-[88vh] w-[min(1500px,96vw)] overflow-hidden border-2 border-[rgba(157,213,172,0.45)] bg-[rgba(9,22,15,0.98)] p-5 shadow-[0_0_0_1px_rgba(244,240,215,0.08),0_18px_0_rgba(0,0,0,0.3)]">
         <header className="flex items-start justify-between gap-4 border-b border-[rgba(157,213,172,0.22)] pb-4">
           <div>

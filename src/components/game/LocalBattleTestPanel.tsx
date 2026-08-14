@@ -11,6 +11,12 @@ import {
 } from '../../game/localBattleTest'
 import { isLocalDevelopmentRuntime } from '../../game/localRuntime'
 import type { LocalBattleTestApplyResult, LocalBattleTestSpawnOption } from '../../game/types'
+import {
+  COMBAT_UI_LAYER,
+  getCombatUiLayerAccessibilityProps,
+  getCombatUiLayerStyle,
+  useCombatUiLayerState,
+} from './combatUiLayers'
 
 export type LocalBattleSessionView = {
   active: boolean
@@ -38,6 +44,7 @@ const describeResult = (result: LocalBattleTestApplyResult, successMessage: stri
 )
 
 export function LocalBattleTestPanel({ onClose, controller, session, spawnOptions }: LocalBattleTestPanelProps) {
+  const { highestLayer } = useCombatUiLayerState()
   const groups = useMemo(() => getLocalBattleEntityGroups(spawnOptions), [spawnOptions])
   const options = useMemo(() => groups.flatMap((group) => group.options), [groups])
   const [selections, setSelections] = useState<Record<string, LocalBattleMonsterSelection>>(() => createLocalBattleMonsterSelection(options))
@@ -71,7 +78,13 @@ export function LocalBattleTestPanel({ onClose, controller, session, spawnOption
   }
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-start justify-end bg-[rgba(2,6,4,0.5)] p-4 pt-16" role="dialog" aria-label="本地战斗测试">
+    <div
+      {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.developer, highestLayer)}
+      className="fixed inset-0 flex items-start justify-end bg-[rgba(2,6,4,0.5)] p-4 pt-16"
+      style={getCombatUiLayerStyle(COMBAT_UI_LAYER.developer)}
+      role="dialog"
+      aria-label="本地战斗测试"
+    >
       <section className="max-h-[82vh] w-[min(680px,calc(100vw-2rem))] overflow-y-auto border-2 border-[rgba(157,213,172,0.45)] bg-[rgba(9,22,15,0.98)] p-5 text-[#f4f0d7] shadow-[0_0_0_1px_rgba(244,240,215,0.08),0_18px_0_rgba(0,0,0,0.3)]" data-testid="local-battle-panel">
         <header className="flex items-start justify-between gap-4 border-b border-[rgba(157,213,172,0.22)] pb-4">
           <div>

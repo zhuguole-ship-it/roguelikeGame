@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { Coins, RotateCcw } from 'lucide-react'
+import { RotateCcw } from 'lucide-react'
 
-import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, ARCHER_FIXED_PASSIVE, ARCHER_FIXED_PASSIVE_LEVELS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
-import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
+import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_FIXED_PASSIVE, SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
+import { PLAYER_ARCHER_ACTIONS, getPlayerArcherPublicFrameSrc } from '../../game/archerAssetFrames'
 import { developerAssetEntities, type DeveloperAssetAction } from '../../game/assetManifest'
-import { ACTIVE_SKILL_DAMAGE_MULTIPLIER } from '../../game/config'
 import {
   CAMPAIGN_DIFFICULTY_ORDER,
   getCampaignDifficultyLabel,
@@ -38,9 +37,12 @@ import { hasDiscoveredHighRarityEquipment } from '../../game/equipmentDiscovery'
 import { MONSTER_FRAME_SPECS, drawMonsterGuideFrame, getMonsterSpriteAtlasForEnemy, type MonsterFrameAction } from '../../game/sprites'
 import { getMonsterDataCard } from '../../game/monsterDataCards'
 import {
+  getCampaignRewardPresentationSnapshot,
+  getRunTalentPresentationSnapshot,
+} from '../../game/engine'
+import {
   META_TALENT_NODE_BY_ID,
   META_TALENT_NODES,
-  RUN_TALENT_NODES,
   TALENT_RESET_BUILD_SHARD_COST,
   TALENT_RESET_GOLD_COST,
   getMetaTalentEffectsAtRank,
@@ -48,19 +50,30 @@ import {
   getMetaTalentUnlockState,
   getTalentBuildLabel,
   type MetaTalentNode,
-  type RunTalentNode,
+  type RunTalentPresentationItem,
   type TalentEffect,
 } from '../../game/talents'
 import { getMetaTalentIconAssetUrl } from '../../game/metaTalentIcons'
 import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
 import type { EnemyKind, EquipmentDismantleCategory, EquipmentItem, EquipmentRarity, EquipmentReforgeMode, EquipmentSkillModifier, EquipmentSlot, SkillBuildTag } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
+import {
+  COMBAT_UI_LAYER,
+  getCombatUiLayerAccessibilityProps,
+  getCombatUiLayerStyle,
+  useCombatUiLayerInitialFocus,
+  useCombatUiLayerState,
+} from './combatUiLayers'
+import { ArcherEvolutionDetailSkillGrid, ArcherEvolutionGuide, createArcherEvolutionGuideCatalog, type ArcherEvolutionGuideCatalog } from './ArcherEvolutionGuide'
+import { RunTalentFormDetails, RunTalentFormPlaceholder } from './RunTalentFormPresentation'
+import { RunSettlementOverlay } from './RunSettlementOverlay'
+import { CampaignRewardSnapshotSummary } from './CampaignRewardPresentation'
 
 type VillageModal = 'campaign' | 'shop' | 'guide' | 'character' | 'inventory' | 'settings' | 'hunter-home' | null
 type VillageModalId = Exclude<VillageModal, null>
 type GuideTab = 'career' | 'skills' | 'monsters'
 type HunterHomeTab = 'functional-talents' | 'combat-talents' | 'history'
-type RunTalentModule = RunTalentNode['module']
+type RunTalentModule = 'common' | 'death' | 'blood' | 'beast' | 'crystal'
 type MetaTalentTreeTab = 'common' | 'death' | 'blood' | 'beast' | 'crystal' | 'difficulty' | 'campaign' | 'endgame'
 type VillageClickAreaConfig = {
   id: string
@@ -86,6 +99,86 @@ type VillageHomepageConfig = {
 const GODOT_HOMEPAGE_LAYOUT_URL = `${import.meta.env.BASE_URL}assets/godot-ui/main-menu-layout.json`
 const DEFAULT_VILLAGE_BACKGROUND_VIDEO = `${import.meta.env.BASE_URL}assets/godot-ui/pixel_contract_hunter_start_screen_960x640.webm`
 const DEFAULT_VILLAGE_BACKGROUND_POSTER = `${import.meta.env.BASE_URL}assets/godot-ui/pixel_contract_hunter_start_screen_960x640_poster.png`
+const characterSelectionAssetUrl = (fileName: string) => `${(import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')}assets/ui/character-selection/${fileName}`
+
+export const CHARACTER_SELECTION_ASSET_URLS = Object.freeze({
+  selectionBackground: characterSelectionAssetUrl('character-selection-background.png'),
+  detailButton: characterSelectionAssetUrl('character-detail-button-transparent.png'),
+  detailBackground: characterSelectionAssetUrl('archer-detail-background.png'),
+  selectFrame: `${(import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')}assets/ui/run-settlement-black-gold/action-frame-3x.png`,
+})
+export const CHARACTER_SELECTION_ARCHER_IDLE_FPS = PLAYER_ARCHER_ACTIONS.idle.fps
+export const CHARACTER_SELECTION_ARCHER_IDLE_FRAME_URLS = Object.freeze(
+  Array.from(
+    { length: PLAYER_ARCHER_ACTIONS.idle.frameCount },
+    (_, frameIndex) => getPlayerArcherPublicFrameSrc('idle', frameIndex),
+  ),
+)
+
+type CharacterSelectionStageRect = Readonly<{
+  x: number
+  y: number
+  width: number
+  height: number
+}>
+
+export const CHARACTER_SELECTION_STAGE_SIZE = Object.freeze({ width: 1670, height: 942 })
+export const CHARACTER_SELECTION_FINAL_LAYOUT = Object.freeze({
+  detailButton: Object.freeze({ x: 341.27, y: 363, width: 115, height: 41.16 }),
+  selectButton: Object.freeze({ x: 305.27, y: 424.41, width: 190, height: 50 }),
+  archerCanvas: Object.freeze({ x: 268.27, y: 171.70, width: 240, height: 240 }),
+  idleVisibleBounds: Object.freeze({ x: 318.27, y: 197.95, width: 135, height: 187.50 }),
+}) satisfies Readonly<Record<string, CharacterSelectionStageRect>>
+export const CHARACTER_SELECTION_SELECT_LABEL_Y_DELTA = 2
+export const CHARACTER_DETAIL_TRANSITION_DURATION_MS = 240
+export const CHARACTER_DETAIL_TRANSITION_SELECTION_FADE_END_MS = 140
+export const CHARACTER_DETAIL_TRANSITION_DETAIL_FADE_START_MS = 100
+
+export const CHARACTER_DETAIL_STAGE_SIZE = Object.freeze({ width: 2880, height: 1508 })
+export const CHARACTER_DETAIL_TEXT_LAYOUT = Object.freeze({
+  title: Object.freeze({ x: 1328, y: 64, width: 200, height: 67 }),
+  builds: Object.freeze({ x: 1852, y: 172, width: 91, height: 45 }),
+  skills: Object.freeze({ x: 1843, y: 637, width: 92, height: 45 }),
+  returnLabel: Object.freeze({ x: 1350, y: 1293, width: 133, height: 65 }),
+}) satisfies Readonly<Record<string, CharacterSelectionStageRect>>
+export const CHARACTER_DETAIL_CONTENT_LAYOUT = Object.freeze({
+  builds: Object.freeze({ top: 231.6 }),
+  skills: Object.freeze({ top: 719.24 }),
+})
+export const CHARACTER_DETAIL_ARCHER_PREVIEW_LAYOUT = Object.freeze({ left: 252.8 })
+const CHARACTER_DETAIL_RETURN_HOT_AREA = Object.freeze({ x: 1050, y: 1350, width: 760, height: 158 })
+
+const getCharacterSelectionStageRectStyle = (rect: CharacterSelectionStageRect) => ({
+  '--character-selection-layout-left': `${(rect.x / CHARACTER_SELECTION_STAGE_SIZE.width) * 100}%`,
+  '--character-selection-layout-top': `${(rect.y / CHARACTER_SELECTION_STAGE_SIZE.height) * 100}%`,
+  '--character-selection-layout-width': `${(rect.width / CHARACTER_SELECTION_STAGE_SIZE.width) * 100}%`,
+  '--character-selection-layout-height': `${(rect.height / CHARACTER_SELECTION_STAGE_SIZE.height) * 100}%`,
+}) as CSSProperties
+
+const getCharacterDetailStageRectStyle = (rect: CharacterSelectionStageRect) => ({
+  '--character-selection-layout-left': `${(rect.x / CHARACTER_DETAIL_STAGE_SIZE.width) * 100}%`,
+  '--character-selection-layout-top': `${(rect.y / CHARACTER_DETAIL_STAGE_SIZE.height) * 100}%`,
+  '--character-selection-layout-width': `${(rect.width / CHARACTER_DETAIL_STAGE_SIZE.width) * 100}%`,
+  '--character-selection-layout-height': `${(rect.height / CHARACTER_DETAIL_STAGE_SIZE.height) * 100}%`,
+}) as CSSProperties
+
+const getCharacterDetailContentTopStyle = (top: number) => ({
+  top: `${(top / CHARACTER_DETAIL_STAGE_SIZE.height) * 100}%`,
+}) as CSSProperties
+
+const getCharacterDetailPreviewLeftStyle = (left: number) => ({
+  left: `${(left / CHARACTER_DETAIL_STAGE_SIZE.width) * 100}%`,
+}) as CSSProperties
+
+type CharacterSelectionView = 'selection' | 'transitioning' | 'details'
+
+const prefersReducedMotion = () => (
+  typeof window !== 'undefined'
+  && typeof window.matchMedia === 'function'
+  && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+)
+
+const archerBuildTags: readonly SkillBuildTag[] = ['pierce', 'spread', 'control', 'beast']
 
 const defaultVillageClickAreas: VillageClickAreaConfig[] = [
   { id: 'start', label: '开始游戏', modal: 'campaign', zIndex: 20, rect: { leftPct: 2.4, topPct: 50.7, widthPct: 16.8, heightPct: 7.9 } },
@@ -100,6 +193,13 @@ const defaultVillageClickAreas: VillageClickAreaConfig[] = [
 const defaultVillageBackgroundMedia: VillageBackgroundMediaConfig = {
   videoSrc: DEFAULT_VILLAGE_BACKGROUND_VIDEO,
   posterSrc: DEFAULT_VILLAGE_BACKGROUND_POSTER,
+}
+
+const VILLAGE_COMPACT_VIEWPORT_QUERY = '(max-width: 1023px)'
+
+const getIsCompactVillageViewport = () => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true
+  return window.matchMedia(VILLAGE_COMPACT_VIEWPORT_QUERY).matches
 }
 
 const villageModalIds = new Set<VillageModalId>(['campaign', 'shop', 'guide', 'character', 'inventory', 'settings', 'hunter-home'])
@@ -206,12 +306,6 @@ const runTalentModuleLabels: Record<RunTalentModule, string> = {
   crystal: getTalentBuildLabel('crystal'),
 }
 
-const runTalentTierLabels: Record<RunTalentNode['tier'], string> = {
-  basic: '基础',
-  breakthrough: '突破',
-  advanced: '进阶',
-}
-
 const runTalentIconClasses: Record<RunTalentModule, string> = {
   common: 'border-[#facc15] bg-[#241f0a] text-[#fef08a]',
   death: 'border-[#ef4444] bg-[#281013] text-[#fecaca]',
@@ -227,46 +321,6 @@ const runTalentModuleTitleClasses: Record<RunTalentModule, string> = {
   beast: 'text-[#bbf7d0]',
   crystal: 'text-[#ddd6fe]',
 }
-
-const runTalentGuideTagLabels: Record<string, string> = {
-  'blood-feather': '血羽',
-  'build-weight': '流派权重',
-  'skill-upgrade': '技能升级',
-  beast: '兽王赦令',
-  bleed: '流血',
-  blood: '血羽游侠',
-  break: '破防',
-  chain: '连锁',
-  charge: '充能',
-  command: '指令',
-  control: '控场',
-  cooldown: '冷却',
-  critical: '暴击',
-  crystal: '蓝晶契约',
-  death: '死契处刑',
-  elite: '精英',
-  equipment: '装备',
-  execute: '处刑',
-  explosion: '爆炸',
-  field: '领域',
-  leader: '首领',
-  loot: '战利品',
-  lv5: '等级 5',
-  mark: '标记',
-  overload: '过载',
-  pickup: '拾取',
-  pierce: '穿透',
-  pulse: '脉冲',
-  range: '范围',
-  revive: '复苏',
-  skill: '技能',
-  spread: '散射',
-  storm: '风暴',
-  survival: '生存',
-  team: '协同',
-}
-
-const formatRunTalentGuideTag = (tag: string) => runTalentGuideTagLabels[tag] ?? tag
 
 const metaTalentTreeTabs: Array<{
   id: MetaTalentTreeTab
@@ -716,11 +770,31 @@ const MetaTalentShelfNode = ({
   )
 }
 
-const RunTalentGuideShelfNode = ({ node, selected = false }: { node: RunTalentNode; selected?: boolean }) => {
+const runTalentPresentationStatusLabels: Record<RunTalentPresentationItem['status'], string> = {
+  selected: '本局已选',
+  candidate: '当前候选',
+  eligible: '满足前置（当前可用）',
+  unavailable: '前置未满足（当前不可用）',
+}
+
+const getRunTalentPresentationModule = (id: string): RunTalentModule => {
+  const module = id.split('_')[1]
+  return runTalentModuleOrder.includes(module as RunTalentModule) ? module as RunTalentModule : 'common'
+}
+
+const RunTalentGuideShelfNode = ({
+  item,
+  siblingName,
+}: {
+  item: RunTalentPresentationItem
+  siblingName?: string
+}) => {
   const buttonRef = useRef<HTMLButtonElement>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
   const [tooltipPlacement, setTooltipPlacement] = useState<MetaTalentTooltipPlacement | null>(null)
-  const iconUrl = getRunTalentIconAssetUrl(node)
+  const module = getRunTalentPresentationModule(item.id)
+  const iconUrl = item.form ? undefined : getRunTalentIconAssetUrl({ module, name: item.name })
+  const statusLabel = runTalentPresentationStatusLabels[item.status]
 
   const updatePlacement = useCallback(() => {
     const rect = buttonRef.current?.getBoundingClientRect()
@@ -738,30 +812,41 @@ const RunTalentGuideShelfNode = ({ node, selected = false }: { node: RunTalentNo
 
   const showTooltip = () => updatePlacement()
   const hideTooltip = () => setTooltipPlacement(null)
-  const tooltipId = `run-talent-guide-tooltip-${node.id}`
+  const tooltipId = `run-talent-guide-tooltip-${item.id}`
 
   return (
-    <div className="relative flex w-[5.25rem] shrink-0 flex-col items-center" data-selected={selected ? 'true' : 'false'} data-testid={`run-talent-guide-node-${node.id}`}>
+    <div
+      className="relative flex w-[5.25rem] shrink-0 flex-col items-center"
+      data-icon-id={item.iconId}
+      data-status={item.status}
+      data-unmet-prerequisite-ids={item.unmetPrerequisiteIds.join(' ')}
+      data-form-group={item.form?.group}
+      data-testid={`run-talent-guide-node-${item.id}`}
+    >
       <button
         ref={buttonRef}
         type="button"
-        className={`flex h-16 w-16 items-center justify-center overflow-hidden border-2 p-0 font-pixel text-lg leading-none shadow-[0_0_0_2px_rgba(8,16,11,0.86)] transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 ${selected ? 'ring-2 ring-amber-200' : ''} ${runTalentIconClasses[node.module]}`}
-        aria-label={node.name}
+        className={`flex h-16 w-16 items-center justify-center overflow-hidden border-2 p-0 font-pixel text-lg leading-none shadow-[0_0_0_2px_rgba(8,16,11,0.86)] transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 ${item.status === 'selected' ? 'ring-2 ring-amber-200' : ''} ${item.status === 'candidate' ? 'ring-2 ring-cyan-200' : ''} ${item.status === 'unavailable' ? 'opacity-55' : ''} ${runTalentIconClasses[module]}`}
+        aria-label={item.name}
         aria-describedby={tooltipId}
-        data-testid={`run-talent-guide-icon-${node.id}`}
+        data-testid={`run-talent-guide-icon-${item.id}`}
         onMouseEnter={showTooltip}
         onMouseLeave={hideTooltip}
         onFocus={showTooltip}
         onBlur={hideTooltip}
       >
-        <img
-          src={iconUrl}
-          alt=""
-          className="block h-full w-full object-cover [image-rendering:pixelated]"
-          data-testid={`run-talent-guide-image-${node.id}`}
-        />
+        {item.form ? (
+          <RunTalentFormPlaceholder item={item} testId={`run-talent-guide-placeholder-${item.id}`} />
+        ) : (
+          <img
+            src={iconUrl}
+            alt=""
+            className="block h-full w-full object-cover [image-rendering:pixelated]"
+            data-testid={`run-talent-guide-image-${item.id}`}
+          />
+        )}
       </button>
-      <span className="hidden" data-testid={`run-talent-guide-node-label-${node.id}`}>{node.name}</span>
+      <span className="hidden" data-testid={`run-talent-guide-node-label-${item.id}`}>{item.name}</span>
       <div
         ref={tooltipRef}
         id={tooltipId}
@@ -778,48 +863,62 @@ const RunTalentGuideShelfNode = ({ node, selected = false }: { node: RunTalentNo
         data-testid={tooltipId}
       >
         <div className="flex items-center gap-3">
-          <div className={`grid h-14 w-14 shrink-0 place-items-center overflow-hidden border-2 p-0 font-pixel text-lg leading-none ${runTalentIconClasses[node.module]}`} data-testid={`run-talent-guide-tooltip-icon-${node.id}`}>
-            <img
-              src={iconUrl}
-              alt=""
-              className="block h-full w-full object-cover [image-rendering:pixelated]"
-              data-testid={`run-talent-guide-tooltip-image-${node.id}`}
-            />
+          <div className={`grid h-14 w-14 shrink-0 place-items-center overflow-hidden border-2 p-0 font-pixel text-lg leading-none ${runTalentIconClasses[module]}`} data-testid={`run-talent-guide-tooltip-icon-${item.id}`}>
+            {item.form ? (
+              <RunTalentFormPlaceholder item={item} testId={`run-talent-guide-tooltip-placeholder-${item.id}`} />
+            ) : (
+              <img
+                src={iconUrl}
+                alt=""
+                className="block h-full w-full object-cover [image-rendering:pixelated]"
+                data-testid={`run-talent-guide-tooltip-image-${item.id}`}
+              />
+            )}
           </div>
           <div className="min-w-0">
-            <p className="font-pixel text-base text-amber-200" data-testid={`run-talent-guide-tooltip-name-${node.id}`}>{node.name}</p>
-            <p className="mt-1 text-sm text-[#9dd5ac]" data-testid={`run-talent-guide-tooltip-level-${node.id}`}>等级：Lv.{node.requiredLevel} · {runTalentTierLabels[node.tier]}</p>
+            <p className="font-pixel text-base text-amber-200" data-testid={`run-talent-guide-tooltip-name-${item.id}`}>{item.name}</p>
+            <p className="mt-1 text-sm text-[#9dd5ac]" data-testid={`run-talent-guide-tooltip-id-${item.id}`}>天赋 ID：{item.id}</p>
           </div>
         </div>
         <div className="mt-4 space-y-2">
-          <p data-testid={`run-talent-guide-tooltip-module-${node.id}`}>分类：{runTalentModuleLabels[node.module]}</p>
-          <p data-testid={`run-talent-guide-tooltip-description-${node.id}`}>说明：{node.description}</p>
-          <p data-testid={`run-talent-guide-tooltip-tags-${node.id}`}>标签：{node.tags.map(formatRunTalentGuideTag).join(' / ') || '无'}</p>
-          <div data-testid={`run-talent-guide-tooltip-effects-${node.id}`}>
-            <p>效果：</p>
-            {node.effects.map((effect, index) => (
-              <p key={`${node.id}-guide-effect-${index}`} className="text-[#9dd5ac]">{formatTalentEffect(effect)}</p>
-            ))}
-          </div>
+          <p data-testid={`run-talent-guide-tooltip-module-${item.id}`}>分类：{runTalentModuleLabels[module]}</p>
+          <p data-testid={`run-talent-guide-tooltip-description-${item.id}`}>说明：{item.description}</p>
+          <p data-testid={`run-talent-guide-tooltip-status-${item.id}`}>状态：{statusLabel}</p>
+          <p data-testid={`run-talent-guide-tooltip-prerequisites-${item.id}`}>未满足前置：{item.unmetPrerequisiteIds.length ? item.unmetPrerequisiteIds.join(' / ') : '无'}</p>
+          {item.runtime ? (
+            <p data-testid={`run-talent-guide-tooltip-runtime-${item.id}`}>运行状态：野兽指令 {item.runtime.commandCount}/3 · 冷却 {item.runtime.cooldownRemaining} 秒</p>
+          ) : null}
+          {item.form ? (
+            <>
+              <RunTalentFormDetails item={item} testIdPrefix={`run-talent-guide-tooltip-${item.id}`} />
+              {siblingName ? <p data-testid={`run-talent-guide-tooltip-sibling-${item.id}`}>同组另一个分支：{siblingName}</p> : null}
+            </>
+          ) : null}
         </div>
       </div>
     </div>
   )
 }
 
-const RunTalentGuideShelf = ({ selectedTalentIds }: { selectedTalentIds: string[] }) => {
-  const selectedTalentIdSet = new Set(selectedTalentIds)
-
+const RunTalentGuideShelf = ({
+  presentationItems,
+  campaignRewardSnapshot,
+}: {
+  presentationItems: readonly RunTalentPresentationItem[]
+  campaignRewardSnapshot: ReturnType<typeof getCampaignRewardPresentationSnapshot>
+}) => {
   return (
     <div className="mt-1 overflow-hidden border-2 border-[#08100b] bg-[radial-gradient(circle_at_45%_38%,rgba(34,197,94,0.1),transparent_32%),linear-gradient(135deg,#10170f,#070b08)] shadow-[inset_0_0_0_1px_rgba(244,240,215,0.08)]" data-testid="hunter-home-run-talent-tree">
-      <div className="space-y-3 p-4" data-testid="run-talent-guide">
+      <div
+        className="space-y-3 p-4"
+        data-testid="run-talent-guide"
+      >
         <p className="text-lg leading-tight text-[#9dd5ac]">
           战斗天赋只在冒险奖励中选择；这里仅作只读预览，不消耗天赋点，也不提供重置或解锁操作。
         </p>
+        <CampaignRewardSnapshotSummary snapshot={campaignRewardSnapshot} testId="hunter-home-campaign-reward-summary" compact />
         {runTalentModuleOrder.map((module) => {
-          const nodes = RUN_TALENT_NODES
-            .filter((node) => node.module === module)
-            .sort((a, b) => a.order - b.order)
+          const items = presentationItems.filter((item) => getRunTalentPresentationModule(item.id) === module)
           const borderClass = runTalentIconClasses[module].split(' ').find((className) => className.startsWith('border-')) ?? 'border-[#9dd5ac]'
 
           return (
@@ -834,8 +933,14 @@ const RunTalentGuideShelf = ({ selectedTalentIds }: { selectedTalentIds: string[
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-x-3 gap-y-4" data-testid={`run-talent-guide-shelf-${module}`}>
-                {nodes.map((node) => (
-                  <RunTalentGuideShelfNode key={node.id} node={node} selected={selectedTalentIdSet.has(node.id)} />
+                {items.map((item) => (
+                  <RunTalentGuideShelfNode
+                    key={item.id}
+                    item={item}
+                    siblingName={item.form
+                      ? items.find((candidate) => candidate.id !== item.id && candidate.form?.group === item.form?.group)?.name
+                      : undefined}
+                  />
                 ))}
               </div>
             </section>
@@ -845,116 +950,6 @@ const RunTalentGuideShelf = ({ selectedTalentIds }: { selectedTalentIds: string[
     </div>
   )
 }
-
-const formatScaledDamage = (damage: number) => {
-  return Number((damage * ACTIVE_SKILL_DAMAGE_MULTIPLIER).toFixed(1))
-}
-
-type SkillGuideTooltipTrigger = 'hover' | 'focus' | 'click'
-
-const SkillGuideIcon = ({ skill }: { skill?: (typeof ARCHER_ACTIVE_SKILLS)[number] }) => {
-  const buttonRef = useRef<HTMLButtonElement>(null)
-  const tooltipRef = useRef<HTMLDivElement>(null)
-  const [tooltipPlacement, setTooltipPlacement] = useState<MetaTalentTooltipPlacement | null>(null)
-  const [tooltipTrigger, setTooltipTrigger] = useState<SkillGuideTooltipTrigger | null>(null)
-  const id = skill?.id ?? ARCHER_FIXED_PASSIVE.id
-  const name = skill?.name ?? ARCHER_FIXED_PASSIVE.name
-  const iconUrl = getArcherSkillIconAssetUrl(id)
-  const tooltipId = `skill-guide-tooltip-${id}`
-
-  const updatePlacement = useCallback((trigger?: SkillGuideTooltipTrigger) => {
-    const rect = buttonRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const tooltipRect = tooltipRef.current?.getBoundingClientRect()
-    setTooltipPlacement(getMetaTalentTooltipPlacement(rect, tooltipRect
-      ? { width: tooltipRect.width, height: tooltipRect.height }
-      : undefined))
-    if (trigger) setTooltipTrigger(trigger)
-  }, [])
-
-  useLayoutEffect(() => {
-    if (!tooltipPlacement) return
-    updatePlacement()
-  }, [tooltipPlacement?.left, tooltipPlacement?.top, updatePlacement])
-
-  const hideTooltip = () => {
-    setTooltipPlacement(null)
-    setTooltipTrigger(null)
-  }
-
-  const toggleClickTooltip = () => {
-    if (tooltipTrigger === 'click') {
-      hideTooltip()
-      return
-    }
-    updatePlacement('click')
-  }
-
-  return (
-    <div className="relative">
-      <button
-        ref={buttonRef}
-        type="button"
-        className="flex h-16 w-16 items-center justify-center overflow-hidden border-2 border-[#9dd5ac] bg-[#08100b] p-0 shadow-[0_0_0_2px_rgba(8,16,11,0.86)] transition hover:scale-105 hover:border-amber-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
-        aria-label={name}
-        aria-describedby={tooltipId}
-        data-testid={`skill-guide-icon-${id}`}
-        onMouseEnter={() => updatePlacement('hover')}
-        onMouseLeave={hideTooltip}
-        onFocus={() => updatePlacement('focus')}
-        onBlur={hideTooltip}
-        onClick={toggleClickTooltip}
-      >
-        {iconUrl ? <img src={iconUrl} alt="" className="block h-full w-full object-cover [image-rendering:pixelated]" data-testid={`skill-guide-image-${id}`} /> : null}
-      </button>
-      <div
-        ref={tooltipRef}
-        id={tooltipId}
-        role="tooltip"
-        className={`pointer-events-none fixed z-[120] overflow-y-auto border-2 border-[#fbbf24] bg-[#08100b] p-4 text-left font-sans text-sm leading-relaxed text-[#dfe7d5] shadow-[0_14px_28px_rgba(0,0,0,0.48)] ${tooltipPlacement ? 'block' : 'hidden'}`}
-        style={tooltipPlacement
-          ? {
-              left: tooltipPlacement.left,
-              top: tooltipPlacement.top,
-              width: tooltipPlacement.width,
-              maxHeight: tooltipPlacement.maxHeight,
-            }
-          : undefined}
-        data-testid={tooltipId}
-      >
-        <div className="flex items-center gap-3">
-          <div className="h-14 w-14 shrink-0 overflow-hidden border-2 border-[#9dd5ac] bg-[#08100b]">
-            {iconUrl ? <img src={iconUrl} alt="" className="block h-full w-full object-cover [image-rendering:pixelated]" /> : null}
-          </div>
-          <p className="font-pixel text-base text-amber-200">{name}</p>
-        </div>
-        {skill ? (
-          <div className="mt-4 space-y-2">
-            <p>说明：{skill.description}</p>
-            <p>流派：{SKILL_BUILD_LABELS[skill.buildTag]}</p>
-            <p>标签：{skill.tacticalTags.join(' / ') || '无'}</p>
-            <p>Lv.1 伤害：{formatScaledDamage(skill.levels[0].damage)}</p>
-            <p>Lv.5 伤害：{formatScaledDamage(skill.levels[4].damage)}</p>
-            <p>冷却：{skill.levels[0].cooldown}s 到 {skill.levels[4].cooldown}s</p>
-          </div>
-        ) : (
-          <div className="mt-4 space-y-2">
-            <p>说明：{ARCHER_FIXED_PASSIVE.description}</p>
-            {ARCHER_FIXED_PASSIVE_LEVELS.map((level) => <p key={level.level}>Lv.{level.level}：{level.description}</p>)}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-const milestoneRewards = [
-  { level: 10, reward: '挑战者称号' },
-  { level: 20, reward: '绿色角色描边' },
-  { level: 50, reward: '黄金箭矢外观' },
-  { level: 100, reward: '永久角色皮肤' },
-  { level: 200, reward: '永久武器皮肤' },
-]
 
 const monsterKindLabels: Record<EnemyKind, string> = {
   melee: '近战',
@@ -1487,33 +1482,6 @@ const EquipmentPixelIcon = ({ item, equipped }: { item: EquipmentItem; equipped:
   )
 }
 
-const OverlayCard = ({
-  title,
-  description,
-  actionLabel,
-  onAction,
-  icon,
-}: {
-  title: string
-  description: string
-  actionLabel: string
-  onAction: () => void
-  icon: ReactNode
-}) => {
-  return (
-    <div className="pointer-events-auto pixel-panel mx-4 max-w-md p-6 text-center">
-      <div className="mb-4 inline-flex border-2 border-[#08100b] bg-[#121b16] p-3 text-amber-300 shadow-[0_0_0_2px_rgba(157,213,172,0.12)]">
-        {icon}
-      </div>
-      <h3 className="font-pixel text-sm uppercase tracking-[0.2em] text-[#f4f0d7] md:text-base">{title}</h3>
-      <p className="mx-auto mt-4 max-w-xs text-xl text-[#dfe7d5]">{description}</p>
-      <button className="pixel-button mt-6 px-5 py-3 font-pixel text-[10px] uppercase tracking-[0.18em]" onClick={onAction}>
-        {actionLabel}
-      </button>
-    </div>
-  )
-}
-
 const SectionPanel = ({
   eyebrow,
   title,
@@ -1589,42 +1557,449 @@ const VillageModalShell = ({
   headerTestId?: string
   contentTestId?: string
 }) => (
-  <div className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(3,8,6,0.68)] p-4">
+  <div
+    className="absolute inset-0 z-20 flex items-start justify-center overflow-x-hidden overflow-y-auto bg-[rgba(3,8,6,0.68)] p-2 sm:p-4"
+    data-testid={testId ? `${testId}-backdrop` : undefined}
+  >
     <div
-      className={`pointer-events-auto pixel-panel w-[min(94vw,1280px)] ${fixedFrame ? 'h-[min(92vh,760px)]' : 'max-h-[92vh]'} ${stickyHeader ? 'flex flex-col overflow-hidden p-0' : 'overflow-y-auto p-5 md:p-6'}`}
+      className={`pointer-events-auto my-2 min-w-0 pixel-panel w-[min(94vw,1280px)] ${fixedFrame ? 'h-[min(92vh,760px)] max-h-[calc(100vh-1rem)]' : 'max-h-[calc(100vh-1rem)]'} ${stickyHeader ? 'flex flex-col overflow-hidden p-0' : 'overflow-y-auto p-5 md:p-6'}`}
       data-testid={testId}
     >
       <div className={stickyHeader ? 'shrink-0 border-b-2 border-[rgba(157,213,172,0.18)] bg-[#101913] px-5 py-5 shadow-[0_10px_18px_rgba(0,0,0,0.24)] md:px-6 md:py-6' : 'mb-4'} data-testid={headerTestId}>
-        <div className="flex items-center justify-between gap-4">
-          <h2 className="font-pixel text-sm uppercase tracking-[0.18em] text-[#f4f0d7] md:text-base">{title}</h2>
+        <div className="flex min-w-0 items-center justify-between gap-4">
+          <h2 className="min-w-0 break-words font-pixel text-sm uppercase tracking-[0.18em] text-[#f4f0d7] md:text-base">{title}</h2>
           <button type="button" className={`pixel-button px-4 py-3 font-pixel uppercase tracking-[0.14em] ${fixedFrame ? 'text-sm' : 'text-[10px]'}`} onClick={onClose}>
             关闭
           </button>
         </div>
         {headerExtra ? <div className="mt-4">{headerExtra}</div> : null}
       </div>
-      <div className={stickyHeader ? 'min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4 md:px-6 md:pb-6' : undefined} data-testid={contentTestId}>
+      <div className={stickyHeader ? 'min-h-0 min-w-0 flex-1 overflow-y-auto px-5 pb-5 pt-4 md:px-6 md:pb-6' : undefined} data-testid={contentTestId}>
         {children}
       </div>
     </div>
   </div>
 )
 
-export function GameOverlay() {
+const ArcherMenuIdlePreview = ({
+  testId,
+  className,
+  imageClassName,
+  stageRect,
+  visibleStageRect,
+}: {
+  testId: string
+  className?: string
+  imageClassName?: string
+  stageRect?: CharacterSelectionStageRect
+  visibleStageRect?: CharacterSelectionStageRect
+}) => {
+  const [frameIndex, setFrameIndex] = useState(0)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setFrameIndex((currentFrame) => (currentFrame + 1) % CHARACTER_SELECTION_ARCHER_IDLE_FRAME_URLS.length)
+    }, 1000 / CHARACTER_SELECTION_ARCHER_IDLE_FPS)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  return (
+    <div
+      className={`flex min-w-0 items-end justify-center ${className ?? ''}`}
+      style={stageRect ? getCharacterSelectionStageRectStyle(stageRect) : undefined}
+      data-testid={testId}
+      data-preview-fps={String(CHARACTER_SELECTION_ARCHER_IDLE_FPS)}
+      data-frame-index={String(frameIndex)}
+      data-stage-x={stageRect?.x}
+      data-stage-y={stageRect?.y}
+      data-stage-width={stageRect?.width}
+      data-stage-height={stageRect?.height}
+      data-visible-stage-x={visibleStageRect?.x}
+      data-visible-stage-y={visibleStageRect?.y}
+      data-visible-stage-width={visibleStageRect?.width}
+      data-visible-stage-height={visibleStageRect?.height}
+    >
+      <img
+        src={CHARACTER_SELECTION_ARCHER_IDLE_FRAME_URLS[frameIndex]}
+        alt="弓箭手待机预览"
+        className={`block h-full w-full object-contain [image-rendering:pixelated] ${imageClassName ?? ''}`}
+        draggable={false}
+      />
+    </div>
+  )
+}
+
+const CharacterDetailStageHeading = ({
+  label,
+  stageRect,
+  testId,
+  level,
+  className,
+}: {
+  label: string
+  stageRect: CharacterSelectionStageRect
+  testId: string
+  level: 2 | 3
+  className?: string
+}) => {
+  const Heading = level === 2 ? 'h2' : 'h3'
+  const fontSize = `${(stageRect.height / CHARACTER_DETAIL_STAGE_SIZE.width) * 100}cqw`
+
+  return (
+    <div
+      className={`pointer-events-none absolute left-[var(--character-selection-layout-left)] top-[var(--character-selection-layout-top)] z-20 flex h-[var(--character-selection-layout-height)] w-[var(--character-selection-layout-width)] items-center justify-center text-[#ffc107] ${className ?? ''}`}
+      data-testid={testId}
+      data-stage-x={stageRect.x}
+      data-stage-y={stageRect.y}
+      data-stage-width={stageRect.width}
+      data-stage-height={stageRect.height}
+      style={getCharacterDetailStageRectStyle(stageRect)}
+    >
+      <Heading className="whitespace-nowrap font-pixel font-semibold leading-none" style={{ fontSize }}>{label}</Heading>
+    </div>
+  )
+}
+
+const characterDetailTransitionStyles = `
+  @keyframes character-selection-fade-out {
+    0% { opacity: 1; }
+    ${((CHARACTER_DETAIL_TRANSITION_SELECTION_FADE_END_MS / CHARACTER_DETAIL_TRANSITION_DURATION_MS) * 100).toFixed(10)}% { opacity: 0; }
+    100% { opacity: 0; }
+  }
+  @keyframes character-detail-fade-in {
+    0% { opacity: 0; }
+    ${((CHARACTER_DETAIL_TRANSITION_DETAIL_FADE_START_MS / CHARACTER_DETAIL_TRANSITION_DURATION_MS) * 100).toFixed(10)}% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  .character-selection-stage--transitioning {
+    animation: character-selection-fade-out ${CHARACTER_DETAIL_TRANSITION_DURATION_MS}ms linear both;
+  }
+  .character-detail-transition {
+    animation: character-detail-fade-in ${CHARACTER_DETAIL_TRANSITION_DURATION_MS}ms linear both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .character-selection-stage--transitioning,
+    .character-detail-transition {
+      animation: none !important;
+    }
+  }
+`
+
+const CharacterDetailStage = ({
+  evolutionCatalog,
+  isInteractive,
+  onReturnToSelection,
+}: {
+  evolutionCatalog: ArcherEvolutionGuideCatalog
+  isInteractive: boolean
+  onReturnToSelection: () => void
+}) => {
+  const returnButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  useLayoutEffect(() => {
+    if (isInteractive) returnButtonRef.current?.focus()
+  }, [isInteractive])
+
+  return (
+    <div
+      className={`relative mx-auto w-[min(100%,calc((100dvh-1rem)*1.909814))] max-w-full aspect-[2880/1508] [container-type:inline-size] ${isInteractive ? '' : 'pointer-events-none'}`}
+      data-testid="character-detail-stage"
+      data-interactive={String(isInteractive)}
+      aria-hidden={!isInteractive || undefined}
+      inert={!isInteractive}
+    >
+      <img
+        src={CHARACTER_SELECTION_ASSET_URLS.detailBackground}
+        alt=""
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 h-full w-full select-none object-contain [image-rendering:pixelated]"
+        draggable={false}
+        data-testid="character-detail-background"
+      />
+      <CharacterDetailStageHeading
+        label="弓箭手"
+        stageRect={CHARACTER_DETAIL_TEXT_LAYOUT.title}
+        testId="character-detail-title"
+        level={2}
+      />
+      <section
+        className="absolute top-[14%] z-10 flex h-[64%] w-[34%] min-w-0 items-end justify-center"
+        data-testid="character-detail-archer-preview"
+        data-stage-left={CHARACTER_DETAIL_ARCHER_PREVIEW_LAYOUT.left}
+        style={getCharacterDetailPreviewLeftStyle(CHARACTER_DETAIL_ARCHER_PREVIEW_LAYOUT.left)}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <ArcherMenuIdlePreview testId="character-detail-idle-preview" className="h-[78%] w-full max-w-none" />
+      </section>
+      <CharacterDetailStageHeading
+        label="流派"
+        stageRect={CHARACTER_DETAIL_TEXT_LAYOUT.builds}
+        testId="character-detail-builds-heading"
+        level={3}
+      />
+      <section
+        className="absolute left-[48%] z-10 h-[23%] w-[38%] min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain px-[1.5%] pb-[2.5%] pt-[1.5%]"
+        data-testid="character-detail-builds"
+        data-stage-top={CHARACTER_DETAIL_CONTENT_LAYOUT.builds.top}
+        style={getCharacterDetailContentTopStyle(CHARACTER_DETAIL_CONTENT_LAYOUT.builds.top)}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h4 className="font-pixel text-[clamp(0.6rem,1.1cqw,2rem)] tracking-[0.12em] text-[#f4d47a]">{ARCHER_FIXED_PASSIVE.name}</h4>
+        <p className="mt-[0.35cqw] text-[clamp(0.55rem,0.86cqw,1.5rem)] leading-relaxed text-[#dfe7d5]">{ARCHER_FIXED_PASSIVE.description}</p>
+        <div className="mt-[0.7cqw] grid min-w-0 grid-cols-2 gap-[clamp(0.45rem,0.6cqw,1.1rem)] max-[900px]:grid-cols-1">
+          {archerBuildTags.map((buildTag) => (
+            <div key={buildTag} className="min-w-0">
+              <p className="font-pixel text-[clamp(0.55rem,0.78cqw,1.25rem)] tracking-[0.1em] text-[#9dd5ac]">{SKILL_BUILD_LABELS[buildTag]}</p>
+              <p className="mt-[0.2cqw] text-[clamp(0.5rem,0.7cqw,1.1rem)] leading-relaxed text-[#dfe7d5]">{SKILL_BUILD_DESCRIPTIONS[buildTag]}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+      <CharacterDetailStageHeading
+        label="技能"
+        stageRect={CHARACTER_DETAIL_TEXT_LAYOUT.skills}
+        testId="character-detail-skills-heading"
+        level={3}
+      />
+      <section
+        className="absolute left-[48%] z-10 h-[29%] w-[38%] min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain px-[1.5%] pb-[2.5%] pt-[1.5%]"
+        data-testid="character-detail-skills"
+        data-stage-top={CHARACTER_DETAIL_CONTENT_LAYOUT.skills.top}
+        style={getCharacterDetailContentTopStyle(CHARACTER_DETAIL_CONTENT_LAYOUT.skills.top)}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <ArcherEvolutionDetailSkillGrid catalog={evolutionCatalog} />
+      </section>
+      <button
+        ref={returnButtonRef}
+        type="button"
+        aria-label="返回"
+        disabled={!isInteractive}
+        tabIndex={isInteractive ? 0 : -1}
+        className="absolute left-[var(--character-selection-layout-left)] top-[var(--character-selection-layout-top)] z-20 h-[var(--character-selection-layout-height)] w-[var(--character-selection-layout-width)] bg-transparent p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#08100b]"
+        data-testid="character-detail-return-button"
+        style={getCharacterDetailStageRectStyle(CHARACTER_DETAIL_RETURN_HOT_AREA)}
+        onClick={(event) => {
+          event.stopPropagation()
+          if (isInteractive) onReturnToSelection()
+        }}
+      >
+        <span
+          className="absolute flex items-center justify-center whitespace-nowrap font-pixel font-semibold leading-none text-[#ffc107]"
+          data-testid="character-detail-return-label"
+          data-stage-x={CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel.x}
+          data-stage-y={CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel.y}
+          data-stage-width={CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel.width}
+          data-stage-height={CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel.height}
+          style={{
+            left: `${((CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel.x - CHARACTER_DETAIL_RETURN_HOT_AREA.x) / CHARACTER_DETAIL_RETURN_HOT_AREA.width) * 100}%`,
+            top: `${((CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel.y - CHARACTER_DETAIL_RETURN_HOT_AREA.y) / CHARACTER_DETAIL_RETURN_HOT_AREA.height) * 100}%`,
+            width: `${(CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel.width / CHARACTER_DETAIL_RETURN_HOT_AREA.width) * 100}%`,
+            height: `${(CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel.height / CHARACTER_DETAIL_RETURN_HOT_AREA.height) * 100}%`,
+            fontSize: `${(CHARACTER_DETAIL_TEXT_LAYOUT.returnLabel.height / CHARACTER_DETAIL_STAGE_SIZE.width) * 100}cqw`,
+          }}
+        >
+          返回
+        </span>
+      </button>
+    </div>
+  )
+}
+
+const CharacterDetailTransition = ({
+  evolutionCatalog,
+  onReturnToSelection,
+}: {
+  evolutionCatalog: ArcherEvolutionGuideCatalog
+  onReturnToSelection: () => void
+}) => (
+  <div
+    className="character-detail-transition absolute inset-0 z-30 grid place-items-center overflow-hidden p-2"
+    data-testid="character-detail-transition"
+    data-transition-duration={String(CHARACTER_DETAIL_TRANSITION_DURATION_MS)}
+    data-transition-selection-fade-end={String(CHARACTER_DETAIL_TRANSITION_SELECTION_FADE_END_MS)}
+    data-transition-detail-fade-start={String(CHARACTER_DETAIL_TRANSITION_DETAIL_FADE_START_MS)}
+  >
+    <CharacterDetailStage evolutionCatalog={evolutionCatalog} isInteractive={false} onReturnToSelection={onReturnToSelection} />
+  </div>
+)
+
+const CharacterSelectionDialog = ({
+  view,
+  evolutionCatalog,
+  onClose,
+  onShowDetails,
+  onTransitionComplete,
+  onReturnToSelection,
+}: {
+  view: CharacterSelectionView
+  evolutionCatalog: ArcherEvolutionGuideCatalog
+  onClose: () => void
+  onShowDetails: () => void
+  onTransitionComplete: () => void
+  onReturnToSelection: () => void
+}) => {
+  const isDetailView = view === 'details'
+  const isTransitioning = view === 'transitioning'
+  const isDetailPresentation = isDetailView || isTransitioning
+  const handleBackgroundClose = isDetailView ? onReturnToSelection : onClose
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!isTransitioning) return
+    const timer = window.setTimeout(onTransitionComplete, CHARACTER_DETAIL_TRANSITION_DURATION_MS)
+    return () => window.clearTimeout(timer)
+  }, [isTransitioning, onTransitionComplete])
+
+  useLayoutEffect(() => {
+    if (!isDetailView) return
+    dialogRef.current?.querySelector<HTMLButtonElement>('[data-testid="character-detail-return-button"]')?.focus()
+  }, [isDetailView])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      if (isTransitioning) return
+      handleBackgroundClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [handleBackgroundClose, isTransitioning])
+
+  return (
+    <div
+      ref={dialogRef}
+      className={`pointer-events-auto absolute inset-0 z-20 bg-[#030504] ${isDetailPresentation ? 'overflow-hidden p-2' : 'overflow-x-hidden overflow-y-auto p-2 sm:p-4'}`}
+      data-testid="character-selection-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-label={isDetailView ? '弓箭手详情' : '角色选择'}
+      aria-busy={isTransitioning || undefined}
+      onClick={isTransitioning ? undefined : handleBackgroundClose}
+    >
+      <style>{characterDetailTransitionStyles}</style>
+      {isDetailView ? (
+        <CharacterDetailStage evolutionCatalog={evolutionCatalog} isInteractive onReturnToSelection={onReturnToSelection} />
+      ) : (
+        <div
+          className={`relative mx-auto flex min-h-[34rem] w-full max-w-[1670px] flex-col items-center bg-[#030504] pb-12 pt-[calc(56.407vw+1rem)] [--character-selection-select-label-offset:clamp(2px,0.48vw,8px)] xl:block xl:min-h-0 xl:w-[min(100%,calc(177.3885dvh-56.76px))] xl:aspect-[1670/942] xl:bg-transparent xl:p-0 ${isTransitioning ? 'character-selection-stage--transitioning' : ''}`}
+          data-testid="character-selection-stage"
+          aria-hidden={isTransitioning || undefined}
+          inert={isTransitioning}
+        >
+          <img
+            src={CHARACTER_SELECTION_ASSET_URLS.selectionBackground}
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 top-0 h-auto w-full select-none object-contain [image-rendering:pixelated]"
+            draggable={false}
+            data-testid="character-selection-background"
+          />
+          <div
+            className="absolute left-[17.9%] top-[11.55%] z-10 flex h-[4.45%] w-[12.6%] items-center justify-center"
+            data-testid="character-selection-archer-nameplate"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 className="max-w-full whitespace-nowrap font-pixel text-[clamp(10px,3.2vw,24px)] leading-none tracking-[0.16em] text-[#f4d47a]">弓箭手</h2>
+          </div>
+          <section
+            className="relative z-10 flex w-[min(92vw,22rem)] min-w-0 flex-col items-center pt-8 [--character-selection-select-height:3rem] xl:contents"
+            data-testid="character-selection-archer-cell"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div
+              className="relative flex w-full flex-col items-center translate-y-[var(--character-selection-select-height)] xl:contents"
+              data-testid="character-selection-archer-content-group"
+            >
+              <ArcherMenuIdlePreview
+                testId="character-selection-idle-preview"
+                className="relative z-10 mt-3 h-80 w-full xl:absolute xl:left-[var(--character-selection-layout-left)] xl:top-[var(--character-selection-layout-top)] xl:m-0 xl:h-[var(--character-selection-layout-height)] xl:w-[var(--character-selection-layout-width)]"
+                imageClassName="origin-top"
+                stageRect={CHARACTER_SELECTION_FINAL_LAYOUT.archerCanvas}
+                visibleStageRect={CHARACTER_SELECTION_FINAL_LAYOUT.idleVisibleBounds}
+              />
+              <button
+                type="button"
+                className="relative z-20 mt-3 w-[min(41%,6.5rem)] shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#60a5fa] xl:absolute xl:left-[var(--character-selection-layout-left)] xl:top-[var(--character-selection-layout-top)] xl:m-0 xl:h-[var(--character-selection-layout-height)] xl:w-[var(--character-selection-layout-width)]"
+                aria-label="查看详情"
+                disabled={isTransitioning}
+                data-testid="character-selection-detail-button"
+                data-stage-x={CHARACTER_SELECTION_FINAL_LAYOUT.detailButton.x}
+                data-stage-y={CHARACTER_SELECTION_FINAL_LAYOUT.detailButton.y}
+                data-stage-width={CHARACTER_SELECTION_FINAL_LAYOUT.detailButton.width}
+                data-stage-height={CHARACTER_SELECTION_FINAL_LAYOUT.detailButton.height}
+                style={getCharacterSelectionStageRectStyle(CHARACTER_SELECTION_FINAL_LAYOUT.detailButton)}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onShowDetails()
+                }}
+              >
+                <img
+                  src={CHARACTER_SELECTION_ASSET_URLS.detailButton}
+                  alt=""
+                  className="block h-full w-full [image-rendering:pixelated]"
+                  draggable={false}
+                  data-testid="character-selection-detail-button-image"
+                />
+              </button>
+              <button
+                type="button"
+                className="relative z-20 mt-3 flex h-12 w-[min(76%,11rem)] shrink-0 items-center justify-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#f4d47a] active:translate-y-px xl:absolute xl:left-[var(--character-selection-layout-left)] xl:top-[var(--character-selection-layout-top)] xl:m-0 xl:h-[var(--character-selection-layout-height)] xl:w-[var(--character-selection-layout-width)]"
+                data-testid="character-selection-select-button"
+                data-stage-x={CHARACTER_SELECTION_FINAL_LAYOUT.selectButton.x}
+                data-stage-y={CHARACTER_SELECTION_FINAL_LAYOUT.selectButton.y}
+                data-stage-width={CHARACTER_SELECTION_FINAL_LAYOUT.selectButton.width}
+                data-stage-height={CHARACTER_SELECTION_FINAL_LAYOUT.selectButton.height}
+                disabled={isTransitioning}
+                style={getCharacterSelectionStageRectStyle(CHARACTER_SELECTION_FINAL_LAYOUT.selectButton)}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onClose()
+                }}
+              >
+                <img
+                  src={CHARACTER_SELECTION_ASSET_URLS.selectFrame}
+                  alt=""
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 h-full w-full [image-rendering:pixelated]"
+                  draggable={false}
+                />
+                <span
+                  className="relative z-10 font-pixel text-sm tracking-[0.16em] text-[#f4d47a]"
+                  data-label-y-delta={CHARACTER_SELECTION_SELECT_LABEL_Y_DELTA}
+                  style={{ transform: `translateY(calc(${CHARACTER_SELECTION_SELECT_LABEL_Y_DELTA}px - var(--character-selection-select-label-offset)))` }}
+                >
+                  选择
+                </span>
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {isTransitioning ? (
+        <CharacterDetailTransition
+          evolutionCatalog={evolutionCatalog}
+          onReturnToSelection={onReturnToSelection}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+export function GameOverlay({ onVillageModalVisibilityChange }: {
+  onVillageModalVisibilityChange?: (open: boolean) => void
+} = {}) {
   const phase = useGameStore((state) => state.phase)
   const localBattleTest = useGameStore((state) => state.localBattleTest)
   const level = useGameStore((state) => state.level)
   const levelTargetKills = useGameStore((state) => state.levelTargetKills)
   const levelTimer = useGameStore((state) => state.levelTimer)
   const message = useGameStore((state) => state.message)
-  const kills = useGameStore((state) => state.kills)
+  const runSettlementSummary = useGameStore((state) => state.runSettlementSummary)
   const currency = useGameStore((state) => state.currency)
-  const earnedGold = useGameStore((state) => state.earnedGold)
-  const bestLevel = useGameStore((state) => state.bestLevel)
   const runHistory = useGameStore((state) => state.runHistory)
-  const achievedMilestones = useGameStore((state) => state.achievedMilestones)
   const talentPoints = useGameStore((state) => state.talentPoints)
-  const lastTalentPointRecord = useGameStore((state) => state.lastTalentPointRecord)
   const unlockedMetaTalentIds = useGameStore((state) => state.unlockedMetaTalentIds)
   const metaTalentRanks = useGameStore((state) => state.metaTalentRanks ?? {})
   const equipmentInventory = useGameStore((state) => state.equipmentInventory)
@@ -1637,6 +2012,7 @@ export function GameOverlay() {
   const completedCampaignDifficulties = useGameStore((state) => state.completedCampaignDifficulties)
   const unsealedEquipmentSlots = useGameStore((state) => state.unsealedEquipmentSlots)
   const activeSkills = useGameStore((state) => state.activeSkills)
+  const discoveredSkillEvolutionIds = useGameStore((state) => state.discoveredSkillEvolutionIds)
   const player = useGameStore((state) => state.player)
   const audioSettings = useGameStore((state) => state.audioSettings)
   const startGame = useGameStore((state) => state.startGame)
@@ -1655,8 +2031,25 @@ export function GameOverlay() {
   const updateAudioSettings = useGameStore((state) => state.updateAudioSettings)
   const unlockMetaTalentAction = useGameStore((state) => state.unlockMetaTalent)
   const resetMetaTalentTreeAction = useGameStore((state) => state.resetMetaTalentTree)
-  const selectedRunTalentIds = useGameStore((state) => state.runTalentState.selectedTalentIds)
+  const runTalentPresentationSource = useGameStore((state) => state)
+  const archerEvolutionGuideCatalog = useMemo(
+    () => createArcherEvolutionGuideCatalog(discoveredSkillEvolutionIds),
+    [discoveredSkillEvolutionIds],
+  )
+  const runTalentPresentationItems = useMemo(
+    () => getRunTalentPresentationSnapshot(runTalentPresentationSource),
+    [runTalentPresentationSource],
+  )
+  const campaignRewardSnapshot = useMemo(
+    () => getCampaignRewardPresentationSnapshot(runTalentPresentationSource),
+    [runTalentPresentationSource],
+  )
+  const settlementOverlayRef = useRef<HTMLDivElement | null>(null)
+  const { highestLayer } = useCombatUiLayerState()
+  useCombatUiLayerInitialFocus(settlementOverlayRef, COMBAT_UI_LAYER.settlement, highestLayer)
   const [villageModal, setVillageModal] = useState<VillageModal>(null)
+  const [characterSelectionView, setCharacterSelectionView] = useState<CharacterSelectionView>('selection')
+  const characterDetailTransitionLockRef = useRef(false)
   const [moveKeys, setMoveKeys] = useState('WASD')
   const [inventorySlot, setInventorySlot] = useState<EquipmentSlot>('weapon')
   const [reforgeRequest, setReforgeRequest] = useState<{ itemId: string; mode: EquipmentReforgeMode } | null>(null)
@@ -1664,15 +2057,31 @@ export function GameOverlay() {
   const [hunterHomeTab, setHunterHomeTab] = useState<HunterHomeTab>('functional-talents')
   const [villageClickAreas, setVillageClickAreas] = useState<VillageClickAreaConfig[]>(defaultVillageClickAreas)
   const [villageBackgroundMedia, setVillageBackgroundMedia] = useState<VillageBackgroundMediaConfig>(defaultVillageBackgroundMedia)
-  const skillSections = useMemo(() => {
-    return [
-      { buildTag: 'pierce' as const, label: SKILL_BUILD_LABELS.pierce, items: ARCHER_ACTIVE_SKILLS.filter((skill) => skill.buildTag === 'pierce') },
-      { buildTag: 'spread' as const, label: SKILL_BUILD_LABELS.spread, items: ARCHER_ACTIVE_SKILLS.filter((skill) => skill.buildTag === 'spread') },
-      { buildTag: 'control' as const, label: SKILL_BUILD_LABELS.control, items: ARCHER_ACTIVE_SKILLS.filter((skill) => skill.buildTag === 'control') },
-      { buildTag: 'beast' as const, label: SKILL_BUILD_LABELS.beast, items: ARCHER_ACTIVE_SKILLS.filter((skill) => skill.buildTag === 'beast') },
-    ]
+  const [isCompactVillageViewport, setIsCompactVillageViewport] = useState(getIsCompactVillageViewport)
+  const openVillageModal = (modal: VillageModalId) => {
+    if (modal === 'character') {
+      characterDetailTransitionLockRef.current = false
+      setCharacterSelectionView('selection')
+    }
+    setVillageModal(modal)
+  }
+  const closeCharacterSelection = () => {
+    characterDetailTransitionLockRef.current = false
+    setCharacterSelectionView('selection')
+    setVillageModal(null)
+  }
+  const beginCharacterDetailTransition = useCallback(() => {
+    if (characterDetailTransitionLockRef.current) return
+    characterDetailTransitionLockRef.current = true
+    setCharacterSelectionView(prefersReducedMotion() ? 'details' : 'transitioning')
   }, [])
-
+  const completeCharacterDetailTransition = useCallback(() => {
+    setCharacterSelectionView((currentView) => currentView === 'transitioning' ? 'details' : currentView)
+  }, [])
+  const returnToCharacterSelection = useCallback(() => {
+    characterDetailTransitionLockRef.current = false
+    setCharacterSelectionView('selection')
+  }, [])
   useEffect(() => {
     const controller = new AbortController()
     fetch(GODOT_HOMEPAGE_LAYOUT_URL, { cache: 'no-store', signal: controller.signal })
@@ -1695,6 +2104,23 @@ export function GameOverlay() {
     return () => controller.abort()
   }, [])
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const mediaQuery = window.matchMedia(VILLAGE_COMPACT_VIEWPORT_QUERY)
+    const updateViewportMode = () => setIsCompactVillageViewport(mediaQuery.matches)
+    updateViewportMode()
+    mediaQuery.addEventListener('change', updateViewportMode)
+    return () => mediaQuery.removeEventListener('change', updateViewportMode)
+  }, [])
+
+  useEffect(() => {
+    onVillageModalVisibilityChange?.(phase === 'idle' && villageModal !== null)
+  }, [onVillageModalVisibilityChange, phase, villageModal])
+
+  useEffect(() => {
+    return () => onVillageModalVisibilityChange?.(false)
+  }, [onVillageModalVisibilityChange])
+
   if (phase === 'idle') {
     const equipmentSlotCounts = EQUIPMENT_SLOTS.reduce<Record<EquipmentSlot, number>>((counts, slot) => {
       counts[slot] = equipmentInventory.filter((item) => item.slot === slot).length
@@ -1703,7 +2129,6 @@ export function GameOverlay() {
     const activeInventorySlot = equipmentSlotCounts[inventorySlot] > 0
       ? inventorySlot
       : EQUIPMENT_SLOTS.find((slot) => equipmentSlotCounts[slot] > 0) ?? inventorySlot
-    const currentSkillNames = activeSkills.map((skill) => ARCHER_ACTIVE_SKILLS.find((definition) => definition.id === skill.skillId)?.name ?? skill.skillId)
     const unlockedEquipmentSlots = getEffectiveUnlockedEquipmentSlots(level, unsealedEquipmentSlots)
     const equipmentBonus = getEquipmentBonusSummary(equippedItems)
     const equipmentSetCounts = getEquipmentSetCounts(equippedItems)
@@ -1806,7 +2231,7 @@ export function GameOverlay() {
               data-testid="godot-village-background-poster"
             />
           )}
-          {villageClickAreas.map((area) => (
+          {!isCompactVillageViewport ? villageClickAreas.map((area) => (
             <VillageClickArea
               key={area.id}
               label={area.label}
@@ -1818,10 +2243,29 @@ export function GameOverlay() {
                 height: `${area.rect.heightPct}%`,
                 zIndex: area.zIndex,
               }}
-              onClick={() => setVillageModal(area.modal)}
+              onClick={() => openVillageModal(area.modal)}
             />
-          ))}
+          )) : null}
         </div>
+
+        {isCompactVillageViewport ? (
+        <nav
+          className="pointer-events-auto absolute inset-x-2 bottom-2 z-10 grid grid-cols-2 gap-2 rounded-sm border-2 border-[rgba(157,213,172,0.42)] bg-[rgba(4,10,7,0.9)] p-2 sm:grid-cols-4 lg:hidden"
+          data-testid="village-compact-actions"
+          aria-label="村庄入口"
+        >
+          {villageClickAreas.map((area) => (
+            <button
+              key={`compact-${area.id}`}
+              type="button"
+              className="pixel-button min-w-0 truncate px-2 py-2 font-pixel text-[10px]"
+              onClick={() => openVillageModal(area.modal)}
+            >
+              {area.label}
+            </button>
+          ))}
+        </nav>
+        ) : null}
 
         {villageModal === 'campaign' ? (
           <VillageModalShell
@@ -1944,39 +2388,14 @@ export function GameOverlay() {
         ) : null}
 
         {villageModal === 'character' ? (
-          <VillageModalShell
-            title="角色选择"
-            onClose={() => setVillageModal(null)}
-            stickyHeader
-            fixedFrame
-            testId="character-modal-shell"
-            headerTestId="character-modal-header"
-            contentTestId="character-modal-scroll"
-          >
-            <div className="grid gap-4 md:grid-cols-[320px_minmax(0,1fr)]">
-              <SectionPanel eyebrow="可用职业" title="弓箭手">
-                <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
-                  <p className="font-pixel text-[10px] text-amber-300">已解锁 / 当前可玩</p>
-                  <p className="mt-3 text-xl text-[#dfe7d5]">远程拉扯、穿透箭线、散射压制、野兽伙伴。</p>
-                  <p className="mt-3 font-pixel text-[9px] text-[#9dd5ac]">其他职业：未开放</p>
-                </div>
-              </SectionPanel>
-              <SectionPanel eyebrow="职业档案" title="当前职业：弓箭手">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
-                    <p className="font-pixel text-[9px] text-[#f4f0d7]">固定被动</p>
-                    <p className="mt-2 text-xl text-[#9dd5ac]">{ARCHER_FIXED_PASSIVE.name}</p>
-                    <p className="mt-2 text-lg text-[#dfe7d5]">{ARCHER_FIXED_PASSIVE.description}</p>
-                  </div>
-                  <div className="border-2 border-[#08100b] bg-[#121b16] p-4">
-                    <p className="font-pixel text-[9px] text-[#f4f0d7]">初始技能</p>
-                    <p className="mt-2 text-lg text-[#dfe7d5]">{currentSkillNames.join(' / ')}</p>
-                    <button className="pixel-button mt-5 px-4 py-3 font-pixel text-[10px]" onClick={startGame}>使用弓箭手开始</button>
-                  </div>
-                </div>
-              </SectionPanel>
-            </div>
-          </VillageModalShell>
+          <CharacterSelectionDialog
+            view={characterSelectionView}
+            evolutionCatalog={archerEvolutionGuideCatalog}
+            onClose={closeCharacterSelection}
+            onShowDetails={beginCharacterDetailTransition}
+            onTransitionComplete={completeCharacterDetailTransition}
+            onReturnToSelection={returnToCharacterSelection}
+          />
         ) : null}
 
         {villageModal === 'inventory' ? (
@@ -2360,7 +2779,19 @@ export function GameOverlay() {
 
               {hunterHomeTab === 'combat-talents' ? (
                 <SectionPanel eyebrow="" title="">
-                  <RunTalentGuideShelf selectedTalentIds={selectedRunTalentIds} />
+                  <div className="space-y-5">
+                    <section className="border-2 border-[#08100b] bg-[#101913] p-4" data-testid="hunter-home-evolution-guide">
+                      <p className="font-pixel text-[10px] tracking-[0.12em] text-amber-200">弓箭手进化图鉴</p>
+                      <p className="mt-2 text-lg leading-tight text-[#9dd5ac]">与首页图鉴、查看详情共用同一份已发现进化记录；未发现分支只显示灰色名称和图标。</p>
+                      <div className="mt-4">
+                        <ArcherEvolutionGuide catalog={archerEvolutionGuideCatalog} />
+                      </div>
+                    </section>
+                    <RunTalentGuideShelf
+                      presentationItems={runTalentPresentationItems}
+                      campaignRewardSnapshot={campaignRewardSnapshot}
+                    />
+                  </div>
                 </SectionPanel>
               ) : null}
 
@@ -2499,8 +2930,8 @@ export function GameOverlay() {
         ) : null}
 
         {reforgeItem && reforgeRequest && reforgeCost ? (
-          <div className="pointer-events-auto fixed inset-0 z-40 flex items-center justify-center bg-black/65 p-4" role="dialog" aria-modal="true" aria-label={`${reforgeModeLabels[reforgeRequest.mode]}确认`}>
-            <div className="max-h-[88vh] w-full max-w-2xl overflow-y-auto border-4 border-[#08100b] bg-[#162019] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.55)]">
+          <div className="pointer-events-auto fixed inset-0 z-40 flex items-start justify-center overflow-x-hidden overflow-y-auto bg-black/65 p-2 sm:p-4" role="dialog" aria-modal="true" aria-label={`${reforgeModeLabels[reforgeRequest.mode]}确认`}>
+            <div className="my-2 max-h-[calc(100vh-1rem)] w-full max-w-2xl overflow-y-auto border-4 border-[#08100b] bg-[#162019] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.55)]">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <p className="font-pixel text-[10px] uppercase tracking-[0.16em] text-amber-300">{reforgeModeLabels[reforgeRequest.mode]}</p>
@@ -2602,22 +3033,7 @@ export function GameOverlay() {
 
               {guideTab === 'skills' ? (
                 <SectionPanel eyebrow="" title="技能">
-                  <div className="space-y-5" data-testid="skill-guide-icon-shelves">
-                    <section>
-                      <p className="mb-3 font-pixel text-xs uppercase tracking-[0.14em] text-[#f4f0d7]">固定被动</p>
-                      <div className="flex flex-wrap gap-3"><SkillGuideIcon /></div>
-                    </section>
-                    {skillSections.map((section) => (
-                      <section key={section.buildTag}>
-                        <p className="mb-3 font-pixel text-xs uppercase tracking-[0.14em] text-[#9dd5ac]">{section.label}</p>
-                        <div className="flex flex-wrap gap-3">
-                          {section.items.map((skill) => (
-                            <SkillGuideIcon key={skill.id} skill={skill} />
-                          ))}
-                        </div>
-                      </section>
-                    ))}
-                  </div>
+                  <ArcherEvolutionGuide catalog={archerEvolutionGuideCatalog} />
                 </SectionPanel>
               ) : null}
 
@@ -2661,7 +3077,17 @@ export function GameOverlay() {
 
   if (localBattleTest?.active && localBattleTest.status === 'failed') {
     return (
-      <div className="absolute inset-0 flex items-center justify-center bg-[rgba(8,16,11,0.62)]" data-testid="local-battle-failed">
+      <div
+        ref={settlementOverlayRef}
+        {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.settlement, highestLayer)}
+        className="absolute inset-0 flex items-center justify-center bg-[rgba(8,16,11,0.62)]"
+        style={getCombatUiLayerStyle(COMBAT_UI_LAYER.settlement)}
+        data-testid="local-battle-failed"
+        role="dialog"
+        aria-modal="true"
+        aria-label="本地战斗测试结束"
+        tabIndex={-1}
+      >
         <div className="pointer-events-auto pixel-panel mx-4 w-full max-w-[720px] p-5 text-center md:p-6">
           <p className="font-pixel text-sm uppercase tracking-[0.18em] text-amber-300">开发测试</p>
           <h2 className="mt-3 font-pixel text-xl text-[#f4f0d7] md:text-2xl">本地战斗测试结束</h2>
@@ -2682,90 +3108,7 @@ export function GameOverlay() {
   }
 
   if (phase === 'game-over') {
-    const nextMilestone = milestoneRewards.find((milestone) => !achievedMilestones.includes(milestone.level))
-
-    return (
-      <div className="absolute inset-0 flex items-center justify-center bg-[rgba(8,16,11,0.62)]">
-        <div className="pointer-events-auto pixel-panel mx-4 w-full max-w-[1180px] p-5 md:p-6">
-          <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-            <div className="space-y-4">
-              <OverlayCard
-                title="冒险结束"
-                description={`你闯到第 ${level} 层，累计击败 ${kills} 只敌人。`}
-                actionLabel="回到村庄"
-                onAction={returnToVillage}
-                icon={<RotateCcw size={24} />}
-              />
-              <div className="border-2 border-[#08100b] bg-[#111913] p-4 shadow-[0_0_0_2px_rgba(157,213,172,0.1)]">
-                <div className="flex items-center gap-3 text-amber-300">
-                  <Coins size={18} />
-                  <p className="font-pixel text-[10px] uppercase tracking-[0.18em]">对局结算</p>
-                </div>
-                <div className="mt-4 grid grid-cols-2 gap-2 text-xl text-[#dfe7d5]">
-                  <p>到达层数：{level}</p>
-                  <p>击杀数量：{kills}</p>
-                  <p>本局奖励：{earnedGold} 金币</p>
-                  <p>当前金币：{currency}</p>
-                  <p>天赋点：+{lastTalentPointRecord?.points ?? 0}</p>
-                  <p>天赋余额：{talentPoints}</p>
-                </div>
-                {lastTalentPointRecord ? (
-                  <p className="mt-3 text-lg text-[#9dd5ac]">
-                    累计经验 {lastTalentPointRecord.cumulativeExp} / 最高局内 Lv.{lastTalentPointRecord.highestContractLevel} / 精英 {lastTalentPointRecord.eliteKills} / Boss {lastTalentPointRecord.bossKills}
-                    {lastTalentPointRecord.firstClear ? ' / 首通奖励' : ''}
-                  </p>
-                ) : null}
-                <p className="mt-3 text-lg text-[#9dd5ac]">
-                  {nextMilestone
-                    ? `距离 ${nextMilestone.level} 层奖励「${nextMilestone.reward}」还差 ${Math.max(0, nextMilestone.level - level)} 层`
-                    : '所有长期目标已经达成，继续刷新你的最高层数'}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-4 lg:grid-cols-2">
-              <SectionPanel eyebrow="历史排行" title={`最高层：${bestLevel}`}>
-                <div className="space-y-3">
-                  {runHistory.length === 0 ? (
-                    <p className="text-xl text-[#dfe7d5]">完成一局后会记录你的前 5 名成绩。</p>
-                  ) : (
-                    runHistory.map((record, index) => (
-                      <div key={record.id} className="border-2 border-[#08100b] bg-[#121b16] px-3 py-3 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="font-pixel text-[10px] uppercase tracking-[0.16em] text-amber-300">#{index + 1}</p>
-                          <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#f4f0d7]">第 {record.level} 层</p>
-                        </div>
-                        <p className="mt-2 text-lg text-[#dfe7d5]">击杀 {record.kills} / 金币 {record.gold}</p>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </SectionPanel>
-
-              <SectionPanel eyebrow="长期目标" title="爬塔奖励">
-                <div className="space-y-3">
-                  {milestoneRewards.map((milestone) => {
-                    const achieved = achievedMilestones.includes(milestone.level) || bestLevel >= milestone.level
-
-                    return (
-                      <div key={milestone.level} className="border-2 border-[#08100b] bg-[#121b16] px-3 py-3 shadow-[0_0_0_2px_rgba(157,213,172,0.08)]">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#f4f0d7]">通关 {milestone.level} 层</p>
-                          <p className={`font-pixel text-[8px] uppercase tracking-[0.16em] ${achieved ? 'text-amber-300' : 'text-[#9dd5ac]'}`}>
-                            {achieved ? '已达成' : '未达成'}
-                          </p>
-                        </div>
-                        <p className="mt-2 text-lg text-[#dfe7d5]">{milestone.reward}</p>
-                      </div>
-                    )
-                  })}
-                </div>
-              </SectionPanel>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
+    return <RunSettlementOverlay summary={runSettlementSummary} campaignRewardSnapshot={campaignRewardSnapshot} onReturnToVillage={returnToVillage} />
   }
 
   if (phase === 'paused') {
@@ -2774,7 +3117,12 @@ export function GameOverlay() {
 
   if (phase === 'running' && levelTimer > 0) {
     return (
-      <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+      <div
+        {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.hud, highestLayer)}
+        className="pointer-events-none absolute inset-0 flex items-center justify-center"
+        style={getCombatUiLayerStyle(COMBAT_UI_LAYER.hud)}
+        data-testid="level-countdown-hud"
+      >
         <div className="border-2 border-[#08100b] bg-[rgba(8,16,11,0.72)] px-6 py-5 text-center shadow-[0_0_0_2px_rgba(157,213,172,0.16)]">
           <p className="font-pixel text-[10px] uppercase tracking-[0.18em] text-[#9dd5ac] md:text-xs">地牢入场</p>
           <p className="mt-3 font-pixel text-sm uppercase tracking-[0.14em] text-[#f4f0d7] md:text-lg">第 {level} 层</p>
@@ -2786,7 +3134,12 @@ export function GameOverlay() {
   }
 
   return (
-    <div className="pointer-events-none absolute left-4 top-20 border-2 border-[#08100b] bg-[rgba(8,16,11,0.68)] px-3 py-2 shadow-[0_0_0_2px_rgba(157,213,172,0.08)] md:top-[76px]">
+    <div
+      {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.hud, highestLayer)}
+      className="pointer-events-none absolute left-4 top-20 border-2 border-[#08100b] bg-[rgba(8,16,11,0.68)] px-3 py-2 shadow-[0_0_0_2px_rgba(157,213,172,0.08)] md:top-[76px]"
+      style={getCombatUiLayerStyle(COMBAT_UI_LAYER.hud)}
+      data-testid="combat-floor-hud"
+    >
       <p className="font-pixel text-[9px] uppercase tracking-[0.12em] text-[#f4f0d7] md:text-[10px]">
         {level}层 / 目标{levelTargetKills}
       </p>

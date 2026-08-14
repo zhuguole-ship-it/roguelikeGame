@@ -10,11 +10,11 @@ import {
   COMBAT_DAMAGE_LOG_BOTTOM_EPSILON,
   COMBAT_DAMAGE_LOG_LAYOUTS,
   COMBAT_DAMAGE_LOG_PAUSE_VIEWPORT_CLASS,
-  COMBAT_DAMAGE_LOG_REWARD_VIEWPORT_CLASS,
   COMBAT_DAMAGE_LOG_STANDARD_VIEWPORT_CLASS,
   COMBAT_DAMAGE_LOG_VIEWPORT_SIZE,
   CombatDamageLog,
   formatCombatDamageLogEvent,
+  getCombatDamageLogEventTextClass,
   getCombatDamageLogViewportGeometry,
   isCombatDamageLogAtBottom,
   shouldShowCombatDamageLog,
@@ -73,6 +73,42 @@ describe('CombatDamageLog', () => {
     })).toBe('典狱长 使用 暴击攻击 攻击玩家造成伤害1')
   })
 
+  it('uses the core-owned side and critical result for red, white, and orange log text', () => {
+    const ordinaryPlayer = playerEvent('ordinary-player')
+    const criticalPlayer = { ...playerEvent('critical-player'), isCritical: true }
+    const enemy = {
+      ...playerEvent('enemy-player'),
+      side: 'enemy' as const,
+      isCritical: true,
+      attackerId: 'warden',
+      attackerName: '典狱长',
+      sourceName: '暴击攻击',
+      targetId: 'player',
+      targetName: '玩家',
+    }
+
+    expect(getCombatDamageLogEventTextClass(ordinaryPlayer)).toBe('text-white')
+    expect(getCombatDamageLogEventTextClass(criticalPlayer)).toBe('text-orange-400')
+    expect(getCombatDamageLogEventTextClass(enemy)).toBe('text-red-400')
+
+    const running = createInitialSnapshot('running')
+    useGameStore.setState({ ...running, combatDamageLog: [ordinaryPlayer, criticalPlayer, enemy] })
+    const { rerender } = render(<CombatDamageLog />)
+    const assertEntryColors = (scrollTestId: string) => {
+      const entries = screen.getByTestId(scrollTestId).querySelectorAll('li')
+      expect(entries[0]?.className).toContain('text-white')
+      expect(entries[1]?.className).toContain('text-orange-400')
+      expect(entries[2]?.className).toContain('text-red-400')
+      expect(entries[0]?.className).not.toContain('text-[#dfe7d5]')
+    }
+    assertEntryColors('combat-damage-log-scroll')
+
+    const paused = createInitialSnapshot('paused')
+    useGameStore.setState({ ...paused, pauseMenuOpen: true, combatDamageLog: [ordinaryPlayer, criticalPlayer, enemy] })
+    rerender(<CombatDamageLog placement="pause" />)
+    assertEntryColors('combat-damage-log-scroll-pause')
+  })
+
   it('renders up to the current 120-event memory as a scrollable viewport with the newest event at the bottom', () => {
     const base = createInitialSnapshot('running')
     const events = Array.from({ length: COMBAT_DAMAGE_LOG_CAPACITY }, (_, index) => playerEvent(`event-${index + 1}`, index + 1))
@@ -89,12 +125,16 @@ describe('CombatDamageLog', () => {
     expect(entries[entries.length - 1]?.textContent).toContain('造成伤害120')
     expect(scroll.className).toContain('overflow-y-auto')
     expect(viewport.className).toContain(COMBAT_DAMAGE_LOG_STANDARD_VIEWPORT_CLASS)
-    expect(viewport.className).toContain(COMBAT_DAMAGE_LOG_BACKGROUND_CLASS)
-    expect(viewport.className).not.toMatch(/\bopacity-/)
+    expect(viewport.parentElement?.className).toContain(COMBAT_DAMAGE_LOG_BACKGROUND_CLASS)
+    expect(viewport.parentElement?.className).not.toMatch(/\bopacity-/)
     expect(scroll.querySelector('ol')?.className).toContain(COMBAT_DAMAGE_LOG_LAYOUTS.standard.listClass)
     expect(entries[0]?.className).toContain(COMBAT_DAMAGE_LOG_LAYOUTS.standard.recordClass)
-    expect(log.className).toContain('left-4')
-    expect(log.className).toContain('md:bottom-[6rem]')
+    expect(log.className).toContain('left-2')
+    expect(log.className).toContain('right-2')
+    expect(log.className).toContain('max-w-[21rem]')
+    expect(log.className).toContain('bottom-[12.5rem]')
+    expect(log.className).toContain('xl:bottom-[8rem]')
+    expect(log.className).toContain('xl:left-4')
     expect(scroll.scrollTop).toBe(960)
     expect(log.getAttribute('aria-label')).toContain(`最近 ${COMBAT_DAMAGE_LOG_VIEWPORT_SIZE} 条`)
     expect(log.getAttribute('aria-label')).toContain(`当前 ${COMBAT_DAMAGE_LOG_CAPACITY} 条`)
@@ -215,7 +255,7 @@ describe('CombatDamageLog', () => {
     expect(scroll.className).toContain('overscroll-contain')
   })
 
-  it('uses a compact eight-line viewport during level-clear without changing the regular combat layout', () => {
+  it('unmounts the floating Top4 log during a Top3 level-clear reward without changing regular combat layout', () => {
     const running = createInitialSnapshot('running')
     useGameStore.setState({ ...running, combatDamageLog: [playerEvent('event-1')] })
     const { rerender } = render(<CombatDamageLog />)
@@ -229,15 +269,10 @@ describe('CombatDamageLog', () => {
     useGameStore.setState({ ...levelClear, combatDamageLog: [playerEvent('event-1')] })
     rerender(<CombatDamageLog />)
 
-    const compactScroll = screen.getByTestId('combat-damage-log-scroll')
-    expect(compactScroll.parentElement?.className).toContain(COMBAT_DAMAGE_LOG_REWARD_VIEWPORT_CLASS)
-    expect(compactScroll.parentElement?.className).toContain(COMBAT_DAMAGE_LOG_BACKGROUND_CLASS)
-    expect(compactScroll.parentElement?.className).toContain('py-1')
-    expect(compactScroll.querySelector('ol')?.className).toContain(COMBAT_DAMAGE_LOG_LAYOUTS.reward.listClass)
-    expect(compactScroll.textContent).toContain('玩家使用 穿刺箭 攻击 腐蚀史莱姆 造成伤害20')
+    expect(screen.queryByTestId('combat-damage-log')).toBeNull()
   })
 
-  it('uses the same compact viewport for a paused reward screen', () => {
+  it('unmounts the floating Top4 log for a paused reward screen', () => {
     const pausedReward = createInitialSnapshot('paused')
     useGameStore.setState({
       ...pausedReward,
@@ -248,35 +283,59 @@ describe('CombatDamageLog', () => {
 
     render(<CombatDamageLog />)
 
-    const log = screen.getByTestId('combat-damage-log')
-    const compactScroll = screen.getByTestId('combat-damage-log-scroll')
-    expect(log.className).not.toContain('hidden md:block')
-    expect(compactScroll.parentElement?.className).toContain(COMBAT_DAMAGE_LOG_REWARD_VIEWPORT_CLASS)
-    expect(compactScroll.parentElement?.className).toContain(COMBAT_DAMAGE_LOG_BACKGROUND_CLASS)
-    expect(compactScroll.parentElement?.className).toContain('py-1')
-    expect(compactScroll.querySelector('ol')?.className).toContain(COMBAT_DAMAGE_LOG_LAYOUTS.reward.listClass)
+    expect(screen.queryByTestId('combat-damage-log')).toBeNull()
   })
 
-  it('moves the narrow manual-pause log into the pause container while keeping the desktop floating log', () => {
+  it('keeps the damage log embedded in the Top1 pause container instead of rendering a floating duplicate', () => {
     const paused = createInitialSnapshot('paused')
     useGameStore.setState({ ...paused, pauseMenuOpen: true, combatDamageLog: [playerEvent('event-1')] })
     const { rerender } = render(<CombatDamageLog />)
 
-    expect(screen.getByTestId('combat-damage-log').className).toContain('hidden md:block')
+    expect(screen.queryByTestId('combat-damage-log')).toBeNull()
 
     rerender(<CombatDamageLog placement="pause" />)
 
     const pauseLog = screen.getByTestId('combat-damage-log-pause')
     const pauseScroll = screen.getByTestId('combat-damage-log-scroll-pause')
     expect(pauseLog.className).toContain('w-full')
-    expect(pauseLog.className).toContain('md:hidden')
+    expect(pauseLog.className).toContain('min-w-0')
+    expect(pauseLog.className).not.toContain('md:hidden')
     expect(pauseLog.className).not.toContain('absolute')
     expect(pauseScroll.parentElement?.className).toContain(COMBAT_DAMAGE_LOG_PAUSE_VIEWPORT_CLASS)
     expect(pauseScroll.parentElement?.className).toContain(COMBAT_DAMAGE_LOG_BACKGROUND_CLASS)
     expect(pauseScroll.querySelector('ol')?.className).toContain(COMBAT_DAMAGE_LOG_LAYOUTS.pause.listClass)
+    expect(screen.queryByRole('button', { name: '隐藏伤害日志' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '显示伤害日志' })).toBeNull()
   })
 
-  it('keeps long Chinese sentences intact in standard, both reward contexts, and the narrow pause flow', () => {
+  it('toggles only the floating log without clearing events and restores expanded after remount', () => {
+    const running = createInitialSnapshot('running')
+    useGameStore.setState({ ...running, combatDamageLog: [playerEvent('toggle-event', 22)] })
+
+    const firstView = render(<CombatDamageLog />)
+    const hideButton = screen.getByRole('button', { name: '隐藏伤害日志' })
+    expect(hideButton.getAttribute('data-testid')).toBe('combat-damage-log-hide')
+    expect(hideButton.className).toContain('pointer-events-auto')
+    expect(screen.getByTestId('combat-damage-log-scroll')).toBeTruthy()
+
+    fireEvent.click(hideButton)
+    expect(screen.queryByTestId('combat-damage-log-scroll')).toBeNull()
+    const showButton = screen.getByRole('button', { name: '显示伤害日志' })
+    expect(showButton.getAttribute('data-testid')).toBe('combat-damage-log-show')
+    expect(showButton.className).toContain('pointer-events-auto')
+    expect(useGameStore.getState().combatDamageLog).toHaveLength(1)
+
+    fireEvent.click(showButton)
+    expect(screen.getByRole('button', { name: '隐藏伤害日志' })).toBeTruthy()
+    expect(screen.getByTestId('combat-damage-log-scroll')).toBeTruthy()
+
+    firstView.unmount()
+    render(<CombatDamageLog />)
+    expect(screen.getByRole('button', { name: '隐藏伤害日志' })).toBeTruthy()
+    expect(screen.getByTestId('combat-damage-log-scroll')).toBeTruthy()
+  })
+
+  it('keeps long Chinese sentences intact in standard combat and the embedded pause flow', () => {
     const longEvent = {
       ...playerEvent('long-name-event', 42),
       sourceName: '万箭贯日风暴终结技',
@@ -299,12 +358,12 @@ describe('CombatDamageLog', () => {
     const levelClear = createInitialSnapshot('level-clear')
     useGameStore.setState({ ...levelClear, combatDamageLog: [longEvent] })
     rerender(<CombatDamageLog />)
-    assertSingleLineRecord('combat-damage-log-scroll', 'reward')
+    expect(screen.queryByTestId('combat-damage-log-scroll')).toBeNull()
 
     const pausedReward = createInitialSnapshot('paused')
     useGameStore.setState({ ...pausedReward, pauseMenuOpen: true, pendingSkillReward: { poolKind: 'skill', choices: [] }, combatDamageLog: [longEvent] })
     rerender(<CombatDamageLog />)
-    assertSingleLineRecord('combat-damage-log-scroll', 'reward')
+    expect(screen.queryByTestId('combat-damage-log-scroll')).toBeNull()
 
     const pausedMenu = createInitialSnapshot('paused')
     useGameStore.setState({ ...pausedMenu, pauseMenuOpen: true, combatDamageLog: [longEvent] })

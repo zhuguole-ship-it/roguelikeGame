@@ -1,5 +1,14 @@
 import type { ActiveSkillInstance, BeastCompanion, GameSnapshot, TalentCombatState } from '../../game/types'
+import { getCampaignRewardPresentationSnapshot, getRunTalentPresentationSnapshot } from '../../game/engine'
+import type { RunTalentPresentationItem } from '../../game/talents'
 import { useGameStore } from '../../store/useGameStore'
+import {
+  COMBAT_UI_LAYER,
+  getCombatUiLayerAccessibilityProps,
+  getCombatUiLayerStyle,
+  useCombatUiLayerState,
+} from './combatUiLayers'
+import { CAMPAIGN_REWARD_SOURCE_LABEL, getCampaignRewardSourceDetail } from './CampaignRewardPresentation'
 
 export type RunTalentFeedbackItem = {
   id: string
@@ -20,6 +29,7 @@ type RunTalentFeedbackInput = {
   talentCombatState?: TalentCombatState
   beastCompanions: readonly BeastCompanion[]
   activeSkills: readonly ActiveSkillInstance[]
+  presentationItems?: readonly RunTalentPresentationItem[]
 }
 
 const selected = (ids: readonly string[], id: string) => ids.includes(id)
@@ -50,11 +60,29 @@ export const getRunTalentFeedbackItems = ({
   talentCombatState,
   beastCompanions,
   activeSkills,
+  presentationItems = [],
 }: RunTalentFeedbackInput): RunTalentFeedbackItem[] => {
   const items: PrioritizedRunTalentFeedbackItem[] = []
   const state = talentCombatState
   const addItem = (item: RunTalentFeedbackItem, priority: RunTalentFeedbackPriority) => {
     items.push({ ...item, priority, order: items.length })
+  }
+
+  const selectedFormAreaTalent = presentationItems.find((item) => item.status === 'selected' && item.form?.group === 4)
+  if (selectedFormAreaTalent?.form?.cycle) {
+    const { cycle, cooldownRemaining = 0 } = selectedFormAreaTalent.form
+    const detail = cycle.enhancementRemaining > 0
+      ? `${selectedFormAreaTalent.name} · 强化 ${formatSeconds(cycle.enhancementRemaining)}`
+      : cooldownRemaining > 0
+        ? `${selectedFormAreaTalent.name} · 冷却 ${formatSeconds(cooldownRemaining)}`
+        : `${selectedFormAreaTalent.name} · ${cycle.progress}/3 · 窗口 ${cycle.windowSeconds} 秒`
+    const priority = cycle.enhancementRemaining > 0 ? 1 : cycle.progress > 0 ? 2 : cooldownRemaining > 0 ? 3 : 4
+    addItem({
+      id: `form-area-cycle-${selectedFormAreaTalent.id}`,
+      label: '形态区域强化',
+      detail,
+      tone: cycle.enhancementRemaining > 0 ? 'ready' : cooldownRemaining > 0 ? 'cooldown' : 'active',
+    }, priority)
   }
 
   if (selected(selectedTalentIds, 'run_common_04') && state?.cooldownEcho) {
@@ -159,24 +187,48 @@ const toneClasses: Record<RunTalentFeedbackItem['tone'], string> = {
 }
 
 export function RunTalentFeedbackHud() {
-  const selectedTalentIds = useGameStore((state) => state.runTalentState.selectedTalentIds)
-  const talentCombatState = useGameStore((state) => state.talentCombatState)
-  const beastCompanions = useGameStore((state) => state.beastCompanions)
-  const activeSkills = useGameStore((state) => state.activeSkills)
-  const phase = useGameStore((state) => state.phase)
+  const state = useGameStore((snapshot) => snapshot)
+  const { highestLayer } = useCombatUiLayerState()
 
-  if (phase === 'idle' || phase === 'game-over') return null
+  if (state.phase === 'idle' || state.phase === 'game-over' || highestLayer !== COMBAT_UI_LAYER.combat) return null
 
   const items = getRunTalentFeedbackItems({
-    selectedTalentIds,
-    talentCombatState,
-    beastCompanions,
-    activeSkills,
+    selectedTalentIds: state.runTalentState.selectedTalentIds,
+    talentCombatState: state.talentCombatState,
+    beastCompanions: state.beastCompanions,
+    activeSkills: state.activeSkills,
+    presentationItems: getRunTalentPresentationSnapshot(state),
   })
-  if (items.length === 0) return null
+  const campaignRewardSnapshot = getCampaignRewardPresentationSnapshot(state)
+  const campaignReward = campaignRewardSnapshot.currentReward
+  if (items.length === 0 && !campaignReward) return null
 
   return (
-    <div className="absolute bottom-[5.75rem] right-4 z-20 flex max-w-[min(92vw,34rem)] flex-wrap justify-end gap-2" data-testid="run-talent-feedback-hud" aria-live="polite">
+    <div
+      {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.hud, highestLayer)}
+      className="pointer-events-none absolute right-2 top-[7.5rem] flex max-w-[calc(100vw-1rem)] flex-wrap justify-end gap-1.5 sm:right-3 sm:top-[9.5rem] sm:max-w-[min(54vw,28rem)] sm:gap-2 lg:top-auto lg:right-4 lg:bottom-[5.75rem] lg:max-w-[min(92vw,34rem)]"
+      style={getCombatUiLayerStyle(COMBAT_UI_LAYER.hud)}
+      data-testid="run-talent-feedback-hud"
+      aria-live="polite"
+    >
+      {campaignReward ? (
+        <div
+          className="border border-[#c89938] bg-[rgba(15,12,5,0.88)] px-2.5 py-2 font-pixel text-[9px] leading-relaxed text-[#f4f0d7] shadow-[0_0_0_1px_rgba(0,0,0,0.44)]"
+          data-testid="campaign-reward-hud-chip"
+          data-source={campaignReward.source}
+          data-semantics={campaignReward.semantics}
+          data-choice-count={campaignReward.choiceCount}
+          data-candidate-choice-ids={campaignReward.candidateChoiceIds.join(' ')}
+        >
+          <span>{CAMPAIGN_REWARD_SOURCE_LABEL[campaignReward.source]}</span>
+          <span className="text-[#f4f0d7]"> · {getCampaignRewardSourceDetail(campaignReward)}</span>
+          <span className="block text-[#dfe7d5]" data-testid="campaign-reward-hud-progress">
+            蓝晶 {campaignRewardSnapshot.crystal.talentAwardsGranted}/{campaignRewardSnapshot.crystal.talentQuota}
+            {' · '}固定 {campaignRewardSnapshot.fixedSkill.claimed}/{campaignRewardSnapshot.fixedSkill.total}
+            {' · '}突袭 {campaignRewardSnapshot.eliteRaid.skillAwardsGranted}/{campaignRewardSnapshot.eliteRaid.count}
+          </span>
+        </div>
+      ) : null}
       {items.map((item) => (
         <div key={item.id} className={`border bg-[rgba(4,10,7,0.86)] px-2.5 py-2 font-pixel text-[9px] leading-relaxed shadow-[0_0_0_1px_rgba(0,0,0,0.44)] ${toneClasses[item.tone]}`}>
           <span>{item.label}</span>

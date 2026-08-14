@@ -7,7 +7,6 @@ import {
   batchDismantleEquipmentSnapshot,
   buildPendingReward,
   clearLocalBattleTestMonstersSnapshot,
-  confirmLevelClearSnapshot,
   createInitialSnapshot,
   declineSkillRewardSnapshot,
   dismissBossLootSnapshot,
@@ -19,11 +18,17 @@ import {
   getEnemyChargeMoveSpeed,
   getEnemyEffectiveMoveSpeed,
   getEnemyEffectiveSpeedSoftCap,
+  getFirstCampaignFixedMeleeDistances,
+  getPlayerArrowDisplayLength,
   getDungeonWardenCritChance,
   getDungeonWardenArenaRadius,
+  getQuickTripleHalfArrowReleaseInterval,
   getHealthPackDropChanceForHealthRatio,
+  getCampaignRewardPresentationSnapshot,
   getLocalBattleTestSpawnOptions,
   getMetaTalentRuntimeEffectsForSnapshot,
+  getRunTalentPresentationSnapshot,
+  migrateArcherSkillEvolutionSnapshot,
   getRouteObjectiveExtraThreatCap,
   getRouteObjectiveLimit,
   getRouteObjectiveRewardCap,
@@ -48,7 +53,16 @@ import {
   updateAimPointSnapshot,
 } from './engine'
 import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, LV5_QUALITATIVE_TEXT } from './archerSkills'
-import { getMetaTalentBonusSummary, META_TALENT_NODES } from './talents'
+import { ARCHER_CORE_SKILL_IDS, ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTIONS, getActiveSkillRuntimePresentation, getEffectiveActiveSkillDefinition } from './archerSkillEvolution'
+import { getPlayerArcherBowMouthWorldPosition } from './archerAssetFrames'
+import { getMonsterHurtboxGeometry } from './monsterHurtboxGeometry'
+import {
+  getPlayerArcherStableVisibleBodyEnvelope,
+  getStableMonsterVisibleBodyEnvelope,
+  getStableVisibleBodyEdgeGap,
+  getStableVisibleBodyRequiredRootDistance,
+} from './visibleBodyEnvelope'
+import { getMetaTalentBonusSummary, META_TALENT_NODES, RUN_TALENT_DEATH_SHOT_INTERVAL_SECONDS } from './talents'
 import { CAMPAIGN_LOOT_PROFILES, CAMPAIGN_MONSTER_THEMES, CORROSIVE_SLIME_ARCHETYPE, getCampaignFloorEnemyPool, getCampaignLootProfile } from './campaignMonsters'
 import { FLOORS_PER_CAMPAIGN, INFINITE_ACTIVE_CHUNK_LIMIT, INFINITE_ACTIVE_CHUNK_RADIUS, INFINITE_ENEMY_RECYCLE_DISTANCE, INFINITE_OBSTACLE_SAFE_RADIUS, INFINITE_SPAWN_MAX_DISTANCE, INFINITE_SPAWN_MIN_DISTANCE, WORLD_HEIGHT, WORLD_WIDTH, getCampaignFloorPhase, getCorrosiveSlimeRatio, getEliteBudget, getEnemyStats, getHordeMultiplier, getHordeNormalTarget, getLegacyHordeMultiplier, getLevelGoal, getMaxEnemiesOnField, hasCampaignEnvironmentMechanic, isBossPreludeLevel } from './config'
 import { getBossCombatTable } from './bossStages'
@@ -73,7 +87,7 @@ import {
 import { getMonsterDropProfile } from './monsterDataCards'
 import { CAMPAIGN_ONE_DECORATION_ASSETS, CAMPAIGN_ONE_OBSTACLE_ASSETS } from './terrainAssets'
 import type { Enemy, EquipmentItem, EquipmentSetId, EquipmentSlot, GameSnapshot, MapObstacle, Projectile, SkillField, Vector2 } from './types'
-import { distance } from '../utils/math'
+import { distance, normalize } from '../utils/math'
 
 describe('game engine', () => {
   afterEach(() => {
@@ -94,6 +108,25 @@ describe('game engine', () => {
       ...chunk,
       obstacles: [],
     }))
+  }
+
+  const noInput = { up: false, down: false, left: false, right: false }
+
+  const finishPlayerDeathAnimation = (snapshot: GameSnapshot) => {
+    let next = snapshot
+    for (let frame = 0; frame < 21 && next.phase === 'running'; frame += 1) {
+      next = advanceGame(next, noInput, 0.05)
+    }
+    return next
+  }
+
+  // Downstream damage tests intentionally begin after the release gate. The
+  // dedicated archer tests below cover the gate itself through advanceGame.
+  const releasePlayerProjectilesForImpact = <T extends GameSnapshot>(snapshot: T) => {
+    snapshot.projectiles.forEach((projectile) => {
+      projectile.releaseDelayRemaining = 0
+    })
+    return snapshot
   }
 
   it('starts a local battle test session on the official first campaign battlefield without auto spawns', () => {
@@ -135,12 +168,20 @@ describe('game engine', () => {
     const options = getLocalBattleTestSpawnOptions()
     const enabledOrdinary = options.find((option) => option.enabled && option.group === 'ordinary')
     const warden = options.find((option) => option.entityId === 'dungeon-warden')
+    const jailerChief = options.find((option) => option.entityId === 'dungeon-jailer-chief')
 
     expect(enabledOrdinary).toBeTruthy()
     expect(enabledOrdinary?.maxCount).toBe(20)
     expect(warden?.enabled).toBe(true)
     expect(warden?.disabledReason).toBeUndefined()
     expect(warden?.disabledReason ?? '').not.toContain('独立验收未通过')
+    expect(jailerChief).toMatchObject({ enabled: true, disabledReason: undefined })
+    ;['dungeon-chain-captain', 'dungeon-chain-wraith-elite'].forEach((entityId) => {
+      expect(options.find((option) => option.entityId === entityId)).toMatchObject({
+        enabled: true,
+        disabledReason: undefined,
+      })
+    })
   })
 
   it('applies local battle monster configs with legal spawn positions and session-only clearing', () => {
@@ -443,7 +484,7 @@ describe('game engine', () => {
     snapshot.talentPoints = 7
     snapshot.player.hp = 0
 
-    const failed = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+    const failed = finishPlayerDeathAnimation(snapshot)
 
     expect(failed.phase).toBe('running')
     expect(failed.localBattleTest?.active).toBe(true)
@@ -491,6 +532,25 @@ describe('game engine', () => {
     movementTrait: overrides.movementTrait,
     skillTrait: overrides.skillTrait,
     eliteRank: overrides.eliteRank,
+    eliteAffixes: overrides.eliteAffixes,
+    jailerChiefPhase: overrides.jailerChiefPhase,
+    jailerChiefCastTimer: overrides.jailerChiefCastTimer,
+    jailerChiefCastTarget: overrides.jailerChiefCastTarget,
+    jailerChiefCooldown: overrides.jailerChiefCooldown,
+    jailerChiefDodgeActive: overrides.jailerChiefDodgeActive,
+    jailerChiefDodgeCooldown: overrides.jailerChiefDodgeCooldown,
+    jailerChiefDodgeDirection: overrides.jailerChiefDodgeDirection,
+    jailerChiefDodgeTargetY: overrides.jailerChiefDodgeTargetY,
+    chainCaptainSlash: overrides.chainCaptainSlash,
+    chainCaptainSlashWindow: overrides.chainCaptainSlashWindow,
+    chainCaptainSlashVisualTimer: overrides.chainCaptainSlashVisualTimer,
+    chainCaptainSlashCooldown: overrides.chainCaptainSlashCooldown,
+    chainCaptainCommandTimer: overrides.chainCaptainCommandTimer,
+    chainCaptainCommandCooldown: overrides.chainCaptainCommandCooldown,
+    chainWraithPullPhase: overrides.chainWraithPullPhase,
+    chainWraithPullTimer: overrides.chainWraithPullTimer,
+    chainWraithPullWarningTarget: overrides.chainWraithPullWarningTarget,
+    chainWraithPullCooldown: overrides.chainWraithPullCooldown,
     position: overrides.position ?? { x: 260, y: 200 },
     hp: overrides.hp ?? 80,
     maxHp: overrides.maxHp ?? 80,
@@ -579,6 +639,7 @@ describe('game engine', () => {
     id: overrides.id ?? 'projectile-1',
     owner: overrides.owner ?? 'player',
     position: overrides.position ?? { x: 300, y: 200 },
+    previousPosition: overrides.previousPosition ? { ...overrides.previousPosition } : undefined,
     origin: overrides.origin ?? overrides.position ?? { x: 300, y: 200 },
     velocity: overrides.velocity ?? { x: 1, y: 0 },
     damage: overrides.damage ?? 12,
@@ -591,6 +652,7 @@ describe('game engine', () => {
     effect: overrides.effect ?? 'none',
     effectStrength: overrides.effectStrength ?? 0,
     sourceSkillId: overrides.sourceSkillId ?? 'pierce-arrow',
+    playerDirectArrow: overrides.playerDirectArrow,
     attackerId: overrides.attackerId,
     attackerName: overrides.attackerName,
     sourceName: overrides.sourceName,
@@ -785,7 +847,7 @@ describe('game engine', () => {
       }),
     ]
 
-    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+    const next = advanceGame(snapshot, noInput, 0.016)
 
     expect(asset.width).toBe(128)
     expect(asset.height).toBe(128)
@@ -1069,7 +1131,7 @@ describe('game engine', () => {
       extraThreatBudget: getRouteObjectiveExtraThreatCap(level),
     }]
 
-    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+    const next = advanceGame(snapshot, noInput, 0.016)
     const extraHighThreats = next.enemies.filter((enemy) => enemy.role === 'high-threat')
 
     expect(next.battlefield.debug.routeObjectiveRewardBudget).toBeLessThanOrEqual(getRouteObjectiveRewardCap(level))
@@ -1132,7 +1194,7 @@ describe('game engine', () => {
       extraThreatBudget: 1,
     }]
 
-    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    const next = finishPlayerDeathAnimation(snapshot)
 
     expect(next.player.hp).toBe(72)
     expect(next.equipmentMaterials.ironScraps).toBe(snapshot.equipmentMaterials.ironScraps)
@@ -1245,8 +1307,8 @@ describe('game engine', () => {
       return snapshot
     }
 
-    const base = advanceGame(makeRun(false), { up: false, down: false, left: false, right: false }, 0.016)
-    const talented = advanceGame(makeRun(true), { up: false, down: false, left: false, right: false }, 0.016)
+    const base = finishPlayerDeathAnimation(makeRun(false))
+    const talented = finishPlayerDeathAnimation(makeRun(true))
 
     expect(base.lastTalentMaterialDrop).toBeUndefined()
     expect(talented.lastTalentMaterialDrop).toMatchObject({
@@ -1503,6 +1565,7 @@ describe('game engine', () => {
     snapshot.enemies = []
     snapshot.mapObstacles = []
     snapshot.player.attackCooldown = 999
+    snapshot.campaignRewardProgress.eliteRaidRollResolvedLevels = [4]
 
     const spawned = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
     const expectedBatch = Math.min(
@@ -1528,6 +1591,7 @@ describe('game engine', () => {
         snapshot.mapObstacles = []
         snapshot.enemies = []
         snapshot.skillFields = []
+        snapshot.campaignRewardProgress.eliteRaidRollResolvedLevels = [level]
 
         const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
 
@@ -1538,7 +1602,7 @@ describe('game engine', () => {
     })
   })
 
-  it('adds boss prelude elite pressure before the boss floor', () => {
+  it('keeps boss-prelude elite pressure outside the first campaign only', () => {
     CAMPAIGN_MONSTER_THEMES.forEach((theme) => {
       const level = (theme.campaign - 1) * FLOORS_PER_CAMPAIGN + 19
       let snapshot = createInitialSnapshot('running')
@@ -1549,12 +1613,34 @@ describe('game engine', () => {
       snapshot.levelTargetKills = getLevelGoal(level)
       snapshot.mapObstacles = []
       snapshot.enemies = []
+      if (theme.campaign === 1) snapshot.campaignRewardProgress.eliteRaidRollResolvedLevels = [level]
 
       const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
 
       expect(isBossPreludeLevel(level)).toBe(true)
-      expect(next.enemies.some((enemy) => enemy.kind === 'elite')).toBe(true)
-      expect(next.message).toContain('Boss 前置压力')
+      if (theme.campaign === 1) {
+        expect(next.enemies.some((enemy) => enemy.kind === 'elite')).toBe(false)
+        expect(next.message).not.toContain('Boss 前置压力')
+      } else {
+        expect(next.enemies.some((enemy) => enemy.kind === 'elite')).toBe(true)
+        expect(next.message).toContain('Boss 前置压力')
+      }
+    })
+
+    ;[19, 20].forEach((level) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.level = level
+      snapshot.levelTimer = 0
+      snapshot.spawnCooldown = 0
+      snapshot.remainingToSpawn = 1
+      snapshot.levelTargetKills = 1
+      snapshot.enemies = []
+      clearCombatObstacles(snapshot)
+      snapshot.campaignRewardProgress.eliteRaidRollResolvedLevels = [level]
+
+      const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+      expect(next.enemies.some((enemy) => enemy.kind === 'elite')).toBe(false)
+      expect(next.message).not.toContain('Boss 前置压力')
     })
   })
 
@@ -1791,6 +1877,8 @@ describe('game engine', () => {
         hp: 800,
         attackCooldown: 999,
         bossPhase: 1,
+        deathAnimationDuration: 0.1,
+        deathAnimationElapsed: 0,
       }),
     ]
 
@@ -1826,6 +1914,10 @@ describe('game engine', () => {
 
     snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
 
+    expect(snapshot.enemies.some((enemy) => enemy.id === 'dungeon-warden')).toBe(true)
+    for (let frame = 0; frame < 3 && snapshot.enemies.some((enemy) => enemy.id === 'dungeon-warden'); frame += 1) {
+      snapshot = advanceGame(snapshot, noInput, 0.1)
+    }
     expect(snapshot.enemies.some((enemy) => enemy.id === 'dungeon-warden')).toBe(false)
     expect(snapshot.battlefield.wardenArena).toBeUndefined()
     expect(snapshot.battlefield.bossArenaRadius).toBeUndefined()
@@ -1838,7 +1930,8 @@ describe('game engine', () => {
     snapshot.remainingToSpawn = 0
     snapshot.spawnCooldown = 999
     snapshot.mapObstacles = []
-    snapshot.debugControls.disableAttacks = true
+    snapshot.player.attackCooldown = 999
+    snapshot.campaignRewardProgress.eliteRaidRollResolvedLevels = [3]
     snapshot.player.position = { x: 600, y: 220 }
     snapshot.enemies = [
       makeEnemy({
@@ -1883,7 +1976,7 @@ describe('game engine', () => {
     snapshot.remainingToSpawn = 0
     snapshot.spawnCooldown = 999
     snapshot.mapObstacles = []
-    snapshot.debugControls.disableAttacks = true
+    snapshot.player.attackCooldown = 999
     snapshot.player.position = { x: 700, y: 220 }
     snapshot.player.maxHp = 100
     snapshot.player.hp = 100
@@ -2044,6 +2137,304 @@ describe('game engine', () => {
     expect(snapshot.battlefield.bossArenaRadius).toBeGreaterThan(160)
   })
 
+  it('returns a p2 warden to its off-center shrinking arena without moving the player or the arena center', () => {
+    let snapshot = createInitialSnapshot('running')
+    snapshot.level = FLOORS_PER_CAMPAIGN
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.battlefield.mode = 'boss-arena'
+    snapshot.battlefield.wardenArena = {
+      center: { x: 160, y: 220 },
+      elapsed: 15,
+      duration: 15,
+      startRadius: 620,
+      minRadius: 160,
+    }
+    snapshot.battlefield.bossArenaRadius = 160
+    clearCombatObstacles(snapshot)
+    snapshot.debugControls.disableAttacks = true
+    snapshot.player.position = { x: 190, y: 220 }
+    snapshot.enemies = [makeEnemy({
+      id: 'dungeon-warden',
+      kind: 'boss',
+      archetypeId: 'dungeon-warden',
+      displayName: '典狱长',
+      campaignIndex: 1,
+      position: { x: 360, y: 220 },
+      size: 44,
+      speed: 80,
+      attackCooldown: 999,
+      bossPhase: 2,
+    })]
+    const arenaCenter = { ...snapshot.battlefield.wardenArena.center }
+    const playerPosition = { ...snapshot.player.position }
+    const initialGap = distance(snapshot.enemies[0].position, arenaCenter)
+
+    snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    const firstStepGap = distance(snapshot.enemies[0].position, arenaCenter)
+    expect(firstStepGap).toBeLessThan(initialGap)
+    expect(initialGap - firstStepGap).toBeLessThanOrEqual(16.01)
+
+    for (let step = 0; step < 8; step += 1) {
+      snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+
+    expect(distance(snapshot.enemies[0].position, arenaCenter)).toBeLessThanOrEqual(160)
+    expect(snapshot.battlefield.wardenArena?.center).toEqual(arenaCenter)
+    expect(snapshot.player.position).toEqual(playerPosition)
+
+    snapshot.enemies[0].attackCooldown = 0
+    snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+    expect(snapshot.enemies[0].meleeAttackWindup).toBeGreaterThan(0)
+  })
+
+  it('uses obstacle steering to return an off-center p2 warden without a teleport', () => {
+    let snapshot = createInitialSnapshot('running')
+    snapshot.level = 1
+    snapshot.levelTimer = 0
+    snapshot.battlefield.mode = 'infinite'
+    snapshot.localBattleTest = {
+      active: true,
+      status: 'active',
+      monsterConfig: [{ entityId: 'dungeon-warden', count: 1 }],
+      spawnedEnemyIds: ['dungeon-warden'],
+    }
+    snapshot.battlefield.wardenArena = {
+      center: { x: 200, y: 220 },
+      elapsed: 15,
+      duration: 15,
+      startRadius: 620,
+      minRadius: 160,
+    }
+    snapshot.battlefield.bossArenaRadius = 160
+    clearCombatObstacles(snapshot)
+    snapshot.mapObstacles = [{
+      id: 'warden-return-obstacle',
+      kind: 'pillar',
+      position: { x: 300, y: 220 },
+      width: 40,
+      height: 112,
+      collisionWidth: 40,
+      collisionHeight: 112,
+    }]
+    snapshot.debugControls.disableAttacks = true
+    snapshot.player.position = { x: 200, y: 220 }
+    snapshot.enemies = [makeEnemy({
+      id: 'dungeon-warden',
+      kind: 'boss',
+      archetypeId: 'dungeon-warden',
+      displayName: '典狱长',
+      campaignIndex: 1,
+      position: { x: 420, y: 220 },
+      size: 44,
+      speed: 80,
+      attackCooldown: 999,
+      bossPhase: 2,
+    })]
+    const start = { ...snapshot.enemies[0].position }
+
+    for (let step = 0; step < 8; step += 1) {
+      snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+
+    const warden = snapshot.enemies[0]
+    expect(distance(warden.position, snapshot.battlefield.wardenArena!.center)).toBeLessThan(distance(start, snapshot.battlefield.wardenArena!.center))
+    expect(warden.position.y).not.toBeCloseTo(start.y, 5)
+    expect(distance(warden.position, start)).toBeLessThanOrEqual(8 * 16 + 0.01)
+  })
+
+  it('uses a stable extended recovery direction when every primary warden detour corner is blocked', () => {
+    let snapshot = createInitialSnapshot('running')
+    snapshot.level = 1
+    snapshot.levelTimer = 0
+    snapshot.battlefield.mode = 'infinite'
+    snapshot.localBattleTest = {
+      active: true,
+      status: 'active',
+      monsterConfig: [{ entityId: 'dungeon-warden', count: 1 }],
+      spawnedEnemyIds: ['dungeon-warden'],
+    }
+    snapshot.battlefield.wardenArena = {
+      center: { x: 200, y: 220 },
+      elapsed: 15,
+      duration: 15,
+      startRadius: 620,
+      minRadius: 160,
+    }
+    snapshot.battlefield.bossArenaRadius = 160
+    clearCombatObstacles(snapshot)
+    snapshot.mapObstacles = [
+      { id: 'blocking-center', kind: 'pillar', position: { x: 300, y: 220 }, width: 40, height: 112, collisionWidth: 40, collisionHeight: 112 },
+      { id: 'blocked-corner-top-left', kind: 'pillar', position: { x: 222, y: 106 }, width: 40, height: 40, collisionWidth: 40, collisionHeight: 40 },
+      { id: 'blocked-corner-top-right', kind: 'pillar', position: { x: 378, y: 106 }, width: 40, height: 40, collisionWidth: 40, collisionHeight: 40 },
+      { id: 'blocked-corner-bottom-left', kind: 'pillar', position: { x: 222, y: 334 }, width: 40, height: 40, collisionWidth: 40, collisionHeight: 40 },
+      { id: 'blocked-corner-bottom-right', kind: 'pillar', position: { x: 378, y: 334 }, width: 40, height: 40, collisionWidth: 40, collisionHeight: 40 },
+    ]
+    snapshot.debugControls.disableAttacks = true
+    snapshot.player.position = { x: 200, y: 220 }
+    snapshot.enemies = [makeEnemy({
+      id: 'dungeon-warden-a',
+      kind: 'boss',
+      archetypeId: 'dungeon-warden',
+      displayName: '典狱长',
+      campaignIndex: 1,
+      position: { x: 420, y: 220 },
+      size: 44,
+      speed: 80,
+      attackCooldown: 999,
+      bossPhase: 2,
+    })]
+    const start = { ...snapshot.enemies[0].position }
+    const playerPosition = { ...snapshot.player.position }
+    const arenaCenter = { ...snapshot.battlefield.wardenArena.center }
+
+    snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    expect(snapshot.enemies[0].position.y).toBeGreaterThan(start.y)
+    expect(distance(snapshot.enemies[0].position, start)).toBeLessThanOrEqual(16.01)
+
+    for (let step = 0; step < 12; step += 1) {
+      snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+
+    const wardenRadius = snapshot.enemies[0].size * 0.5
+    expect(snapshot.mapObstacles.some((obstacle) => {
+      const halfWidth = (obstacle.collisionWidth ?? obstacle.width) / 2 + wardenRadius
+      const halfHeight = (obstacle.collisionHeight ?? obstacle.height) / 2 + wardenRadius
+      return Math.abs(snapshot.enemies[0].position.x - obstacle.position.x) <= halfWidth &&
+        Math.abs(snapshot.enemies[0].position.y - obstacle.position.y) <= halfHeight
+    })).toBe(false)
+    expect(distance(snapshot.enemies[0].position, arenaCenter)).toBeLessThan(distance(start, arenaCenter))
+    expect(snapshot.battlefield.wardenArena?.center).toEqual(arenaCenter)
+    expect(snapshot.battlefield.bossArenaRadius).toBe(160)
+    expect(snapshot.player.position).toEqual(playerPosition)
+  })
+
+  it('keeps a fully enclosed p2 warden collision-safe without inventing a recovery teleport', () => {
+    let snapshot = createInitialSnapshot('running')
+    snapshot.level = 1
+    snapshot.levelTimer = 0
+    snapshot.battlefield.mode = 'infinite'
+    snapshot.localBattleTest = {
+      active: true,
+      status: 'active',
+      monsterConfig: [{ entityId: 'dungeon-warden', count: 1 }],
+      spawnedEnemyIds: ['dungeon-warden'],
+    }
+    snapshot.battlefield.wardenArena = {
+      center: { x: 200, y: 220 },
+      elapsed: 15,
+      duration: 15,
+      startRadius: 620,
+      minRadius: 160,
+    }
+    snapshot.battlefield.bossArenaRadius = 160
+    clearCombatObstacles(snapshot)
+    snapshot.mapObstacles = [
+      { id: 'sealed-left', kind: 'pillar', position: { x: 370, y: 220 }, width: 28, height: 120, collisionWidth: 28, collisionHeight: 120 },
+      { id: 'sealed-right', kind: 'pillar', position: { x: 470, y: 220 }, width: 28, height: 120, collisionWidth: 28, collisionHeight: 120 },
+      { id: 'sealed-top', kind: 'pillar', position: { x: 420, y: 170 }, width: 120, height: 28, collisionWidth: 120, collisionHeight: 28 },
+      { id: 'sealed-bottom', kind: 'pillar', position: { x: 420, y: 270 }, width: 120, height: 28, collisionWidth: 120, collisionHeight: 28 },
+    ]
+    snapshot.debugControls.disableAttacks = true
+    snapshot.player.position = { x: 200, y: 220 }
+    snapshot.enemies = [makeEnemy({
+      id: 'dungeon-warden-sealed',
+      kind: 'boss',
+      archetypeId: 'dungeon-warden',
+      displayName: '典狱长',
+      campaignIndex: 1,
+      position: { x: 420, y: 220 },
+      size: 44,
+      speed: 80,
+      attackCooldown: 999,
+      bossPhase: 2,
+    })]
+    const start = { ...snapshot.enemies[0].position }
+    const playerPosition = { ...snapshot.player.position }
+    const arenaCenter = { ...snapshot.battlefield.wardenArena.center }
+
+    for (let step = 0; step < 12; step += 1) {
+      snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+
+    expect(snapshot.enemies[0].position).toEqual(start)
+    expect(snapshot.enemies[0].stuckTimer).toBeGreaterThan(0)
+    expect(snapshot.battlefield.wardenArena?.center).toEqual(arenaCenter)
+    expect(snapshot.battlefield.bossArenaRadius).toBe(160)
+    expect(snapshot.player.position).toEqual(playerPosition)
+  })
+
+  it('measures a warden stuck timer after the final boss-boundary clamp while preserving p1 and other boss fallback', () => {
+    const createBoundarySnapshot = (enemy: Enemy) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.level = FLOORS_PER_CAMPAIGN
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.battlefield.mode = 'boss-arena'
+      snapshot.battlefield.bossArenaRadius = 160
+      clearCombatObstacles(snapshot)
+      snapshot.debugControls.disableAttacks = true
+      snapshot.player.position = { x: 800, y: 320 }
+      snapshot.enemies = [enemy]
+      return snapshot
+    }
+    const p1Warden = makeEnemy({
+      id: 'p1-boundary-warden',
+      kind: 'boss',
+      archetypeId: 'dungeon-warden',
+      displayName: '典狱长',
+      position: { x: 640, y: 320 },
+      size: 44,
+      speed: 80,
+      attackCooldown: 999,
+      bossPhase: 1,
+    })
+    const otherBoss = makeEnemy({
+      id: 'other-boundary-boss',
+      kind: 'boss',
+      archetypeId: 'other-boss',
+      displayName: '其他 Boss',
+      position: { x: 640, y: 320 },
+      size: 44,
+      speed: 80,
+      attackCooldown: 999,
+      bossPhase: 1,
+    })
+    const p2BoundaryWarden = makeEnemy({
+      id: 'p2-boundary-warden',
+      kind: 'boss',
+      archetypeId: 'dungeon-warden',
+      displayName: '典狱长',
+      position: { x: 320, y: 320 },
+      size: 44,
+      speed: 80,
+      attackCooldown: 999,
+      bossPhase: 2,
+    })
+
+    const p1Result = advanceGame(createBoundarySnapshot(p1Warden), { up: false, down: false, left: false, right: false }, 0.05)
+    const otherBossResult = advanceGame(createBoundarySnapshot(otherBoss), { up: false, down: false, left: false, right: false }, 0.05)
+    const p2BoundarySnapshot = createBoundarySnapshot(p2BoundaryWarden)
+    p2BoundarySnapshot.battlefield.wardenArena = {
+      center: { x: 160, y: 320 },
+      elapsed: 15,
+      duration: 15,
+      startRadius: 620,
+      minRadius: 160,
+    }
+    p2BoundarySnapshot.player.position = { x: 480, y: 320 }
+    const p2Result = advanceGame(p2BoundarySnapshot, { up: false, down: false, left: false, right: false }, 0.05)
+
+    expect(p1Result.enemies[0].position).toEqual(p1Warden.position)
+    expect(p1Result.enemies[0].stuckTimer).toBeGreaterThan(0)
+    expect(distance(otherBossResult.enemies[0].position, { x: 480, y: 320 })).toBeLessThanOrEqual(160.001)
+    expect(otherBossResult.battlefield.wardenArena).toBeUndefined()
+    expect(p2Result.enemies[0].position).toEqual(p2BoundaryWarden.position)
+    expect(p2Result.enemies[0].stuckTimer).toBeGreaterThan(0)
+  })
+
   it('uses the documented continuous 15 second warden arena curve at t=0, 7.5, and 15', () => {
     const arena = {
       elapsed: 0,
@@ -2202,7 +2593,7 @@ describe('game engine', () => {
     expect(snapshot.enemies[0].position.y).toBeCloseTo(start.y, 5)
   })
 
-  it('stops at the warden melee contact distance instead of crossing the player while cooldown is active', () => {
+  it('stops the warden at its fixed fifty-pixel melee standoff while cooldown is active', () => {
     let snapshot = createInitialSnapshot('running')
     snapshot.level = FLOORS_PER_CAMPAIGN
     snapshot.levelTimer = 0
@@ -2227,7 +2618,7 @@ describe('game engine', () => {
     snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.5)
 
     expect(snapshot.enemies[0].position.x).toBeLessThan(snapshot.player.position.x)
-    expect(snapshot.enemies[0].position.x).toBeGreaterThanOrEqual(385)
+    expect(snapshot.enemies[0].position.x).toBeCloseTo(370, 5)
     expect(snapshot.enemies[0].position.y).toBe(220)
   })
 
@@ -2290,7 +2681,7 @@ describe('game engine', () => {
     expect(snapshot.enemies[0].position.x).toBeLessThan(snapshot.player.position.x)
   })
 
-  it('lets dungeon warden p1 begin normal attacks without locking movement in place', () => {
+  it('locks dungeon warden p1 normal attacks at the fixed melee standoff', () => {
     const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.9)
     let snapshot = createInitialSnapshot('running')
     snapshot.level = FLOORS_PER_CAMPAIGN
@@ -2322,8 +2713,8 @@ describe('game engine', () => {
     snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
 
     expect(snapshot.enemies[0].meleeAttackWindup ?? 0).toBeGreaterThan(0)
-    expect(distance(snapshot.enemies[0].position, startPosition)).toBeGreaterThan(0.1)
-    expect(snapshot.message).toContain('轻视')
+    expect(snapshot.enemies[0].position).toEqual(startPosition)
+    expect(snapshot.message).not.toContain('轻视')
     randomSpy.mockRestore()
   })
 
@@ -2715,7 +3106,7 @@ describe('game engine', () => {
     snapshot.enemies = [makeEnemy({
       id: 'leftover-normal',
       position: { x: snapshot.player.position.x + 300, y: snapshot.player.position.y },
-      speed: 0,
+      speed: 160,
     })]
     snapshot.enemyProjectiles = []
     snapshot.player.attackCooldown = 999
@@ -2784,8 +3175,11 @@ describe('game engine', () => {
     })]
     snapshot.projectiles = [makeProjectile({ id: 'stray-player-arrow', ttl: 3 })]
     snapshot.player.attackCooldown = 999
+    snapshot.campaignRewardProgress.eliteRaidRollResolvedLevels = [3]
 
-    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    // This assertion checks legal refill spawn placement, before pursuit has
+    // time to reduce the freshly spawned enemy's player distance.
+    const next = advanceGame(snapshot, noInput, 0)
 
     expect(next.level).toBe(3)
     expect(next.phase).toBe('running')
@@ -2875,7 +3269,7 @@ describe('game engine', () => {
     snapshot.kills = 18
     snapshot.player.hp = 0
 
-    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+    const next = finishPlayerDeathAnimation(snapshot)
 
     expect(next.phase).toBe('game-over')
     expect(next.earnedGold).toBeGreaterThan(0)
@@ -2946,6 +3340,56 @@ describe('game engine', () => {
 
     expect(next.player.hp).toBe(60)
     expect(next.player.dashTimer).toBeGreaterThan(0)
+  })
+
+  it('spends, restores, and refunds the core-owned dash stamina without bypassing dash guards', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+
+    const dashed = triggerDashSnapshot(snapshot)
+    expect(snapshot.player.stamina).toBe(100)
+    expect(dashed.player.stamina).toBe(65)
+    expect(dashed.player.dashCooldown).toBeCloseTo(1.1, 5)
+    expect(dashed.player.dashTimer).toBeCloseTo(0.16, 5)
+    expect(triggerDashSnapshot(dashed).player.stamina).toBe(65)
+
+    const insufficient = createInitialSnapshot('running')
+    insufficient.player.stamina = 34
+    const rejected = triggerDashSnapshot(insufficient)
+    expect(rejected.player.stamina).toBe(34)
+    expect(rejected.player.dashCooldown).toBe(0)
+    expect(rejected.player.dashTimer).toBe(0)
+
+    const recovering = createInitialSnapshot('running')
+    recovering.remainingToSpawn = 0
+    recovering.spawnCooldown = 999
+    recovering.player.stamina = 65
+    const recovered = advanceGame(recovering, noInput, 0.05)
+    expect(recovered.player.stamina).toBeCloseTo(66, 5)
+    recovered.player.stamina = 99.5
+    const capped = advanceGame(recovered, noInput, 0.05)
+    expect(capped.player.stamina).toBe(100)
+    const paused = advanceGame(togglePauseSnapshot(capped), noInput, 0.05)
+    expect(paused.player.stamina).toBe(100)
+
+    const emergency = createInitialSnapshot('running')
+    emergency.remainingToSpawn = 0
+    emergency.spawnCooldown = 999
+    emergency.runTalentState.selectedTalentIds = ['run_common_05']
+    emergency.player.hp = emergency.player.maxHp * 0.29
+    emergency.player.stamina = 30
+    const emergencyTriggered = advanceGame(emergency, noInput, 0.05)
+    expect(emergencyTriggered.player.shield).toBeCloseTo(emergency.player.maxHp * 0.12, 5)
+    expect(emergencyTriggered.player.stamina).toBeCloseTo(66, 5)
+    expect(emergencyTriggered.talentCombatState!.emergencyDodge?.cooldown).toBeCloseTo(35, 5)
+    const emergencyCooldownTick = advanceGame(emergencyTriggered, noInput, 0.05)
+    expect(emergencyCooldownTick.player.stamina).toBeCloseTo(67, 5)
+
+    expect(restartRunSnapshot(dashed).player.stamina).toBe(100)
+    expect(startRunSnapshot(dashed).player.stamina).toBe(100)
+    expect(startLocalBattleTestSnapshot(dashed).player.stamina).toBe(100)
   })
 
   it('does not auto-cast active skills when cooldown is ready', () => {
@@ -3151,7 +3595,7 @@ describe('game engine', () => {
     snapshot.equipmentInventory = [equippedRare, backpackFine, dungeonEpic, systemEpic]
     snapshot.equippedItems = { weapon: equippedRare, ring1: dungeonEpic, necklace: systemEpic }
 
-    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    const next = finishPlayerDeathAnimation(snapshot)
 
     expect(next.phase).toBe('game-over')
     expect(next.equipmentInventory.map((item) => item.id)).toEqual(['system-epic'])
@@ -3197,6 +3641,90 @@ describe('game engine', () => {
     expect(next.equipmentMaterials).toEqual(createEmptyEquipmentMaterials())
   })
 
+  it('freezes one formal run settlement summary only after the real boss reward exit', () => {
+    const preRunEquipment = makeEquipment({ id: 'pre-run-system', source: 'system', slot: 'weapon', rarity: 'epic', score: 150 })
+    const current = createInitialSnapshot('idle')
+    current.equipmentInventory = [preRunEquipment]
+    current.equippedItems = { weapon: preRunEquipment }
+    const carriedEpic = makeEquipment({ id: 'settlement-carried-epic', source: 'dungeon', slot: 'ring1', rarity: 'epic', score: 160 })
+    const dismantledRare = makeEquipment({ id: 'settlement-dismantled-rare', source: 'dungeon', slot: 'boots', rarity: 'rare', score: 90 })
+    let success = startRunSnapshot(current)
+    success.activeSkills = [{ skillId: 'pierce-arrow', level: 2, cooldownRemaining: 0 }]
+    success.inRunTalentIds = ['run_blood_02']
+    success.runTalentState.selectedTalentIds = ['run_blood_02']
+    success.equipmentInventory = [...success.equipmentInventory, carriedEpic, dismantledRare]
+    success.equippedItems = { ...success.equippedItems, ring1: carriedEpic, boots: dismantledRare }
+    success.runSettlementDamageStats = [
+      { sourceId: 'player-basic-attack', sourceName: '普通攻击', totalDamage: 144, maxHitDamage: 36 },
+      { sourceId: 'pierce-arrow', sourceName: '穿透箭', totalDamage: 321, maxHitDamage: 88 },
+    ]
+    success.level = FLOORS_PER_CAMPAIGN
+    success.levelTargetKills = getLevelGoal(FLOORS_PER_CAMPAIGN)
+    success.levelKills = success.levelTargetKills
+    success.remainingToSpawn = 0
+    success.bossDefeatedThisLevel = true
+    success.levelTimer = 0.01
+    success.phase = 'level-clear'
+    success.pendingSkillReward = null
+    success.pendingBossLoot = []
+    success.levelClearConfirmed = true
+    success.kills = 42
+    success.runExpGained = 320
+    success.runHighestContractLevel = FLOORS_PER_CAMPAIGN
+    success.runBossKills = 1
+
+    success = advanceGame(success, noInput, 0.05)
+    const summary = success.runSettlementSummary
+    expect(success.phase).toBe('game-over')
+    expect(summary).toMatchObject({
+      result: 'success',
+      reachedLevel: FLOORS_PER_CAMPAIGN,
+      finalCarriedEquipmentIds: ['settlement-carried-epic'],
+      carriedEquipmentCount: 1,
+      talentPointsEarned: success.lastTalentPointRecord?.points,
+    })
+    expect(summary?.displayEntries).toEqual([
+      expect.objectContaining({ sourceId: 'pierce-arrow', name: '穿刺箭', kind: 'active-skill', order: 0, level: 2 }),
+      expect.objectContaining({ sourceId: 'run_blood_02', name: '流血箭簇', kind: 'run-talent', order: 1 }),
+    ])
+    expect(summary?.damageEntries).toEqual([
+      { sourceId: 'player-basic-attack', sourceName: '普通攻击', totalDamage: 144, maxHitDamage: 36 },
+      { sourceId: 'pierce-arrow', sourceName: '穿透箭', totalDamage: 321, maxHitDamage: 88 },
+    ])
+    expect(summary?.finalCarriedEquipmentIds).not.toContain('pre-run-system')
+    expect(summary?.finalCarriedEquipmentIds).not.toContain('settlement-dismantled-rare')
+    expect(Object.isFrozen(summary)).toBe(true)
+    expect(Object.isFrozen(summary?.damageEntries)).toBe(true)
+
+    const nonBoss = createInitialSnapshot('level-clear')
+    nonBoss.level = FLOORS_PER_CAMPAIGN - 1
+    nonBoss.pendingSkillReward = null
+    nonBoss.pendingBossLoot = []
+    const nonBossAfterDismiss = dismissBossLootSnapshot(nonBoss)
+    expect(nonBossAfterDismiss.runSettlementSummary).toBeUndefined()
+
+    expect(returnToVillageSnapshot(success).runSettlementSummary).toBeUndefined()
+    expect(startRunSnapshot(success).runSettlementSummary).toBeUndefined()
+    expect(restartRunSnapshot(success).runSettlementSummary).toBeUndefined()
+    expect(startLocalBattleTestSnapshot(success).runSettlementSummary).toBeUndefined()
+
+    const failure = startRunSnapshot(current)
+    failure.player.hp = 0
+    const failed = finishPlayerDeathAnimation(failure)
+    expect(failed.runSettlementSummary).toMatchObject({
+      result: 'failure',
+      reachedLevel: 1,
+      talentPointsEarned: failed.lastTalentPointRecord?.points,
+    })
+    expect(failed.runSettlementSummary?.carriedEquipmentCount).toBe(0)
+
+    const local = startLocalBattleTestSnapshot(current)
+    local.player.hp = 0
+    const localFailed = finishPlayerDeathAnimation(local)
+    expect(localFailed.localBattleTest?.status).toBe('failed')
+    expect(localFailed.runSettlementSummary).toBeUndefined()
+  })
+
   it('applies unlocked meta talent material bonuses to automatic below-epic dismantle results', () => {
     const makeRun = (withTalent: boolean) => {
       const snapshot = createInitialSnapshot('running')
@@ -3217,8 +3745,8 @@ describe('game engine', () => {
       return snapshot
     }
 
-    const base = advanceGame(makeRun(false), { up: false, down: false, left: false, right: false }, 0.016)
-    const talented = advanceGame(makeRun(true), { up: false, down: false, left: false, right: false }, 0.016)
+    const base = finishPlayerDeathAnimation(makeRun(false))
+    const talented = finishPlayerDeathAnimation(makeRun(true))
 
     expect(talented.lastAutoDismantleSummary?.count).toBe(base.lastAutoDismantleSummary?.count)
     expect(talented.lastAutoDismantleSummary?.materials.crystalDust ?? 0).toBeGreaterThan(base.lastAutoDismantleSummary?.materials.crystalDust ?? 0)
@@ -3618,6 +4146,7 @@ describe('game engine', () => {
     ]
 
     const cast = triggerActiveSkillSnapshot(snapshot, 0)
+    releasePlayerProjectilesForImpact(cast)
     cast.projectiles = [cast.projectiles[0]]
     cast.projectiles[0].position = { ...cast.enemies[0].position }
     const next = advanceGame(cast, { up: false, down: false, left: false, right: false }, 0.016)
@@ -3648,6 +4177,7 @@ describe('game engine', () => {
     snapshot.enemies = []
 
     let next = triggerActiveSkillSnapshot(snapshot, 0)
+    releasePlayerProjectilesForImpact(next)
     expect(next.projectiles[0].velocity.x).toBeGreaterThan(0)
     const returnAfter = next.projectiles[0].returnAfter ?? 0
     for (let elapsed = 0; elapsed < returnAfter + 0.08; elapsed += 0.04) {
@@ -3685,6 +4215,7 @@ describe('game engine', () => {
     snapshot.enemies = []
 
     let next = triggerActiveSkillSnapshot(snapshot, 0)
+    releasePlayerProjectilesForImpact(next)
     const returnAfter = next.projectiles[0].returnAfter ?? 0
     for (let elapsed = 0; elapsed < returnAfter + 0.08; elapsed += 0.04) {
       next = advanceGame(next, { up: false, down: false, left: false, right: false }, 0.04)
@@ -3833,6 +4364,10 @@ describe('game engine', () => {
     expect(next.enemies[0].hp).toBeCloseTo(795, 5)
     expect(next.floatingTexts.some((text) => text.value === '正面防御')).toBe(true)
     expect(next.floatingTexts.some((text) => text.value === '暴击')).toBe(true)
+    expect(next.combatDamageLog).toEqual(expect.arrayContaining([
+      expect.objectContaining({ targetId: 'curve-skeleton-warrior', sourceId: 'curve-return', isCritical: false }),
+      expect.objectContaining({ targetId: 'curve-skeleton-warrior', sourceId: 'curve-return', isCritical: true }),
+    ]))
   })
 
   it('records final structured combat damage with source attribution, shields, aggregation, capacity, and run reset cleanup', () => {
@@ -3865,8 +4400,15 @@ describe('game engine', () => {
       targetId: 'log-target',
       targetName: '训练木桩',
       damage: 20,
-      mergeKey: 'player:player:basic-arrow:log-target',
+      isCritical: false,
+      mergeKey: 'player:player:basic-arrow:log-target:normal',
     })
+    expect(merged.runSettlementDamageStats).toEqual([{
+      sourceId: 'player-basic-attack',
+      sourceName: '普通攻击',
+      totalDamage: 20,
+      maxHitDamage: 12,
+    }])
 
     let afterMergeWindow = merged
     for (let frame = 0; frame < 11; frame += 1) {
@@ -3876,6 +4418,79 @@ describe('game engine', () => {
     const separated = advanceGame(afterMergeWindow, { up: false, down: false, left: false, right: false }, 0.016)
     expect(separated.combatDamageLog).toHaveLength(2)
     expect(separated.combatDamageLog[1]?.damage).toBe(5)
+    expect(separated.runSettlementDamageStats).toEqual([{
+      sourceId: 'player-basic-attack',
+      sourceName: '普通攻击',
+      totalDamage: 25,
+      maxHitDamage: 12,
+    }])
+
+    const basicAliases = createLogSnapshot()
+    basicAliases.enemies = [
+      makeEnemy({ id: 'basic-alias-arrow', position: { x: 220, y: 160 }, hp: 100, maxHp: 100 }),
+      makeEnemy({ id: 'basic-alias-attack', position: { x: 220, y: 200 }, hp: 100, maxHp: 100 }),
+      makeEnemy({ id: 'basic-alias-projectile', position: { x: 220, y: 240 }, hp: 100, maxHp: 100 }),
+    ]
+    basicAliases.projectiles = [
+      makeProjectile({ id: 'basic-alias-arrow', sourceSkillId: 'basic-arrow', position: { x: 220, y: 160 }, velocity: { x: 0, y: 0 }, damage: 7 }),
+      makeProjectile({ id: 'basic-alias-attack', sourceSkillId: 'player-basic-attack', position: { x: 220, y: 200 }, velocity: { x: 0, y: 0 }, damage: 13 }),
+      makeProjectile({ id: 'basic-alias-projectile', sourceSkillId: 'player-projectile', position: { x: 220, y: 240 }, velocity: { x: 0, y: 0 }, damage: 9 }),
+    ]
+    const basicAliasesAfter = advanceGame(basicAliases, noInput, 0.016)
+    expect(basicAliasesAfter.runSettlementDamageStats).toEqual([{
+      sourceId: 'player-basic-attack',
+      sourceName: '普通攻击',
+      totalDamage: 29,
+      maxHitDamage: 13,
+    }])
+
+    const activeSkill = createLogSnapshot()
+    activeSkill.enemies = [makeEnemy({ id: 'active-skill-target', position: { x: 220, y: 200 }, hp: 100, maxHp: 100 })]
+    activeSkill.projectiles = [makeProjectile({ id: 'active-skill-arrow', sourceSkillId: 'pierce-arrow', position: { x: 220, y: 200 }, velocity: { x: 0, y: 0 }, damage: 14 })]
+    const activeSkillAfter = advanceGame(activeSkill, noInput, 0.016)
+    expect(activeSkillAfter.runSettlementDamageStats).toEqual([{
+      sourceId: 'pierce-arrow',
+      sourceName: ARCHER_ACTIVE_SKILL_MAP['pierce-arrow'].name,
+      totalDamage: 14,
+      maxHitDamage: 14,
+    }])
+
+    const mixedCriticals = createLogSnapshot()
+    mixedCriticals.enemies = [makeEnemy({ id: 'mixed-critical-target', position: { x: 220, y: 200 }, hp: 100, maxHp: 100 })]
+    mixedCriticals.projectiles = [
+      makeProjectile({ id: 'mixed-normal', sourceSkillId: 'basic-arrow', position: { x: 220, y: 200 }, velocity: { x: 0, y: 0 }, damage: 10, criticalChance: 0 }),
+      makeProjectile({
+        id: 'mixed-forced-critical',
+        sourceSkillId: 'basic-arrow',
+        position: { x: 220, y: 200 },
+        velocity: { x: 0, y: 0 },
+        damage: 12,
+        forceCritical: true,
+        criticalDamageMultiplier: 2,
+      }),
+    ]
+    const mixedCriticalsAfter = advanceGame(mixedCriticals, noInput, 0.016)
+    expect(mixedCriticalsAfter.combatDamageLog).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        targetId: 'mixed-critical-target',
+        damage: 10,
+        isCritical: false,
+        mergeKey: 'player:player:basic-arrow:mixed-critical-target:normal',
+      }),
+      expect.objectContaining({
+        targetId: 'mixed-critical-target',
+        damage: 24,
+        isCritical: true,
+        mergeKey: 'player:player:basic-arrow:mixed-critical-target:critical',
+      }),
+    ]))
+    expect(mixedCriticalsAfter.combatDamageLog).toHaveLength(2)
+    expect(mixedCriticalsAfter.runSettlementDamageStats).toEqual([{
+      sourceId: 'player-basic-attack',
+      sourceName: '普通攻击',
+      totalDamage: 34,
+      maxHitDamage: 24,
+    }])
 
     const shielded = createLogSnapshot()
     shielded.player.shield = 30
@@ -3913,7 +4528,7 @@ describe('game engine', () => {
     })]
     const meleeAfter = advanceGame(melee, { up: false, down: false, left: false, right: false }, 0.016)
     expect(meleeAfter.combatDamageLog).toEqual([expect.objectContaining({
-      side: 'enemy', attackerId: 'log-melee', attackerName: '骷髅兵', sourceId: 'enemy-basic-attack', sourceName: '普通攻击', damage: 9,
+      side: 'enemy', isCritical: false, attackerId: 'log-melee', attackerName: '骷髅兵', sourceId: 'enemy-basic-attack', sourceName: '普通攻击', damage: 9,
     })])
 
     const ranged = createLogSnapshot()
@@ -3923,7 +4538,7 @@ describe('game engine', () => {
     })]
     const rangedAfter = advanceGame(ranged, { up: false, down: false, left: false, right: false }, 0.016)
     expect(rangedAfter.combatDamageLog).toEqual([expect.objectContaining({
-      side: 'enemy', attackerId: 'log-archer', attackerName: '骷髅弓手', sourceId: 'enemy-ranged-shot', sourceName: '远程射击', damage: 11,
+      side: 'enemy', isCritical: false, attackerId: 'log-archer', attackerName: '骷髅弓手', sourceId: 'enemy-ranged-shot', sourceName: '远程射击', damage: 11,
     })])
 
     const dot = createLogSnapshot()
@@ -3934,6 +4549,9 @@ describe('game engine', () => {
     const dotAfter = advanceGame(dotHit, { up: false, down: false, left: false, right: false }, 0.2)
     expect(dotAfter.combatDamageLog).toEqual(expect.arrayContaining([expect.objectContaining({
       side: 'player', sourceId: 'run_blood_02', sourceName: '流血箭簇', targetId: 'dot-target', damage: expect.any(Number),
+    })]))
+    expect(dotAfter.runSettlementDamageStats).toEqual(expect.arrayContaining([expect.objectContaining({
+      sourceId: 'run_blood_02', sourceName: '流血箭簇', totalDamage: expect.any(Number), maxHitDamage: expect.any(Number),
     })]))
 
     const bossSkill = createLogSnapshot()
@@ -3983,9 +4601,10 @@ describe('game engine', () => {
       hp: 20,
       maxHp: 20,
     }))
+    const basicSources = ['basic-arrow', 'player-basic-attack', 'player-projectile'] as const
     capped.projectiles = capped.enemies.map((enemy, index) => makeProjectile({
       id: `capacity-arrow-${index}`,
-      sourceSkillId: 'basic-arrow',
+      sourceSkillId: basicSources[index % basicSources.length],
       position: { ...enemy.position },
       velocity: { x: 0, y: 0 },
       damage: 1,
@@ -3993,12 +4612,94 @@ describe('game engine', () => {
     const capacityAfter = advanceGame(capped, { up: false, down: false, left: false, right: false }, 0.016)
     expect(capacityAfter.combatDamageLog).toHaveLength(120)
     expect(capacityAfter.combatDamageLog[0]?.targetId).toBe('capacity-target-1')
+    expect(capacityAfter.runSettlementDamageStats).toEqual([{
+      sourceId: 'player-basic-attack',
+      sourceName: '普通攻击',
+      totalDamage: 121,
+      maxHitDamage: 1,
+    }])
+
+    separated.player.hp = 0
+    const failedWithBasicDamage = finishPlayerDeathAnimation(separated)
+    expect(failedWithBasicDamage.runSettlementSummary?.damageEntries).toEqual([{
+      sourceId: 'player-basic-attack',
+      sourceName: '普通攻击',
+      totalDamage: 25,
+      maxHitDamage: 12,
+    }])
 
     expect(startRunSnapshot(separated).combatDamageLog).toEqual([])
     expect(restartRunSnapshot(separated).combatDamageLog).toEqual([])
     expect(returnToVillageSnapshot(separated).combatDamageLog).toEqual([])
     expect(startLocalBattleTestSnapshot(separated).combatDamageLog).toEqual([])
     expect(exitLocalBattleTestSnapshot(startLocalBattleTestSnapshot(separated)).combatDamageLog).toEqual([])
+  })
+
+  it('aggregates actual ordinary-arrow variants for formal settlement without merging skills or talents', () => {
+    const createSettlementDamageSnapshot = () => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.player.attackCooldown = 999
+      snapshot.player.position = { x: 100, y: 200 }
+      return snapshot
+    }
+
+    const snapshot = createSettlementDamageSnapshot()
+    snapshot.enemies = [
+      makeEnemy({ id: 'basic-arrow-target', position: { x: 220, y: 120 }, hp: 100, maxHp: 100 }),
+      makeEnemy({ id: 'basic-attack-target', position: { x: 220, y: 160 }, hp: 100, maxHp: 100 }),
+      makeEnemy({ id: 'basic-projectile-target', position: { x: 220, y: 200 }, hp: 100, maxHp: 100 }),
+      makeEnemy({ id: 'skill-target', position: { x: 220, y: 240 }, hp: 100, maxHp: 100 }),
+      makeEnemy({ id: 'talent-target', position: { x: 220, y: 280 }, hp: 100, maxHp: 100 }),
+    ]
+    snapshot.projectiles = [
+      makeProjectile({ id: 'basic-arrow-hit', sourceSkillId: 'basic-arrow', position: { x: 220, y: 120 }, velocity: { x: 0, y: 0 }, damage: 7 }),
+      makeProjectile({ id: 'basic-attack-hit', sourceSkillId: 'player-basic-attack', position: { x: 220, y: 160 }, velocity: { x: 0, y: 0 }, damage: 13 }),
+      makeProjectile({ id: 'basic-projectile-hit', sourceSkillId: 'player-projectile', position: { x: 220, y: 200 }, velocity: { x: 0, y: 0 }, damage: 9 }),
+      makeProjectile({ id: 'skill-hit', sourceSkillId: 'pierce-arrow', position: { x: 220, y: 240 }, velocity: { x: 0, y: 0 }, damage: 14 }),
+      makeProjectile({ id: 'talent-hit', sourceSkillId: 'run_blood_02', sourceName: '流血箭簇', position: { x: 220, y: 280 }, velocity: { x: 0, y: 0 }, damage: 6 }),
+    ]
+
+    const afterHits = advanceGame(snapshot, noInput, 0.016)
+    expect(afterHits.runSettlementDamageStats).toEqual([
+      { sourceId: 'player-basic-attack', sourceName: '普通攻击', totalDamage: 29, maxHitDamage: 13 },
+      { sourceId: 'pierce-arrow', sourceName: ARCHER_ACTIVE_SKILL_MAP['pierce-arrow'].name, totalDamage: 14, maxHitDamage: 14 },
+      { sourceId: 'run_blood_02', sourceName: '流血箭簇', totalDamage: 6, maxHitDamage: 6 },
+    ])
+
+    const capacity = createSettlementDamageSnapshot()
+    capacity.enemies = Array.from({ length: 121 }, (_, index) => makeEnemy({
+      id: `ordinary-capacity-target-${index}`,
+      position: { x: 220 + (index % 11) * 50, y: 60 + Math.floor(index / 11) * 50 },
+      hp: 20,
+      maxHp: 20,
+    }))
+    const basicSources = ['basic-arrow', 'player-basic-attack', 'player-projectile'] as const
+    capacity.projectiles = capacity.enemies.map((enemy, index) => makeProjectile({
+      id: `ordinary-capacity-arrow-${index}`,
+      sourceSkillId: basicSources[index % basicSources.length],
+      position: { ...enemy.position },
+      velocity: { x: 0, y: 0 },
+      damage: 1,
+    }))
+    const afterCapacity = advanceGame(capacity, noInput, 0.016)
+    expect(afterCapacity.combatDamageLog).toHaveLength(120)
+    expect(afterCapacity.runSettlementDamageStats).toEqual([
+      { sourceId: 'player-basic-attack', sourceName: '普通攻击', totalDamage: 121, maxHitDamage: 1 },
+    ])
+
+    afterHits.player.hp = 0
+    const failed = finishPlayerDeathAnimation(afterHits)
+    expect(failed.runSettlementSummary?.result).toBe('failure')
+    expect(failed.runSettlementSummary?.damageEntries).toEqual(afterHits.runSettlementDamageStats)
+
+    const local = startLocalBattleTestSnapshot(createInitialSnapshot('idle'))
+    local.player.hp = 0
+    const localFailed = finishPlayerDeathAnimation(local)
+    expect(localFailed.runSettlementSummary).toBeUndefined()
   })
 
   it('uses actual enemy life loss for damage floats, including overkill and boss health gates', () => {
@@ -4093,6 +4794,7 @@ describe('game engine', () => {
     snapshot.enemies = [makeEnemy({ id: 'marked', position: { x: 260, y: 200 }, hp: 80 })]
 
     const cast = triggerActiveSkillSnapshot(snapshot, 0)
+    releasePlayerProjectilesForImpact(cast)
     cast.projectiles[0].position = { ...cast.enemies[0].position }
     const next = advanceGame(cast, { up: false, down: false, left: false, right: false }, 0.016)
 
@@ -4110,6 +4812,7 @@ describe('game engine', () => {
     snapshot.enemies = [makeEnemy({ id: 'burned', position: { x: 260, y: 200 }, hp: 120, maxHp: 120 })]
 
     const cast = triggerActiveSkillSnapshot(snapshot, 0)
+    releasePlayerProjectilesForImpact(cast)
     cast.projectiles[0].position = { ...cast.enemies[0].position }
     const hit = advanceGame(cast, { up: false, down: false, left: false, right: false }, 0.016)
     const hpAfterHit = hit.enemies[0].hp
@@ -4176,6 +4879,7 @@ describe('game engine', () => {
     ]
 
     const cast = triggerActiveSkillSnapshot(snapshot, 0)
+    releasePlayerProjectilesForImpact(cast)
     cast.projectiles[0].position = { ...cast.enemies[0].position }
     const next = advanceGame(cast, { up: false, down: false, left: false, right: false }, 0.016)
 
@@ -4194,6 +4898,7 @@ describe('game engine', () => {
     stunned.enemies = [makeEnemy({ id: 'stunned', position: { x: 260, y: 200 }, hp: 120, maxHp: 120 })]
 
     const stunCast = triggerActiveSkillSnapshot(stunned, 0)
+    releasePlayerProjectilesForImpact(stunCast)
     stunCast.projectiles[0].position = { ...stunCast.enemies[0].position }
     const stunHit = advanceGame(stunCast, { up: false, down: false, left: false, right: false }, 0.016)
     expect(stunHit.enemies[0].stunTimer).toBeGreaterThan(0)
@@ -4208,6 +4913,7 @@ describe('game engine', () => {
     bleeding.enemies = [makeEnemy({ id: 'bleeding', position: { x: 260, y: 200 }, hp: 120, maxHp: 120 })]
 
     const bleedCast = triggerActiveSkillSnapshot(bleeding, 0)
+    releasePlayerProjectilesForImpact(bleedCast)
     bleedCast.projectiles[0].position = { ...bleedCast.enemies[0].position }
     const bleedHit = advanceGame(bleedCast, { up: false, down: false, left: false, right: false }, 0.016)
     expect(bleedHit.enemies[0].bleedStacks?.length).toBeGreaterThan(0)
@@ -4246,11 +4952,13 @@ describe('game engine', () => {
     }
 
     const closeCast = triggerActiveSkillSnapshot(createDawnSnapshot(230), 0)
+    releasePlayerProjectilesForImpact(closeCast)
     closeCast.projectiles[0].position = { ...closeCast.enemies[0].position }
     const closeHit = advanceGame(closeCast, { up: false, down: false, left: false, right: false }, 0.016)
     const closeDamage = 400 - closeHit.enemies[0].hp
 
     const farCast = triggerActiveSkillSnapshot(createDawnSnapshot(660), 0)
+    releasePlayerProjectilesForImpact(farCast)
     farCast.projectiles[0].position = { ...farCast.enemies[0].position }
     const farHit = advanceGame(farCast, { up: false, down: false, left: false, right: false }, 0.016)
     const farDamage = 400 - farHit.enemies[0].hp
@@ -4288,6 +4996,7 @@ describe('game engine', () => {
     snapshot.enemies = [makeEnemy({ id: 'pulled', position: { x: 320, y: 250 }, hp: 400, maxHp: 400 })]
 
     const cast = triggerActiveSkillSnapshot(snapshot, 0)
+    releasePlayerProjectilesForImpact(cast)
     cast.projectiles[0].position = { ...cast.enemies[0].position }
     const next = advanceGame(cast, { up: false, down: false, left: false, right: false }, 0.016)
 
@@ -4308,6 +5017,7 @@ describe('game engine', () => {
 
     const snipeCast = triggerActiveSkillSnapshot(snipe, 0)
     expect(snipeCast.projectiles[0].singleTargetDamageMultiplier).toBeGreaterThanOrEqual(1.25)
+    releasePlayerProjectilesForImpact(snipeCast)
     snipeCast.projectiles[0].position = { ...snipeCast.enemies[0].position }
     const snipeHit = advanceGame(snipeCast, { up: false, down: false, left: false, right: false }, 0.016)
     expect(snipeHit.enemies[0].hp).toBeLessThan(240 - ARCHER_ACTIVE_SKILL_MAP['heavy-snipe'].levels[4].damage)
@@ -4325,26 +5035,28 @@ describe('game engine', () => {
     ]
 
     const shockCast = triggerActiveSkillSnapshot(shock, 0)
+    releasePlayerProjectilesForImpact(shockCast)
     shockCast.projectiles[0].position = { ...shockCast.enemies[0].position }
     const shockHit = advanceGame(shockCast, { up: false, down: false, left: false, right: false }, 0.016)
     expect(shockHit.enemies.find((enemy) => enemy.id === 'nearby')?.stunTimer).toBeGreaterThan(0)
   })
 
-  it('leaves a level five starfire field after celestial feather explodes', () => {
+  it('leaves the sky judgement Lv5 starfire field after its impact', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.remainingToSpawn = 0
     snapshot.mapObstacles = []
     snapshot.player.position = { x: 180, y: 200 }
     snapshot.aimPoint = { x: 320, y: 200 }
     snapshot.player.attackCooldown = 99
-    snapshot.activeSkills = [{ skillId: 'celestial-feather', level: 5, cooldownRemaining: 0 }]
+    snapshot.activeSkills = [{ skillId: 'curve-return', familyId: 'curve-return', evolutionId: 'sky-judgement', level: 5, cooldownRemaining: 0 }]
     snapshot.enemies = [makeEnemy({ id: 'starfire-target', position: { x: 260, y: 200 }, hp: 240, maxHp: 240 })]
 
     const cast = triggerActiveSkillSnapshot(snapshot, 0)
+    releasePlayerProjectilesForImpact(cast)
     cast.projectiles[0].position = { ...cast.enemies[0].position }
     const hit = advanceGame(cast, { up: false, down: false, left: false, right: false }, 0.016)
 
-    expect(hit.skillFields.some((field) => field.sourceSkillId === 'celestial-starfire' && field.effect === 'burn')).toBe(true)
+    expect(hit.skillFields.some((field) => field.sourceSkillId === 'sky-judgement' && field.sourceEvolutionId === 'sky-judgement' && field.effect === 'burn')).toBe(true)
   })
 
   it('tightens spread skill fan angles before firing', () => {
@@ -4361,6 +5073,506 @@ describe('game engine', () => {
     const angles = cast.projectiles.map((projectile) => Math.atan2(projectile.velocity.y, projectile.velocity.x))
 
     expect(Math.max(...angles) - Math.min(...angles)).toBeLessThan(ARCHER_ACTIVE_SKILL_MAP['fan-burst'].levels[0].spread * (cast.projectiles.length - 1))
+  })
+
+  it('fires mapped death-contract arrows in a locked straight sequence without changing curve-return behavior', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.remainingToSpawn = 1
+    snapshot.spawnCooldown = 999
+    clearCombatObstacles(snapshot)
+    snapshot.player.attackCooldown = 99
+    snapshot.player.position = { x: 180, y: 200 }
+    snapshot.aimPoint = { x: 420, y: 200 }
+    snapshot.runTalentState.selectedTalentIds = ['run_death_03']
+    snapshot.activeSkills = [{ skillId: 'curve-return', level: 1, cooldownRemaining: 0 }]
+
+    const cast = triggerActiveSkillSnapshot(snapshot, 0)
+    expect(cast.projectiles).toHaveLength(1)
+    expect(cast.pendingProjectileLaunches).toHaveLength(1)
+    expect(cast.projectiles[0]).toMatchObject({ sourceSkillId: 'curve-return', returnAfter: expect.any(Number) })
+    const curveInterval = Math.max(
+      RUN_TALENT_DEATH_SHOT_INTERVAL_SECONDS,
+      getQuickTripleHalfArrowReleaseInterval(cast.projectiles[0]),
+    )
+    expect(cast.pendingProjectileLaunches?.[0]).toMatchObject({
+      delayRemaining: cast.projectiles[0].releaseDelayRemaining! + curveInterval,
+      projectile: { sourceSkillId: 'curve-return', returnAfter: expect.any(Number) },
+    })
+    expect(cast.activeSkills[0].cooldownRemaining).toBeCloseTo(ARCHER_ACTIVE_SKILL_MAP['curve-return'].levels[0].cooldown, 6)
+
+    const paused = togglePauseSnapshot(cast)
+    const resumed = togglePauseSnapshot(paused)
+    const redirected = updateAimPointSnapshot(resumed, { x: 180, y: 520 })
+    let beforeRelease = redirected
+    for (let frame = 0; frame < 30 && beforeRelease.projectiles.length < 2; frame += 1) {
+      beforeRelease = advanceGame(beforeRelease, noInput, 0.05)
+    }
+    expect(beforeRelease.pendingProjectileLaunches).toHaveLength(0)
+    expect(beforeRelease.projectiles).toHaveLength(2)
+
+    beforeRelease.projectiles.forEach((projectile) => {
+      expect(projectile.velocity.y).toBeCloseTo(0, 6)
+      expect(projectile.velocity.x).toBeGreaterThan(0)
+      expect(projectile.returnAfter).toBeGreaterThan(0)
+    })
+  })
+
+  it('keeps explicit straight skills at zero degrees from the first cast and snapshots death takeover atomically', () => {
+    const totalAngle = (projectiles: Projectile[]) => {
+      const angles = projectiles.map((projectile) => Math.atan2(projectile.velocity.y, projectile.velocity.x))
+      return Math.max(...angles) - Math.min(...angles)
+    }
+    const createFormalPierceRun = (extraArrowCount: number) => {
+      const snapshot = startRunSnapshot(createInitialSnapshot('idle'))
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 99
+      snapshot.player.position = { x: 180, y: 200 }
+      snapshot.aimPoint = { x: 420, y: 200 }
+      clearCombatObstacles(snapshot)
+      snapshot.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+      snapshot.equippedItems = extraArrowCount > 0
+        ? {
+            weapon: makeEquipment({
+              id: `first-cast-straight-${extraArrowCount}`,
+              buildTag: 'pierce',
+              bonus: {},
+              modifiers: [{ type: 'projectile-count', buildTag: 'pierce', amount: extraArrowCount }],
+            }),
+          }
+        : {}
+      return snapshot
+    }
+
+    ;[1, 2, 3].forEach((extraArrowCount) => {
+      const cast = triggerActiveSkillSnapshot(createFormalPierceRun(extraArrowCount), 0)
+      expect(cast.projectiles).toHaveLength(1 + extraArrowCount)
+      expect(totalAngle(cast.projectiles)).toBeCloseTo(0, 8)
+      expect(cast.pendingProjectileLaunches).toHaveLength(0)
+    })
+
+    const curveReturn = createFormalPierceRun(0)
+    curveReturn.activeSkills = [{ skillId: 'curve-return', level: 1, cooldownRemaining: 0 }]
+    const curveCast = triggerActiveSkillSnapshot(curveReturn, 0)
+    expect(curveCast.projectiles).toHaveLength(2)
+    expect(totalAngle(curveCast.projectiles)).toBeCloseTo(0, 8)
+    expect(curveCast.pendingProjectileLaunches).toHaveLength(0)
+
+    const fan = createFormalPierceRun(0)
+    fan.activeSkills = [{ skillId: 'fan-burst', level: 1, cooldownRemaining: 0 }]
+    const fanCast = triggerActiveSkillSnapshot(fan, 0)
+    expect(totalAngle(fanCast.projectiles)).toBeGreaterThan(0)
+
+    ;(['run_death_03', 'run_death_06'] as const).forEach((nodeId) => {
+      const selected = createFormalPierceRun(2)
+      selected.runTalentState.selectedTalentIds = [nodeId]
+      const cast = triggerActiveSkillSnapshot(selected, 0)
+      const first = cast.projectiles[0]
+      const interval = Math.max(
+        RUN_TALENT_DEATH_SHOT_INTERVAL_SECONDS,
+        getQuickTripleHalfArrowReleaseInterval(first),
+      )
+      expect(cast.projectiles).toHaveLength(1)
+      expect(cast.pendingProjectileLaunches).toHaveLength(2)
+      expect(cast.pendingProjectileLaunches?.[0]?.delayRemaining).toBeCloseTo(first.releaseDelayRemaining! + interval, 8)
+      expect(cast.pendingProjectileLaunches?.[1]?.delayRemaining).toBeCloseTo(first.releaseDelayRemaining! + interval * 2, 8)
+
+      // The queued arrows keep the cast's original aim even if the cursor
+      // changes while the bow animation and 0.08-second cadence advance.
+      let released = updateAimPointSnapshot(togglePauseSnapshot(togglePauseSnapshot(cast)), { x: 180, y: 520 })
+      for (let frame = 0; frame < 30 && (released.pendingProjectileLaunches?.length ?? 0) > 0; frame += 1) {
+        released = advanceGame(released, noInput, frame === 0 ? 0.5 : 0.05)
+      }
+      expect(released.pendingProjectileLaunches).toHaveLength(0)
+      expect(released.projectiles).toHaveLength(3)
+      expect(totalAngle(released.projectiles)).toBeCloseTo(0, 8)
+      expect(released.projectiles.every((projectile) => projectile.velocity.x > 0 && Math.abs(projectile.velocity.y) < 0.000001)).toBe(true)
+    })
+
+    ;(['pierce-arrow', 'sun-piercer', 'weakness-trace'] as const).forEach((skillId) => {
+      const selected = createFormalPierceRun(2)
+      selected.activeSkills = [{ skillId, level: 1, cooldownRemaining: 0 }]
+      selected.runTalentState.selectedTalentIds = ['run_death_03']
+      const cast = triggerActiveSkillSnapshot(selected, 0)
+      const first = cast.projectiles[0]
+      const interval = Math.max(
+        RUN_TALENT_DEATH_SHOT_INTERVAL_SECONDS,
+        getQuickTripleHalfArrowReleaseInterval(first),
+      )
+
+      expect(cast.projectiles).toHaveLength(1)
+      expect(cast.pendingProjectileLaunches).toHaveLength(2)
+      cast.pendingProjectileLaunches?.forEach((launch, index) => {
+        expect(launch.projectile.playerDirectArrow).toBe(true)
+        expect(launch.delayRemaining).toBeCloseTo(first.releaseDelayRemaining! + interval * (index + 1), 8)
+      })
+
+      const dashFrozen = triggerDashSnapshot(cast)
+      const dashDelays = dashFrozen.pendingProjectileLaunches?.map((launch) => launch.delayRemaining)
+      const duringDash = advanceGame(dashFrozen, noInput, 0.05)
+      expect(duringDash.pendingProjectileLaunches?.map((launch) => launch.delayRemaining)).toEqual(dashDelays)
+      const paused = advanceGame(togglePauseSnapshot(duringDash), noInput, 0.5)
+      expect(paused.pendingProjectileLaunches?.map((launch) => launch.delayRemaining)).toEqual(dashDelays)
+    })
+
+    ;(['run_death_01', 'run_death_02', 'run_death_04', 'run_death_05', 'run_death_07', 'run_death_08'] as const).forEach((nodeId) => {
+      const unaffected = createFormalPierceRun(2)
+      unaffected.runTalentState.selectedTalentIds = [nodeId]
+      const cast = triggerActiveSkillSnapshot(unaffected, 0)
+      expect(cast.pendingProjectileLaunches).toHaveLength(0)
+      expect(cast.projectiles).toHaveLength(3)
+    })
+
+    const selectedRun = createFormalPierceRun(2)
+    selectedRun.runTalentState.selectedTalentIds = ['run_death_03']
+    const restarted = restartRunSnapshot(selectedRun)
+    expect(restarted.runTalentState.selectedTalentIds).toEqual([])
+    restarted.levelTimer = 0
+    restarted.remainingToSpawn = 1
+    restarted.spawnCooldown = 999
+    restarted.player.attackCooldown = 99
+    clearCombatObstacles(restarted)
+    restarted.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    const restartedCast = triggerActiveSkillSnapshot(restarted, 0)
+    expect(totalAngle(restartedCast.projectiles)).toBeCloseTo(0, 8)
+    expect(restartedCast.pendingProjectileLaunches).toHaveLength(0)
+
+    const local = startLocalBattleTestSnapshot(selectedRun)
+    local.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    const localCast = triggerActiveSkillSnapshot(local, 0)
+    expect(localCast.pendingProjectileLaunches).toHaveLength(2)
+  })
+
+  it('releases every direct player arrow from the shared bow mouth and freezes only unstrung arrows during dash', () => {
+    const createDirectSkillSnapshot = (skillId = 'pierce-arrow', aimPoint = { x: 440, y: 220 }) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 99
+      snapshot.player.position = { x: 220, y: 220 }
+      snapshot.aimPoint = { ...aimPoint }
+      snapshot.activeSkills = [{ skillId, level: 1, cooldownRemaining: 0 }]
+      clearCombatObstacles(snapshot)
+      return snapshot
+    }
+    const expectedBowMouth = (
+      snapshot: GameSnapshot,
+      action: 'attack' | 'move-attack' | 'skill',
+      frameIndex: number,
+      aimDirection: Vector2,
+    ) => getPlayerArcherBowMouthWorldPosition({
+      bodyRoot: snapshot.player.position,
+      action,
+      frameIndex,
+      flipX: Math.abs(aimDirection.x) > 0.001 ? aimDirection.x < 0 : snapshot.player.facing === 'left',
+    })
+    const advanceUntilDirectRelease = (snapshot: GameSnapshot, input = noInput) => {
+      let next = snapshot
+      for (let frame = 0; frame < 32; frame += 1) {
+        next = advanceGame(next, input, 0.05)
+        if ((next.pendingProjectileLaunches?.length ?? 0) === 0 && next.projectiles.every((projectile) => !projectile.playerArcherReleaseAction)) {
+          return next
+        }
+      }
+      throw new Error('Expected all direct player arrows to release')
+    }
+
+    const stationaryLeft = triggerActiveSkillSnapshot(createDirectSkillSnapshot('pierce-arrow', { x: 80, y: 220 }), 0)
+    const stationaryLeftReleased = advanceUntilDirectRelease(stationaryLeft)
+    expect(stationaryLeftReleased.projectiles[0].origin).toEqual(
+      expectedBowMouth(stationaryLeftReleased, 'skill', 1, { x: -1, y: 0 }),
+    )
+
+    const movingDiagonal = createDirectSkillSnapshot('pierce-arrow', { x: 480, y: 330 })
+    const movingState = advanceGame(movingDiagonal, { up: false, down: true, left: false, right: true }, 0.05)
+    const movingCast = triggerActiveSkillSnapshot(movingState, 0)
+    const movingReleased = advanceUntilDirectRelease(movingCast, { up: false, down: true, left: false, right: true })
+    expect(movingReleased.projectiles[0].origin).toEqual(
+      expectedBowMouth(movingReleased, 'move-attack', 4, { x: 260, y: 110 }),
+    )
+
+    const basic = createDirectSkillSnapshot()
+    basic.player.attackCooldown = 0
+    basic.enemies = [makeEnemy({ id: 'basic-left-target', position: { x: 110, y: 220 }, speed: 0, attackCooldown: 999 })]
+    const basicStarted = advanceGame(basic, noInput, 0.05)
+    const basicReleased = advanceUntilDirectRelease(basicStarted)
+    expect(basicReleased.projectiles).toHaveLength(1)
+    expect(basicReleased.projectiles[0].origin).toEqual(
+      expectedBowMouth(basicReleased, 'attack', 5, { x: -1, y: 0 }),
+    )
+
+    const afterimage = createDirectSkillSnapshot('afterimage-salvo')
+    afterimage.activeSkills = [{ skillId: 'afterimage-salvo', level: 5, cooldownRemaining: 0 }]
+    const afterimageCast = triggerActiveSkillSnapshot(afterimage, 0)
+    const afterimageCount = afterimageCast.projectiles.length
+    const afterimageReleased = advanceUntilDirectRelease(afterimageCast)
+    const afterimageOrigin = expectedBowMouth(afterimageReleased, 'skill', 1, { x: 1, y: 0 })
+    expect(afterimageReleased.projectiles).toHaveLength(afterimageCount)
+    expect(afterimageReleased.projectiles.every((projectile) => JSON.stringify(projectile.origin) === JSON.stringify(afterimageOrigin))).toBe(true)
+
+    const deathSequence = createDirectSkillSnapshot()
+    deathSequence.equippedItems = {
+      weapon: makeEquipment({
+        id: 'bow-mouth-death-sequence',
+        buildTag: 'pierce',
+        bonus: {},
+        modifiers: [{ type: 'projectile-count', buildTag: 'pierce', amount: 2 }],
+      }),
+    }
+    deathSequence.runTalentState.selectedTalentIds = ['run_death_03']
+    const deathCast = triggerActiveSkillSnapshot(deathSequence, 0)
+    expect(deathCast.projectiles).toHaveLength(1)
+    expect(deathCast.pendingProjectileLaunches).toHaveLength(2)
+
+    let beforeFirstReleaseDash = triggerDashSnapshot(deathCast)
+    const firstDelay = beforeFirstReleaseDash.projectiles[0].releaseDelayRemaining
+    const firstPendingDelays = beforeFirstReleaseDash.pendingProjectileLaunches?.map((launch) => launch.delayRemaining)
+    beforeFirstReleaseDash = advanceGame(beforeFirstReleaseDash, noInput, 0.05)
+    expect(beforeFirstReleaseDash.player.archerAction?.elapsed).toBe(0)
+    expect(beforeFirstReleaseDash.projectiles[0].releaseDelayRemaining).toBe(firstDelay)
+    expect(beforeFirstReleaseDash.pendingProjectileLaunches?.map((launch) => launch.delayRemaining)).toEqual(firstPendingDelays)
+
+    let deathReleased = beforeFirstReleaseDash
+    for (let frame = 0; frame < 16 && deathReleased.projectiles.some((projectile) => projectile.playerArcherReleaseAction); frame += 1) {
+      deathReleased = advanceGame(deathReleased, noInput, 0.05)
+    }
+    expect(deathReleased.projectiles).toHaveLength(1)
+    expect(deathReleased.pendingProjectileLaunches).toHaveLength(2)
+    const releasedFirstOrigin = { ...deathReleased.projectiles[0].origin }
+    const remainingSequenceDelays = deathReleased.pendingProjectileLaunches?.map((launch) => launch.delayRemaining)
+    deathReleased.player.dashCooldown = 0
+    let midSequenceDash = triggerDashSnapshot(deathReleased)
+    midSequenceDash = advanceGame(midSequenceDash, noInput, 0.05)
+    expect(midSequenceDash.projectiles[0].origin).toEqual(releasedFirstOrigin)
+    expect(midSequenceDash.pendingProjectileLaunches?.map((launch) => launch.delayRemaining)).toEqual(remainingSequenceDelays)
+    const deathSequenceReleased = advanceUntilDirectRelease(midSequenceDash)
+    expect(deathSequenceReleased.projectiles).toHaveLength(3)
+    expect(deathSequenceReleased.projectiles.every((projectile) => projectile.velocity.x > 0 && Math.abs(projectile.velocity.y) < 0.000001)).toBe(true)
+
+    const dashBeforeRelease = triggerActiveSkillSnapshot(createDirectSkillSnapshot(), 0)
+    let dashed = triggerDashSnapshot(dashBeforeRelease)
+    const preDashDelay = dashed.projectiles[0].releaseDelayRemaining
+    dashed = advanceGame(dashed, noInput, 0.05)
+    expect(dashed.projectiles[0].releaseDelayRemaining).toBe(preDashDelay)
+    expect(dashed.player.archerAction?.elapsed).toBe(0)
+    const dashedReleased = advanceUntilDirectRelease(dashed)
+    expect(dashedReleased.projectiles[0].origin).toEqual(
+      expectedBowMouth(dashedReleased, 'skill', 1, { x: 1, y: 0 }),
+    )
+
+    let duringDash = triggerDashSnapshot(createDirectSkillSnapshot())
+    duringDash = triggerActiveSkillSnapshot(duringDash, 0)
+    duringDash = advanceGame(duringDash, noInput, 0.05)
+    expect(duringDash.player.archerAction?.elapsed).toBe(0)
+    expect(duringDash.projectiles).toHaveLength(1)
+
+    const alreadyReleased = triggerDashSnapshot(stationaryLeftReleased)
+    const afterDashFlight = advanceGame(alreadyReleased, noInput, 0.05)
+    expect(afterDashFlight.projectiles[0].origin).toEqual(stationaryLeftReleased.projectiles[0].origin)
+    expect(afterDashFlight.projectiles[0].age).toBeGreaterThan(stationaryLeftReleased.projectiles[0].age ?? 0)
+
+    const basicDuringDash = createDirectSkillSnapshot()
+    basicDuringDash.player.attackCooldown = 0
+    basicDuringDash.enemies = [makeEnemy({ id: 'single-autoattack-target', position: { x: 320, y: 220 }, speed: 0, attackCooldown: 999 })]
+    const basicDuringDashStarted = advanceGame(basicDuringDash, noInput, 0.05)
+    let basicDuringDashFrozen = triggerDashSnapshot(basicDuringDashStarted)
+    for (let frame = 0; frame < 3; frame += 1) {
+      basicDuringDashFrozen = advanceGame(basicDuringDashFrozen, noInput, 0.05)
+    }
+    expect(basicDuringDashFrozen.projectiles).toHaveLength(1)
+    expect(basicDuringDashFrozen.lastBasicAttackId).toBe(basicDuringDashStarted.lastBasicAttackId)
+
+    const pausedCast = triggerActiveSkillSnapshot(createDirectSkillSnapshot(), 0)
+    const pausedDelay = pausedCast.projectiles[0].releaseDelayRemaining
+    const paused = advanceGame(togglePauseSnapshot(pausedCast), noInput, 0.5)
+    expect(paused.projectiles[0].releaseDelayRemaining).toBe(pausedDelay)
+    expect(paused.projectiles[0].playerArcherReleaseAction).toBe('skill')
+
+    const returning = advanceUntilDirectRelease(triggerActiveSkillSnapshot(createDirectSkillSnapshot('curve-return'), 0))
+    const returningProjectile = returning.projectiles[0]
+    expect(returningProjectile.origin).toBeDefined()
+    const returnOrigin = { ...returningProjectile.origin! }
+    returningProjectile.hasReturned = true
+    returningProjectile.position = { x: returnOrigin.x + 70, y: returnOrigin.y }
+    returningProjectile.previousPosition = { ...returningProjectile.position }
+    returningProjectile.velocity = { x: -100, y: 0 }
+    returning.player.position = { x: returning.player.position.x + 60, y: returning.player.position.y + 30 }
+    const stillReturning = advanceGame(returning, noInput, 0.05)
+    expect(stillReturning.projectiles[0].origin).toEqual(returnOrigin)
+    expect(stillReturning.projectiles[0].playerArcherReleaseAction).toBeUndefined()
+
+    const restarted = restartRunSnapshot(dashBeforeRelease)
+    expect(restarted.player.archerAction).toBeUndefined()
+    expect(restarted.projectiles).toHaveLength(0)
+    const local = startLocalBattleTestSnapshot(deathSequence)
+    local.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    const localReleased = advanceUntilDirectRelease(triggerActiveSkillSnapshot(local, 0))
+    expect(localReleased.projectiles).toHaveLength(3)
+    localReleased.projectiles.forEach((projectile) => {
+      expect(projectile.origin).toBeDefined()
+      expect(projectile.origin).not.toEqual(localReleased.player.position)
+    })
+  })
+
+  it('queues quick-triple arrows at half-arrow visible gaps without changing other volleys', () => {
+    const createQuickTripleSnapshot = (level = 1, extraArrowCount = 0, withDeathTrajectory = false) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 99
+      snapshot.player.position = { x: 220, y: 220 }
+      snapshot.aimPoint = { x: 520, y: 220 }
+      snapshot.activeSkills = [{ skillId: 'quick-triple', level, cooldownRemaining: 0 }]
+      if (extraArrowCount > 0) {
+        snapshot.equippedItems = {
+          weapon: makeEquipment({
+            id: `quick-triple-extra-${level}-${extraArrowCount}`,
+            buildTag: 'spread',
+            bonus: {},
+            modifiers: [{ type: 'projectile-count', buildTag: 'spread', amount: extraArrowCount }],
+          }),
+        }
+      }
+      if (withDeathTrajectory) {
+        snapshot.runTalentState.selectedTalentIds = ['run_death_03']
+      }
+      clearCombatObstacles(snapshot)
+      return snapshot
+    }
+    const castProjectiles = (snapshot: GameSnapshot) => [
+      ...snapshot.projectiles,
+      ...(snapshot.pendingProjectileLaunches ?? []).map((launch) => launch.projectile),
+    ]
+    const expectQuickTripleQueue = (cast: GameSnapshot, expectedCount: number, deathTrajectory = false) => {
+      const projectiles = castProjectiles(cast).filter((projectile) => projectile.sourceSkillId === 'quick-triple')
+      const first = cast.projectiles.find((projectile) => projectile.sourceSkillId === 'quick-triple')!
+      const visibleLength = getPlayerArrowDisplayLength(first.size, Math.hypot(first.velocity.x, first.velocity.y))
+      const halfArrowInterval = getQuickTripleHalfArrowReleaseInterval(first)
+      const interval = Math.max(deathTrajectory ? RUN_TALENT_DEATH_SHOT_INTERVAL_SECONDS : 0, halfArrowInterval)
+      const releaseDelay = first.releaseDelayRemaining!
+
+      expect(projectiles).toHaveLength(expectedCount)
+      expect(cast.projectiles.filter((projectile) => projectile.sourceSkillId === 'quick-triple')).toHaveLength(1)
+      expect(cast.pendingProjectileLaunches).toHaveLength(expectedCount - 1)
+      expect(visibleLength).toBeCloseTo(Math.max(15, Math.min(30, first.size * 3.8 + Math.hypot(first.velocity.x, first.velocity.y) * 0.02)), 8)
+      cast.pendingProjectileLaunches?.forEach((launch, index) => {
+        expect(launch.delayRemaining).toBeCloseTo(releaseDelay + interval * (index + 1), 8)
+      })
+      expect(projectiles.map((projectile) => projectile.damage)).toEqual(Array(expectedCount).fill(first.damage))
+      expect(projectiles.map((projectile) => Math.hypot(projectile.velocity.x, projectile.velocity.y))).toEqual(
+        Array(expectedCount).fill(Math.hypot(first.velocity.x, first.velocity.y)),
+      )
+      return { first, interval, visibleLength }
+    }
+
+    const baseCast = triggerActiveSkillSnapshot(createQuickTripleSnapshot(), 0)
+    expectQuickTripleQueue(baseCast, 3)
+
+    const levelFiveCast = triggerActiveSkillSnapshot(createQuickTripleSnapshot(5), 0)
+    expectQuickTripleQueue(levelFiveCast, 5)
+    expect(castProjectiles(levelFiveCast).filter((projectile) => projectile.sourceSkillId === 'quick-triple').at(-1)?.forceCritical).toBe(true)
+
+    const extraCast = triggerActiveSkillSnapshot(createQuickTripleSnapshot(1, 2), 0)
+    expectQuickTripleQueue(extraCast, 5)
+
+    const deathCast = triggerActiveSkillSnapshot(createQuickTripleSnapshot(1, 0, true), 0)
+    const { interval: deathInterval, visibleLength } = expectQuickTripleQueue(deathCast, 3, true)
+    expect(deathInterval).toBe(Math.max(RUN_TALENT_DEATH_SHOT_INTERVAL_SECONDS, getQuickTripleHalfArrowReleaseInterval(deathCast.projectiles[0])))
+    const frozenVelocities = castProjectiles(deathCast).map((projectile) => ({ ...projectile.velocity }))
+    let released = updateAimPointSnapshot(deathCast, { x: 220, y: 520 })
+    for (let frame = 0; frame < 16 && (released.pendingProjectileLaunches?.length ?? 0) > 0; frame += 1) {
+      released = advanceGame(released, noInput, 0.05)
+    }
+    const releasedQuickTriples = released.projectiles
+      .filter((projectile) => projectile.sourceSkillId === 'quick-triple')
+      .sort((left, right) => right.position.x - left.position.x)
+    expect(releasedQuickTriples).toHaveLength(3)
+    expect(releasedQuickTriples.map((projectile) => projectile.velocity)).toEqual(frozenVelocities)
+    for (let index = 0; index < releasedQuickTriples.length - 1; index += 1) {
+      expect(releasedQuickTriples[index].position.x - releasedQuickTriples[index + 1].position.x)
+        .toBeGreaterThanOrEqual(visibleLength * 1.5 - 0.000001)
+    }
+
+    let dashFrozen = triggerDashSnapshot(baseCast)
+    const dashFirstDelay = dashFrozen.projectiles[0].releaseDelayRemaining
+    const dashPendingDelays = dashFrozen.pendingProjectileLaunches?.map((launch) => launch.delayRemaining)
+    dashFrozen = advanceGame(dashFrozen, noInput, 0.05)
+    expect(dashFrozen.projectiles[0].releaseDelayRemaining).toBe(dashFirstDelay)
+    expect(dashFrozen.pendingProjectileLaunches?.map((launch) => launch.delayRemaining)).toEqual(dashPendingDelays)
+    const paused = advanceGame(togglePauseSnapshot(dashFrozen), noInput, 0.5)
+    expect(paused.pendingProjectileLaunches?.map((launch) => launch.delayRemaining)).toEqual(dashPendingDelays)
+
+    const deathPierce = createQuickTripleSnapshot(1, 0, true)
+    deathPierce.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    deathPierce.equippedItems = {
+      weapon: makeEquipment({
+        id: 'non-quick-death-cadence',
+        buildTag: 'pierce',
+        bonus: {},
+        modifiers: [{ type: 'projectile-count', buildTag: 'pierce', amount: 2 }],
+      }),
+    }
+    const deathPierceCast = triggerActiveSkillSnapshot(deathPierce, 0)
+    const deathPierceInterval = Math.max(
+      RUN_TALENT_DEATH_SHOT_INTERVAL_SECONDS,
+      getQuickTripleHalfArrowReleaseInterval(deathPierceCast.projectiles[0]),
+    )
+    expect(deathPierceCast.pendingProjectileLaunches?.map((launch) => launch.delayRemaining)).toEqual([
+      deathPierceCast.projectiles[0].releaseDelayRemaining! + deathPierceInterval,
+      deathPierceCast.projectiles[0].releaseDelayRemaining! + deathPierceInterval * 2,
+    ])
+
+    const fan = createQuickTripleSnapshot()
+    fan.activeSkills = [{ skillId: 'fan-burst', level: 1, cooldownRemaining: 0 }]
+    const fanCast = triggerActiveSkillSnapshot(fan, 0)
+    expect(fanCast.pendingProjectileLaunches).toHaveLength(0)
+    expect(fanCast.projectiles.filter((projectile) => projectile.sourceSkillId === 'fan-burst')).toHaveLength(5)
+
+    const nonDirect = createQuickTripleSnapshot(1, 2, true)
+    nonDirect.activeSkills = [{ skillId: 'arrow-rain', level: 1, cooldownRemaining: 0 }]
+    nonDirect.runTalentState.selectedTalentIds = ['run_death_03']
+    const nonDirectCast = triggerActiveSkillSnapshot(nonDirect, 0)
+    expect(nonDirectCast.pendingProjectileLaunches).toHaveLength(0)
+    expect(nonDirectCast.projectiles).toHaveLength(0)
+    expect(nonDirectCast.skillFields.some((field) => field.sourceSkillId === 'arrow-rain')).toBe(true)
+  })
+
+  it('consumes the blood trajectory branch only for fan-burst and keeps focused fans above the configured minimum', () => {
+    const createSpreadSnapshot = (skillId: 'fan-burst' | 'quick-triple', branch?: 'wide' | 'focused', level = 1) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.player.attackCooldown = 99
+      snapshot.player.position = { x: 180, y: 200 }
+      snapshot.aimPoint = { x: 420, y: 200 }
+      snapshot.runTalentState.selectedTalentIds = ['run_blood_03']
+      snapshot.runTalentState.trajectoryBranches = branch ? { run_blood_03: branch } : {}
+      snapshot.activeSkills = [{ skillId, level, cooldownRemaining: 0 }]
+      return snapshot
+    }
+    const totalAngle = (projectiles: Projectile[]) => {
+      const angles = projectiles.map((projectile) => Math.atan2(projectile.velocity.y, projectile.velocity.x))
+      return Math.max(...angles) - Math.min(...angles)
+    }
+
+    const wideFan = triggerActiveSkillSnapshot(createSpreadSnapshot('fan-burst', 'wide'), 0)
+    const legacyDefaultFan = triggerActiveSkillSnapshot(createSpreadSnapshot('fan-burst'), 0)
+    const focusedFan = triggerActiveSkillSnapshot(createSpreadSnapshot('fan-burst', 'focused'), 0)
+    expect(totalAngle(focusedFan.projectiles)).toBeCloseTo(14 * Math.PI / 180, 6)
+    expect(totalAngle(focusedFan.projectiles)).toBeLessThan(totalAngle(wideFan.projectiles))
+    expect(totalAngle(focusedFan.projectiles)).toBeGreaterThan(0)
+    expect(totalAngle(legacyDefaultFan.projectiles)).toBeCloseTo(totalAngle(wideFan.projectiles), 6)
+
+    const focusedSixArrowFan = triggerActiveSkillSnapshot(createSpreadSnapshot('fan-burst', 'focused', 2), 0)
+    expect(totalAngle(focusedSixArrowFan.projectiles)).toBeCloseTo(16 * Math.PI / 180, 6)
+
+    const baseOtherSpread = triggerActiveSkillSnapshot(createSpreadSnapshot('quick-triple'), 0)
+    const bloodOtherSpread = triggerActiveSkillSnapshot(createSpreadSnapshot('quick-triple', 'wide'), 0)
+    expect(totalAngle(bloodOtherSpread.projectiles)).toBeCloseTo(totalAngle(baseOtherSpread.projectiles), 6)
   })
 
   it('triggers a zone overlap reaction between fire and ice fields', () => {
@@ -4426,7 +5638,7 @@ describe('game engine', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.fixedPassiveLevel = 4
     snapshot.activeSkills = [
-      { skillId: 'pierce-arrow', level: 4, cooldownRemaining: 0 },
+      { skillId: 'pierce-arrow', familyId: 'pierce-arrow', evolutionId: 'sun-piercer', level: 4, cooldownRemaining: 0 },
       { skillId: 'fan-burst', level: 5, cooldownRemaining: 0 },
       { skillId: 'fire-feather', level: 5, cooldownRemaining: 0 },
     ]
@@ -4437,6 +5649,151 @@ describe('game engine', () => {
 
     expect(reward.choices.some((choice) => choice.levelText.includes('Lv.5 质变'))).toBe(true)
     expect(reward.choices.some((choice) => choice.tacticalText.includes('额外受到 35%') || choice.tacticalText.includes('鹰眼暴击'))).toBe(true)
+  })
+
+  it('offers a mandatory mutually exclusive Lv4 evolution instead of an ordinary upgrade', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 3, cooldownRemaining: 0 }]
+    snapshot.phase = 'level-clear'
+    const reward = buildPendingReward(snapshot)
+
+    expect(reward.poolKind).toBe('skill-evolution')
+    expect(reward.mandatoryEvolutionFamilyId).toBe('pierce-arrow')
+    expect(reward.choices.map((choice) => choice.evolutionId).sort()).toEqual(['sun-piercer', 'wind-cut'])
+    expect(declineSkillRewardSnapshot({ ...snapshot, pendingSkillReward: reward }).pendingSkillReward).not.toBeNull()
+
+    const evolved = acceptSkillRewardSnapshot({ ...snapshot, pendingSkillReward: reward }, reward.choices[0].choiceId)
+    expect(evolved.activeSkills[0]).toMatchObject({ familyId: 'pierce-arrow', skillId: 'pierce-arrow', evolutionId: reward.choices[0].evolutionId, level: 4 })
+    expect(evolved.discoveredSkillEvolutionIds).toContain(reward.choices[0].evolutionId)
+  })
+
+  it('migrates standalone legacy skills into one family slot without leaking a retired seventy-third run talent', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.activeSkills = [
+      { skillId: 'pierce-arrow', level: 3, cooldownRemaining: 0 },
+      { skillId: 'sun-piercer', level: 5, cooldownRemaining: 2 },
+      { skillId: 'shock-bolt', level: 2, cooldownRemaining: 1 },
+      { skillId: 'god-hunt', level: 4, cooldownRemaining: 0 },
+    ]
+    snapshot.discoveredSkillEvolutionIds = ['wind-cut']
+    snapshot.runTalentState.selectedTalentIds = ['run_beast_legendary_hunt']
+    snapshot.runTalentState.lastOfferedCandidateIds = ['run_beast_legendary_hunt']
+    snapshot.runTalentState.legendaryBeastHunt = { commandCount: 2, cooldownRemaining: 7 }
+    snapshot.inRunTalentIds = ['run_beast_legendary_hunt']
+    const migrated = migrateArcherSkillEvolutionSnapshot(snapshot)
+
+    expect(migrated.activeSkills).toHaveLength(3)
+    expect(migrated.activeSkills.find((skill) => skill.familyId === 'pierce-arrow')).toMatchObject({ evolutionId: 'sun-piercer', level: 5 })
+    expect(migrated.activeSkills.find((skill) => skill.familyId === 'ricochet-feather')).toMatchObject({ evolutionId: 'thunder-chain', level: 4 })
+    expect(migrated.activeSkills.find((skill) => skill.familyId === 'raptor-dive')).toMatchObject({ level: 4 })
+    expect(migrated.runTalentState.legendaryBeastHunt).toBeUndefined()
+    expect(migrated.runTalentState.selectedTalentIds).not.toContain('run_beast_legendary_hunt')
+    expect(migrated.inRunTalentIds).not.toContain('run_beast_legendary_hunt')
+    expect(migrated.runTalentState.lastOfferedCandidateIds).not.toContain('run_beast_legendary_hunt')
+    expect(migrated.discoveredSkillEvolutionIds).toEqual(['wind-cut'])
+  })
+
+  it('exposes one stable core/evolution presentation contract for B2', () => {
+    expect(ARCHER_CORE_SKILL_IDS).toHaveLength(21)
+    expect(ARCHER_SKILL_EVOLUTIONS).toHaveLength(42)
+    expect(getActiveSkillRuntimePresentation({ skillId: 'curve-return', familyId: 'curve-return', evolutionId: 'sky-judgement', level: 4 })).toMatchObject({
+      familyId: 'curve-return',
+      evolutionId: 'sky-judgement',
+      name: '苍穹审判',
+      behaviorSkillId: 'sky-judgement',
+    })
+  })
+
+  it('does not expose retired legendary beast hunt through the run-talent presentation contract', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.contractLevel = 5
+    snapshot.activeSkills = [
+      { skillId: 'ring-volley', familyId: 'ring-volley', evolutionId: 'frost-wolf-king', level: 4, cooldownRemaining: 0 },
+      { skillId: 'raptor-dive', familyId: 'raptor-dive', level: 2, cooldownRemaining: 0 },
+    ]
+
+    snapshot.runTalentState.lastOfferedCandidateIds = ['run_beast_legendary_hunt']
+    snapshot.runTalentState.selectedTalentIds = ['run_beast_legendary_hunt']
+    snapshot.runTalentState.legendaryBeastHunt = { commandCount: 2, cooldownRemaining: 7 }
+    const presentation = getRunTalentPresentationSnapshot(snapshot)
+
+    expect(presentation).toHaveLength(72)
+    expect(presentation.find((item) => item.id === 'run_beast_legendary_hunt')).toBeUndefined()
+  })
+
+  it('emits stable evolution warning/body/hit-ready events without granting a second skill slot', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', evolutionId: 'wind-cut', level: 4, cooldownRemaining: 0 }]
+    const cast = triggerActiveSkillSnapshot(snapshot, 0)
+
+    expect(cast.activeSkills).toHaveLength(1)
+    expect(cast.skillEvolutionEffectEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        familyId: 'pierce-arrow',
+        evolutionId: 'wind-cut',
+        kind: 'cast',
+        layer: 'warning',
+        eventId: expect.any(String),
+        origin: snapshot.player.position,
+        direction: expect.any(Object),
+        length: expect.any(Number),
+        startedAt: expect.any(Number),
+        duration: expect.any(Number),
+      }),
+      expect.objectContaining({ layer: 'body' }),
+    ]))
+    let expired = cast
+    for (let tick = 0; tick < 9; tick += 1) {
+      expired = advanceGame(expired, noInput, 0.05)
+    }
+    expect(expired.skillEvolutionEffectEvents).toEqual([])
+  })
+
+  it('emits an evolution hit event only after an evolved field causes real enemy life loss', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.player.attackCooldown = 99
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    clearCombatObstacles(snapshot)
+    snapshot.enemies = [makeEnemy({ id: 'field-target', position: { x: 300, y: 200 }, hp: 100, maxHp: 100 })]
+    snapshot.skillFields = [{
+      id: 'evolution-field',
+      owner: 'player',
+      kind: 'rain',
+      position: { x: 300, y: 200 },
+      ttl: 1,
+      radius: 60,
+      damage: 12,
+      tickInterval: 0.1,
+      tickCooldown: 0,
+      color: '#fb923c',
+      effect: 'burn',
+      effectStrength: 1,
+      projectileCount: 0,
+      spread: 0,
+      projectileSpeed: 0,
+      sourceSkillId: 'starfire-fall',
+      sourceSkillFamilyId: 'venom-vine',
+      sourceEvolutionId: 'starfire-fall',
+      sourceName: '星火坠矢',
+      skillLevel: 4,
+      reactionCooldown: 0,
+      centerStrikeCooldown: 0,
+      enteredEnemyIds: [],
+    }]
+
+    const next = advanceGame(snapshot, noInput, 0.05)
+
+    expect(next.enemies[0].hp).toBeLessThan(100)
+    expect(next.skillEvolutionEffectEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        familyId: 'venom-vine',
+        evolutionId: 'starfire-fall',
+        layer: 'hit',
+        origin: { x: 300, y: 200 },
+        targetId: 'field-target',
+      }),
+    ]))
   })
 
   it('shocks nearby enemies with thunder chain impact feedback', () => {
@@ -4452,6 +5809,7 @@ describe('game engine', () => {
     ]
 
     const cast = triggerActiveSkillSnapshot(snapshot, 0)
+    releasePlayerProjectilesForImpact(cast)
     cast.projectiles[0].position = { ...cast.enemies[0].position }
     const next = advanceGame(cast, { up: false, down: false, left: false, right: false }, 0.016)
 
@@ -4470,6 +5828,7 @@ describe('game engine', () => {
     snapshot.enemies = [makeEnemy({ id: 'frozen', position: { x: 260, y: 200 }, hp: 220, maxHp: 220 })]
 
     const cast = triggerActiveSkillSnapshot(snapshot, 0)
+    releasePlayerProjectilesForImpact(cast)
     cast.projectiles[0].position = { ...cast.enemies[0].position }
     const next = advanceGame(cast, { up: false, down: false, left: false, right: false }, 0.016)
 
@@ -4582,7 +5941,7 @@ describe('game engine', () => {
       const snapshot = createInitialSnapshot('running')
       snapshot.remainingToSpawn = 1
       snapshot.spawnCooldown = 999
-      snapshot.mapObstacles = []
+      clearCombatObstacles(snapshot)
       snapshot.player.attackCooldown = 999
       snapshot.enemies = [makeEnemy({
         id: `${skillId}-swept-target`,
@@ -4593,7 +5952,7 @@ describe('game engine', () => {
       })]
       snapshot.projectiles = [makeProjectile({
         id: `${skillId}-fast-arrow`,
-        position: { x: 100, y: 200 },
+        position: { x: 100, y: 195 },
         velocity: { x: 6000, y: 0 },
         damage: 8,
         size: 5,
@@ -4604,6 +5963,200 @@ describe('game engine', () => {
 
       expect(next.enemies[0].hp, `${skillId} should hit while crossing the target`).toBeLessThan(40)
     })
+  })
+
+  it('uses visible skeleton body parts from the shared hurtbox geometry for swept player arrows', () => {
+    const createSnapshotForEnemy = (enemy: Enemy) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.levelTargetKills = 999
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.enemies = [enemy]
+      return snapshot
+    }
+    const baseEnemy = makeEnemy({
+      id: 'visible-skeleton',
+      archetypeId: 'dungeon-skeleton-warrior',
+      displayName: '骷髅战士',
+      position: { x: 300, y: 220 },
+      lastPosition: { x: 300, y: 220 },
+      hp: 100,
+      maxHp: 100,
+      speed: 0,
+      size: 24,
+    })
+    const geometry = getMonsterHurtboxGeometry(baseEnemy, 0.05)
+
+    ;['head', 'chest', 'legs'].forEach((partId) => {
+      const part = geometry.parts.find((candidate) => candidate.id === partId)!
+      const snapshot = createSnapshotForEnemy({ ...baseEnemy, id: `visible-skeleton-${partId}` })
+      snapshot.projectiles = [makeProjectile({
+        id: `body-${partId}`,
+        position: { x: part.bounds.left - 20, y: (part.bounds.top + part.bounds.bottom) / 2 },
+        velocity: { x: 6000, y: 0 },
+        damage: 10,
+        size: 3,
+        pierceRemaining: 0,
+      })]
+
+      const next = advanceGame(snapshot, noInput, 0.05)
+      expect(next.enemies[0].hp, `${partId} should be hittable`).toBeLessThan(100)
+    })
+
+    const outside = createSnapshotForEnemy(baseEnemy)
+    outside.projectiles = [makeProjectile({
+      id: 'outside-visible-body',
+      position: { x: geometry.bounds.left - 20, y: geometry.bounds.top - 12 },
+      velocity: { x: 6000, y: 0 },
+      damage: 10,
+      size: 3,
+      pierceRemaining: 0,
+    })]
+    expect(advanceGame(outside, noInput, 0.05).enemies[0].hp).toBe(100)
+  })
+
+  it('orders visible-body hits along a swept path and keeps obstacles ahead of the body blocking arrows', () => {
+    const createSnapshot = (obstacles: MapObstacle[]) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.levelTargetKills = 999
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.mapObstacles = obstacles
+      snapshot.enemies = [makeEnemy({
+        id: 'ordered-visible-target',
+        archetypeId: 'dungeon-skeleton-warrior',
+        displayName: '骷髅战士',
+        position: { x: 300, y: 220 },
+        lastPosition: { x: 300, y: 220 },
+        hp: 100,
+        maxHp: 100,
+        speed: 0,
+        size: 24,
+      })]
+      snapshot.projectiles = [makeProjectile({
+        id: 'ordered-visible-arrow',
+        position: { x: 100, y: 200 },
+        velocity: { x: 6000, y: 0 },
+        damage: 10,
+        size: 3,
+        pierceRemaining: 0,
+      })]
+      return snapshot
+    }
+    const before = advanceGame(createSnapshot([{
+      id: 'blocking-wall', kind: 'pillar', position: { x: 180, y: 200 }, width: 20, height: 40,
+    }]), noInput, 0.05)
+    expect(before.enemies[0].hp).toBe(100)
+
+    const after = advanceGame(createSnapshot([{
+      id: 'trailing-wall', kind: 'pillar', position: { x: 460, y: 200 }, width: 20, height: 40,
+    }]), noInput, 0.05)
+    expect(after.enemies[0].hp).toBeLessThan(100)
+  })
+
+  it('uses the same visible-body sweep for pierce, return, split, and death-contract projectiles without repeat hits', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.levelTargetKills = 999
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+    clearCombatObstacles(snapshot)
+    snapshot.enemies = [
+      makeEnemy({ id: 'first-visible-target', archetypeId: 'dungeon-skeleton-warrior', displayName: '骷髅战士', position: { x: 290, y: 220 }, lastPosition: { x: 290, y: 220 }, hp: 100, maxHp: 100, speed: 0, size: 24 }),
+      makeEnemy({ id: 'second-visible-target', archetypeId: 'dungeon-skeleton-warrior', displayName: '骷髅战士', position: { x: 420, y: 220 }, lastPosition: { x: 420, y: 220 }, hp: 100, maxHp: 100, speed: 0, size: 24 }),
+    ]
+    snapshot.projectiles = [makeProjectile({
+      id: 'pierce-visible-order',
+      position: { x: 100, y: 200 },
+      velocity: { x: 7000, y: 0 },
+      damage: 10,
+      size: 3,
+      pierceRemaining: 3,
+      sourceSkillId: 'pierce-arrow',
+    })]
+
+    let next = advanceGame(snapshot, noInput, 0.05)
+    const projectile = next.projectiles.find((candidate) => candidate.id === 'pierce-visible-order')
+    expect(projectile?.hitEnemyIds).toEqual(['first-visible-target', 'second-visible-target'])
+    const hpAfterFirstSweep = next.enemies.map((enemy) => enemy.hp)
+    next = advanceGame(next, noInput, 0.05)
+    expect(next.enemies.map((enemy) => enemy.hp)).toEqual(hpAfterFirstSweep)
+
+    const visibleTarget = next.enemies[0]
+    const sourceIds = ['curve-return', 'light-split', 'basic-arrow'] as const
+    next.projectiles = sourceIds.map((sourceSkillId, index) => makeProjectile({
+      id: `shared-visible-${sourceSkillId}`,
+      position: { x: 100 + index * 8, y: 200 },
+      velocity: { x: 7000, y: 0 },
+      damage: 5,
+      size: 3,
+      pierceRemaining: 0,
+      sourceSkillId,
+      ...(sourceSkillId === 'curve-return'
+        ? { returnAfter: 99, curveReturnOutboundHitEnemyIds: [], curveReturnReturnHitEnemyIds: [] }
+        : {}),
+    }))
+    next.pendingProjectileLaunches = [{
+      delayRemaining: 0,
+      projectile: makeProjectile({
+        id: 'shared-visible-death-contract-pending',
+        position: { x: 124, y: 200 },
+        velocity: { x: 7000, y: 0 },
+        damage: 5,
+        size: 3,
+        pierceRemaining: 0,
+        sourceSkillId: 'pierce-arrow',
+      }),
+    }]
+    const afterSharedPaths = advanceGame(next, noInput, 0.05)
+    expect(afterSharedPaths.enemies.find((enemy) => enemy.id === visibleTarget.id)?.hp).toBeLessThan(visibleTarget.hp)
+    expect(afterSharedPaths.combatDamageLog.filter((event) => event.targetId === visibleTarget.id).map((event) => event.sourceId))
+      .toEqual(expect.arrayContaining(['curve-return', 'light-split', 'basic-arrow', 'pierce-arrow']))
+  })
+
+  it('uses the B1 action-time and mirrored presentation when sweeping a visible body', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.elapsedTime = 1.2
+    snapshot.levelTimer = 0
+    snapshot.levelTargetKills = 999
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+    clearCombatObstacles(snapshot)
+    const enemy = makeEnemy({
+      id: 'mirrored-attacking-skeleton',
+      archetypeId: 'dungeon-skeleton-warrior',
+      displayName: '骷髅战士',
+      position: { x: 320, y: 220 },
+      lastPosition: { x: 320, y: 220 },
+      hp: 100,
+      maxHp: 100,
+      speed: 0,
+      size: 24,
+      meleeAttackWindup: 0.3,
+      facingDirection: { x: -1, y: 0 },
+    })
+    snapshot.enemies = [enemy]
+    const geometry = getMonsterHurtboxGeometry(enemy, snapshot.elapsedTime + 0.05)
+    const chest = geometry.parts.find((part) => part.id === 'chest')!
+    snapshot.projectiles = [makeProjectile({
+      id: 'mirrored-action-hit',
+      position: { x: chest.bounds.left - 20, y: (chest.bounds.top + chest.bounds.bottom) / 2 },
+      velocity: { x: 6000, y: 0 },
+      damage: 10,
+      size: 3,
+      pierceRemaining: 0,
+    })]
+
+    const next = advanceGame(snapshot, noInput, 0.05)
+    expect(next.enemies[0].hp).toBeLessThan(100)
   })
 
   it('keeps blocked melee enemies steering consistently instead of wobbling in place', () => {
@@ -4774,7 +6327,7 @@ describe('game engine', () => {
       displayName: CORROSIVE_SLIME_ARCHETYPE.name,
       role: 'fodder',
       isFodder: true,
-      hp: 1,
+      hp: 0,
       maxHp: 8,
       position: enemyPosition,
     })]
@@ -5072,11 +6625,12 @@ describe('game engine', () => {
         next.projectiles = [{
           ...projectileTemplate,
           id: `${projectileTemplate.id}-${targetId}-${frame}`,
-          position: { ...target.position },
+          position: { x: target.position.x, y: target.position.y - 20 },
           velocity: { x: 1, y: 0 },
           age: 0,
           hitEnemyIds: [],
           hitEnemyCounts: {},
+          releaseDelayRemaining: 0,
           pierceRemaining: Math.max(projectileTemplate.pierceRemaining, targetIds.length),
           ttl: Math.max(projectileTemplate.ttl, 0.5),
         }]
@@ -5257,7 +6811,8 @@ describe('game engine', () => {
       behaviorTimer: 0.4,
       behaviorDirection: { x: -1, y: 0 },
     })]
-    const hit = advanceGame(lethalSkill, { up: false, down: false, left: false, right: false }, 0.016)
+    const deathStarted = advanceGame(lethalSkill, noInput, 0.016)
+    const hit = finishPlayerDeathAnimation(deathStarted)
     expect(hit.phase).toBe('game-over')
     expect(hit.message).toContain('倒下')
   })
@@ -5423,6 +6978,62 @@ describe('game engine', () => {
     expect(advanced.phase).toBe('running')
   })
 
+  it('carries blue-crystal world state and campaign reward progress across a floor transition', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = 1
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 0
+    snapshot.levelKills = snapshot.levelTargetKills
+    snapshot.enemies = []
+    snapshot.enemyProjectiles = []
+    snapshot.campaignRewardProgress = {
+      ...snapshot.campaignRewardProgress,
+      crystalExperienceCollected: 4321,
+      crystalTalentAwardsGranted: 7,
+      universalTalentAwardsGranted: 3,
+      crystalNextAwardAt: 4567,
+      fixedSkillNodesClaimed: ['elite-death:3'],
+      eliteRaidRollResolvedLevels: [3],
+      eliteRaidPendingLevels: [3],
+      eliteRaidLevels: [4],
+    }
+    snapshot.pickups = [{
+      id: 'cross-floor-crystal',
+      kind: 'soul-crystal',
+      position: { x: 180, y: 240 },
+      radius: 8,
+      expValue: 17,
+      ttl: 18.5,
+      createdAt: 11,
+      fadeStartsAt: 36,
+    }]
+
+    const waiting = advanceGame(snapshot, noInput, 0.05)
+    const advanced = advancePastFloorTransition(waiting)
+
+    expect(advanced.level).toBe(2)
+    expect(advanced.campaignRewardProgress).toMatchObject({
+      crystalExperienceCollected: 4321,
+      crystalTalentAwardsGranted: 7,
+      universalTalentAwardsGranted: 3,
+      crystalNextAwardAt: 4567,
+      fixedSkillNodesClaimed: ['elite-death:3'],
+      eliteRaidPendingLevels: [3],
+      eliteRaidLevels: [4],
+    })
+    expect(advanced.campaignRewardProgress.eliteRaidRollResolvedLevels).toContain(3)
+    expect(advanced.pickups[0]).toMatchObject({
+      id: 'cross-floor-crystal',
+      kind: 'soul-crystal',
+      position: { x: 180, y: 240 },
+      fadeStartsAt: 36,
+    })
+    expect(advanced.pickups[0]?.ttl).toBeLessThan(18.5)
+    expect(advanced.pickups[0]?.ttl).toBeGreaterThan(18)
+    expect(advanced.pickups[0]).not.toBe(snapshot.pickups[0])
+    expect(advanced.pickups[0]?.position).not.toBe(snapshot.pickups[0]?.position)
+  })
+
   it('pauses and resumes the game with a snapshot toggle', () => {
     const snapshot = createInitialSnapshot('running')
     const paused = togglePauseSnapshot(snapshot)
@@ -5468,7 +7079,7 @@ describe('game engine', () => {
     expect(next.pickups).toHaveLength(0)
   })
 
-  it('uses meta and in-run talent summaries to extend blue crystal pickup range only', () => {
+  it('keeps blue crystals fixed in world space regardless of pickup-range talents', () => {
     const makeRun = (withTalents: boolean) => {
       const snapshot = createInitialSnapshot('running')
       snapshot.enemies = []
@@ -5502,8 +7113,8 @@ describe('game engine', () => {
     const talentedHealth = talented.pickups.find((pickup) => pickup.kind === 'health-pack')
 
     expect(baseCrystal?.magnetized).toBeUndefined()
-    expect(talentedCrystal?.magnetized).toBe(true)
-    expect(talentedCrystal?.position.x).toBeLessThan(482)
+    expect(talentedCrystal?.magnetized).toBeUndefined()
+    expect(talentedCrystal?.position.x).toBe(482)
     expect(talentedHealth?.magnetized).toBeUndefined()
   })
 
@@ -5541,13 +7152,14 @@ describe('game engine', () => {
     })
   })
 
-  it('applies blue crystal pickup range ranks one through three in live pickup resolution', () => {
+  it('does not let blue-crystal pickup range ranks enable magnetism', () => {
     const magnetizesAt = (rank: 1 | 2 | 3, gap: number) => {
       const snapshot = createInitialSnapshot('running')
       snapshot.enemies = []
       snapshot.remainingToSpawn = 1
       snapshot.spawnCooldown = 999
       snapshot.player.attackCooldown = 999
+      snapshot.debugControls.infiniteHealth = true
       snapshot.player.position = { x: 400, y: 300 }
       snapshot.unlockedMetaTalentIds = ['meta_common_05']
       snapshot.metaTalentRanks = { meta_common_05: rank }
@@ -5563,9 +7175,87 @@ describe('game engine', () => {
     }
 
     expect(magnetizesAt(1, 82)).toBe(false)
-    expect(magnetizesAt(2, 82)).toBe(true)
+    expect(magnetizesAt(2, 82)).toBe(false)
     expect(magnetizesAt(2, 89)).toBe(false)
-    expect(magnetizesAt(3, 89)).toBe(true)
+    expect(magnetizesAt(3, 89)).toBe(false)
+  })
+
+  it('owns blue-crystal lifetime and its talent-only reward contract in the formal runtime', () => {
+    const ttlRun = createInitialSnapshot('running')
+    ttlRun.enemies = []
+    ttlRun.remainingToSpawn = 1
+    ttlRun.spawnCooldown = 999
+    ttlRun.player.attackCooldown = 999
+    ttlRun.pickups = [{
+      id: 'fixed-world-crystal',
+      kind: 'soul-crystal',
+      position: { x: ttlRun.player.position.x + 160, y: ttlRun.player.position.y },
+      radius: 8,
+      expValue: 1,
+      ttl: 30,
+      createdAt: 0,
+      fadeStartsAt: 25,
+    }]
+    const fading = advanceGame(ttlRun, noInput, 0.05)
+    expect(fading.pickups[0]).toMatchObject({ position: ttlRun.pickups[0].position, ttl: 29.95, fadeStartsAt: 25 })
+    const paused = togglePauseSnapshot(fading)
+    expect(advanceGame(paused, noInput, 10).pickups[0]?.ttl).toBeCloseTo(29.95, 6)
+    const expiring = {
+      ...fading,
+      pickups: fading.pickups.map((pickup) => ({ ...pickup, ttl: 0.05 })),
+    }
+    const expired = advanceGame(expiring, noInput, 0.05)
+    expect(expired.pickups).toHaveLength(0)
+
+    const rewardRun = createInitialSnapshot('running')
+    rewardRun.contractLevel = 5
+    rewardRun.enemies = []
+    rewardRun.remainingToSpawn = 1
+    rewardRun.spawnCooldown = 999
+    rewardRun.player.attackCooldown = 999
+    rewardRun.campaignRewardProgress.crystalNextAwardAt = 1
+    rewardRun.pickups = [{
+      id: 'reward-crystal',
+      kind: 'soul-crystal',
+      position: { ...rewardRun.player.position },
+      radius: 8,
+      expValue: 1,
+      ttl: 30,
+    }]
+    const rewarded = advanceGame(rewardRun, noInput, 0.016)
+    const presentation = getCampaignRewardPresentationSnapshot(rewarded)
+    expect(rewarded.pendingSkillReward?.poolKind).toBe('crystal-talent')
+    expect(presentation.currentReward).toMatchObject({
+      source: 'crystal-talent',
+      semantics: 'talent-choice',
+      candidateChoiceIds: rewarded.pendingSkillReward?.choices.map((choice) => choice.choiceId),
+    })
+    expect(presentation.fixedSkill.total).toBe(16)
+    expect(presentation.crystal.rewardTotal).toBe(presentation.crystal.talentQuota + presentation.crystal.universalQuota)
+  })
+
+  it('spawns one independent elite raid before ordinary monsters without consuming normal spawn budget', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = 2
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 12
+    snapshot.levelTargetKills = 12
+    snapshot.spawnCooldown = 0
+    snapshot.enemies = []
+    clearCombatObstacles(snapshot)
+
+    const first = advanceGame(snapshot, noInput, 0.016)
+    expect(first.enemies.filter((enemy) => enemy.campaignRewardSource === 'elite-raid')).toHaveLength(1)
+    expect(first.remainingToSpawn).toBe(12)
+    expect(first.campaignRewardProgress).toMatchObject({
+      eliteRaidRollResolvedLevels: [2],
+      eliteRaidLevels: [2],
+      eliteRaidPendingLevels: [],
+    })
+
+    const second = advanceGame(first, noInput, 0.016)
+    expect(second.enemies.filter((enemy) => enemy.campaignRewardSource === 'elite-raid')).toHaveLength(1)
   })
 
   it('applies rank-scaled death, blood, beast, and crystal effects in combat', () => {
@@ -6143,7 +7833,7 @@ describe('game engine', () => {
     deathRun.kills = 16
     deathRun.player.hp = 0
 
-    const deathResult = advanceGame(deathRun, { up: false, down: false, left: false, right: false }, 0.016)
+    const deathResult = finishPlayerDeathAnimation(deathRun)
     expect(deathResult.phase).toBe('game-over')
     expect(deathResult.lastTalentPointRecord?.source).toBe('death')
     expect(deathResult.lastTalentPointRecord?.points).toBe(1)
@@ -6163,7 +7853,7 @@ describe('game engine', () => {
     const lowDeathRun = createInitialSnapshot('running')
     lowDeathRun.kills = 1
     lowDeathRun.player.hp = 0
-    const lowDeath = advanceGame(lowDeathRun, { up: false, down: false, left: false, right: false }, 0.016)
+    const lowDeath = finishPlayerDeathAnimation(lowDeathRun)
     expect(lowDeath.lastTalentPointRecord?.source).toBe('death')
     expect(lowDeath.lastTalentPointRecord?.points).toBe(0)
 
@@ -6200,8 +7890,8 @@ describe('game engine', () => {
       return snapshot
     }
 
-    const base = advanceGame(makeDeathRun(false), { up: false, down: false, left: false, right: false }, 0.016)
-    const talented = advanceGame(makeDeathRun(true), { up: false, down: false, left: false, right: false }, 0.016)
+    const base = finishPlayerDeathAnimation(makeDeathRun(false))
+    const talented = finishPlayerDeathAnimation(makeDeathRun(true))
 
     expect(base.lastTalentPointRecord?.source).toBe('death')
     expect(talented.lastTalentPointRecord?.source).toBe('death')
@@ -6435,18 +8125,9 @@ describe('game engine', () => {
     expect(Math.abs(rCast.skillFields[0].position.y - rSnapshot.player.position.y)).toBeLessThan(1)
   })
 
-  it('spawns more elite entities as elite floors climb and keeps boss floors separate', () => {
-    const expectedEliteCounts = [
-      [3, 1],
-      [6, 2],
-      [9, 2],
-      [12, 3],
-      [15, 3],
-      [18, 4],
-      [21, 4],
-    ] as const
-
-    expectedEliteCounts.forEach(([level, expectedCount]) => {
+  it('runs exactly one first-campaign elite draw on every authorized elite floor and keeps boss floors separate', () => {
+    ;[3, 6, 9, 12, 15, 18, 21].forEach((level) => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.5)
       const snapshot = createInitialSnapshot('running')
       snapshot.level = level
       snapshot.levelTargetKills = 20
@@ -6459,11 +8140,12 @@ describe('game engine', () => {
       const spawned = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
       const elites = spawned.enemies.filter((enemy) => enemy.kind === 'elite')
 
-      expect(elites).toHaveLength(expectedCount)
+      expect(elites).toHaveLength(1)
+      expect(elites[0]?.archetypeId).toBe('dungeon-jailer-chief')
       expect(spawned.enemies.filter((enemy) => enemy.grantsEliteReward)).toHaveLength(1)
       expect(elites.every((enemy) => (enemy.eliteAffixes?.length ?? 0) >= 1)).toBe(true)
       expect(elites.every((enemy) => (enemy.eliteAffixes?.length ?? 0) <= 3)).toBe(true)
-      expect(spawned.remainingToSpawn).toBe(20 - expectedCount)
+      expect(spawned.remainingToSpawn).toBe(19)
     })
 
     const bossFloor = createInitialSnapshot('running')
@@ -6485,8 +8167,8 @@ describe('game engine', () => {
     expect(withGuards.enemies.some((enemy) => enemy.kind !== 'boss')).toBe(true)
   })
 
-  it('spawns an elite enemy on level 15 and pauses for reward after kill', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0)
+  it('spawns the eligible jailer chief on level 15 and pauses for reward after kill', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
     const snapshot = createInitialSnapshot('running')
     snapshot.level = 15
     snapshot.remainingToSpawn = 1
@@ -6524,33 +8206,534 @@ describe('game engine', () => {
     const killed = advanceGame(spawned, { up: false, down: false, left: false, right: false }, 0.016)
     expect(killed.phase).toBe('paused')
     expect(killed.pendingSkillReward).not.toBeNull()
-    expect(killed.pendingSkillReward?.source).toBe('elite')
+    expect(killed.pendingSkillReward?.source).toBe('fixed-skill')
   })
 
-  it.each([
-    { archetypeId: 'dungeon-chain-captain', roll: 0 },
-    { archetypeId: 'dungeon-jailer-chief', roll: 0.5 },
-    { archetypeId: 'dungeon-chain-wraith-elite', roll: 0.99 },
-  ])('creates $archetypeId as a single-life elite and permanently removes it after a real projectile death', ({ archetypeId, roll }) => {
-    vi.spyOn(Math, 'random').mockReturnValue(roll)
+  it('restores captain and wraith elite draws after their body assets are available', () => {
+    ;[
+      { archetypeId: 'dungeon-chain-captain', roll: 0 },
+      { archetypeId: 'dungeon-chain-wraith-elite', roll: 0.99 },
+    ].forEach(({ archetypeId, roll }) => {
+      vi.spyOn(Math, 'random').mockReturnValue(roll)
+      const snapshot = createInitialSnapshot('running')
+      snapshot.level = 15
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 0
+      snapshot.enemies = []
+      clearCombatObstacles(snapshot)
+      snapshot.campaignRewardProgress.eliteRaidRollResolvedLevels = [15]
+
+      const result = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+      expect(result.enemies.some((enemy) => enemy.archetypeId === archetypeId)).toBe(true)
+      expect(result.firstCampaignEliteArchetypeId).toBe(archetypeId)
+      expect(result.eliteSpawnedThisLevel).toBe(true)
+      expect(result.remainingToSpawn).toBe(0)
+
+      const retried = advanceGame(result, { up: false, down: false, left: false, right: false }, 0.5)
+      expect(retried.enemies.filter((enemy) => enemy.archetypeId === archetypeId)).toHaveLength(1)
+      expect(retried.firstCampaignEliteArchetypeId).toBe(archetypeId)
+    })
+  })
+
+  it('initializes and drives captain command plus both slash windows from formal and local spawns', () => {
+    const createFormalCaptain = () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0)
+      const snapshot = createInitialSnapshot('running')
+      snapshot.level = 15
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 0
+      snapshot.enemies = []
+      clearCombatObstacles(snapshot)
+      return advanceGame(snapshot, noInput, 0.016)
+    }
+    const createLocalCaptain = () => {
+      let snapshot = startLocalBattleTestSnapshot(createInitialSnapshot('idle'))
+      clearCombatObstacles(snapshot)
+      snapshot = applyLocalBattleTestMonsterConfigSnapshot(snapshot, [{ entityId: 'dungeon-chain-captain', count: 1 }])
+      expect(snapshot.localBattleTest?.lastApplyResult).toEqual({ ok: true, spawned: 1, errors: [] })
+      return snapshot
+    }
+    const formal = createFormalCaptain()
+    const local = createLocalCaptain()
+    const formalCaptain = formal.enemies.find((enemy) => enemy.archetypeId === 'dungeon-chain-captain')
+    const localCaptain = local.enemies.find((enemy) => enemy.archetypeId === 'dungeon-chain-captain')
+    expect(formalCaptain).toBeDefined()
+    expect(localCaptain).toBeDefined()
+    expect(formalCaptain?.chainCaptainSlashCooldown).toBe(0)
+    expect(formalCaptain?.chainCaptainSlashVisualTimer).toBe(0)
+    expect(formalCaptain?.chainWraithPullCooldown).toBe(0)
+    expect(localCaptain).toMatchObject({
+      chainCaptainSlash: undefined,
+      chainCaptainSlashWindow: undefined,
+      chainCaptainSlashVisualTimer: 0,
+      chainCaptainSlashCooldown: 0,
+      chainCaptainCommandTimer: 0,
+      chainCaptainCommandCooldown: 0,
+      chainWraithPullPhase: undefined,
+      chainWraithPullTimer: 0,
+      chainWraithPullWarningTarget: undefined,
+      chainWraithPullCooldown: 0,
+    })
+
+    ;[formal, local].forEach((created) => {
+      const captain = created.enemies.find((enemy) => enemy.archetypeId === 'dungeon-chain-captain')!
+      created.remainingToSpawn = 0
+      created.spawnCooldown = 999
+      created.player.position = { x: 200, y: 200 }
+      created.player.attackCooldown = 999
+      captain.position = { x: 250, y: 200 }
+      captain.lastPosition = { ...captain.position }
+      captain.speed = 0
+      captain.attackDamage = 10
+
+      let advanced = created
+      if (!captain.chainCaptainSlash) {
+        advanced = advanceGame(created, noInput, 0.01)
+      }
+      const activeCaptain = advanced.enemies.find((enemy) => enemy.id === captain.id)!
+      expect(activeCaptain.chainCaptainCommandTimer).toBeGreaterThan(4.9)
+      expect(advanced.enemySkillEffects).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'chain-captain-command', range: 160 }),
+      ]))
+      expect(activeCaptain.chainCaptainSlashWindow).toEqual({ strikeIndex: 1, remaining: 0.18 })
+      expect(activeCaptain.chainCaptainSlashVisualTimer).toBeCloseTo(0.54, 5)
+
+      advanced = advanceGame(advanced, noInput, 0.05)
+      expect(advanced.enemies.find((enemy) => enemy.id === captain.id)?.chainCaptainSlashWindow).toEqual({
+        strikeIndex: 2,
+        remaining: 0.18,
+      })
+      expect(advanced.enemies.find((enemy) => enemy.id === captain.id)?.chainCaptainSlashVisualTimer).toBeCloseTo(0.49, 5)
+      for (let frame = 0; frame < 4; frame += 1) {
+        advanced = advanceGame(advanced, noInput, 0.05)
+      }
+      expect(advanced.enemies.find((enemy) => enemy.id === captain.id)?.chainCaptainSlashWindow).toBeUndefined()
+      expect(advanced.enemies.find((enemy) => enemy.id === captain.id)?.chainCaptainSlashVisualTimer).toBeCloseTo(0.29, 5)
+      expect(advanced.player.hp).toBe(created.player.maxHp - 20)
+      expect(advanced.combatDamageLog.filter((event) => event.sourceId === 'chain-captain-chain-slash')).toEqual([
+        expect.objectContaining({ damage: 20 }),
+      ])
+
+      advanced.enemies.find((enemy) => enemy.id === captain.id)!.hp = 0
+      advanced = advanceGame(advanced, noInput, 0.05)
+      expect(advanced.enemies.some((enemy) => enemy.id === captain.id)).toBe(false)
+    })
+  })
+
+  it('initializes and completes wraith warning, pull, slow, and cancellation from formal and local spawns', () => {
+    const createFormalWraith = () => {
+      vi.spyOn(Math, 'random').mockReturnValue(0.99)
+      const snapshot = createInitialSnapshot('running')
+      snapshot.level = 15
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 0
+      snapshot.enemies = []
+      clearCombatObstacles(snapshot)
+      return advanceGame(snapshot, noInput, 0.016)
+    }
+    const createLocalWraith = () => {
+      let snapshot = startLocalBattleTestSnapshot(createInitialSnapshot('idle'))
+      clearCombatObstacles(snapshot)
+      snapshot = applyLocalBattleTestMonsterConfigSnapshot(snapshot, [{ entityId: 'dungeon-chain-wraith-elite', count: 1 }])
+      expect(snapshot.localBattleTest?.lastApplyResult).toEqual({ ok: true, spawned: 1, errors: [] })
+      return snapshot
+    }
+    const formal = createFormalWraith()
+    const local = createLocalWraith()
+    const formalWraith = formal.enemies.find((enemy) => enemy.archetypeId === 'dungeon-chain-wraith-elite')
+    const localWraith = local.enemies.find((enemy) => enemy.archetypeId === 'dungeon-chain-wraith-elite')
+    expect(formalWraith).toBeDefined()
+    expect(localWraith).toBeDefined()
+    expect(formalWraith?.chainCaptainSlashCooldown).toBe(0)
+    expect(formalWraith?.chainWraithPullCooldown).toBe(0)
+    expect(localWraith).toMatchObject({
+      chainCaptainSlash: undefined,
+      chainCaptainSlashWindow: undefined,
+      chainCaptainSlashCooldown: 0,
+      chainCaptainCommandTimer: 0,
+      chainCaptainCommandCooldown: 0,
+      chainWraithPullPhase: undefined,
+      chainWraithPullTimer: 0,
+      chainWraithPullWarningTarget: undefined,
+      chainWraithPullCooldown: 0,
+    })
+
+    ;[formal, local].forEach((created) => {
+      const wraith = created.enemies.find((enemy) => enemy.archetypeId === 'dungeon-chain-wraith-elite')!
+      created.remainingToSpawn = 0
+      created.spawnCooldown = 999
+      created.player.position = { x: 500, y: 200 }
+      created.player.attackCooldown = 999
+      wraith.position = { x: 300, y: 200 }
+      wraith.lastPosition = { ...wraith.position }
+      wraith.speed = 0
+
+      let advanced = created
+      if (wraith.chainWraithPullPhase !== 'warning') {
+        advanced = advanceGame(created, noInput, 0.01)
+      }
+      expect(advanced.chainWraithPullVisual).toMatchObject({ casterId: wraith.id, phase: 'warning', remaining: 0.8 })
+      for (let frame = 0; frame < 15; frame += 1) {
+        advanced = advanceGame(advanced, noInput, 0.05)
+      }
+      expect(advanced.player.position).toEqual({ x: 500, y: 200 })
+      advanced = advanceGame(advanced, noInput, 0.05)
+      expect(advanced.player.position.x).toBeCloseTo(500, 5)
+      expect(advanced.player.chainWraithSlowTimer).toBeCloseTo(4, 2)
+      expect(advanced.player.chainWraithSlowFactor).toBe(0.25)
+      expect(advanced.chainWraithPullVisual).toMatchObject({
+        casterId: wraith.id,
+        phase: 'pull',
+        remaining: 0.24,
+        pullStart: { x: 500, y: 200 },
+        pullTarget: { x: 400, y: 200 },
+      })
+      advanced = advanceGame(advanced, noInput, 0.05)
+      expect(advanced.player.position.x).toBeGreaterThan(400)
+      expect(advanced.player.position.x).toBeLessThan(500)
+      for (let frame = 0; frame < 4; frame += 1) {
+        advanced = advanceGame(advanced, noInput, 0.05)
+      }
+      expect(advanced.player.position.x).toBeCloseTo(400, 5)
+      expect(advanced.chainWraithPullVisual).toBeUndefined()
+    })
+
+    let cancelled = createLocalWraith()
+    const cancelledWraith = cancelled.enemies.find((enemy) => enemy.archetypeId === 'dungeon-chain-wraith-elite')!
+    cancelled.remainingToSpawn = 0
+    cancelled.spawnCooldown = 999
+    cancelled.player.position = { x: 500, y: 200 }
+    cancelled.player.attackCooldown = 999
+    cancelledWraith.position = { x: 300, y: 200 }
+    cancelledWraith.lastPosition = { ...cancelledWraith.position }
+    cancelledWraith.speed = 0
+    cancelled = advanceGame(cancelled, noInput, 0.01)
+    cancelled.mapObstacles = [{ id: 'wall', kind: 'crate', position: { x: 400, y: 200 }, width: 34, height: 160 }]
+    for (let frame = 0; frame < 16; frame += 1) {
+      cancelled = advanceGame(cancelled, noInput, 0.05)
+    }
+    expect(cancelled.player.position).toEqual({ x: 500, y: 200 })
+    expect(cancelled.player.chainWraithSlowTimer).toBe(0)
+    expect(cancelled.chainWraithPullVisual).toBeUndefined()
+    expect(cancelled.enemies.find((enemy) => enemy.id === cancelledWraith.id)?.chainWraithPullPhase).toBeUndefined()
+  })
+
+  it('uses shared local spawning plus the captain command and two-strike state machine', () => {
+    let local = startLocalBattleTestSnapshot(createInitialSnapshot('idle'))
+    local = applyLocalBattleTestMonsterConfigSnapshot(local, [
+      { entityId: 'dungeon-chain-captain', count: 1 },
+      { entityId: 'dungeon-chain-wraith-elite', count: 1 },
+    ])
+    expect(local.localBattleTest?.lastApplyResult).toEqual({ ok: true, spawned: 2, errors: [] })
+    expect(local.enemies.map((enemy) => enemy.archetypeId).sort()).toEqual(['dungeon-chain-captain', 'dungeon-chain-wraith-elite'])
+
+    const snapshot = createInitialSnapshot('running')
+    clearCombatObstacles(snapshot)
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.position = { x: 200, y: 200 }
+    snapshot.player.attackCooldown = 999
+    snapshot.enemies = [makeEnemy({
+      id: 'captain',
+      kind: 'elite',
+      role: 'elite',
+      archetypeId: 'dungeon-chain-captain',
+      position: { x: 250, y: 200 },
+      attackDamage: 10,
+      speed: 0,
+      attackCooldown: 999,
+      behaviorCooldown: 0,
+    }), makeEnemy({
+      id: 'captain-ally',
+      kind: 'melee',
+      position: { x: 350, y: 200 },
+      speed: 20,
+      attackCooldown: 999,
+    })]
+
+    let advanced = advanceGame(snapshot, noInput, 0.01)
+    expect(advanced.enemies[0].chainCaptainCommandTimer).toBeCloseTo(5, 2)
+    expect(advanced.enemySkillEffects).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'chain-captain-command', range: 160 })]))
+    expect(advanced.enemies.find((enemy) => enemy.id === 'captain-ally')?.position.x).toBeCloseTo(349.77, 5)
+    for (let frame = 0; frame < 4; frame += 1) {
+      advanced = advanceGame(advanced, noInput, 0.05)
+    }
+    for (let frame = 0; frame < 4; frame += 1) {
+      advanced = advanceGame(advanced, noInput, 0.05)
+    }
+    expect(advanced.player.hp).toBe(snapshot.player.maxHp - 20)
+    expect(advanced.combatDamageLog.filter((event) => event.sourceId === 'chain-captain-chain-slash')).toEqual([
+      expect.objectContaining({ damage: 20 }),
+    ])
+
+    advanced.enemies[0].hp = 0
+    const allyBeforeCaptainDeath = advanced.enemies.find((enemy) => enemy.id === 'captain-ally')!.position.x
+    const afterDeath = advanceGame(advanced, noInput, 0.016)
+    expect(afterDeath.enemies).toHaveLength(1)
+    expect(afterDeath.enemies[0].id).toBe('captain-ally')
+    expect(afterDeath.enemies[0].position.x).toBeCloseTo(allyBeforeCaptainDeath - 0.32, 5)
+    const fadingCommand = afterDeath.enemySkillEffects.find((effect) => effect.kind === 'chain-captain-command')
+    expect(fadingCommand?.ttl).toBeGreaterThan(0.55)
+    expect(fadingCommand?.ttl).toBeLessThanOrEqual(0.6)
+  })
+
+  it('follows the moving chain captain with the active command effect and freezes it at death', () => {
+    const snapshot = createInitialSnapshot('running')
+    clearCombatObstacles(snapshot)
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+    snapshot.player.position = { x: 600, y: 200 }
+    snapshot.enemies = [
+      makeEnemy({
+        id: 'command-moving-captain',
+        kind: 'elite',
+        role: 'elite',
+        archetypeId: 'dungeon-chain-captain',
+        position: { x: 200, y: 200 },
+        speed: 20,
+      }),
+      makeEnemy({
+        id: 'command-moving-ally',
+        position: { x: 300, y: 200 },
+        speed: 20,
+      }),
+    ]
+
+    let next = advanceGame(snapshot, noInput, 0.05)
+    const captain = next.enemies.find((enemy) => enemy.id === 'command-moving-captain')!
+    const activeCommand = next.enemySkillEffects.find((effect) => effect.kind === 'chain-captain-command')!
+
+    expect(captain.position.x).toBeGreaterThan(200)
+    expect(activeCommand.position).toEqual(captain.position)
+    expect(activeCommand.range).toBe(160)
+    expect(activeCommand.ttl).toBeCloseTo(4.95, 5)
+    expect(captain.chainCaptainCommandTimer).toBe(5)
+    expect(captain.chainCaptainCommandCooldown).toBe(10)
+
+    const deathPosition = { ...captain.position }
+    captain.hp = 0
+    next = advanceGame(next, noInput, 0.05)
+    const fadingCommand = next.enemySkillEffects.find((effect) => effect.kind === 'chain-captain-command')!
+
+    expect(next.enemies.some((enemy) => enemy.id === captain.id)).toBe(false)
+    expect(fadingCommand.position).toEqual(deathPosition)
+    expect(fadingCommand.ttl).toBeCloseTo(0.55, 5)
+
+    next = advanceGame(next, noInput, 0.05)
+    expect(next.enemySkillEffects.find((effect) => effect.kind === 'chain-captain-command')?.position).toEqual(deathPosition)
+  })
+
+  it('executes the chain wraith warning, legal pull, slow, cooldown, and renderer state without pulling through walls', () => {
+    const snapshot = createInitialSnapshot('running')
+    clearCombatObstacles(snapshot)
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+    snapshot.player.position = { x: 500, y: 200 }
+    snapshot.enemies = [makeEnemy({
+      id: 'wraith',
+      kind: 'elite',
+      role: 'elite',
+      archetypeId: 'dungeon-chain-wraith-elite',
+      position: { x: 300, y: 200 },
+      speed: 0,
+      attackCooldown: 999,
+      behaviorCooldown: 0,
+    })]
+
+    let advanced = advanceGame(snapshot, noInput, 0.01)
+    expect(advanced.chainWraithPullVisual).toMatchObject({ casterId: 'wraith', targetId: 'player', phase: 'warning', remaining: 0.8 })
+    for (let frame = 0; frame < 15; frame += 1) {
+      advanced = advanceGame(advanced, noInput, 0.05)
+    }
+    expect(advanced.player.position.x).toBe(500)
+    advanced = advanceGame(advanced, noInput, 0.05)
+    expect(advanced.player.position.x).toBeCloseTo(500, 5)
+    expect(advanced.player.chainWraithSlowTimer).toBeCloseTo(4, 2)
+    expect(advanced.player.chainWraithSlowFactor).toBe(0.25)
+    expect(advanced.chainWraithPullVisual).toMatchObject({
+      casterId: 'wraith',
+      phase: 'pull',
+      remaining: 0.24,
+      pullStart: { x: 500, y: 200 },
+      pullTarget: { x: 400, y: 200 },
+    })
+    expect(advanced.enemies[0].chainWraithPullCooldown).toBeGreaterThan(7)
+    advanced = advanceGame(advanced, noInput, 0.05)
+    expect(advanced.player.position.x).toBeGreaterThan(400)
+    expect(advanced.player.position.x).toBeLessThan(500)
+    for (let frame = 0; frame < 4; frame += 1) {
+      advanced = advanceGame(advanced, noInput, 0.05)
+    }
+    expect(advanced.player.position.x).toBeCloseTo(400, 5)
+    expect(advanced.chainWraithPullVisual).toBeUndefined()
+
+    const blocked = createInitialSnapshot('running')
+    clearCombatObstacles(blocked)
+    blocked.remainingToSpawn = 0
+    blocked.spawnCooldown = 999
+    blocked.player.attackCooldown = 999
+    blocked.player.position = { x: 500, y: 200 }
+    blocked.mapObstacles = [{ id: 'wall', kind: 'crate', position: { x: 400, y: 200 }, width: 34, height: 160 }]
+    blocked.enemies = [makeEnemy({ id: 'blocked-wraith', kind: 'elite', role: 'elite', archetypeId: 'dungeon-chain-wraith-elite', position: { x: 300, y: 200 }, speed: 0 })]
+    const noPullThroughWall = advanceGame(blocked, noInput, 0.05)
+    expect(noPullThroughWall.chainWraithPullVisual).toBeUndefined()
+    expect(noPullThroughWall.player.position).toEqual({ x: 500, y: 200 })
+  })
+
+  it('moves a confirmed chain wraith pull over its visual window without a final wall correction', () => {
+    const startConfirmedPull = () => {
+      const snapshot = createInitialSnapshot('running')
+      clearCombatObstacles(snapshot)
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 999
+      snapshot.player.position = { x: 500, y: 200 }
+      snapshot.enemies = [makeEnemy({
+        id: 'wraith',
+        kind: 'elite',
+        role: 'elite',
+        archetypeId: 'dungeon-chain-wraith-elite',
+        position: { x: 300, y: 200 },
+        speed: 0,
+        attackCooldown: 999,
+        behaviorCooldown: 0,
+      })]
+
+      let advanced = advanceGame(snapshot, noInput, 0.01)
+      for (let frame = 0; frame < 15; frame += 1) {
+        advanced = advanceGame(advanced, noInput, 0.05)
+      }
+      return advanceGame(advanced, noInput, 0.05)
+    }
+
+    let unobstructed = startConfirmedPull()
+    const target = unobstructed.chainWraithPullVisual?.pullTarget
+    expect(target).toEqual({ x: 400, y: 200 })
+    expect(unobstructed.player.position).toEqual({ x: 500, y: 200 })
+
+    unobstructed = advanceGame(unobstructed, noInput, 0.05)
+    expect(unobstructed.player.position.x).toBeGreaterThan(target!.x)
+    expect(unobstructed.player.position.x).toBeLessThan(500)
+    const firstPullStepX = unobstructed.player.position.x
+    unobstructed = advanceGame(unobstructed, noInput, 0.05)
+    expect(unobstructed.player.position.x).toBeGreaterThan(target!.x)
+    expect(unobstructed.player.position.x).toBeLessThan(firstPullStepX)
+    for (let frame = 0; frame < 3; frame += 1) {
+      unobstructed = advanceGame(unobstructed, noInput, 0.05)
+    }
+    expect(unobstructed.player.position).toEqual(target)
+    expect(Math.abs(unobstructed.player.position.x - 500)).toBeLessThanOrEqual(100)
+    expect(unobstructed.player.chainWraithSlowTimer).toBeGreaterThan(3.7)
+    expect(unobstructed.enemies[0].chainWraithPullCooldown).toBeGreaterThan(6.9)
+
+    let blocked = startConfirmedPull()
+    const blockedTarget = blocked.chainWraithPullVisual?.pullTarget
+    blocked.mapObstacles = [{ id: 'new-wall', kind: 'crate', position: { x: 440, y: 200 }, width: 80, height: 9999 }]
+    for (let frame = 0; frame < 5; frame += 1) {
+      blocked = advanceGame(blocked, noInput, 0.05)
+    }
+    expect(blocked.chainWraithPullVisual).toBeUndefined()
+    expect(blocked.player.position.x).toBeGreaterThan(blockedTarget!.x)
+    expect(blocked.player.position.x).toBeLessThanOrEqual(500)
+    expect(Math.abs(blocked.player.position.x - 500)).toBeLessThanOrEqual(100)
+  })
+
+  it('faces chain wraith pursuit by its final legal horizontal movement and retains that direction otherwise', () => {
+    const createChasingWraith = (enemyPosition: { x: number; y: number }, playerPosition: { x: number; y: number }, facingDirection: { x: number; y: number }) => {
+      const snapshot = createInitialSnapshot('running')
+      clearCombatObstacles(snapshot)
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 999
+      snapshot.player.position = { ...playerPosition }
+      snapshot.enemies = [makeEnemy({
+        id: 'facing-wraith',
+        kind: 'elite',
+        role: 'elite',
+        archetypeId: 'dungeon-chain-wraith-elite',
+        position: { ...enemyPosition },
+        lastPosition: { ...enemyPosition },
+        facingDirection,
+        speed: 100,
+        attackCooldown: 999,
+        behaviorCooldown: 0,
+        chainWraithPullCooldown: 999,
+      })]
+      return snapshot
+    }
+
+    const left = advanceGame(createChasingWraith({ x: 300, y: 200 }, { x: 100, y: 200 }, { x: 1, y: 0 }), noInput, 0.05)
+    const leftWraith = left.enemies.find((enemy) => enemy.id === 'facing-wraith')!
+    expect(leftWraith.position.x).toBeLessThan(300)
+    expect(leftWraith.facingDirection!.x).toBeLessThan(-0.05)
+
+    const right = advanceGame(createChasingWraith({ x: 300, y: 200 }, { x: 500, y: 200 }, { x: -1, y: 0 }), noInput, 0.05)
+    const rightWraith = right.enemies.find((enemy) => enemy.id === 'facing-wraith')!
+    expect(rightWraith.position.x).toBeGreaterThan(300)
+    expect(rightWraith.facingDirection!.x).toBeGreaterThan(0.05)
+
+    const diagonalLeft = advanceGame(createChasingWraith({ x: 300, y: 300 }, { x: 296, y: 100 }, { x: 1, y: 0 }), noInput, 0.05)
+    const diagonalLeftWraith = diagonalLeft.enemies.find((enemy) => enemy.id === 'facing-wraith')!
+    expect(Math.abs(diagonalLeftWraith.position.y - 300)).toBeGreaterThan(Math.abs(diagonalLeftWraith.position.x - 300))
+    expect(diagonalLeftWraith.position.x).toBeLessThan(300)
+    expect(diagonalLeftWraith.facingDirection).toEqual({ x: -1, y: 0 })
+
+    const diagonalRight = advanceGame(createChasingWraith({ x: 300, y: 300 }, { x: 304, y: 100 }, { x: -1, y: 0 }), noInput, 0.05)
+    const diagonalRightWraith = diagonalRight.enemies.find((enemy) => enemy.id === 'facing-wraith')!
+    expect(Math.abs(diagonalRightWraith.position.y - 300)).toBeGreaterThan(Math.abs(diagonalRightWraith.position.x - 300))
+    expect(diagonalRightWraith.position.x).toBeGreaterThan(300)
+    expect(diagonalRightWraith.facingDirection).toEqual({ x: 1, y: 0 })
+
+    const vertical = advanceGame(createChasingWraith({ x: 300, y: 300 }, { x: 300, y: 100 }, { x: -1, y: 0 }), noInput, 0.05)
+    const verticalWraith = vertical.enemies.find((enemy) => enemy.id === 'facing-wraith')!
+    expect(verticalWraith.position.y).toBeLessThan(300)
+    expect(verticalWraith.facingDirection!.x).toBeLessThan(-0.05)
+
+    const blocked = createChasingWraith({ x: 300, y: 200 }, { x: 100, y: 200 }, { x: 1, y: 0 })
+    blocked.mapObstacles = [{ id: 'wraith-facing-wall', kind: 'crate', position: { x: 270, y: 200 }, width: 48, height: 9999 }]
+    const blockedAfter = advanceGame(blocked, noInput, 0.05)
+    const blockedWraith = blockedAfter.enemies.find((enemy) => enemy.id === 'facing-wraith')!
+    expect(blockedWraith.position).toEqual({ x: 300, y: 200 })
+    expect(blockedWraith.facingDirection!.x).toBeGreaterThan(0.05)
+  })
+
+  it('keeps the selected jailer chief eligible until a legal elite spawn position exists', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
     const snapshot = createInitialSnapshot('running')
     snapshot.level = 15
     snapshot.remainingToSpawn = 1
     snapshot.spawnCooldown = 0
     snapshot.enemies = []
-    snapshot.mapObstacles = []
+    clearCombatObstacles(snapshot)
+    snapshot.battlefield.mode = 'boss-arena'
+    snapshot.player.size = WORLD_WIDTH * 8
     snapshot.player.attackCooldown = 999
 
-    const spawned = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+    const blocked = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+    expect(blocked.enemies.some((enemy) => enemy.kind === 'elite')).toBe(false)
+    expect(blocked.firstCampaignEliteArchetypeId).toBe('dungeon-jailer-chief')
+    expect(blocked.eliteSpawnedThisLevel).toBe(false)
+
+    blocked.battlefield.mode = 'infinite'
+    blocked.player.size = 16
+    const spawned = advanceGame(blocked, { up: false, down: false, left: false, right: false }, 0.016)
     const elite = spawned.enemies.find((enemy) => enemy.kind === 'elite')
-    expect(elite?.archetypeId).toBe(archetypeId)
+    expect(elite?.archetypeId).toBe('dungeon-jailer-chief')
     expect(elite?.revivesRemaining).toBe(0)
+    expect(elite).toMatchObject({
+      jailerChiefPhase: 'waiting',
+      jailerChiefCastTimer: 0,
+      jailerChiefCooldown: 0,
+      meleeAttackReady: false,
+    })
     if (!elite) {
       return
     }
 
     spawned.projectiles = [makeProjectile({
-      id: `${archetypeId}-fatal-shot`,
+      id: 'dungeon-jailer-chief-fatal-shot',
       position: { ...elite.position },
       velocity: { x: 0, y: 0 },
       damage: elite.hp + 1,
@@ -7184,7 +9367,7 @@ describe('game engine', () => {
     expect(afterDeath.enemySkillEffects.some((effect) => effect.kind === 'hellhound-breath')).toBe(false)
   })
 
-  it('keeps dungeon hellhounds as fast bite-only enemies without breath or charge behavior', () => {
+  it('keeps dungeon hellhounds as fast bite-only enemies even when a legacy breath state is present', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.player.position = { x: 300, y: 200 }
     snapshot.player.hp = 100
@@ -7200,11 +9383,13 @@ describe('game engine', () => {
         displayName: '地狱犬',
         campaignIndex: 1,
         movementTrait: 'charger',
-        skillTrait: 'none',
+        skillTrait: 'fire-breath',
         position: { x: 145, y: 200 },
         speed: 162,
         attackCooldown: 0,
         behaviorCooldown: 0,
+        breathTimer: 3,
+        breathTickCooldown: 0,
         behaviorDirection: { x: 1, y: 0 },
         facingDirection: { x: 1, y: 0 },
       }),
@@ -7692,7 +9877,7 @@ describe('game engine', () => {
     expect(windup.enemies[0].facingDirection?.x ?? 0).toBeGreaterThan(0)
 
     let fired = windup
-    for (let frame = 0; frame < 12; frame += 1) {
+    for (let frame = 0; frame < 20; frame += 1) {
       fired = advanceGame(fired, { up: false, down: false, left: false, right: false }, 0.05)
     }
     expect(fired.enemyProjectiles.length).toBeGreaterThan(0)
@@ -7840,13 +10025,273 @@ describe('game engine', () => {
     expect(blast.combatDamageLog.find((event) => event.sourceId === 'bomber-explosion')?.damage).toBe(26)
   })
 
+  it('uses fire-sac melee only without control, while keeping its final self-destruct separate', () => {
+    let snapshot = createInitialSnapshot('running')
+    snapshot.player.position = { x: 220, y: 200 }
+    snapshot.player.hp = 100
+    snapshot.player.hurtCooldown = 0
+    snapshot.player.attackCooldown = 99
+    snapshot.remainingToSpawn = 0
+    clearCombatObstacles(snapshot)
+    snapshot.enemies = [makeEnemy({
+      id: 'fire-sac-melee',
+      kind: 'bomber',
+      archetypeId: 'dungeon-explosive-fire-sac',
+      displayName: '爆裂火囊怪',
+      campaignIndex: 1,
+      skillTrait: 'hex-slow',
+      position: { x: 190, y: 200 },
+      speed: 160,
+      attackDamage: 13,
+      attackCooldown: 0,
+      behaviorCooldown: 0,
+    })]
+
+    for (let frame = 0; frame < 20; frame += 1) {
+      snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+
+    expect(snapshot.player.hp).toBeLessThan(100)
+    expect(snapshot.player.stunTimer ?? 0).toBe(0)
+    expect(snapshot.combatDamageLog.some((event) => event.attackerId === 'fire-sac-melee' && event.sourceName === '火囊爆炸')).toBe(true)
+    expect(snapshot.enemySkillEffects.some((effect) => effect.kind === 'jailer-chief-warning')).toBe(false)
+    expect(snapshot.combatDamageLog.some((event) => event.sourceId === 'bomber-explosion')).toBe(false)
+  })
+
+  it('keeps the first-campaign fixed melee table independent from size, rank, and difficulty', () => {
+    const expected = {
+      'dungeon-hellhound': { standoff: 46, trigger: 60, strike: 60 },
+      'dungeon-jailer-chief': { standoff: 50, trigger: 70, strike: 70 },
+      'dungeon-warden': { standoff: 50, trigger: 70, strike: 70 },
+      'dungeon-chain-captain': { standoff: 50, trigger: 70, strike: 70 },
+      'dungeon-chain-wraith-elite': { standoff: 50, trigger: 70, strike: 70 },
+    }
+    Object.entries(expected).forEach(([archetypeId, distances]) => {
+      expect(getFirstCampaignFixedMeleeDistances({ archetypeId })).toEqual(distances)
+      expect(getFirstCampaignFixedMeleeDistances({ archetypeId, size: 999 } as Enemy)).toEqual(distances)
+    })
+    expect(getFirstCampaignFixedMeleeDistances({ archetypeId: 'dungeon-skeleton-warrior' })).toBeUndefined()
+  })
+
+  it('runs hellhound bite through the locked windup and impact path instead of contact damage', () => {
+    let snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.position = { x: 220, y: 200 }
+    snapshot.player.hp = 100
+    snapshot.player.hurtCooldown = 0
+    snapshot.player.attackCooldown = 999
+    clearCombatObstacles(snapshot)
+    snapshot.enemies = [makeEnemy({
+      id: 'hellhound-bite-state-machine',
+      kind: 'charger',
+      archetypeId: 'dungeon-hellhound',
+      displayName: '地狱犬',
+      campaignIndex: 1,
+      position: { x: 160, y: 200 },
+      lastPosition: { x: 160, y: 200 },
+      speed: 160,
+      attackDamage: 17,
+      attackCooldown: 0,
+      behaviorCooldown: 99,
+    })]
+
+    snapshot = advanceGame(snapshot, noInput, 0.016)
+    const lockedPosition = { ...snapshot.enemies[0].position }
+    expect(snapshot.player.hp).toBe(100)
+    expect(snapshot.enemies[0].meleeAttackWindup).toBeGreaterThan(0)
+    for (let frame = 0; frame < 10 && snapshot.player.hp === 100; frame += 1) {
+      snapshot = advanceGame(snapshot, noInput, 0.05)
+      expect(snapshot.enemies[0].position).toEqual(lockedPosition)
+    }
+    expect(snapshot.player.hp).toBeLessThan(100)
+    expect(snapshot.combatDamageLog.some((event) => event.attackerId === 'hellhound-bite-state-machine' && event.sourceName === '撕咬')).toBe(true)
+
+    const overlapping = createInitialSnapshot('running')
+    overlapping.levelTimer = 0
+    overlapping.remainingToSpawn = 0
+    overlapping.spawnCooldown = 999
+    overlapping.player.position = { x: 220, y: 200 }
+    overlapping.player.hp = 100
+    overlapping.player.hurtCooldown = 0
+    overlapping.player.attackCooldown = 999
+    clearCombatObstacles(overlapping)
+    overlapping.mapObstacles = [{
+      id: 'hellhound-overlap-blocker',
+      kind: 'pillar',
+      position: { x: 205, y: 200 },
+      width: 12,
+      height: 64,
+    }]
+    overlapping.enemies = [makeEnemy({
+      id: 'hellhound-no-contact-bypass',
+      kind: 'charger',
+      archetypeId: 'dungeon-hellhound',
+      displayName: '地狱犬',
+      campaignIndex: 1,
+      position: { x: 220, y: 200 },
+      lastPosition: { x: 220, y: 200 },
+      speed: 120,
+      attackCooldown: 999,
+    })]
+    const escaped = advanceGame(overlapping, noInput, 0.05)
+    expect(escaped.player.hp).toBe(100)
+    expect(distance(escaped.enemies[0].position, overlapping.enemies[0].position)).toBeLessThanOrEqual(6.01)
+  })
+
+  it('uses the same fixed melee positioning from the public local battle spawn path', () => {
+    let snapshot = applyLocalBattleTestMonsterConfigSnapshot(
+      startLocalBattleTestSnapshot(createInitialSnapshot('idle')),
+      [{ entityId: 'dungeon-warden', count: 1 }],
+    )
+    clearCombatObstacles(snapshot)
+    snapshot.player.position = { x: 420, y: 240 }
+    snapshot.player.hp = 100
+    snapshot.player.hurtCooldown = 0
+    snapshot.player.attackCooldown = 999
+    const warden = snapshot.enemies.find((enemy) => enemy.archetypeId === 'dungeon-warden')!
+    warden.position = { x: 360, y: 240 }
+    warden.lastPosition = { ...warden.position }
+    warden.attackCooldown = 0
+    warden.behaviorCooldown = 99
+    snapshot = advanceGame(snapshot, noInput, 0.016)
+
+    const activeWarden = snapshot.enemies.find((enemy) => enemy.id === warden.id)!
+    expect(distance(activeWarden.position, snapshot.player.position)).toBeCloseTo(60, 4)
+    expect(activeWarden.meleeAttackWindup).toBeGreaterThan(0)
+    expect(activeWarden.meleeAttackOrigin).toEqual(activeWarden.position)
+  })
+
+  it('uses the shared stable visible-body envelope for slime-family melee placement in every direction', () => {
+    const directions = [
+      { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }, { x: 1, y: 1 },
+    ]
+    const variants: Array<Pick<Enemy, 'kind' | 'archetypeId' | 'c1SlimeVariantParentSize'> & { id: string; size: number }> = [
+      { id: 'corrosive', kind: 'melee', archetypeId: 'corrosive-slime', size: 32 },
+      { id: 'split-parent', kind: 'splitter', archetypeId: 'dungeon-splitting-ooze', size: 36 },
+      { id: 'split-child', kind: 'splitter', archetypeId: 'dungeon-splitting-ooze', size: 18, c1SlimeVariantParentSize: 36 },
+      { id: 'fire-sac', kind: 'bomber', archetypeId: 'dungeon-explosive-fire-sac', size: 32 },
+    ]
+
+    variants.forEach((variant) => directions.forEach((rawDirection) => {
+      const direction = normalize(rawDirection)
+      const snapshot = createInitialSnapshot('running')
+      snapshot.elapsedTime = 0.2
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.position = { x: 360, y: 260 }
+      snapshot.player.hp = 100
+      snapshot.player.hurtCooldown = 0
+      snapshot.player.attackCooldown = 999
+      clearCombatObstacles(snapshot)
+      const seed = makeEnemy({
+        ...variant,
+        position: { x: snapshot.player.position.x - direction.x * 120, y: snapshot.player.position.y - direction.y * 120 },
+        lastPosition: { x: snapshot.player.position.x - direction.x * 120, y: snapshot.player.position.y - direction.y * 120 },
+        facingDirection: direction,
+        behaviorDirection: direction,
+        speed: 160,
+        attackCooldown: 0,
+        behaviorCooldown: 99,
+      })
+      const monster = getStableMonsterVisibleBodyEnvelope(seed, snapshot.elapsedTime)!
+      const player = getPlayerArcherStableVisibleBodyEnvelope(snapshot.player.position, { flipX: snapshot.player.facing === 'left' })
+      const required = getStableVisibleBodyRequiredRootDistance(monster, player, direction, 4)
+      const rootOffset = { x: monster.root.x - seed.position.x, y: monster.root.y - seed.position.y }
+      seed.position = {
+        x: player.root.x - direction.x * required - rootOffset.x,
+        y: player.root.y - direction.y * required - rootOffset.y,
+      }
+      seed.lastPosition = { ...seed.position }
+      snapshot.enemies = [seed]
+
+      let next = snapshot
+      for (let frame = 0; frame < 6 && (next.enemies[0].meleeAttackWindup ?? 0) <= 0; frame += 1) {
+        next = advanceGame(next, noInput, 0.016)
+      }
+      const placed = next.enemies[0]
+      const placedMonster = getStableMonsterVisibleBodyEnvelope(placed, next.elapsedTime)!
+      const placedPlayer = getPlayerArcherStableVisibleBodyEnvelope(next.player.position, { flipX: next.player.facing === 'left' })
+      const placedDirection = normalize({ x: placedPlayer.root.x - placedMonster.root.x, y: placedPlayer.root.y - placedMonster.root.y })
+      expect(placed.meleeAttackWindup, `${variant.id} ${rawDirection.x},${rawDirection.y}`).toBeGreaterThan(0)
+      expect(getStableVisibleBodyEdgeGap(placedMonster, placedPlayer, placedDirection)).toBeGreaterThanOrEqual(3.25)
+      expect(getStableVisibleBodyEdgeGap(placedMonster, placedPlayer, placedDirection)).toBeLessThanOrEqual(4.75)
+    }))
+  })
+
+  it('keeps a visible-body melee windup locked and misses when the player leaves its edge range', () => {
+    let snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.elapsedTime = 0.2
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.position = { x: 360, y: 260 }
+    snapshot.player.hp = 100
+    snapshot.player.hurtCooldown = 0
+    snapshot.player.attackCooldown = 999
+    clearCombatObstacles(snapshot)
+    const seed = makeEnemy({
+      id: 'visible-body-windup',
+      kind: 'splitter',
+      archetypeId: 'dungeon-splitting-ooze',
+      position: { x: 220, y: 260 },
+      lastPosition: { x: 220, y: 260 },
+      speed: 160,
+      size: 36,
+      attackDamage: 14,
+      attackCooldown: 0,
+      behaviorCooldown: 99,
+      facingDirection: { x: 1, y: 0 },
+      behaviorDirection: { x: 1, y: 0 },
+    })
+    const monster = getStableMonsterVisibleBodyEnvelope(seed, snapshot.elapsedTime)!
+    const player = getPlayerArcherStableVisibleBodyEnvelope(snapshot.player.position)
+    const direction = normalize({ x: player.root.x - monster.root.x, y: player.root.y - monster.root.y })
+    const required = getStableVisibleBodyRequiredRootDistance(monster, player, direction, 4)
+    const rootOffset = { x: monster.root.x - seed.position.x, y: monster.root.y - seed.position.y }
+    seed.position = { x: player.root.x - direction.x * required - rootOffset.x, y: player.root.y - direction.y * required - rootOffset.y }
+    seed.lastPosition = { ...seed.position }
+    snapshot.enemies = [seed]
+
+    for (let frame = 0; frame < 6 && (snapshot.enemies[0].meleeAttackWindup ?? 0) <= 0; frame += 1) {
+      snapshot = advanceGame(snapshot, noInput, 0.016)
+    }
+    const lockedPosition = { ...snapshot.enemies[0].position }
+    expect(snapshot.enemies[0].meleeAttackWindup).toBeGreaterThan(0)
+    snapshot.player.position.x += 180
+    for (let frame = 0; frame < 12 && ((snapshot.enemies[0].meleeAttackWindup ?? 0) > 0 || snapshot.enemies[0].meleeAttackReady); frame += 1) {
+      snapshot = advanceGame(snapshot, noInput, 0.05)
+      if ((snapshot.enemies[0].meleeAttackWindup ?? 0) > 0 || snapshot.enemies[0].meleeAttackReady) {
+        expect(snapshot.enemies[0].position).toEqual(lockedPosition)
+      }
+    }
+    expect(snapshot.player.hp).toBe(100)
+    expect(snapshot.enemies[0].meleeAttackReady).toBe(false)
+  })
+
   it('forces new enemy types into early milestone levels', () => {
+    const slimeRun = createInitialSnapshot('running')
+    slimeRun.level = 1
+    slimeRun.levelTargetKills = 100
+    slimeRun.remainingToSpawn = 100
+    slimeRun.spawnCooldown = 0
+    slimeRun.enemies = []
+    clearCombatObstacles(slimeRun)
+    slimeRun.campaignRewardProgress.eliteRaidRollResolvedLevels = [1]
+
+    const slimeSpawned = advanceGame(slimeRun, { up: false, down: false, left: false, right: false }, 0.016)
+    expect(slimeSpawned.enemies.some((enemy) => enemy.archetypeId === 'corrosive-slime')).toBe(true)
+    expect(getLocalBattleTestSpawnOptions().some((option) => ['dungeon-jailer', 'corrupted-jailer', 'dungeon-rat-swarm', 'dungeon-chain-wraith'].includes(option.entityId))).toBe(false)
+
     const chargerRun = createInitialSnapshot('running')
     chargerRun.level = 4
     chargerRun.levelTargetKills = 15
     chargerRun.remainingToSpawn = 15
     chargerRun.spawnCooldown = 0
     chargerRun.enemies = []
+    chargerRun.campaignRewardProgress.eliteRaidRollResolvedLevels = [4]
 
     const chargerSpawned = advanceGame(chargerRun, { up: false, down: false, left: false, right: false }, 0.016)
     expect(chargerSpawned.enemies.some((enemy) => enemy.kind === 'charger')).toBe(true)
@@ -7857,6 +10302,7 @@ describe('game engine', () => {
     splitterRun.remainingToSpawn = 27
     splitterRun.spawnCooldown = 0
     splitterRun.enemies = []
+    splitterRun.campaignRewardProgress.eliteRaidRollResolvedLevels = [7]
 
     const splitterSpawned = advanceGame(splitterRun, { up: false, down: false, left: false, right: false }, 0.016)
     expect(splitterSpawned.enemies.some((enemy) => enemy.kind === 'splitter')).toBe(true)
@@ -7868,6 +10314,7 @@ describe('game engine', () => {
     bomberRun.remainingToSpawn = 33
     bomberRun.spawnCooldown = 0
     bomberRun.enemies = []
+    bomberRun.campaignRewardProgress.eliteRaidRollResolvedLevels = [10]
 
     const bomberSpawned = advanceGame(bomberRun, { up: false, down: false, left: false, right: false }, 0.016)
     expect(bomberSpawned.enemies.some((enemy) => enemy.kind === 'bomber')).toBe(true)
@@ -7909,7 +10356,7 @@ describe('game engine', () => {
     expect(ARCHER_ACTIVE_SKILLS.every((skillDefinition) => LV5_QUALITATIVE_TEXT[skillDefinition.id]?.length > 0)).toBe(true)
   })
 
-  it('keeps every active archer skill wired to a level five behavior hook', () => {
+  it('keeps every core archer family wired to a level five behavior hook', () => {
     const castLevelFive = (skillId: string) => {
       const snapshot = createInitialSnapshot('running')
       snapshot.remainingToSpawn = 0
@@ -7957,7 +10404,10 @@ describe('game engine', () => {
 
     const matrix: Record<string, (cast: ReturnType<typeof triggerActiveSkillSnapshot>) => void> = {
       'pierce-arrow': (cast) => expect(expectProjectile(cast, 'pierce-arrow').lastPierceDamageMultiplier).toBe(1.35),
-      'quick-triple': (cast) => expect(cast.projectiles.some((projectile) => projectile.forceCritical)).toBe(true),
+      'quick-triple': (cast) => expect([
+        ...cast.projectiles,
+        ...(cast.pendingProjectileLaunches ?? []).map((launch) => launch.projectile),
+      ].some((projectile) => projectile.forceCritical)).toBe(true),
       'fan-burst': (cast) => expect(Math.max(...cast.projectiles.map((projectile) => projectile.damage))).toBeGreaterThan(Math.min(...cast.projectiles.map((projectile) => projectile.damage))),
       'heavy-snipe': (cast) => expect(expectProjectile(cast, 'heavy-snipe').damage).toBeGreaterThan(ARCHER_ACTIVE_SKILL_MAP['heavy-snipe'].levels[4].damage),
       'curve-return': (cast) => {
@@ -7971,7 +10421,10 @@ describe('game engine', () => {
         expect(projectile.ricochetMaxHitsPerEnemy).toBe(3)
       },
       'armor-pin': (cast) => expect(expectProjectile(cast, 'armor-pin').infectOnDeath).toBe('mark'),
-      'gale-barrage': (cast) => expect(cast.projectiles.filter((projectile) => projectile.sourceSkillId === 'gale-barrage').length).toBeGreaterThan(ARCHER_ACTIVE_SKILL_MAP['gale-barrage'].levels[4].projectileCount),
+      'gale-barrage': (cast) => expect([
+        ...cast.projectiles,
+        ...(cast.pendingProjectileLaunches ?? []).map((launch) => launch.projectile),
+      ].filter((projectile) => projectile.sourceSkillId === 'gale-barrage').length).toBeGreaterThan(ARCHER_ACTIVE_SKILL_MAP['gale-barrage'].levels[4].projectileCount),
       'arrow-rain': centerStrikeHook('arrow-rain'),
       'arrow-screen': (cast) => expect(expectProjectile(cast, 'arrow-screen').slowOnHit).toBeTruthy(),
       'meteor-cluster': centerStrikeHook('meteor-cluster'),
@@ -7989,11 +10442,6 @@ describe('game engine', () => {
         expect(projectile.bleedOnHit).toBe(true)
         expect(projectile.slowOnHit?.factor).toBe(1)
       },
-      'shadow-erosion': (cast) => {
-        const projectile = expectProjectile(cast, 'shadow-erosion')
-        expect(projectile.effect).toBe('dark')
-        expect(projectile.infectOnDeath).toBe('dark')
-      },
       'light-split': (cast) => {
         const projectile = expectProjectile(cast, 'light-split')
         expect(projectile.explosionRadius).toBeGreaterThanOrEqual(26)
@@ -8003,7 +10451,6 @@ describe('game engine', () => {
       'hunter-net': genericEndBurstHook('hunter-net'),
       'pit-spikes': genericEndBurstHook('pit-spikes'),
       'snare-line': genericEndBurstHook('snare-line'),
-      'shock-bolt': (cast) => expect(expectProjectile(cast, 'shock-bolt').stunNearbyOnHit?.radius).toBe(80),
       'decoy-feather': (cast) => expectAlphaBeast(cast, 'decoy-feather'),
       'sentry-tower': (cast) => expectAlphaBeast(cast, 'sentry-tower'),
       'poison-ambush': (cast) => expectAlphaBeast(cast, 'poison-ambush'),
@@ -8013,7 +10460,7 @@ describe('game engine', () => {
         expect(Math.max(...cast.projectiles.map((projectile) => projectile.damage))).toBeGreaterThan(Math.min(...cast.projectiles.map((projectile) => projectile.damage)))
         expect(expectProjectile(cast, 'double-star').homingRange).toBeGreaterThan(0)
       },
-      'spiral-break': (cast) => expect(expectProjectile(cast, 'spiral-break').bleedOnHit).toBe(true),
+      'spiral-break': (cast) => expect(expectProjectile(cast, 'spiral-break').damage).toBeGreaterThan(0),
       'revolving-feather': (cast) => expect(cast.beastCompanions.filter((beast) => beast.skillId.startsWith('revolving-feather')).length).toBeGreaterThanOrEqual(3),
       'feather-storm': genericEndBurstHook('feather-storm'),
       'cross-cut': (cast) => expect(expectProjectile(cast, 'cross-cut').bleedOnHit).toBe(true),
@@ -8022,17 +10469,16 @@ describe('game engine', () => {
         expect(projectile.eliteBossDamageMultiplier).toBe(1.3)
         expect(projectile.linePullMaxDistance).toBe(96)
       },
-      'hunter-mark': (cast) => expect(expectProjectile(cast, 'hunter-mark').infectOnDeath).toBe('mark'),
+      'hunter-mark': (cast) => expect(expectProjectile(cast, 'hunter-mark').effect).toBe('mark'),
       'weakness-trace': (cast) => expect(expectProjectile(cast, 'weakness-trace').lowHpDamageMultiplier).toBe(1.5),
       'death-line': centerStrikeHook('death-line'),
       'blood-scent': (cast) => expect(expectProjectile(cast, 'blood-scent').velocity.y).toBeGreaterThan(0),
-      'raptor-dive': (cast) => expectAlphaBeast(cast, 'raptor-dive'),
+      'raptor-dive': (cast) => expect(cast.beastCompanions.some((beast) => beast.skillId === 'raptor-dive')).toBe(true),
       'final-hunt': (cast) => expect(expectProjectile(cast, 'final-hunt').lowHpDamageMultiplier).toBe(1.45),
       'thousand-feathers': centerStrikeHook('thousand-feathers'),
       'starfire-fall': (cast) => expect(expectField(cast, 'starfire-fall').effect).toBe('burn'),
       'rift-storm': fieldHook('rift-storm'),
       'sky-judgement': (cast) => expect(cast.projectiles.filter((projectile) => projectile.sourceSkillId === 'sky-judgement').length).toBeGreaterThan(ARCHER_ACTIVE_SKILL_MAP['sky-judgement'].levels[4].projectileCount),
-      'god-hunt': (cast) => expect(cast.beastCompanions.length).toBeGreaterThanOrEqual(7),
       'moonshard-volley': (cast) => expect(expectProjectile(cast, 'moonshard-volley').slowOnHit).toBeTruthy(),
       'sunflare-sweep': (cast) => {
         const projectile = expectProjectile(cast, 'sunflare-sweep')
@@ -8041,28 +10487,129 @@ describe('game engine', () => {
       },
       'azure-barrage': centerStrikeHook('azure-barrage'),
       'thorn-whistle': genericEndBurstHook('thorn-whistle'),
-      'celestial-feather': (cast) => {
-        const projectile = expectProjectile(cast, 'celestial-feather')
-        expect(projectile.effect).toBe('burn')
-        expect(projectile.infectOnDeath).toBe('burn')
-      },
     }
 
-    expect(Object.keys(matrix).sort()).toEqual(ARCHER_ACTIVE_SKILLS.map((skillDefinition) => skillDefinition.id).sort())
-    ARCHER_ACTIVE_SKILLS.forEach((skillDefinition) => {
-      matrix[skillDefinition.id](castLevelFive(skillDefinition.id))
+    expect(ARCHER_CORE_SKILL_IDS.every((skillId) => matrix[skillId])).toBe(true)
+    ARCHER_CORE_SKILL_IDS.forEach((skillId) => {
+      matrix[skillId](castLevelFive(skillId))
     })
   })
 
-  it('links every active archer skill to at least one equipment modifier', () => {
-    const linkedSkillIds = new Set(
-      Object.values(SKILL_EQUIPMENT_LINKS)
-        .flat()
-        .flatMap((modifier) => ('skillIds' in modifier ? modifier.skillIds ?? [] : [])),
-    )
+  it('uses family and evolution inheritance instead of the retired flat equipment skill ids', () => {
+    const modifiers = Object.values(SKILL_EQUIPMENT_LINKS).flat()
+    expect(modifiers.some((modifier) => modifier.skillIds?.length)).toBe(false)
 
-    ARCHER_ACTIVE_SKILLS.forEach((skillDefinition) => {
-      expect(linkedSkillIds.has(skillDefinition.id)).toBe(true)
+    ARCHER_CORE_SKILLS.forEach((core) => {
+      expect(core.levels).toHaveLength(5)
+      expect(core.levels.slice(0, 3).every((level) => level.mechanics.length > 0)).toBe(true)
+      expect(modifiers.some((modifier) => modifier.familyIds?.includes(core.id) || ('buildTag' in modifier && modifier.buildTag === core.buildTag))).toBe(true)
+      core.evolutionIds.forEach((evolutionId) => {
+        const evolution = ARCHER_SKILL_EVOLUTIONS.find((entry) => entry.id === evolutionId)
+        expect(evolution?.familyId).toBe(core.id)
+        expect(evolution?.level4Mechanics.length).toBeGreaterThan(0)
+        expect(evolution?.level5Mechanics.length).toBeGreaterThan(0)
+        expect(evolution?.effectProfile.warning).toContain(evolution?.name ?? '')
+      })
+    })
+  })
+
+  it('consumes every core level matrix and every Lv4/Lv5 evolution through the runtime event contract', () => {
+    ARCHER_CORE_SKILLS.forEach((core) => {
+      core.levels.forEach((levelContract, index) => {
+        const definition = getEffectiveActiveSkillDefinition({ skillId: core.id, familyId: core.id })
+        expect(definition?.levels[index]).toEqual(levelContract.config)
+        expect(levelContract.mechanics.length).toBeGreaterThan(0)
+      })
+    })
+
+    ARCHER_SKILL_EVOLUTIONS.forEach((evolution) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.remainingToSpawn = 0
+      snapshot.mapObstacles = []
+      snapshot.player.attackCooldown = 999
+      snapshot.aimPoint = { x: snapshot.player.position.x + 220, y: snapshot.player.position.y }
+      snapshot.activeSkills = [{ skillId: evolution.familyId, familyId: evolution.familyId, evolutionId: evolution.id, level: 5, cooldownRemaining: 0 }]
+      const effective = getEffectiveActiveSkillDefinition(snapshot.activeSkills[0])!
+      const cast = triggerActiveSkillSnapshot(snapshot, 0)
+      const events = cast.skillEvolutionEffectEvents.filter((event) => event.evolutionId === evolution.id)
+      expect(effective.id).toBe(evolution.id)
+      expect(effective.levels[3]).toMatchObject(evolution.level4Config)
+      expect(effective.levels[4]).toMatchObject(evolution.level5Config)
+      expect(events.some((event) => event.layer === 'warning')).toBe(true)
+      expect(events.some((event) => event.layer === 'body')).toBe(true)
+      expect(evolution.effectProfile.shape).toBeTruthy()
+      if (evolution.visualKind === 'field') {
+        expect(cast.skillFields.some((field) => field.sourceEvolutionId === evolution.id)).toBe(true)
+      } else if (evolution.visualKind === 'beast') {
+        expect(cast.beastCompanions.some((beast) => beast.evolutionId === evolution.id)).toBe(true)
+      } else {
+        expect([
+          ...cast.projectiles,
+          ...(cast.pendingProjectileLaunches ?? []).map((launch) => launch.projectile),
+        ].some((projectile) => projectile.sourceEvolutionId === evolution.id)).toBe(true)
+      }
+    })
+  })
+
+  it('emits an actual-damage hit event for every evolution, including beast companion damage', () => {
+    ARCHER_SKILL_EVOLUTIONS.forEach((evolution) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.player.attackCooldown = 999
+      snapshot.aimPoint = { x: snapshot.player.position.x + 220, y: snapshot.player.position.y }
+      snapshot.activeSkills = [{
+        skillId: evolution.familyId,
+        familyId: evolution.familyId,
+        evolutionId: evolution.id,
+        level: 5,
+        cooldownRemaining: 0,
+      }]
+      snapshot.enemies = [makeEnemy({
+        id: `evolution-hit-${evolution.id}`,
+        position: { ...snapshot.aimPoint },
+        hp: 400,
+        maxHp: 400,
+        attackCooldown: 999,
+      })]
+
+      let next = triggerActiveSkillSnapshot(snapshot, 0)
+      if (evolution.visualKind === 'beast') {
+        const beast = next.beastCompanions.find((companion) => companion.evolutionId === evolution.id)
+        expect(beast, `${evolution.id} should create its evolved beast before a hit`).toBeTruthy()
+        beast!.position = { x: next.enemies[0].position.x - 8, y: next.enemies[0].position.y }
+        beast!.commandPoint = { ...beast!.position }
+        beast!.commandTtl = 0
+        beast!.attackCooldown = 0
+        next = advanceGame(next, noInput, 0.05)
+      } else if (evolution.visualKind === 'field') {
+        const field = next.skillFields.find((item) => item.sourceEvolutionId === evolution.id)
+        expect(field, `${evolution.id} should create its evolved field before a hit`).toBeTruthy()
+        field!.position = { ...next.enemies[0].position }
+        field!.tickCooldown = 0
+        next = advanceGame(next, noInput, 0.016)
+      } else {
+        const projectile = next.projectiles.find((item) => item.sourceEvolutionId === evolution.id)
+          ?? next.pendingProjectileLaunches?.find((launch) => launch.projectile.sourceEvolutionId === evolution.id)?.projectile
+        expect(projectile, `${evolution.id} should create its evolved projectile before a hit`).toBeTruthy()
+        projectile!.releaseDelayRemaining = 0
+        projectile!.previousPosition = { ...next.player.position }
+        projectile!.position = { ...next.enemies[0].position }
+        next.projectiles = [projectile!]
+        next.pendingProjectileLaunches = []
+        next = advanceGame(next, noInput, 0.016)
+      }
+
+      const hit = next.skillEvolutionEffectEvents.find((event) => event.layer === 'hit' && event.evolutionId === evolution.id)
+      expect(hit, `${evolution.id} should report a real hit event`).toMatchObject({
+        familyId: evolution.familyId,
+        evolutionId: evolution.id,
+        targetId: `evolution-hit-${evolution.id}`,
+      })
+      expect(hit?.origin).toBeTruthy()
+      expect(hit?.targetPosition).toEqual(next.enemies.find((enemy) => enemy.id === `evolution-hit-${evolution.id}`)?.position)
+      expect(hit?.duration).toBeGreaterThan(0)
     })
   })
 
@@ -8158,8 +10705,9 @@ describe('game engine', () => {
 
     const cast = triggerActiveSkillSnapshot(snapshot, 0)
 
-    expect(cast.projectiles.length).toBeGreaterThan(ARCHER_ACTIVE_SKILL_MAP['gale-barrage'].levels[4].projectileCount)
-    expect(cast.projectiles.every((projectile) => projectile.skillLevel === 5)).toBe(true)
+    const volleys = [...cast.projectiles, ...(cast.pendingProjectileLaunches ?? []).map((launch) => launch.projectile)]
+    expect(volleys.length).toBeGreaterThan(ARCHER_ACTIVE_SKILL_MAP['gale-barrage'].levels[4].projectileCount)
+    expect(volleys.every((projectile) => projectile.skillLevel === 5)).toBe(true)
   })
 
   it('keeps beast companions semi-permanent and prevents command revive abuse', () => {
@@ -8224,7 +10772,7 @@ describe('game engine', () => {
     expect(distance(revivedWolf!.position, revived.player.position)).toBeLessThan(80)
   })
 
-  it('spawns a temporary hunt beast when three main beasts are alive and god hunt is cast at level five', () => {
+  it('migrates retired god hunt into its core family without restoring a retired run-talent node', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.activeSkills = [{ skillId: 'god-hunt', level: 5, cooldownRemaining: 0 }]
     snapshot.beastCompanions = [
@@ -8290,10 +10838,16 @@ describe('game engine', () => {
       },
     ]
 
-    const next = triggerActiveSkillSnapshot(snapshot, 0)
+    let next = migrateArcherSkillEvolutionSnapshot(snapshot)
+    expect(next.activeSkills[0]).toMatchObject({ skillId: 'raptor-dive', familyId: 'raptor-dive', level: 5 })
+    expect(next.runTalentState.selectedTalentIds).not.toContain('run_beast_legendary_hunt')
 
-    expect(next.beastCompanions.some((beast) => beast.skillId.startsWith('god-hunt-alpha-') && beast.isAlpha)).toBe(true)
-    expect(next.floatingTexts.some((text) => text.value === '协猎兽')).toBe(true)
+    for (let cast = 0; cast < 3; cast += 1) {
+      next.activeSkills[0].cooldownRemaining = 0
+      next = triggerActiveSkillSnapshot(next, 0)
+    }
+
+    expect(next.beastCompanions.filter((beast) => beast.skillId.startsWith('legendary-beast-hunt-'))).toHaveLength(0)
   })
 
   it('applies equipment set bonuses to combat stats', () => {
@@ -8767,26 +11321,49 @@ describe('game engine', () => {
     })
   })
 
-  it('queues boss loot independently instead of relying on floor pickup filtering', () => {
+  it('settles the first campaign Boss directly after the final death presentation and abandons world-only drops', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.level = FLOORS_PER_CAMPAIGN
     snapshot.phase = 'running'
     snapshot.levelTimer = 0
     snapshot.levelTargetKills = 1
     snapshot.remainingToSpawn = 0
-    snapshot.enemies = [makeEnemy({ id: 'boss-1', kind: 'boss', grantsEliteReward: true, hp: 1, position: { x: 300, y: 200 } })]
-    snapshot.projectiles = [makeProjectile({ id: 'boss-kill', position: { x: 300, y: 200 }, damage: 999 })]
+    snapshot.enemies = [makeEnemy({
+      id: 'boss-1',
+      kind: 'boss',
+      archetypeId: 'dungeon-warden',
+      grantsEliteReward: true,
+      hp: 0,
+      position: { x: 300, y: 200 },
+      bossPhase: 2,
+      deathAnimationDuration: 0.1,
+      deathAnimationElapsed: 0,
+    })]
     snapshot.spawnCooldown = 999
     snapshot.remainingToSpawn = 1
     snapshot.mapObstacles = []
 
-    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+    snapshot.pickups.push({
+      id: 'world-only-boss-floor-drop',
+      kind: 'equipment',
+      position: { x: 700, y: 500 },
+      radius: 10,
+      ttl: 30,
+      equipment: makeEquipment({ id: 'world-only-boss-floor-equipment', source: 'dungeon' }),
+    })
 
-    expect(next.pendingBossLoot.length).toBeGreaterThanOrEqual(1)
-    expect(next.equipmentInventory.some((item) => item.id === next.pendingBossLoot[0].id)).toBe(true)
-    expect(next.pickups.some((pickup) => pickup.kind === 'equipment')).toBe(false)
-    expect(next.phase).toBe('level-clear')
-    expect(next.message).toContain('Boss 已击败')
+    let next = advanceGame(snapshot, noInput, 0.016)
+    expect(next.phase).toBe('running')
+    expect(next.enemies.find((enemy) => enemy.id === 'boss-1')?.deathAnimationElapsed).toBeGreaterThan(0)
+
+    for (let frame = 0; frame < 4 && next.phase !== 'game-over'; frame += 1) {
+      next = advanceGame(next, noInput, 0.05)
+    }
+
+    expect(next.phase).toBe('game-over')
+    expect(next.runSettlementSummary?.result).toBe('success')
+    expect(next.pendingBossLoot).toHaveLength(0)
+    expect(next.runSettlementSummary?.finalCarriedEquipmentIds).not.toContain('world-only-boss-floor-equipment')
   })
 
   it('cleans boss-layer rifts, route objectives, and stale transition state without ending the boss battle', () => {
@@ -8846,7 +11423,7 @@ describe('game engine', () => {
     })
   })
 
-  it('requires a real boss kill and guard clear before boss loot can return to the village', () => {
+  it('does not let guards, rewards, or pending boss loot block direct first-campaign Boss settlement', () => {
     const snapshot = createInitialSnapshot('running')
     const bossPosition = { x: 300, y: 200 }
     const guardPosition = { x: 460, y: 200 }
@@ -8858,37 +11435,36 @@ describe('game engine', () => {
     snapshot.mapObstacles = []
     snapshot.player.attackCooldown = 999
     snapshot.enemies = [
-      makeEnemy({ id: 'boss-with-guard', kind: 'boss', grantsEliteReward: true, hp: 1, maxHp: 1, speed: 0, position: bossPosition }),
+      makeEnemy({
+        id: 'boss-with-guard',
+        kind: 'boss',
+        archetypeId: 'dungeon-warden',
+        grantsEliteReward: true,
+        hp: 0,
+        maxHp: 1,
+        speed: 0,
+        position: bossPosition,
+        bossPhase: 2,
+        deathAnimationDuration: 0.05,
+        deathAnimationElapsed: 0,
+      }),
       makeEnemy({ id: 'boss-guard', role: 'guard', hp: 1, maxHp: 1, speed: 0, position: guardPosition }),
     ]
-    snapshot.projectiles = [makeProjectile({ id: 'kill-boss-first', position: bossPosition, damage: 999 })]
 
-    const bossDefeated = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
+    snapshot.pendingSkillReward = { ...buildPendingReward(snapshot), source: 'elite' }
+    snapshot.pendingBossLoot = [makeEquipment({ id: 'legacy-pending-boss-item', source: 'dungeon', rarity: 'legacy' })]
+    snapshot.equipmentInventory = [makeEquipment({ id: 'carried-boss-run-item', source: 'dungeon', rarity: 'legacy' })]
 
-    expect(bossDefeated.bossDefeatedThisLevel).toBe(true)
+    let bossDefeated = advanceGame(snapshot, noInput, 0.016)
     expect(bossDefeated.phase).toBe('running')
-    expect(bossDefeated.enemies.map((enemy) => enemy.id)).toEqual(['boss-guard'])
-    expect(bossDefeated.pendingBossLoot.length).toBeGreaterThan(0)
+    expect(bossDefeated.enemies.map((enemy) => enemy.id)).toContain('boss-with-guard')
 
-    const deniedConfirmation = confirmLevelClearSnapshot(bossDefeated)
-    const deniedLootDismissal = dismissBossLootSnapshot(bossDefeated)
-    expect(deniedConfirmation.phase).toBe('running')
-    expect(deniedLootDismissal.phase).toBe('running')
-    expect(deniedLootDismissal.pendingBossLoot).toHaveLength(0)
-    expect(deniedLootDismissal.completedCampaigns).not.toContain(1)
-
-    bossDefeated.projectiles = [makeProjectile({ id: 'kill-guard-last', position: guardPosition, damage: 999 })]
-    const guardsCleared = advanceGame(bossDefeated, { up: false, down: false, left: false, right: false }, 0.016)
-
-    expect(guardsCleared.enemies).toHaveLength(0)
-    expect(guardsCleared.phase).toBe('level-clear')
-    expect(guardsCleared.pendingBossLoot.length).toBeGreaterThan(0)
-
-    const settled = dismissBossLootSnapshot(guardsCleared)
-    expect(settled.phase).toBe('game-over')
-    expect(settled.battlefield.mode).toBe('village')
-    expect(settled.lastTalentPointRecord?.source).toBe('campaign-clear')
-    expect(settled.completedCampaigns).toContain(1)
+    bossDefeated = advanceGame(bossDefeated, noInput, 0.05)
+    expect(bossDefeated.phase).toBe('game-over')
+    expect(bossDefeated.battlefield.mode).toBe('village')
+    expect(bossDefeated.lastTalentPointRecord?.source).toBe('campaign-clear')
+    expect(bossDefeated.completedCampaigns).toContain(1)
+    expect(bossDefeated.runSettlementSummary?.finalCarriedEquipmentIds).toContain('carried-boss-run-item')
   })
 
   it('keeps normal rift progression and the level twenty-one to boss transition intact', () => {
@@ -8924,9 +11500,66 @@ describe('game engine', () => {
     const bossStarted = advancePastFloorTransition(clearedPrelude)
     expect(bossStarted.level).toBe(FLOORS_PER_CAMPAIGN)
     expect(bossStarted.phase).toBe('running')
+    expect(bossStarted.pendingSkillReward).toBeNull()
+    expect(bossStarted.floorTransition).toBeUndefined()
+    expect(bossStarted.levelClearConfirmed).toBe(false)
     expect(bossStarted.battlefield.mode).toBe('boss-arena')
     expect(bossStarted.battlefield.rift).toBeUndefined()
     expect(bossStarted.battlefield.routeObjectives).toHaveLength(0)
+  })
+
+  it('keeps Boss combat running before the final death presentation completes', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = FLOORS_PER_CAMPAIGN
+    snapshot.levelTimer = 0
+    snapshot.levelTargetKills = 2
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.mapObstacles = []
+    snapshot.battlefield.mode = 'boss-arena'
+    snapshot.player.attackCooldown = 999
+    snapshot.enemies = [
+      makeEnemy({
+        id: 'boss-hud-chain',
+        kind: 'boss',
+        grantsEliteReward: true,
+        hp: 10,
+        maxHp: 10,
+        position: { x: 560, y: 200 },
+        archetypeId: 'dungeon-warden',
+        deathAnimationDuration: 0.2,
+        deathAnimationElapsed: 0,
+      }),
+      makeEnemy({
+        id: 'boss-hud-guard',
+        role: 'guard',
+        hp: 10,
+        maxHp: 10,
+        position: { x: 640, y: 200 },
+      }),
+    ]
+    snapshot.pendingSkillReward = {
+      ...buildPendingReward(snapshot),
+      source: 'elite',
+    }
+    snapshot.phase = 'paused'
+    snapshot.phaseBeforePause = 'running'
+    snapshot.pauseMenuOpen = false
+
+    let next = advanceGame(snapshot, noInput, 0.05)
+
+    expect(next.phase).toBe('running')
+    expect(next.pendingSkillReward).toBeNull()
+    expect(next.floorTransition).toBeUndefined()
+    expect(next.levelClearConfirmed).toBe(false)
+
+    next.enemies.find((enemy) => enemy.id === 'boss-hud-chain')!.hp = 0
+    next = advanceGame(next, noInput, 0.05)
+
+    expect(next.bossDefeatedThisLevel).toBe(false)
+    expect(next.phase).toBe('running')
+    expect(next.enemies.map((enemy) => enemy.id)).toContain('boss-hud-chain')
+    expect(next.pendingSkillReward).toBeNull()
   })
 
   it('spawns one dungeon warden through the formal twenty-one to twenty-two transition despite residual capacity, while preserving outside entities', () => {
@@ -8978,6 +11611,12 @@ describe('game engine', () => {
     expect(bossStarted.battlefield.mode).toBe('boss-arena')
     expect(bossStarted.enemies).toHaveLength(bossCapacity + 2)
     expect(bossStarted.enemies.filter((enemy) => enemy.archetypeId === 'dungeon-warden')).toHaveLength(1)
+    const warden = bossStarted.enemies.find((enemy) => enemy.archetypeId === 'dungeon-warden')!
+    expect(distance(warden.position, outsidePlayerPosition)).toBeGreaterThanOrEqual(
+      bossStarted.player.size + warden.size * 0.5 + 72,
+    )
+    expect(distance(warden.position, outsidePlayerPosition)).toBeLessThanOrEqual(8 * (warden.size + 10))
+    expect(distance(warden.position, { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 })).toBeGreaterThan(200)
 
     for (let frame = 0; frame < 3; frame += 1) {
       bossStarted = advanceGame(bossStarted, input, 0.05)
@@ -9093,5 +11732,1213 @@ describe('game engine', () => {
     expect(handled.level).toBe(FLOORS_PER_CAMPAIGN)
     expect(handled.message).toContain('契约完成')
     expect(handled.pendingBossLoot).toHaveLength(0)
+  })
+
+  it('keeps formal spawn budget intact when every validated fallback is blocked', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = 4
+    snapshot.levelTimer = 0
+    snapshot.levelTargetKills = 8
+    snapshot.remainingToSpawn = 8
+    snapshot.spawnCooldown = 0
+    snapshot.mapObstacles = [{
+      id: 'spawn-blocker',
+      kind: 'ruin',
+      position: { ...snapshot.player.position },
+      width: 20_000,
+      height: 20_000,
+      collisionWidth: 20_000,
+      collisionHeight: 20_000,
+    }]
+
+    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+
+    expect(next.enemies).toHaveLength(0)
+    expect(next.remainingToSpawn).toBe(8)
+  })
+
+  it('reserves legal positions across a formal horde batch instead of sharing a spawn center', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = 4
+    snapshot.levelTimer = 0
+    snapshot.levelTargetKills = 60
+    snapshot.remainingToSpawn = 60
+    snapshot.spawnCooldown = 0
+    clearCombatObstacles(snapshot)
+
+    let next = snapshot
+    for (let frame = 0; frame < 8 && next.enemies.length <= 1; frame += 1) {
+      next = advanceGame(next, { up: false, down: false, left: false, right: false }, 0.05)
+      next.spawnCooldown = 0
+    }
+    const centers = new Set(next.enemies.map((enemy) => `${enemy.position.x.toFixed(3)}:${enemy.position.y.toFixed(3)}`))
+
+    expect(next.enemies.length).toBeGreaterThan(1)
+    expect(centers.size).toBe(next.enemies.length)
+    next.enemies.forEach((enemy) => {
+      expect(next.mapObstacles.some((obstacle) => {
+        const halfW = (obstacle.collisionWidth ?? obstacle.width) / 2
+        const halfH = (obstacle.collisionHeight ?? obstacle.height) / 2
+        const nearest = {
+          x: Math.min(Math.max(enemy.position.x, obstacle.position.x - halfW), obstacle.position.x + halfW),
+          y: Math.min(Math.max(enemy.position.y, obstacle.position.y - halfH), obstacle.position.y + halfH),
+        }
+        return distance(enemy.position, nearest) < enemy.size * 0.5
+      })).toBe(false)
+    })
+  })
+
+  it('keeps two splitting-ooze children pending through blocked death space and releases them through advanceGame', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.levelTargetKills = 1
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.position = { x: 120, y: 120 }
+    snapshot.mapObstacles = [{
+      id: 'split-sealed-space',
+      kind: 'ruin',
+      position: { x: 260, y: 200 },
+      width: 20_000,
+      height: 20_000,
+      collisionWidth: 20_000,
+      collisionHeight: 20_000,
+    }]
+    snapshot.enemies = [makeEnemy({
+      id: 'pending-split-parent',
+      kind: 'splitter',
+      archetypeId: 'dungeon-splitting-ooze',
+      displayName: '裂变软泥',
+      position: { x: 260, y: 200 },
+      hp: 0,
+      maxHp: 90,
+      size: 17,
+      deathAnimationDuration: 3,
+      deathAnimationElapsed: 2.99,
+    })]
+
+    const blocked = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    expect(blocked.pendingSplitterChildSpawns).toHaveLength(2)
+    expect(blocked.enemies).toHaveLength(0)
+    expect(blocked.floorTransition).toBeUndefined()
+
+    blocked.mapObstacles = []
+    clearCombatObstacles(blocked)
+    blocked.player.position = { x: -10_000, y: -10_000 }
+    let released = blocked
+    for (let frame = 0; frame < 4; frame += 1) {
+      released = advanceGame(released, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+    const children = released.enemies.filter((enemy) => enemy.id.startsWith('split-'))
+    expect(released.pendingSplitterChildSpawns).toHaveLength(0)
+    expect(children).toHaveLength(2)
+    expect(distance(children[0].position, children[1].position)).toBeGreaterThan(children[0].size * 0.5 + children[1].size * 0.5)
+  })
+
+  it('retains elite split child slots until each can enter legally, blocks settlement, and clears them on lifecycle resets', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = 4
+    snapshot.levelTimer = 0
+    snapshot.levelTargetKills = 1
+    snapshot.levelKills = 1
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.position = { x: 120, y: 120 }
+    snapshot.mapObstacles = [{
+      id: 'elite-split-fully-blocked',
+      kind: 'ruin',
+      position: { x: 260, y: 200 },
+      width: 20_000,
+      height: 20_000,
+      collisionWidth: 20_000,
+      collisionHeight: 20_000,
+    }]
+    snapshot.enemies = [makeEnemy({
+      id: 'pending-elite-split-parent',
+      kind: 'elite',
+      position: { x: 260, y: 200 },
+      hp: 0,
+      maxHp: 100,
+      size: 22,
+      eliteAffixes: ['split'],
+    })]
+
+    const blocked = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    expect(blocked.pendingEliteSplitChildSpawns).toHaveLength(2)
+    expect(blocked.enemies).toHaveLength(0)
+    expect(blocked.floorTransition).toBeUndefined()
+
+    // Leave just the first deterministic ring candidate open. The first child
+    // consumes that slot; the second remains a real pending entitlement.
+    blocked.mapObstacles = [
+      { id: 'elite-hole-top', kind: 'ruin', position: { x: 500, y: -4_910 }, width: 20_000, height: 10_180, collisionWidth: 20_000, collisionHeight: 10_180 },
+      { id: 'elite-hole-bottom', kind: 'ruin', position: { x: 500, y: 5_110 }, width: 20_000, height: 9_780, collisionWidth: 20_000, collisionHeight: 9_780 },
+      { id: 'elite-hole-left', kind: 'ruin', position: { x: -4_865, y: 200 }, width: 10_270, height: 40, collisionWidth: 10_270, collisionHeight: 40 },
+      { id: 'elite-hole-right', kind: 'ruin', position: { x: 5_153, y: 200 }, width: 9_694, height: 40, collisionWidth: 9_694, collisionHeight: 40 },
+    ]
+    blocked.player.position = { x: -10_000, y: -10_000 }
+    let oneReleased = blocked
+    for (let frame = 0; frame < 4; frame += 1) {
+      oneReleased = advanceGame(oneReleased, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+    expect(oneReleased.enemies.filter((enemy) => enemy.id.startsWith('elite-split-'))).toHaveLength(1)
+    expect(oneReleased.pendingEliteSplitChildSpawns).toHaveLength(1)
+    expect(oneReleased.floorTransition).toBeUndefined()
+
+    oneReleased.mapObstacles = []
+    clearCombatObstacles(oneReleased)
+    let released = oneReleased
+    for (let frame = 0; frame < 4; frame += 1) {
+      released = advanceGame(released, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+    expect(released.pendingEliteSplitChildSpawns).toHaveLength(0)
+    expect(released.enemies.filter((enemy) => enemy.id.startsWith('elite-split-'))).toHaveLength(2)
+    expect(released.floorTransition).toBeDefined()
+    expect(advancePastFloorTransition(released).pendingEliteSplitChildSpawns).toEqual([])
+
+    const pendingForReset = {
+      ...blocked,
+      pendingEliteSplitChildSpawns: blocked.pendingEliteSplitChildSpawns?.map((spawn) => ({ ...spawn, origin: { ...spawn.origin } })),
+    }
+    expect(forfeitRunSnapshot(pendingForReset).pendingEliteSplitChildSpawns).toEqual([])
+    expect(restartRunSnapshot(pendingForReset).pendingEliteSplitChildSpawns).toEqual([])
+    expect(returnToVillageSnapshot(pendingForReset).pendingEliteSplitChildSpawns).toEqual([])
+  })
+
+  it('runs the jailer chief bind as an independent full three-second lock, then retreats without consuming attacks or dashes', () => {
+    const createJailerSnapshot = () => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.levelTargetKills = 99
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 999
+      snapshot.player.position = { x: 300, y: 200 }
+      snapshot.aimPoint = { x: 120, y: 200 }
+      clearCombatObstacles(snapshot)
+      snapshot.enemies = [makeEnemy({
+        id: 'dungeon-jailer-chief',
+        kind: 'elite',
+        archetypeId: 'dungeon-jailer-chief',
+        displayName: '腐化狱卒长',
+        position: { x: 120, y: 200 },
+        speed: 120,
+        attackCooldown: 0,
+        jailerChiefCooldown: 0,
+      })]
+      return snapshot
+    }
+    const idleInput = { up: false, down: false, left: false, right: false }
+    const input = { up: false, down: false, left: false, right: true }
+    let snapshot = createJailerSnapshot()
+
+    snapshot = advanceGame(snapshot, idleInput, 0.05)
+    expect(snapshot.enemies[0].jailerChiefPhase).toBe('casting')
+    expect(snapshot.enemies[0].jailerChiefCastTarget).toEqual({ x: 300, y: 200 })
+    expect(snapshot.enemies[0].jailerChiefCooldown).toBeCloseTo(7, 6)
+    expect(snapshot.player.jailerChiefBind).toBeUndefined()
+
+    for (let frame = 0; frame < 13; frame += 1) {
+      snapshot = advanceGame(snapshot, idleInput, 0.05)
+    }
+    const anchor = { ...snapshot.player.position }
+    expect(snapshot.player.jailerChiefBind).toMatchObject({ remaining: 3, anchor, sourceEnemyId: 'dungeon-jailer-chief' })
+    expect(snapshot.enemies[0].jailerChiefPhase).toBe('pursuing')
+    expect(triggerDashSnapshot(snapshot).player.dashCooldown).toBe(snapshot.player.dashCooldown)
+    const paused = advanceGame(togglePauseSnapshot(snapshot), input, 0.05)
+    expect(paused.player.jailerChiefBind?.remaining).toBe(3)
+    snapshot = togglePauseSnapshot(paused)
+    expect(snapshot.phase).toBe('running')
+    const castDuringBind = triggerActiveSkillSnapshot({
+      ...snapshot,
+      activeSkills: [{ skillId: 'quick-triple', level: 1, cooldownRemaining: 0 }],
+    }, 0)
+    expect(castDuringBind.activeSkills[0].cooldownRemaining).toBeGreaterThan(0)
+
+    for (let frame = 0; frame < 59; frame += 1) {
+      snapshot = advanceGame(snapshot, input, 0.05)
+      expect(snapshot.player.position).toEqual(anchor)
+    }
+    expect(snapshot.player.jailerChiefBind?.remaining).toBeCloseTo(0.05, 6)
+    expect(snapshot.combatDamageLog.some((event) => (
+      event.attackerId === 'dungeon-jailer-chief' && event.sourceId === 'enemy-basic-attack' && event.sourceName === '长剑挥击'
+    ))).toBe(true)
+    snapshot = advanceGame(snapshot, input, 0.05)
+    expect(snapshot.player.jailerChiefBind).toMatchObject({ remaining: 0, releasePending: true, anchor })
+    expect(snapshot.player.position).toEqual(anchor)
+    const pursuerDistance = distance(snapshot.enemies[0].position, anchor)
+
+    snapshot = advanceGame(snapshot, input, 0.05)
+    expect(snapshot.player.jailerChiefBind).toBeUndefined()
+    expect(snapshot.player.position.x).toBeGreaterThan(anchor.x)
+    expect(snapshot.enemies[0].jailerChiefPhase).toBe('retreating')
+    expect(snapshot.enemies[0].meleeAttackWindup ?? 0).toBe(0)
+    expect(distance(snapshot.enemies[0].position, snapshot.player.position)).toBeGreaterThanOrEqual(pursuerDistance - 0.01)
+
+    let fineDelta = createJailerSnapshot()
+    fineDelta = advanceGame(fineDelta, idleInput, 0.05)
+    for (let frame = 0; frame < 39; frame += 1) {
+      fineDelta = advanceGame(fineDelta, idleInput, 0.016)
+    }
+    expect(fineDelta.player.jailerChiefBind).toBeDefined()
+    for (let frame = 0; frame < 187; frame += 1) {
+      fineDelta = advanceGame(fineDelta, input, 0.016)
+    }
+    expect(fineDelta.player.jailerChiefBind).toMatchObject({ remaining: 0, releasePending: true })
+    fineDelta = advanceGame(fineDelta, input, 0.016)
+    expect(fineDelta.player.jailerChiefBind).toBeUndefined()
+  })
+
+  it('keeps a jailer chief at range after a missed cast and clears bind state on combat teardown paths', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.levelTargetKills = 99
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+    snapshot.player.position = { x: 300, y: 200 }
+    clearCombatObstacles(snapshot)
+    snapshot.enemies = [makeEnemy({
+      id: 'dungeon-jailer-chief',
+      kind: 'elite',
+      archetypeId: 'dungeon-jailer-chief',
+      displayName: '腐化狱卒长',
+      position: { x: 120, y: 200 },
+      speed: 60,
+      attackCooldown: 0,
+      jailerChiefCooldown: 0,
+    })]
+
+    let missed = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+    expect(missed.enemies[0].jailerChiefPhase).toBe('casting')
+    missed.player.position = { x: 420, y: 200 }
+    for (let frame = 0; frame < 13; frame += 1) {
+      missed = advanceGame(missed, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+    expect(missed.player.jailerChiefBind).toBeUndefined()
+    expect(missed.enemies[0].jailerChiefPhase).toBe('waiting')
+    expect(missed.enemies[0].meleeAttackWindup ?? 0).toBe(0)
+
+    const bound = {
+      ...missed,
+      player: {
+        ...missed.player,
+        jailerChiefBind: { remaining: 3, anchor: { ...missed.player.position }, sourceEnemyId: 'dungeon-jailer-chief' },
+      },
+    }
+    expect(forfeitRunSnapshot(bound).player.jailerChiefBind).toBeUndefined()
+    expect(restartRunSnapshot(bound).player.jailerChiefBind).toBeUndefined()
+    expect(returnToVillageSnapshot(bound).player.jailerChiefBind).toBeUndefined()
+    expect(clearLocalBattleTestMonstersSnapshot({
+      ...startLocalBattleTestSnapshot(bound),
+      player: { ...bound.player },
+    }).player.jailerChiefBind).toBeUndefined()
+
+    const deadJailer = advanceGame({
+      ...bound,
+      enemies: [{ ...bound.enemies[0], hp: 0 }],
+    }, { up: false, down: false, left: false, right: false }, 0.05)
+    expect(deadJailer.player.jailerChiefBind).toBeUndefined()
+
+    const ordinaryHex = createInitialSnapshot('running')
+    ordinaryHex.levelTimer = 0
+    ordinaryHex.remainingToSpawn = 0
+    ordinaryHex.spawnCooldown = 999
+    ordinaryHex.player.attackCooldown = 999
+    ordinaryHex.player.position = { x: 300, y: 200 }
+    clearCombatObstacles(ordinaryHex)
+    ordinaryHex.enemies = [makeEnemy({
+      id: 'ordinary-hex',
+      kind: 'bomber',
+      skillTrait: 'hex-slow',
+      position: { x: 250, y: 200 },
+      attackCooldown: 0,
+    })]
+    const hexResult = advanceGame(ordinaryHex, { up: false, down: false, left: false, right: false }, 0.05)
+    expect(hexResult.player.stunTimer).toBeGreaterThan(0)
+    expect(hexResult.player.jailerChiefBind).toBeUndefined()
+  })
+
+  it('uses the ordinary obstacle-safe movement path when a jailer chief switches from pursuit to retreat', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.levelTargetKills = 99
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+    snapshot.player.position = { x: 300, y: 200 }
+    clearCombatObstacles(snapshot)
+    snapshot.mapObstacles = [{
+      id: 'jailer-retreat-wall',
+      kind: 'pillar',
+      position: { x: 150, y: 200 },
+      width: 24,
+      height: 90,
+      collisionWidth: 24,
+      collisionHeight: 90,
+    }]
+    snapshot.player.jailerChiefBind = {
+      remaining: 0,
+      releasePending: true,
+      anchor: { ...snapshot.player.position },
+      sourceEnemyId: 'dungeon-jailer-chief',
+    }
+    snapshot.enemies = [makeEnemy({
+      id: 'dungeon-jailer-chief',
+      kind: 'elite',
+      archetypeId: 'dungeon-jailer-chief',
+      displayName: '腐化狱卒长',
+      position: { x: 200, y: 200 },
+      speed: 60,
+      jailerChiefPhase: 'pursuing',
+      jailerChiefCooldown: 6,
+    })]
+    const start = { ...snapshot.enemies[0].position }
+    let next = snapshot
+    for (let frame = 0; frame < 8; frame += 1) {
+      next = advanceGame(next, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+    const jailer = next.enemies[0]
+    const radius = jailer.size * 0.5
+    expect(jailer.jailerChiefPhase).toBe('retreating')
+    expect(distance(jailer.position, start)).toBeGreaterThan(0)
+    expect(Math.abs(jailer.position.x - 150)).toBeGreaterThan(12 + radius - 0.01)
+    expect(next.player.position).toEqual({ x: 300, y: 200 })
+  })
+
+  it('runs the jailer chief bind cycle through the real local battle configuration path', () => {
+    const jailerOption = getLocalBattleTestSpawnOptions().find((option) => option.entityId === 'dungeon-jailer-chief')
+    expect(jailerOption?.enabled).toBe(true)
+
+    const current = createInitialSnapshot('idle')
+    current.debugControls.infiniteHealth = true
+    current.debugControls.disableAttacks = true
+    let snapshot = applyLocalBattleTestMonsterConfigSnapshot(
+      startLocalBattleTestSnapshot(current),
+      [{ entityId: 'dungeon-jailer-chief', count: 1 }],
+    )
+    const initialJailer = snapshot.enemies.find((enemy) => enemy.archetypeId === 'dungeon-jailer-chief')
+    expect(initialJailer).toMatchObject({
+      jailerChiefPhase: 'waiting',
+      jailerChiefCastTimer: 0,
+      jailerChiefCooldown: 0,
+      meleeAttackReady: false,
+    })
+
+    const observedPhases = new Set<NonNullable<Enemy['jailerChiefPhase']>>(['waiting'])
+    let firstCastCooldown: number | undefined
+    let bindStartedAt: number | undefined
+    let bindReleasedAt: number | undefined
+    let sawPursuitWhileBound = false
+    let sawRetreat = false
+
+    for (let frame = 0; frame < 300; frame += 1) {
+      snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+      const jailer = snapshot.enemies.find((enemy) => enemy.archetypeId === 'dungeon-jailer-chief')
+      expect(jailer).toBeTruthy()
+      if (!jailer) {
+        return
+      }
+
+      observedPhases.add(jailer.jailerChiefPhase ?? 'waiting')
+      if (jailer.jailerChiefPhase === 'casting' && firstCastCooldown === undefined) {
+        firstCastCooldown = jailer.jailerChiefCooldown
+        expect(jailer.jailerChiefCastTimer).toBeCloseTo(0.6, 6)
+      }
+      if (snapshot.player.jailerChiefBind && bindStartedAt === undefined) {
+        bindStartedAt = snapshot.elapsedTime
+      }
+      if (snapshot.player.jailerChiefBind && jailer.jailerChiefPhase === 'pursuing') {
+        sawPursuitWhileBound = true
+      }
+      if (bindStartedAt !== undefined && !snapshot.player.jailerChiefBind && bindReleasedAt === undefined) {
+        bindReleasedAt = snapshot.elapsedTime
+      }
+      sawRetreat ||= jailer.jailerChiefPhase === 'retreating'
+    }
+
+    expect([...observedPhases]).toEqual(expect.arrayContaining(['waiting', 'casting', 'pursuing', 'retreating']))
+    expect(firstCastCooldown).toBeCloseTo(7, 6)
+    expect(bindStartedAt).toBeDefined()
+    expect(bindReleasedAt).toBeDefined()
+    expect((bindReleasedAt ?? 0) - (bindStartedAt ?? 0)).toBeCloseTo(3.05, 6)
+    expect(sawPursuitWhileBound).toBe(true)
+    expect(sawRetreat).toBe(true)
+  })
+
+  it('rejects residual jailer chief melee intent outside pursuit after real local creation', () => {
+    const createLocalJailer = () => {
+      const current = createInitialSnapshot('idle')
+      current.debugControls.infiniteHealth = true
+      current.debugControls.disableAttacks = true
+      return applyLocalBattleTestMonsterConfigSnapshot(
+        startLocalBattleTestSnapshot(current),
+        [{ entityId: 'dungeon-jailer-chief', count: 1 }],
+      )
+    }
+
+    ;(['waiting', 'retreating'] as const).forEach((phase) => {
+      const snapshot = createLocalJailer()
+      const jailerIndex = snapshot.enemies.findIndex((enemy) => enemy.archetypeId === 'dungeon-jailer-chief')
+      expect(jailerIndex).toBeGreaterThanOrEqual(0)
+      const jailer = snapshot.enemies[jailerIndex]!
+      snapshot.enemies[jailerIndex] = {
+        ...jailer,
+        position: { ...snapshot.player.position },
+        jailerChiefPhase: phase,
+        jailerChiefCooldown: phase === 'waiting' ? 7 : 6,
+        meleeAttackReady: true,
+        meleeAttackImpactDelay: 0,
+        meleeAttackWindup: 0,
+        meleeAttackOrigin: { ...snapshot.player.position },
+        meleeAttackDirection: { x: 1, y: 0 },
+      }
+      const playerHp = snapshot.player.hp
+
+      const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
+      expect(next.player.hp).toBe(playerHp)
+      expect(next.combatDamageLog.some((event) => (
+        event.attackerId === jailer.id && event.sourceId === 'enemy-basic-attack'
+      ))).toBe(false)
+      expect(next.enemies[jailerIndex]?.meleeAttackReady).toBe(false)
+    })
+  })
+
+  it('keeps a waiting jailer chief inside the 170-190 ring without overshooting on large deltas', () => {
+    const createWaitingSnapshot = (x: number, cooldown = 8) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.position = { x: 420, y: 200 }
+      snapshot.player.attackCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.enemies = [makeEnemy({
+        id: `ring-${x}`,
+        kind: 'elite',
+        archetypeId: 'dungeon-jailer-chief',
+        displayName: '腐化狱卒长',
+        position: { x, y: 200 },
+        lastPosition: { x, y: 200 },
+        speed: 120,
+        jailerChiefPhase: 'waiting',
+        jailerChiefCooldown: cooldown,
+        jailerChiefDodgeActive: false,
+        jailerChiefDodgeCooldown: 0,
+      })]
+      return snapshot
+    }
+
+    ;[250, 230].forEach((x) => {
+      const snapshot = createWaitingSnapshot(x)
+      const next = advanceGame(snapshot, noInput, 0.5)
+      expect(next.enemies[0].position).toEqual(snapshot.enemies[0].position)
+    })
+
+    const tooClose = advanceGame(createWaitingSnapshot(251), noInput, 2)
+    expect(distance(tooClose.enemies[0].position, tooClose.player.position)).toBeCloseTo(170, 6)
+    const tooFar = advanceGame(createWaitingSnapshot(229), noInput, 2)
+    expect(distance(tooFar.enemies[0].position, tooFar.player.position)).toBeCloseTo(190, 6)
+  })
+
+  it('converges a ready waiting jailer chief from the ring to 180 before casting without dodging', () => {
+    const createReadyWaitingSnapshot = (gap: number) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.position = { x: 420, y: 200 }
+      snapshot.player.attackCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.enemies = [makeEnemy({
+        id: `ready-ring-${gap}`,
+        kind: 'elite',
+        archetypeId: 'dungeon-jailer-chief',
+        displayName: '腐化狱卒长',
+        position: { x: 420 - gap, y: 200 },
+        lastPosition: { x: 420 - gap, y: 200 },
+        speed: 120,
+        jailerChiefPhase: 'waiting',
+        jailerChiefCooldown: 0,
+        jailerChiefDodgeActive: false,
+        jailerChiefDodgeCooldown: 0,
+      })]
+      return snapshot
+    }
+
+    ;[181, 190].forEach((gap) => {
+      let next = createReadyWaitingSnapshot(gap)
+      let previousGap = gap
+      for (let frame = 0; frame < 8 && next.enemies[0].jailerChiefPhase === 'waiting'; frame += 1) {
+        next = advanceGame(next, noInput, 0.05)
+        const chief = next.enemies[0]
+        const nextGap = distance(chief.position, next.player.position)
+        expect(nextGap).toBeGreaterThanOrEqual(180 - 1e-6)
+        expect(nextGap).toBeLessThanOrEqual(previousGap + 1e-6)
+        expect(chief.jailerChiefDodgeActive).toBe(false)
+        previousGap = nextGap
+      }
+      expect(distance(next.enemies[0].position, next.player.position)).toBeCloseTo(180, 6)
+      expect(next.enemies[0].jailerChiefPhase).toBe('casting')
+      expect(next.enemies[0].jailerChiefDodgeActive).toBe(false)
+    })
+  })
+
+  it('dodges only real incoming straight player arrows along world Y and respects the cooldown', () => {
+    const createDodgeSnapshot = (projectile: Projectile) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.position = { x: 420, y: 200 }
+      snapshot.player.attackCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.enemies = [makeEnemy({
+        id: 'dodge-chief',
+        kind: 'elite',
+        archetypeId: 'dungeon-jailer-chief',
+        displayName: '腐化狱卒长',
+        position: { x: 240, y: 200 },
+        lastPosition: { x: 240, y: 200 },
+        speed: 120,
+        jailerChiefPhase: 'waiting',
+        jailerChiefCooldown: 7,
+        jailerChiefDodgeActive: false,
+        jailerChiefDodgeCooldown: 0,
+      })]
+      snapshot.projectiles = [projectile]
+      return snapshot
+    }
+    const incomingArrow = (sourceSkillId: string) => makeProjectile({
+      id: `incoming-${sourceSkillId}`,
+      sourceSkillId,
+      playerDirectArrow: true,
+      position: { x: 420, y: 200 },
+      previousPosition: { x: 420, y: 200 },
+      velocity: { x: -500, y: 0 },
+      size: 3,
+      damage: 0,
+      ttl: 1,
+    })
+
+    ;['basic-arrow', 'pierce-arrow', 'fan-burst'].forEach((sourceSkillId) => {
+      const next = advanceGame(createDodgeSnapshot(incomingArrow(sourceSkillId)), noInput, 0.05)
+      const chief = next.enemies[0]
+      expect(chief.position.x, sourceSkillId).toBe(240)
+      expect(Math.abs(chief.position.y - 200), sourceSkillId).toBeCloseTo(6, 6)
+      expect(chief.jailerChiefDodgeActive, sourceSkillId).toBe(true)
+      expect(chief.jailerChiefDodgeCooldown, sourceSkillId).toBeCloseTo(0.65, 6)
+    })
+
+    let cooldownSnapshot = advanceGame(createDodgeSnapshot(incomingArrow('basic-arrow')), noInput, 0.05)
+    const firstDirection = cooldownSnapshot.enemies[0].jailerChiefDodgeDirection
+    for (let frame = 0; frame < 12; frame += 1) {
+      cooldownSnapshot = advanceGame(cooldownSnapshot, noInput, 0.05)
+    }
+    expect(cooldownSnapshot.enemies[0].jailerChiefDodgeActive).toBe(false)
+    expect(cooldownSnapshot.enemies[0].jailerChiefDodgeDirection).toBe(firstDirection)
+    expect(cooldownSnapshot.enemies[0].position.y).toBe(firstDirection === -1 ? 164 : 236)
+  })
+
+  it('ignores player-owned turret, beast, and summon projectiles for jailer chief dodge', () => {
+    const createDodgeSnapshot = (projectile: Projectile) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.position = { x: 420, y: 200 }
+      snapshot.player.attackCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.enemies = [makeEnemy({
+        id: 'non-direct-dodge-chief',
+        kind: 'elite',
+        archetypeId: 'dungeon-jailer-chief',
+        displayName: '腐化狱卒长',
+        position: { x: 240, y: 200 },
+        lastPosition: { x: 240, y: 200 },
+        speed: 120,
+        jailerChiefPhase: 'waiting',
+        jailerChiefCooldown: 7,
+        jailerChiefDodgeActive: false,
+        jailerChiefDodgeCooldown: 0,
+      })]
+      snapshot.projectiles = [projectile]
+      return snapshot
+    }
+    const incomingProjectile = (sourceSkillId: string, attackerId?: string) => makeProjectile({
+      id: `non-direct-${sourceSkillId}`,
+      sourceSkillId,
+      attackerId,
+      position: { x: 420, y: 200 },
+      previousPosition: { x: 420, y: 200 },
+      velocity: { x: -500, y: 0 },
+      size: 3,
+      damage: 0,
+      ttl: 1,
+      playerDirectArrow: false,
+    })
+
+    ;[
+      incomingProjectile('sentry-tower', 'field-sentry-tower'),
+      incomingProjectile('decoy-feather', 'field-decoy-feather'),
+      incomingProjectile('beast-hawk-shot', 'beast-hawk-1'),
+    ].forEach((projectile) => {
+      const next = advanceGame(createDodgeSnapshot(projectile), noInput, 0.05)
+      expect(next.enemies[0].position).toEqual({ x: 240, y: 200 })
+      expect(next.enemies[0].jailerChiefDodgeActive).toBe(false)
+      expect(next.enemies[0].jailerChiefDodgeCooldown).toBe(0)
+    })
+  })
+
+  it('keeps real basic and active-skill arrow releases eligible for jailer chief dodge', () => {
+    const createDirectReleaseSnapshot = () => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.position = { x: 420, y: 200 }
+      snapshot.aimPoint = { x: 120, y: 200 }
+      clearCombatObstacles(snapshot)
+      snapshot.enemies = [makeEnemy({
+        id: 'direct-release-chief',
+        kind: 'elite',
+        archetypeId: 'dungeon-jailer-chief',
+        displayName: '腐化狱卒长',
+        position: { x: 240, y: 200 },
+        lastPosition: { x: 240, y: 200 },
+        speed: 120,
+        hp: 999,
+        maxHp: 999,
+        jailerChiefPhase: 'waiting',
+        jailerChiefCooldown: 7,
+        jailerChiefDodgeActive: false,
+        jailerChiefDodgeCooldown: 0,
+      })]
+      return snapshot
+    }
+    const advanceUntilDodge = (current: GameSnapshot) => {
+      let next = current
+      for (let frame = 0; frame < 20 && !next.enemies[0].jailerChiefDodgeActive; frame += 1) {
+        next = advanceGame(next, noInput, 0.05)
+      }
+      return next
+    }
+
+    const basic = advanceUntilDodge(createDirectReleaseSnapshot())
+    expect(basic.projectiles.some((projectile) => projectile.sourceSkillId === 'basic-arrow' && projectile.playerDirectArrow)).toBe(true)
+    expect(basic.enemies[0].jailerChiefDodgeActive).toBe(true)
+
+    const skillSource = createDirectReleaseSnapshot()
+    skillSource.player.attackCooldown = 999
+    skillSource.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    const skill = advanceUntilDodge(triggerActiveSkillSnapshot(skillSource, 0))
+    expect(skill.projectiles.some((projectile) => projectile.sourceSkillId === 'pierce-arrow' && projectile.playerDirectArrow)).toBe(true)
+    expect(skill.enemies[0].jailerChiefDodgeActive).toBe(true)
+  })
+
+  it('does not dodge a blocked or non-straight player effect and falls back to the only legal Y side', () => {
+    const createDodgeSnapshot = () => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.position = { x: 420, y: 200 }
+      snapshot.player.attackCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.enemies = [makeEnemy({
+        id: 'dodge-legal-chief',
+        kind: 'elite',
+        archetypeId: 'dungeon-jailer-chief',
+        displayName: '腐化狱卒长',
+        position: { x: 240, y: 200 },
+        lastPosition: { x: 240, y: 200 },
+        speed: 120,
+        jailerChiefPhase: 'waiting',
+        jailerChiefCooldown: 7,
+        jailerChiefDodgeActive: false,
+        jailerChiefDodgeCooldown: 0,
+      })]
+      snapshot.projectiles = [makeProjectile({
+        id: 'incoming-legal-arrow',
+        sourceSkillId: 'pierce-arrow',
+        playerDirectArrow: true,
+        position: { x: 420, y: 200 },
+        previousPosition: { x: 420, y: 200 },
+        velocity: { x: -500, y: 0 },
+        size: 3,
+        damage: 0,
+        ttl: 1,
+      })]
+      return snapshot
+    }
+
+    const blocked = createDodgeSnapshot()
+    blocked.mapObstacles = [{ id: 'arrow-wall', kind: 'pillar', position: { x: 330, y: 200 }, width: 20, height: 80 }]
+    const blockedNext = advanceGame(blocked, noInput, 0.05)
+    expect(blockedNext.enemies[0].position).toEqual({ x: 240, y: 200 })
+    expect(blockedNext.enemies[0].jailerChiefDodgeActive).toBe(false)
+
+    const nonStraight = createDodgeSnapshot()
+    nonStraight.projectiles[0].homingRange = 180
+    nonStraight.projectiles[0].homingStrength = 0.4
+    const nonStraightNext = advanceGame(nonStraight, noInput, 0.05)
+    expect(nonStraightNext.enemies[0].position).toEqual({ x: 240, y: 200 })
+
+    const oneSideBlocked = createDodgeSnapshot()
+    oneSideBlocked.projectiles[0].position.y = 170
+    oneSideBlocked.projectiles[0].previousPosition = { x: 420, y: 170 }
+    oneSideBlocked.mapObstacles = [{ id: 'up-blocked', kind: 'pillar', position: { x: 240, y: 150 }, width: 20, height: 20 }]
+    const oneSideNext = advanceGame(oneSideBlocked, noInput, 0.05)
+    expect(oneSideNext.enemies[0].jailerChiefDodgeDirection).toBe(1)
+    expect(oneSideNext.enemies[0].position).toEqual({ x: 240, y: 206 })
+
+    const bothSidesBlocked = createDodgeSnapshot()
+    bothSidesBlocked.projectiles[0].position.y = 170
+    bothSidesBlocked.projectiles[0].previousPosition = { x: 420, y: 170 }
+    bothSidesBlocked.mapObstacles = [
+      { id: 'up-blocked', kind: 'pillar', position: { x: 240, y: 150 }, width: 20, height: 20 },
+      { id: 'down-blocked', kind: 'pillar', position: { x: 240, y: 250 }, width: 20, height: 20 },
+    ]
+    const bothSidesNext = advanceGame(bothSidesBlocked, noInput, 0.05)
+    expect(bothSidesNext.enemies[0].position).toEqual({ x: 240, y: 200 })
+    expect(bothSidesNext.enemies[0].jailerChiefDodgeActive).toBe(false)
+  })
+
+  it('keeps ready casts ahead of dodge and initializes dodge state through the public local battle path', () => {
+    const current = createInitialSnapshot('idle')
+    let local = applyLocalBattleTestMonsterConfigSnapshot(
+      startLocalBattleTestSnapshot(current),
+      [{ entityId: 'dungeon-jailer-chief', count: 1 }],
+    )
+    clearCombatObstacles(local)
+    local.player.position = { x: 420, y: 200 }
+    const jailer = local.enemies.find((enemy) => enemy.archetypeId === 'dungeon-jailer-chief')!
+    jailer.position = { x: 240, y: 200 }
+    jailer.lastPosition = { ...jailer.position }
+    jailer.jailerChiefCooldown = 0
+    local.projectiles = [makeProjectile({
+      id: 'ready-cast-arrow',
+        sourceSkillId: 'pierce-arrow',
+        playerDirectArrow: true,
+        position: { x: 420, y: 200 },
+      previousPosition: { x: 420, y: 200 },
+      velocity: { x: -500, y: 0 },
+      size: 3,
+      damage: 0,
+    })]
+
+    local = advanceGame(local, noInput, 0.05)
+    const nextJailer = local.enemies.find((enemy) => enemy.id === jailer.id)!
+    expect(nextJailer.jailerChiefPhase).toBe('casting')
+    expect(nextJailer.jailerChiefDodgeActive).toBe(false)
+    expect(nextJailer.jailerChiefDodgeCooldown).toBe(0)
+
+    const restarted = restartRunSnapshot(local)
+    expect(restarted.enemies).toHaveLength(0)
+    const village = returnToVillageSnapshot(local)
+    expect(village.enemies).toHaveLength(0)
+    expect(village.localBattleTest).toBeUndefined()
+    const freshLocal = applyLocalBattleTestMonsterConfigSnapshot(
+      startLocalBattleTestSnapshot(restarted),
+      [{ entityId: 'dungeon-jailer-chief', count: 1 }],
+    )
+    expect(freshLocal.enemies[0]).toMatchObject({
+      jailerChiefDodgeActive: false,
+      jailerChiefDodgeCooldown: 0,
+      jailerChiefDodgeTargetY: undefined,
+    })
+
+    freshLocal.enemies[0].hp = 0
+    freshLocal.enemies[0].jailerChiefDodgeActive = true
+    freshLocal.enemies[0].jailerChiefDodgeCooldown = 0.65
+    freshLocal.enemies[0].jailerChiefDodgeDirection = -1
+    const dying = advanceGame(freshLocal, noInput, 0.05)
+    const lingeringDeath = dying.enemies[0]
+    expect(lingeringDeath?.jailerChiefDodgeActive ?? false).toBe(false)
+    expect(lingeringDeath?.jailerChiefDodgeCooldown ?? 0).toBe(0)
+    expect(lingeringDeath?.jailerChiefDodgeDirection).toBeUndefined()
+  })
+
+  it('uses bounded spatial-neighbor separation for 155 living enemies, including death-marked enemies', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.debugControls.disableAttacks = true
+    snapshot.player.position = { x: 700, y: 250 }
+    clearCombatObstacles(snapshot)
+    snapshot.enemies = Array.from({ length: 155 }, (_, index) => makeEnemy({
+      id: `crowd-${index}`,
+      kind: 'melee',
+      position: { x: 250, y: 250 },
+      size: 16,
+      speed: 80,
+      attackCooldown: 999,
+      talentStates: index === 0 ? { deathMark: { ttl: 2, stacks: 1 } } : undefined,
+    }))
+
+    let next = snapshot
+    for (let frame = 0; frame < 5; frame += 1) {
+      next = advanceGame(next, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+    const centers = new Set(next.enemies.map((enemy) => `${enemy.position.x.toFixed(3)}:${enemy.position.y.toFixed(3)}`))
+
+    expect(next.enemies).toHaveLength(155)
+    expect(centers.size).toBeGreaterThan(8)
+    expect(next.enemies[0].talentStates?.deathMark).toBeDefined()
+    expect(next.enemies.every((enemy) => distance(enemy.position, { x: 250, y: 250 }) <= 20.01)).toBe(true)
+  })
+
+  it('drives archer release frames, hurt continuity, pause, and death settlement from core state', () => {
+    const stationarySkill = createInitialSnapshot('running')
+    stationarySkill.levelTimer = 0
+    stationarySkill.remainingToSpawn = 1
+    stationarySkill.spawnCooldown = 999
+    stationarySkill.player.attackCooldown = 99
+    clearCombatObstacles(stationarySkill)
+    stationarySkill.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+
+    const cast = triggerActiveSkillSnapshot(stationarySkill, 0)
+    expect(cast.player.archerAction).toMatchObject({ kind: 'skill', isMoving: false, elapsed: 0, duration: 1 })
+    expect(cast.projectiles[0].releaseDelayRemaining).toBeCloseTo(1 / 4, 6)
+    expect(cast.activeSkills[0].cooldownRemaining).toBeCloseTo(ARCHER_ACTIVE_SKILL_MAP['pierce-arrow'].levels[0].cooldown, 6)
+
+    const paused = togglePauseSnapshot(cast)
+    const pausedFrame = advanceGame(paused, noInput, 0.5)
+    expect(pausedFrame.player.archerAction?.elapsed).toBe(0)
+    expect(pausedFrame.projectiles[0].releaseDelayRemaining).toBeCloseTo(1 / 4, 6)
+    let released = togglePauseSnapshot(pausedFrame)
+    for (let frame = 0; frame < 6; frame += 1) {
+      released = advanceGame(released, noInput, frame === 0 ? 0.5 : 0.05)
+    }
+    expect(released.projectiles).toHaveLength(1)
+    expect(released.projectiles[0].releaseDelayRemaining).toBe(0)
+
+    const movingSkill = createInitialSnapshot('running')
+    movingSkill.levelTimer = 0
+    movingSkill.remainingToSpawn = 1
+    movingSkill.spawnCooldown = 999
+    movingSkill.player.attackCooldown = 99
+    clearCombatObstacles(movingSkill)
+    movingSkill.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    const afterLegalMove = advanceGame(movingSkill, { ...noInput, right: true }, 0.05)
+    const movingCast = triggerActiveSkillSnapshot(afterLegalMove, 0)
+    expect(movingCast.player.archerAction).toMatchObject({ kind: 'skill', isMoving: true })
+    expect(movingCast.projectiles[0].releaseDelayRemaining).toBeCloseTo(4 / 6, 6)
+
+    const stationaryAttack = createInitialSnapshot('running')
+    stationaryAttack.levelTimer = 0
+    stationaryAttack.remainingToSpawn = 1
+    stationaryAttack.spawnCooldown = 999
+    stationaryAttack.player.attackCooldown = 0
+    clearCombatObstacles(stationaryAttack)
+    stationaryAttack.enemies = [makeEnemy({ id: 'attack-target', position: { x: stationaryAttack.player.position.x + 90, y: stationaryAttack.player.position.y }, speed: 0, attackCooldown: 999 })]
+    const attacked = advanceGame(stationaryAttack, noInput, 0.016)
+    expect(attacked.player.archerAction?.kind).toBe('attack')
+    expect(attacked.projectiles[0].releaseDelayRemaining).toBeCloseTo(attacked.player.attackInterval * 5 / 12, 6)
+
+    const movingAttack = createInitialSnapshot('running')
+    movingAttack.levelTimer = 0
+    movingAttack.remainingToSpawn = 1
+    movingAttack.spawnCooldown = 999
+    movingAttack.player.attackCooldown = 0
+    clearCombatObstacles(movingAttack)
+    movingAttack.enemies = [makeEnemy({ id: 'move-attack-target', position: { x: movingAttack.player.position.x + 100, y: movingAttack.player.position.y }, speed: 0, attackCooldown: 999 })]
+    const movedAttack = advanceGame(movingAttack, { ...noInput, right: true }, 0.016)
+    expect(movedAttack.player.archerAction).toMatchObject({ kind: 'attack', isMoving: true })
+    expect(movedAttack.projectiles[0].releaseDelayRemaining).toBeCloseTo(movedAttack.player.attackInterval * 4 / 6, 6)
+
+    const hurtRun = triggerActiveSkillSnapshot(stationarySkill, 0)
+    hurtRun.player.hurtCooldown = 0
+    hurtRun.enemyProjectiles = [makeProjectile({
+      id: 'hurt-shot-1',
+      owner: 'enemy',
+      position: { ...hurtRun.player.position },
+      origin: { ...hurtRun.player.position },
+      velocity: { x: 0, y: 0 },
+      damage: 4,
+      size: 10,
+      sourceSkillId: 'enemy-ranged-shot',
+    })]
+    const firstHurt = advanceGame(hurtRun, noInput, 0.05)
+    expect(firstHurt.player.archerHurt?.elapsed).toBe(0)
+    expect(firstHurt.player.archerAction?.kind).toBe('skill')
+    expect(firstHurt.player.archerAction?.elapsed).toBeCloseTo(0.05, 6)
+    expect(firstHurt.projectiles).toHaveLength(1)
+    firstHurt.player.hurtCooldown = 0
+    firstHurt.enemyProjectiles = [makeProjectile({
+      id: 'hurt-shot-2',
+      owner: 'enemy',
+      position: { ...firstHurt.player.position },
+      origin: { ...firstHurt.player.position },
+      velocity: { x: 0, y: 0 },
+      damage: 4,
+      size: 10,
+      sourceSkillId: 'enemy-ranged-shot',
+    })]
+    const secondHurt = advanceGame(firstHurt, noInput, 0.05)
+    expect(secondHurt.player.archerHurt?.elapsed).toBeCloseTo(0.05, 6)
+    expect(secondHurt.player.archerAction?.kind).toBe('skill')
+    expect(secondHurt.player.archerAction?.elapsed).toBeCloseTo(0.1, 6)
+    expect(secondHurt.projectiles).toHaveLength(1)
+    expect(secondHurt.projectiles[0].releaseDelayRemaining).toBeCloseTo(0.15, 6)
+    let recoveredFromHurt = secondHurt
+    for (let frame = 0; frame < 5; frame += 1) {
+      recoveredFromHurt = advanceGame(recoveredFromHurt, noInput, 0.05)
+    }
+    expect(recoveredFromHurt.player.archerHurt).toBeUndefined()
+    expect(recoveredFromHurt.player.archerAction).toMatchObject({ kind: 'skill', elapsed: 0.35 })
+    expect(recoveredFromHurt.projectiles).toHaveLength(1)
+    expect(recoveredFromHurt.projectiles[0].releaseDelayRemaining).toBe(0)
+
+    const lethal = createInitialSnapshot('running')
+    lethal.levelTimer = 0
+    lethal.remainingToSpawn = 1
+    lethal.spawnCooldown = 999
+    lethal.player.hp = 1
+    lethal.player.hurtCooldown = 0
+    lethal.activeSkills = [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    lethal.enemyProjectiles = [makeProjectile({
+      id: 'lethal-shot',
+      owner: 'enemy',
+      position: { ...lethal.player.position },
+      origin: { ...lethal.player.position },
+      velocity: { x: 0, y: 0 },
+      damage: 4,
+      size: 10,
+      sourceSkillId: 'enemy-ranged-shot',
+    })]
+    const dying = advanceGame(lethal, noInput, 0.016)
+    expect(dying.phase).toBe('running')
+    expect(dying.player.archerDeath).toMatchObject({ elapsed: 0, duration: 1 })
+    expect(triggerActiveSkillSnapshot(dying, 0).projectiles).toHaveLength(0)
+    expect(triggerDashSnapshot(dying).player.dashTimer).toBe(0)
+    const deathPaused = advanceGame(togglePauseSnapshot(dying), noInput, 0.5)
+    expect(deathPaused.player.archerDeath?.elapsed).toBe(0)
+    let beforeSettlement = togglePauseSnapshot(deathPaused)
+    for (let frame = 0; frame < 19; frame += 1) {
+      beforeSettlement = advanceGame(beforeSettlement, noInput, 0.05)
+    }
+    expect(beforeSettlement.phase).toBe('running')
+    expect(beforeSettlement.player.archerDeath?.elapsed).toBeCloseTo(0.95, 6)
+    expect(advanceGame(beforeSettlement, noInput, 0.05).phase).toBe('game-over')
+  })
+  describe('2026-08-14 core-skill form talents', () => {
+  it('offers and accepts an anchored form through the formal blue-crystal reward path after a real Lv4 evolution', () => {
+    let snapshot = createInitialSnapshot('running')
+    snapshot.phase = 'level-clear'
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 3, cooldownRemaining: 0 }]
+    snapshot.pendingSkillReward = buildPendingReward(snapshot)
+
+    const evolutionChoice = snapshot.pendingSkillReward.choices.find((choice) => choice.evolutionId === 'wind-cut')
+    expect(snapshot.pendingSkillReward.poolKind).toBe('skill-evolution')
+    expect(evolutionChoice).toBeTruthy()
+    snapshot = acceptSkillRewardSnapshot(snapshot, evolutionChoice!.choiceId)
+    expect(snapshot.activeSkills[0]).toMatchObject({ familyId: 'pierce-arrow', evolutionId: 'wind-cut', level: 4 })
+
+    snapshot.phase = 'running'
+    snapshot.phaseBeforePause = 'running'
+    snapshot.level = 3
+    snapshot.contractLevel = 5
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 1
+    snapshot.levelTargetKills = 999
+    snapshot.spawnCooldown = 999
+    snapshot.campaignRewardProgress.crystalNextAwardAt = 1
+    snapshot.pickups = [{
+      id: 'formal-form-crystal',
+      kind: 'soul-crystal',
+      position: { ...snapshot.player.position },
+      radius: 8,
+      expValue: 1,
+      ttl: 30,
+    }]
+    snapshot.enemies = []
+    snapshot.enemyProjectiles = []
+    snapshot.player.attackCooldown = 999
+    snapshot.runTalentState.selectedBuild = 'death'
+    clearCombatObstacles(snapshot)
+
+    const rewardScreen = advanceGame(snapshot, noInput, 0.05)
+    expect(rewardScreen.phase).toBe('paused')
+    expect(rewardScreen.pendingSkillReward?.poolKind).toBe('crystal-talent')
+    expect(rewardScreen.pendingSkillReward?.choices.length).toBeGreaterThanOrEqual(2)
+    const formChoices = rewardScreen.pendingSkillReward!.choices.filter((choice) => Boolean(choice.formAnchor))
+    expect(formChoices.map((choice) => choice.talentId).sort()).toEqual(['run_death_09', 'run_death_10'])
+    expect(formChoices.every((choice) => choice.formAnchor?.familyId === 'pierce-arrow' && choice.formAnchor.evolutionId === 'wind-cut')).toBe(true)
+
+    const selected = acceptSkillRewardSnapshot(rewardScreen, formChoices.find((choice) => choice.talentId === 'run_death_09')!.choiceId)
+    expect(selected.runTalentState.selectedTalentIds).toContain('run_death_09')
+    expect(selected.inRunTalentIds).toContain('run_death_09')
+    expect(selected.runTalentState.formAnchors?.run_death_09).toMatchObject({ familyId: 'pierce-arrow', evolutionId: 'wind-cut' })
+    expect(selected.runTalentState.lastOfferedCandidateIds).toEqual([])
+
+    selected.activeSkills[0].cooldownRemaining = 0
+    selected.aimPoint = { x: selected.player.position.x + 260, y: selected.player.position.y }
+    const cast = triggerActiveSkillSnapshot(selected, 0)
+    expect(cast.projectiles.some((projectile) => projectile.formTalentIds?.includes('run_death_09'))).toBe(true)
+  })
+
+  it('reaches an anchored form offer after a formal fixed elite reward, then consumes it on a real cast', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    let snapshot = createInitialSnapshot('running')
+    snapshot.level = 3
+    snapshot.contractLevel = 5
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 1
+    snapshot.spawnCooldown = 0
+    snapshot.enemies = []
+    snapshot.enemyProjectiles = []
+    snapshot.player.attackCooldown = 999
+    snapshot.runTalentState.selectedBuild = 'death'
+    snapshot.activeSkills = [{
+      skillId: 'pierce-arrow',
+      familyId: 'pierce-arrow',
+      evolutionId: 'wind-cut',
+      level: 4,
+      cooldownRemaining: 0,
+    }]
+    clearCombatObstacles(snapshot)
+
+    const spawned = advanceGame(snapshot, noInput, 0.016)
+    const elite = spawned.enemies.find((enemy) => enemy.grantsEliteReward)
+    expect(elite).toBeTruthy()
+    if (!elite) return
+
+    spawned.projectiles = [makeProjectile({
+      id: 'formal-elite-finisher',
+      position: { ...elite.position },
+      previousPosition: { ...elite.position },
+      origin: { ...spawned.player.position },
+      velocity: { x: 0, y: 0 },
+      damage: elite.hp + 10,
+      sourceSkillId: 'basic-arrow',
+    })]
+    let afterDeath = advanceGame(spawned, noInput, 0.016)
+    for (let frame = 0; frame < 70 && afterDeath.phase !== 'paused'; frame += 1) {
+      afterDeath = advanceGame(afterDeath, noInput, 0.05)
+    }
+
+    expect(afterDeath.phase).toBe('paused')
+    expect(afterDeath.pendingSkillReward).toMatchObject({ poolKind: 'fixed-skill', source: 'fixed-skill' })
+    const fixedChoice = afterDeath.pendingSkillReward!.choices[0]
+    expect(fixedChoice).toBeTruthy()
+    afterDeath = acceptSkillRewardSnapshot(afterDeath, fixedChoice!.choiceId)
+    afterDeath.levelTargetKills = 999
+    afterDeath.remainingToSpawn = 1
+    afterDeath.spawnCooldown = 999
+    afterDeath.campaignRewardProgress.crystalNextAwardAt = 1
+    afterDeath.pickups = [{
+      id: 'elite-followup-form-crystal',
+      kind: 'soul-crystal',
+      position: { ...afterDeath.player.position },
+      radius: 8,
+      expValue: 1,
+      ttl: 30,
+    }]
+    afterDeath = advanceGame(afterDeath, noInput, 0.016)
+    expect(afterDeath.pendingSkillReward).toMatchObject({ poolKind: 'crystal-talent', source: 'crystal-talent' })
+    const anchoredChoices = afterDeath.pendingSkillReward!.choices.filter((choice) => Boolean(choice.formAnchor))
+    expect(anchoredChoices.map((choice) => choice.talentId).sort()).toEqual(['run_death_09', 'run_death_10'])
+
+    const chosen = acceptSkillRewardSnapshot(afterDeath, anchoredChoices.find((choice) => choice.talentId === 'run_death_09')!.choiceId)
+    expect(chosen.runTalentState.formAnchors?.run_death_09).toMatchObject({
+      familyId: 'pierce-arrow',
+      evolutionId: 'wind-cut',
+    })
+
+    chosen.activeSkills[0].cooldownRemaining = 0
+    chosen.aimPoint = { x: chosen.player.position.x + 260, y: chosen.player.position.y }
+    const cast = triggerActiveSkillSnapshot(chosen, 0)
+    expect(cast.projectiles.some((projectile) => projectile.formTalentIds?.includes('run_death_09'))).toBe(true)
+  })
+
+  it('captures an anchored form on the actual cast and creates its charged form area from a real hit', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 0
+    snapshot.mapObstacles = []
+    snapshot.player.position = { x: 200, y: 200 }
+    snapshot.aimPoint = { x: 760, y: 200 }
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', evolutionId: 'wind-cut', level: 4, cooldownRemaining: 0 }]
+    snapshot.runTalentState.selectedTalentIds = ['run_death_09', 'run_death_15']
+    snapshot.inRunTalentIds = ['run_death_09', 'run_death_15']
+    snapshot.runTalentState.formAnchors = {
+      run_death_09: { familyId: 'pierce-arrow', evolutionId: 'wind-cut', anchoredAt: 1 },
+      run_death_15: { familyId: 'pierce-arrow', evolutionId: 'wind-cut', anchoredAt: 1 },
+    }
+    snapshot.runTalentState.formCycle = { casts: [], chargedUntil: 6 }
+    snapshot.enemies = [makeEnemy({ id: 'form-target', position: { x: 390, y: 200 }, hp: 300, maxHp: 300 })]
+
+    let cast = triggerActiveSkillSnapshot(snapshot, 0)
+    expect(cast.projectiles[0]?.formTalentIds).toEqual(expect.arrayContaining(['run_death_09']))
+    expect(cast.projectiles[0]?.size).toBeGreaterThan(5)
+    cast.projectiles.forEach((projectile) => {
+      projectile.releaseDelayRemaining = 0
+      projectile.previousPosition = { x: 200, y: 200 }
+      projectile.position = { x: 390, y: 200 }
+    })
+    cast = advanceGame(cast, noInput, 0.016)
+    expect(cast.enemies[0].hp).toBeLessThan(300)
+    expect(cast.skillFields.some((field) => field.formTalentId === 'run_death_15')).toBe(true)
+    expect(cast.runTalentState.formCooldowns?.run_death_15).toBe(16)
+  })
+
+  it('charges a group-four form only from three distinct manual evolved casts and consumes it once on the next anchored hit', () => {
+    const makeCycleRun = () => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      clearCombatObstacles(snapshot)
+      snapshot.player.attackCooldown = 999
+      snapshot.aimPoint = { x: snapshot.player.position.x + 260, y: snapshot.player.position.y }
+      snapshot.activeSkills = [
+        { skillId: 'pierce-arrow', familyId: 'pierce-arrow', evolutionId: 'wind-cut', level: 4, cooldownRemaining: 0 },
+        { skillId: 'fan-burst', familyId: 'fan-burst', evolutionId: 'hawk-wing', level: 4, cooldownRemaining: 0 },
+        { skillId: 'arrow-rain', familyId: 'arrow-rain', evolutionId: 'meteor-cluster', level: 4, cooldownRemaining: 0 },
+      ]
+      snapshot.runTalentState.selectedTalentIds = ['run_death_15']
+      snapshot.inRunTalentIds = ['run_death_15']
+      snapshot.runTalentState.formAnchors = {
+        run_death_15: { familyId: 'pierce-arrow', evolutionId: 'wind-cut', anchoredAt: 1 },
+      }
+      snapshot.runTalentState.formCycle = { casts: [] }
+      return snapshot
+    }
+
+    let repeated = triggerActiveSkillSnapshot(makeCycleRun(), 0)
+    repeated.activeSkills[0].cooldownRemaining = 0
+    repeated = triggerActiveSkillSnapshot(repeated, 0)
+    repeated.activeSkills[1].cooldownRemaining = 0
+    repeated = triggerActiveSkillSnapshot(repeated, 1)
+    expect(repeated.runTalentState.formCycle?.chargedUntil).toBeUndefined()
+    expect(repeated.runTalentState.formCycle?.casts.map((entry) => entry.familyId)).toEqual(['pierce-arrow', 'fan-burst'])
+
+    let charged = triggerActiveSkillSnapshot(makeCycleRun(), 0)
+    charged.activeSkills[1].cooldownRemaining = 0
+    charged = triggerActiveSkillSnapshot(charged, 1)
+    charged.activeSkills[2].cooldownRemaining = 0
+    charged = triggerActiveSkillSnapshot(charged, 2)
+    expect(charged.runTalentState.formCycle?.chargedUntil).toBeCloseTo(charged.elapsedTime + 6, 6)
+
+    const paused = togglePauseSnapshot(charged)
+    expect(advanceGame(paused, noInput, 4).runTalentState.formCycle?.chargedUntil).toBe(charged.runTalentState.formCycle?.chargedUntil)
+
+    charged.activeSkills[0].cooldownRemaining = 0
+    charged.enemies = [makeEnemy({ id: 'charged-form-target', position: { ...charged.aimPoint }, hp: 300, maxHp: 300, attackCooldown: 999 })]
+    let consumed = triggerActiveSkillSnapshot(charged, 0)
+    const projectile = consumed.projectiles.find((item) => item.formAreaTalentIds?.includes('run_death_15'))
+    expect(projectile).toBeTruthy()
+    expect(consumed.runTalentState.formCycle?.chargedUntil).toBeGreaterThan(consumed.elapsedTime)
+    projectile!.releaseDelayRemaining = 0
+    projectile!.previousPosition = { ...consumed.player.position }
+    projectile!.position = { ...consumed.aimPoint }
+    consumed = advanceGame(consumed, noInput, 0.016)
+    const area = consumed.skillFields.find((field) => field.formTalentId === 'run_death_15')
+    expect(area).toMatchObject({ formBaseDamage: projectile!.formBaseDamage, formIsArea: true })
+    expect(consumed.runTalentState.formCycle?.chargedUntil).toBeUndefined()
+    expect(restartRunSnapshot(consumed).runTalentState.formCycle).toBeUndefined()
+    expect(restartRunSnapshot(consumed).runTalentState.selectedTalentIds).toEqual([])
+  })
   })
 })

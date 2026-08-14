@@ -417,14 +417,15 @@ describe('DeveloperAssetPanel', () => {
   it('validates anchors for skill actions and opens combat sandbox preview', () => {
     render(<DeveloperAssetPanel onClose={() => undefined} />)
 
-    fireEvent.click(screen.getByRole('button', { name: /地狱犬/ }))
-    fireEvent.click(screen.getByRole('button', { name: /skill_1 3/ }))
+    fireEvent.click(screen.getByTestId('asset-category-elite'))
+    fireEvent.click(screen.getByTestId('asset-entity-dungeon-jailer-chief'))
+    fireEvent.click(screen.getByRole('button', { name: /cast 5/ }))
     fireEvent.click(screen.getByRole('button', { name: '战斗实测预览' }))
 
-    expect(screen.getByText('火焰吐息')).toBeTruthy()
-    expect(screen.getByTestId('anchor-mouth')).toBeTruthy()
+    expect(screen.getByText('牢锁禁锢')).toBeTruthy()
+    expect(screen.getByTestId('anchor-cast')).toBeTruthy()
     expect(screen.getByTestId('combat-sandbox-preview')).toBeTruthy()
-    expect(screen.getByTestId('combat-preview-action').textContent).toContain('火焰吐息')
+    expect(screen.getByTestId('combat-preview-action').textContent).toContain('牢锁禁锢')
     expect(screen.getByTestId('projectile-spawn-point')).toBeTruthy()
     expect(screen.getByTestId('skill-range-preview')).toBeTruthy()
   })
@@ -446,6 +447,9 @@ describe('DeveloperAssetPanel', () => {
     const actionsBySlot = new Map(hellhound?.actions.map((action) => [action.slot, action]))
     const hellhoundSlots = Object.keys(HELLHOUND_IMAGE2_ACTIONS) as HellhoundImage2ActionSlot[]
 
+    expect(hellhound?.requiredSlots).toEqual(hellhoundSlots)
+    expect(actionsBySlot.has('cast')).toBe(false)
+    expect(actionsBySlot.has('skill_1')).toBe(false)
     hellhoundSlots.forEach((slot) => {
       const action = actionsBySlot.get(slot)
       expect(action?.frameUrls).toEqual(getHellhoundImage2FrameUrls(slot).map((path) => `/${path}`))
@@ -458,7 +462,7 @@ describe('DeveloperAssetPanel', () => {
     })
   })
 
-  it('switches hellhound action slots and updates detail state from idle to move and skill', () => {
+  it('switches hellhound action slots from idle to move and bite without exposing retired active skills', () => {
     render(<DeveloperAssetPanel onClose={() => undefined} />)
 
     fireEvent.click(screen.getByRole('button', { name: /地狱犬/ }))
@@ -467,12 +471,13 @@ describe('DeveloperAssetPanel', () => {
     expect(screen.getByRole('heading', { name: '移动' })).toBeTruthy()
     expect((screen.getByLabelText('动作名称') as HTMLInputElement).value).toBe('移动')
 
-    fireEvent.click(screen.getByRole('button', { name: /skill_1 3/ }))
+    fireEvent.click(screen.getByRole('button', { name: /attack 6/ }))
 
-    expect(screen.getByRole('heading', { name: '火焰吐息' })).toBeTruthy()
-    expect((screen.getByLabelText('动作名称') as HTMLInputElement).value).toBe('火焰吐息')
-    expect((screen.getByLabelText('帧数') as HTMLInputElement).value).toBe('3')
-    expect(screen.getByTestId('anchor-mouth')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '普通攻击' })).toBeTruthy()
+    expect((screen.getByLabelText('动作名称') as HTMLInputElement).value).toBe('普通攻击')
+    expect((screen.getByLabelText('帧数') as HTMLInputElement).value).toBe('6')
+    expect(screen.queryByTestId('asset-action-slot-cast')).toBeNull()
+    expect(screen.queryByTestId('asset-action-slot-skill_1')).toBeNull()
   })
 
   it('saves and rolls back draft action settings without touching source assets', () => {
@@ -573,10 +578,10 @@ describe('DeveloperAssetPanel', () => {
   })
 
   it('saves a valid current action flip without blocking on unrelated missing frames', async () => {
-    const makeHellhoundAction = (slot: 'idle' | 'skill_1', frames: number, frameCount = slot === 'idle' ? 7 : 3) => ({
+    const makeHellhoundAction = (slot: 'idle' | 'hit', frames: number, frameCount = slot === 'idle' ? 7 : 3) => ({
       entityId: 'dungeon-hellhound',
       slot,
-      combatAction: slot === 'skill_1' ? 'skill' : slot,
+      combatAction: slot,
       frameUrls: getHellhoundImage2FrameUrls(slot).slice(0, frames),
       frameWidth: 192,
       frameHeight: 192,
@@ -595,7 +600,7 @@ describe('DeveloperAssetPanel', () => {
         entityId: 'dungeon-hellhound',
         actions: [
           makeHellhoundAction('idle', 7),
-          makeHellhoundAction('skill_1', 2),
+          makeHellhoundAction('hit', 2),
         ],
       }],
     }))
@@ -603,10 +608,10 @@ describe('DeveloperAssetPanel', () => {
     render(<DeveloperAssetPanel onClose={() => undefined} />)
 
     fireEvent.click(await screen.findByTestId('asset-entity-dungeon-hellhound'))
-    expect(screen.getByTestId('asset-gap-row-dungeon-hellhound-skill_1')).toBeTruthy()
-    expectGapField('dungeon-hellhound', 'skill_1', 'status', '缺帧')
-    expectGapField('dungeon-hellhound', 'skill_1', 'current-frames', '2')
-    expectGapField('dungeon-hellhound', 'skill_1', 'target-frames', '3')
+    expect(screen.getByTestId('asset-gap-row-dungeon-hellhound-hit')).toBeTruthy()
+    expectGapField('dungeon-hellhound', 'hit', 'status', '缺帧')
+    expectGapField('dungeon-hellhound', 'hit', 'current-frames', '2')
+    expectGapField('dungeon-hellhound', 'hit', 'target-frames', '3')
 
     const flipInput = screen.getByLabelText('是否左右翻转') as HTMLInputElement
     expect(flipInput.checked).toBe(false)
@@ -619,12 +624,12 @@ describe('DeveloperAssetPanel', () => {
       expect(screen.getByTestId('asset-project-save-status').textContent).toContain('已保存当前动作')
     })
     expect(getRuntimeAssetActionOverride('dungeon-hellhound', 'idle')?.flipX).toBe(true)
-    expect(getRuntimeAssetActionOverride('dungeon-hellhound', 'skill')?.frameUrls).toHaveLength(2)
+    expect(getRuntimeAssetActionOverride('dungeon-hellhound', 'hit')?.frameUrls).toHaveLength(2)
     const saved = JSON.parse(window.localStorage.getItem(RUNTIME_ASSET_DRAFT_STORAGE_KEY) ?? '{}')
     const idle = saved.entities[0].actions.find((action: { slot: string }) => action.slot === 'idle')
     expect(idle.flipX).toBe(true)
     expect(idle.frameUrls).toHaveLength(7)
-    expect(screen.getByTestId('asset-gap-row-dungeon-hellhound-skill_1')).toBeTruthy()
+    expect(screen.getByTestId('asset-gap-row-dungeon-hellhound-hit')).toBeTruthy()
   })
 
   it('keeps existing user runtime overrides when saving another action and reloading the draft', async () => {
@@ -692,11 +697,23 @@ describe('DeveloperAssetPanel', () => {
           guideFrame: 'assets/monsters/hellhound-preview.png',
           assetPath: 'assets/monsters/hellhound-sheet.png',
           combatScale: 1,
+        }, {
+          entityId: 'dungeon-hellhound',
+          slot: 'skill_1',
+          combatAction: 'skill',
+          frameUrls: ['assets/monsters/hellhound-image2/Skill_1/Skill_1-1@3x.png'],
+          frameWidth: 192,
+          frameHeight: 192,
+          frameCount: 1,
+          fps: 6,
+          loop: false,
+          flipX: false,
         }],
       }],
     })
 
     expect(getRuntimeAssetActionOverride('dungeon-hellhound', 'idle')).toBeUndefined()
+    expect(getRuntimeAssetActionOverride('dungeon-hellhound', 'skill')).toBeUndefined()
   })
 
   it('shows user runtime overrides before manifest defaults for hellhound actions', async () => {
@@ -883,11 +900,11 @@ describe('DeveloperAssetPanel', () => {
 
   it('marks project actions with missing configured frames as incomplete instead of complete', () => {
     const hellhound = cloneDeveloperAssetEntity(developerAssetEntities.find((entity) => entity.id === 'dungeon-hellhound')!)
-    hellhound.actions = hellhound.actions.map((action) => action.slot === 'skill_1'
+    hellhound.actions = hellhound.actions.map((action) => action.slot === 'attack'
       ? {
         ...action,
-        frameUrls: getHellhoundImage2FrameUrls('skill_1').slice(0, 2),
-        frameCount: 3,
+        frameUrls: getHellhoundImage2FrameUrls('attack').slice(0, 2),
+        frameCount: 6,
         exists: true,
       }
       : action)

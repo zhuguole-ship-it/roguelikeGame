@@ -17,6 +17,7 @@ import {
 import {
   alignDrawYToVisibleBottom,
   drawBeastCompanionSprite,
+  drawChainWraithIronChain,
   drawEnemySprite,
   drawFloorTile,
   drawObstacleSprite,
@@ -25,11 +26,20 @@ import {
   drawProjectileSprite,
   drawTorch,
   getC1SlimeVariantCombatDrawSize,
+  getChainWraithIronChainFrameIndex,
+  getChainWraithSkillHandWorldAnchorForEnemy,
   getEnemySpriteGroundY,
+  type PlayerArcherRenderInput,
 } from './sprites'
+import { getPlayerArcherStableBodyCenter } from './archerAssetFrames'
 import { drawReferenceArt } from './referenceArt'
 import { getTerrainAssetById, type TerrainAssetDefinition } from './terrainAssets'
-import type { BeastCompanion, Enemy, EnemySkillEffect, GameSnapshot, Player, Vector2 } from './types'
+import {
+  ARCHER_CORE_SKILL_CONTRACT_MAP,
+  ARCHER_SKILL_EVOLUTION_MAP,
+  type ArcherSkillEvolutionEffectContract,
+} from './archerSkillEvolution'
+import type { BeastCompanion, Enemy, EnemySkillEffect, GameSnapshot, Player, SkillEvolutionEffectEvent, SkillLevelConfig, Vector2 } from './types'
 import { drawVillageMenuBackground } from './villageMenuBackground'
 import { clamp } from '../utils/math'
 
@@ -40,9 +50,435 @@ let levelOneDungeonFloorImage: HTMLImageElement | null = null
 const terrainAssetImageCache = new Map<string, HTMLImageElement>()
 const fireSacExplosionImageCache = new Map<string, HTMLImageElement>()
 
+export const getPlayerArcherRenderInput = (state: GameSnapshot): PlayerArcherRenderInput => {
+  const player = state.player
+  const death = player.archerDeath
+  const hurt = player.archerHurt
+  const action = player.archerAction
+  const isDead = Boolean(death)
+  const isHurt = !isDead && Boolean(hurt)
+  const actionProgress = death
+    ? death.elapsed / Math.max(0.001, death.duration)
+    : hurt
+      ? hurt.elapsed / Math.max(0.001, hurt.duration)
+      : action
+        ? action.elapsed / Math.max(0.001, action.duration)
+        : undefined
+  const isMoving = action?.isMoving ?? (state.phase === 'running' && player.animationState === 'move')
+
+  return {
+    isDead,
+    isHurt,
+    isCastingSkill: !isDead && action?.kind === 'skill',
+    isAttacking: !isDead && action?.kind === 'attack',
+    isMoving,
+    actionProgress,
+    aimDirection: action?.aimDirection ?? {
+      x: state.aimPoint.x - player.position.x,
+      y: state.aimPoint.y - player.position.y,
+    },
+    movementDirection: player.archerMovementDirection,
+  }
+}
+
+/**
+ * Presentation-only lookup of A1's selected branch. The runtime companion
+ * stays unchanged: this number is passed solely to its sprite draw call.
+ */
+export const getBeastCompanionEvolutionVisualScale = (beast: Pick<BeastCompanion, 'visualScale'>) => (
+  Math.max(1, beast.visualScale ?? 1)
+)
+
 const pixel = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, color: string) => {
   ctx.fillStyle = color
   ctx.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(width)), Math.max(1, Math.round(height)))
+}
+
+const MAX_RENDERED_SKILL_EVOLUTION_EFFECTS = 24
+
+type SkillEvolutionEffectRenderProfile = Readonly<{
+  contract?: ArcherSkillEvolutionEffectContract
+  shape: ArcherSkillEvolutionEffectContract['effectProfile']['shape']
+  accent: string
+  edge: string
+  range: number
+  radius: number
+  projectileCount: number
+  pierce: number
+  spread: number
+  /** The contract cadence drives field/body pulse timing. */
+  tickInterval: number
+  fieldTtl: number
+  warning: string
+  body: string
+  hit: string
+}>
+
+const EVOLUTION_EFFECT_FALLBACK = Object.freeze({
+  shape: 'line' as const,
+  accent: '#facc15',
+  edge: '#fef3c7',
+  range: 280,
+  radius: 28,
+  projectileCount: 1,
+  pierce: 0,
+  spread: 0.2,
+  tickInterval: 0.5,
+  fieldTtl: 2.6,
+  warning: '技能预告',
+  body: '技能主体',
+  hit: '技能命中',
+})
+
+const getContractEffectColors = (contract: ArcherSkillEvolutionEffectContract, color: string, effect: string) => {
+  if (color && color !== '#fef08a') {
+    return { accent: color, edge: '#fef3c7' }
+  }
+  if (effect === 'burn') return { accent: '#fb923c', edge: '#fed7aa' }
+  if (effect === 'slow') return { accent: '#67e8f9', edge: '#e0f2fe' }
+  if (effect === 'mark') return { accent: '#f472b6', edge: '#fce7f3' }
+  const buildTag = ARCHER_CORE_SKILL_CONTRACT_MAP[contract.familyId]?.buildTag
+  if (buildTag === 'pierce') return { accent: '#fde68a', edge: '#fef3c7' }
+  if (buildTag === 'spread') return { accent: '#c4b5fd', edge: '#ede9fe' }
+  if (buildTag === 'control') return { accent: '#93c5fd', edge: '#dbeafe' }
+  if (buildTag === 'beast') return { accent: '#86efac', edge: '#dcfce7' }
+  return { accent: EVOLUTION_EFFECT_FALLBACK.accent, edge: EVOLUTION_EFFECT_FALLBACK.edge }
+}
+
+type EvolutionNumericConfigKey = 'range' | 'fieldRadius' | 'explosionRadius' | 'projectileCount' | 'pierce' | 'spread' | 'tickInterval' | 'fieldTtl'
+type EvolutionNumericConfig = Pick<SkillLevelConfig, EvolutionNumericConfigKey>
+
+/**
+ * Evolution patches are the visual source of truth when one is present. The
+ * core value is only the fallback for a field that the branch did not alter.
+ * This matters for a Lv4 single-beast branch: its `projectileCount: 1` must
+ * not be replaced by an unrelated high-count Lv5 core default.
+ */
+const getBranchConfigNumber = (
+  contract: ArcherSkillEvolutionEffectContract,
+  level4: EvolutionNumericConfig,
+  level5: EvolutionNumericConfig,
+  key: EvolutionNumericConfigKey,
+) => {
+  const level5Patch = contract.level5Config[key]
+  if (typeof level5Patch === 'number') return level5Patch
+  const level4Patch = contract.level4Config[key]
+  if (typeof level4Patch === 'number') return level4Patch
+  return Math.max(level4[key], level5[key])
+}
+
+/**
+ * B2 rendering adapter for A1's single branch contract.  It intentionally
+ * derives geometry, count, range and colour from contract fields rather than
+ * an evolution-id hash or a second renderer-maintained branch table.
+ */
+export const getSkillEvolutionEffectRenderProfile = (evolutionId: string): SkillEvolutionEffectRenderProfile => {
+  const contract = ARCHER_SKILL_EVOLUTION_MAP[evolutionId]
+  if (!contract) return EVOLUTION_EFFECT_FALLBACK
+  const core = ARCHER_CORE_SKILL_CONTRACT_MAP[contract.familyId]
+  if (!core) return EVOLUTION_EFFECT_FALLBACK
+  const level4 = { ...core.levels[3].config, ...contract.level4Config }
+  const level5 = { ...core.levels[4].config, ...contract.level5Config }
+  const effect = level5.effect !== 'none' ? level5.effect : level4.effect
+  const colors = getContractEffectColors(contract, contract.level5Config.color ?? contract.level4Config.color ?? level4.color, effect)
+  const branchLevel4: EvolutionNumericConfig = level4
+  const branchLevel5: EvolutionNumericConfig = level5
+  const branchConfig = (key: EvolutionNumericConfigKey) => getBranchConfigNumber(contract, branchLevel4, branchLevel5, key)
+  const fieldRadius = branchConfig('fieldRadius')
+  const explosionRadius = branchConfig('explosionRadius')
+  // `SkillLevelConfig` supplies defaults for both field and explosion values.
+  // Select the one which belongs to A1's declared shape so a generic 56px
+  // field default cannot accidentally inflate a branch explosion.
+  const radius = contract.effectProfile.shape === 'field' || contract.effectProfile.shape === 'beast'
+    ? Math.max(fieldRadius, 16)
+    : Math.max(explosionRadius, 16)
+  const range = Math.max(branchConfig('range'), radius)
+  const projectileCount = Math.max(1, Math.round(branchConfig('projectileCount')))
+
+  return {
+    contract,
+    shape: contract.effectProfile.shape,
+    accent: colors.accent,
+    edge: colors.edge,
+    range,
+    radius,
+    projectileCount,
+    pierce: branchConfig('pierce'),
+    spread: branchConfig('spread'),
+    tickInterval: Math.max(0.05, branchConfig('tickInterval')),
+    fieldTtl: Math.max(0.05, branchConfig('fieldTtl')),
+    warning: contract.effectProfile.warning,
+    body: contract.effectProfile.body,
+    hit: contract.effectProfile.hit,
+  }
+}
+
+/** @deprecated Use getSkillEvolutionEffectRenderProfile for the full A1 contract-backed result. */
+export const getSkillEvolutionEffectPalette = (evolutionId: string) => getSkillEvolutionEffectRenderProfile(evolutionId)
+
+export const getRenderableSkillEvolutionEffectEvents = (events: readonly SkillEvolutionEffectEvent[]) => (
+  events.slice(-MAX_RENDERED_SKILL_EVOLUTION_EFFECTS)
+)
+
+const getEffectDirection = (event: SkillEvolutionEffectEvent) => {
+  const direction = event.direction ?? (event.targetPosition
+    ? { x: event.targetPosition.x - event.origin.x, y: event.targetPosition.y - event.origin.y }
+    : { x: 0, y: -1 })
+  const magnitude = Math.hypot(direction.x, direction.y)
+  return magnitude > 0.0001 ? { x: direction.x / magnitude, y: direction.y / magnitude } : { x: 0, y: -1 }
+}
+
+const getEffectTarget = (event: SkillEvolutionEffectEvent, direction: Vector2) => {
+  if (event.targetPosition) return event.targetPosition
+  const length = Math.max(18, event.length ?? event.radius ?? 70)
+  return {
+    x: event.position.x + direction.x * length,
+    y: event.position.y + direction.y * length,
+  }
+}
+
+const withEffectAlpha = (ctx: CanvasRenderingContext2D, alpha: number, draw: () => void) => {
+  ctx.save()
+  ctx.globalAlpha = Math.max(0, Math.min(0.68, alpha))
+  draw()
+  ctx.restore()
+}
+
+const getEffectRadius = (event: SkillEvolutionEffectEvent, profile: SkillEvolutionEffectRenderProfile) => (
+  Math.max(10, event.radius ?? profile.radius)
+)
+
+const getEffectLength = (event: SkillEvolutionEffectEvent, profile: SkillEvolutionEffectRenderProfile) => (
+  Math.max(18, event.length ?? profile.range)
+)
+
+const getEffectPulse = (profile: SkillEvolutionEffectRenderProfile, event: SkillEvolutionEffectEvent, progress: number) => {
+  // Events own the lifecycle; the selected contract supplies the cadence.
+  // Cap at five pulses so dense fields remain readable in a crowded fight.
+  const eventDuration = Math.max(0.05, event.duration || profile.fieldTtl)
+  const pulses = Math.max(1, Math.min(5, Math.round(eventDuration / profile.tickInterval)))
+  return 0.72 + 0.28 * Math.sin(progress * Math.PI * pulses)
+}
+
+const getPerpendicular = (direction: Vector2) => ({ x: -direction.y, y: direction.x })
+
+const drawShapeLine = (ctx: CanvasRenderingContext2D, origin: Vector2, target: Vector2) => {
+  ctx.beginPath()
+  ctx.moveTo(origin.x, origin.y)
+  ctx.lineTo(target.x, target.y)
+  ctx.stroke()
+}
+
+const drawShapeFan = (ctx: CanvasRenderingContext2D, origin: Vector2, direction: Vector2, length: number, spread: number, spokeCount: number) => {
+  const angle = Math.atan2(direction.y, direction.x)
+  const halfSpread = Math.max(0.16, Math.min(1.25, spread || 0.52)) / 2
+  const start = angle - halfSpread
+  const end = angle + halfSpread
+  ctx.beginPath()
+  ctx.moveTo(origin.x, origin.y)
+  ctx.lineTo(origin.x + Math.cos(start) * length, origin.y + Math.sin(start) * length)
+  ctx.arc(origin.x, origin.y, length, start, end)
+  ctx.closePath()
+  ctx.stroke()
+  for (let index = 1; index < spokeCount; index += 1) {
+    const spokeAngle = start + (end - start) * (index / spokeCount)
+    drawShapeLine(ctx, origin, {
+      x: origin.x + Math.cos(spokeAngle) * length,
+      y: origin.y + Math.sin(spokeAngle) * length,
+    })
+  }
+}
+
+const drawShapeBurst = (ctx: CanvasRenderingContext2D, target: Vector2, radius: number, rayCount: number, progress: number) => {
+  ctx.beginPath()
+  ctx.arc(target.x, target.y, radius, 0, Math.PI * 2)
+  ctx.stroke()
+  for (let index = 0; index < rayCount; index += 1) {
+    const angle = progress * 0.5 + index * (Math.PI * 2 / rayCount)
+    drawShapeLine(ctx, target, {
+      x: target.x + Math.cos(angle) * radius * 1.25,
+      y: target.y + Math.sin(angle) * radius * 1.25,
+    })
+  }
+}
+
+const drawShapeField = (ctx: CanvasRenderingContext2D, target: Vector2, radius: number, progress: number) => {
+  ctx.beginPath()
+  ctx.arc(target.x, target.y, radius * (0.62 + progress * 0.38), 0, Math.PI * 2)
+  ctx.stroke()
+  const inner = radius * (0.3 + progress * 0.2)
+  ctx.beginPath()
+  ctx.rect(target.x - inner, target.y - inner, inner * 2, inner * 2)
+  ctx.stroke()
+}
+
+const drawShapeBeast = (ctx: CanvasRenderingContext2D, target: Vector2, radius: number, count: number, progress: number) => {
+  const orbit = radius * (0.54 + progress * 0.35)
+  const visibleCount = Math.max(1, Math.min(5, count))
+  for (let index = 0; index < visibleCount; index += 1) {
+    const angle = progress * Math.PI * 2 + index * (Math.PI * 2 / visibleCount)
+    const x = target.x + Math.cos(angle) * orbit
+    const y = target.y + Math.sin(angle) * orbit
+    ctx.beginPath()
+    ctx.moveTo(x, y - 5)
+    ctx.lineTo(x + 4, y + 4)
+    ctx.lineTo(x - 4, y + 4)
+    ctx.closePath()
+    ctx.stroke()
+  }
+}
+
+const drawSkillEvolutionWarning = (ctx: CanvasRenderingContext2D, event: SkillEvolutionEffectEvent, progress: number) => {
+  const profile = getSkillEvolutionEffectRenderProfile(event.evolutionId)
+  const direction = getEffectDirection(event)
+  const target = getEffectTarget(event, direction)
+  const radius = getEffectRadius(event, profile)
+  const length = getEffectLength(event, profile)
+  const perpendicular = getPerpendicular(direction)
+  withEffectAlpha(ctx, 0.34 + (1 - progress) * 0.24, () => {
+    ctx.strokeStyle = profile.edge
+    ctx.lineWidth = 1.5
+    ctx.setLineDash([4, 3])
+    if (profile.shape === 'fan') {
+      drawShapeFan(ctx, event.origin, direction, length, profile.spread, Math.min(5, profile.projectileCount))
+    } else if (profile.shape === 'burst') {
+      drawShapeBurst(ctx, target, radius * (0.68 + progress * 0.32), Math.min(6, profile.projectileCount + 2), progress)
+    } else if (profile.shape === 'field') {
+      drawShapeField(ctx, target, radius, progress)
+    } else if (profile.shape === 'beast') {
+      drawShapeBeast(ctx, target, radius, profile.projectileCount, progress)
+    } else {
+      drawShapeLine(ctx, event.origin, target)
+      drawShapeLine(ctx,
+        { x: target.x + perpendicular.x * radius * 0.35, y: target.y + perpendicular.y * radius * 0.35 },
+        { x: target.x - perpendicular.x * radius * 0.35, y: target.y - perpendicular.y * radius * 0.35 },
+      )
+    }
+    ctx.setLineDash([])
+  })
+}
+
+const drawSkillEvolutionBody = (ctx: CanvasRenderingContext2D, event: SkillEvolutionEffectEvent, progress: number) => {
+  const profile = getSkillEvolutionEffectRenderProfile(event.evolutionId)
+  const direction = getEffectDirection(event)
+  const target = getEffectTarget(event, direction)
+  const radius = getEffectRadius(event, profile) * getEffectPulse(profile, event, progress)
+  const length = getEffectLength(event, profile)
+  withEffectAlpha(ctx, 0.56 * (1 - progress * 0.45), () => {
+    ctx.strokeStyle = profile.accent
+    ctx.lineWidth = 2
+    if (profile.shape === 'fan') {
+      drawShapeFan(ctx, event.origin, direction, length, profile.spread, Math.min(6, profile.projectileCount))
+    } else if (profile.shape === 'burst') {
+      drawShapeBurst(ctx, target, radius, Math.min(7, profile.projectileCount + profile.pierce + 2), progress)
+    } else if (profile.shape === 'field') {
+      drawShapeField(ctx, event.position, radius, progress)
+    } else if (profile.shape === 'beast') {
+      drawShapeBeast(ctx, event.position, radius, profile.projectileCount, progress)
+    } else {
+      drawShapeLine(ctx, event.origin, target)
+      ctx.strokeStyle = profile.edge
+      ctx.lineWidth = 1
+      const perpendicular = getPerpendicular(direction)
+      const chevrons = Math.max(1, Math.min(4, Math.round(profile.pierce) + 1))
+      for (let index = 1; index <= chevrons; index += 1) {
+        const distance = Math.min(length, 10 + index * (length / (chevrons + 1)))
+        const point = { x: event.origin.x + direction.x * distance, y: event.origin.y + direction.y * distance }
+        drawShapeLine(ctx,
+          { x: point.x - direction.x * 7 - perpendicular.x * 4, y: point.y - direction.y * 7 - perpendicular.y * 4 },
+          point,
+        )
+        drawShapeLine(ctx,
+          point,
+          { x: point.x - direction.x * 7 + perpendicular.x * 4, y: point.y - direction.y * 7 + perpendicular.y * 4 },
+        )
+      }
+      return
+    }
+    ctx.strokeStyle = profile.edge
+    ctx.lineWidth = 1
+    drawShapeField(ctx, event.position, radius * 0.5, progress)
+  })
+}
+
+const drawSkillEvolutionHit = (ctx: CanvasRenderingContext2D, event: SkillEvolutionEffectEvent, progress: number) => {
+  const profile = getSkillEvolutionEffectRenderProfile(event.evolutionId)
+  const direction = getEffectDirection(event)
+  const target = getEffectTarget(event, direction)
+  const radius = getEffectRadius(event, profile) * (0.55 + progress * 0.85)
+  withEffectAlpha(ctx, 0.68 * (1 - progress * 0.6), () => {
+    ctx.strokeStyle = profile.edge
+    ctx.lineWidth = 2
+    if (profile.shape === 'fan') {
+      drawShapeFan(ctx, target, direction, radius, profile.spread, Math.min(6, profile.projectileCount))
+    } else if (profile.shape === 'burst') {
+      drawShapeBurst(ctx, target, radius, Math.min(8, profile.projectileCount + profile.pierce + 2), progress)
+    } else if (profile.shape === 'field') {
+      drawShapeField(ctx, target, radius, progress)
+    } else if (profile.shape === 'beast') {
+      drawShapeBeast(ctx, target, radius, profile.projectileCount, progress)
+    } else {
+      const perpendicular = getPerpendicular(direction)
+      drawShapeLine(ctx,
+        { x: target.x - direction.x * radius - perpendicular.x * radius * 0.35, y: target.y - direction.y * radius - perpendicular.y * radius * 0.35 },
+        { x: target.x + direction.x * radius + perpendicular.x * radius * 0.35, y: target.y + direction.y * radius + perpendicular.y * radius * 0.35 },
+      )
+      drawShapeLine(ctx,
+        { x: target.x - direction.x * radius + perpendicular.x * radius * 0.35, y: target.y - direction.y * radius + perpendicular.y * radius * 0.35 },
+        { x: target.x + direction.x * radius - perpendicular.x * radius * 0.35, y: target.y + direction.y * radius - perpendicular.y * radius * 0.35 },
+      )
+    }
+    ctx.strokeStyle = profile.accent
+    ctx.lineWidth = 1.5
+    drawShapeBurst(ctx, target, radius * 0.5, Math.min(6, profile.projectileCount + 2), progress)
+  })
+}
+
+const drawSkillEvolutionEvolve = (ctx: CanvasRenderingContext2D, event: SkillEvolutionEffectEvent, progress: number) => {
+  const profile = getSkillEvolutionEffectRenderProfile(event.evolutionId)
+  const radius = getEffectRadius(event, profile) * (0.6 + progress * 0.45)
+  withEffectAlpha(ctx, 0.58 * (1 - progress * 0.35), () => {
+    ctx.strokeStyle = profile.edge
+    ctx.lineWidth = 2
+    if (profile.shape === 'fan') {
+      drawShapeFan(ctx, event.position, getEffectDirection(event), radius, profile.spread, Math.min(5, profile.projectileCount))
+    } else if (profile.shape === 'burst') {
+      drawShapeBurst(ctx, event.position, radius, Math.min(7, profile.projectileCount + 2), progress)
+    } else if (profile.shape === 'field') {
+      drawShapeField(ctx, event.position, radius, progress)
+    } else if (profile.shape === 'beast') {
+      drawShapeBeast(ctx, event.position, radius, profile.projectileCount, progress)
+    } else {
+      const direction = getEffectDirection(event)
+      drawShapeLine(ctx,
+        { x: event.position.x - direction.x * radius, y: event.position.y - direction.y * radius },
+        { x: event.position.x + direction.x * radius, y: event.position.y + direction.y * radius },
+      )
+    }
+  })
+}
+
+/**
+ * Render only authoritative A1 event layers. This happens before enemy draw
+ * calls so the thin telegraphs never obscure enemy silhouettes or hazards.
+ */
+export const drawSkillEvolutionEffectEvents = (ctx: CanvasRenderingContext2D, state: Pick<GameSnapshot, 'elapsedTime' | 'skillEvolutionEffectEvents'>) => {
+  getRenderableSkillEvolutionEffectEvents(state.skillEvolutionEffectEvents ?? []).forEach((event) => {
+    const progress = Math.max(0, Math.min(1, (state.elapsedTime - event.startedAt) / Math.max(0.001, event.duration)))
+    if (event.layer === 'warning') {
+      drawSkillEvolutionWarning(ctx, event, progress)
+      return
+    }
+    if (event.layer === 'body') {
+      drawSkillEvolutionBody(ctx, event, progress)
+      return
+    }
+    if (event.layer === 'hit') {
+      drawSkillEvolutionHit(ctx, event, progress)
+      return
+    }
+    drawSkillEvolutionEvolve(ctx, event, progress)
+  })
 }
 
 const drawFrame = (ctx: CanvasRenderingContext2D, level: number) => {
@@ -557,6 +993,40 @@ const drawPlayerHealthBar = (ctx: CanvasRenderingContext2D, player: Player) => {
   )
 }
 
+/**
+ * Draws only the visual counterpart of A1's authoritative jailer bind state.
+ * The core owns the three-second lifetime and removes this state on the same
+ * tick that movement is released; rendering never reads stunTimer or keeps a
+ * second duration.
+ */
+export const drawJailerChiefBind = (ctx: CanvasRenderingContext2D, player: Player, elapsedTime: number) => {
+  const bind = player.jailerChiefBind
+  if (!bind) return false
+
+  const foot = bind.anchor
+  const footSpread = Math.max(7, player.size * 0.28)
+  const ringRadiusX = Math.max(4, player.size * 0.14)
+  const ringRadiusY = Math.max(2.5, player.size * 0.075)
+  const pulse = 0.75 + Math.sin(elapsedTime * 8) * 0.08
+
+  ctx.save()
+  ctx.lineWidth = 2
+  for (const offset of [-footSpread, -footSpread * 0.34, footSpread * 0.34, footSpread]) {
+    const tilt = Math.sin(elapsedTime * 5 + offset) * 0.12
+    ctx.beginPath()
+    ctx.strokeStyle = 'rgba(24, 32, 40, 0.96)'
+    ctx.ellipse(foot.x + offset, foot.y, ringRadiusX * pulse, ringRadiusY * pulse, tilt, 0, Math.PI * 2)
+    ctx.stroke()
+
+    ctx.beginPath()
+    ctx.strokeStyle = 'rgba(203, 213, 225, 0.82)'
+    ctx.ellipse(foot.x + offset - 0.5, foot.y - 0.5, ringRadiusX * 0.7, ringRadiusY * 0.7, tilt, 0, Math.PI * 2)
+    ctx.stroke()
+  }
+  ctx.restore()
+  return true
+}
+
 const drawBeastHealthBar = (ctx: CanvasRenderingContext2D, beast: BeastCompanion) => {
   if (beast.reviveTimer > 0 || beast.hp >= beast.maxHp) {
     return
@@ -765,8 +1235,60 @@ const drawSkillFields = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => 
   })
 }
 
-const drawEnemySkillEffects = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
+const getEliteRingFadeAlpha = (effect: EnemySkillEffect) => (
+  Math.max(0, Math.min(1, effect.ttl / 0.6))
+)
+
+export const CHAIN_CAPTAIN_COMMAND_RING_FILL = '#fca5a5'
+export const CHAIN_CAPTAIN_COMMAND_RING_ALPHA = 0.4
+
+/** Draws the captain's core-owned 160px command range in world space. */
+export const drawChainCaptainCommandRing = (
+  ctx: CanvasRenderingContext2D,
+  effect: EnemySkillEffect,
+) => {
+  const range = effect.range ?? 160
+  ctx.save()
+  ctx.globalAlpha = CHAIN_CAPTAIN_COMMAND_RING_ALPHA * getEliteRingFadeAlpha(effect)
+  ctx.fillStyle = CHAIN_CAPTAIN_COMMAND_RING_FILL
+  ctx.beginPath()
+  ctx.arc(effect.position.x, effect.position.y, range, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+}
+
+/** Draws the jailer chief's fixed cast target, never the player's live position. */
+export const drawJailerChiefWarningRing = (
+  ctx: CanvasRenderingContext2D,
+  effect: EnemySkillEffect,
+) => {
+  const range = effect.range ?? 16
+  ctx.save()
+  ctx.globalAlpha = getEliteRingFadeAlpha(effect)
+  ctx.strokeStyle = effect.color ?? '#a78bfa'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.arc(effect.position.x, effect.position.y, range, 0, Math.PI * 2)
+  ctx.stroke()
+  pixel(ctx, effect.position.x - 1, effect.position.y - range - 3, 2, 4, '#f5f3ff')
+  pixel(ctx, effect.position.x - 1, effect.position.y + range - 1, 2, 4, '#f5f3ff')
+  pixel(ctx, effect.position.x - range - 3, effect.position.y - 1, 4, 2, '#f5f3ff')
+  pixel(ctx, effect.position.x + range - 1, effect.position.y - 1, 4, 2, '#f5f3ff')
+  ctx.restore()
+}
+
+export const drawEnemySkillEffects = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
   state.enemySkillEffects.forEach((effect) => {
+    if (effect.kind === 'chain-captain-command') {
+      drawChainCaptainCommandRing(ctx, effect)
+      return
+    }
+
+    if (effect.kind === 'jailer-chief-warning') {
+      drawJailerChiefWarningRing(ctx, effect)
+      return
+    }
+
     if (effect.kind === 'ricochet-link' && effect.targetPosition) {
       const alpha = Math.max(0, Math.min(1, effect.ttl / 0.24))
       ctx.save()
@@ -1052,6 +1574,31 @@ const drawEnemySkillEffects = (ctx: CanvasRenderingContext2D, state: GameSnapsho
     pixel(ctx, originX - 7, originY - 7, 14, 14, theme.metal)
     pixel(ctx, originX - 4, originY - 4, 8, 8, theme.warning)
     ctx.restore()
+  })
+}
+
+/**
+ * The engine exposes the sole pull visual state. Rendering does not infer a
+ * cast from distance, cooldown, or movement, so absence clears the chain in
+ * the same tick and no separate visual lifetime can linger.
+ */
+export const drawChainWraithPullVisual = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
+  const visual = state.chainWraithPullVisual
+  if (!visual || visual.targetId !== 'player') {
+    return false
+  }
+  const caster = state.enemies.find((enemy) => enemy.id === visual.casterId && enemy.hp > 0)
+  if (!caster) {
+    return false
+  }
+  const start = getChainWraithSkillHandWorldAnchorForEnemy(caster, state.elapsedTime, true)
+  if (!start) {
+    return false
+  }
+  return drawChainWraithIronChain(ctx, {
+    start,
+    end: getPlayerArcherStableBodyCenter(state.player.position),
+    frameIndex: getChainWraithIronChainFrameIndex(state.elapsedTime),
   })
 }
 
@@ -1512,9 +2059,9 @@ export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot, c
   if (state.phase === 'idle' || state.phase === 'game-over') {
     drawVillage(ctx, state)
     if (state.phase !== 'idle') {
-      const isMoving = false
       drawPlayerGrowthEffects(ctx, state)
-      drawPlayerSprite(ctx, state.player, state.elapsedTime, isMoving)
+      drawPlayerSprite(ctx, state.player, state.elapsedTime, getPlayerArcherRenderInput(state))
+      drawJailerChiefBind(ctx, state.player, state.elapsedTime)
       drawPlayerHealthBar(ctx, state.player)
     }
     drawBursts(ctx, state)
@@ -1536,23 +2083,29 @@ export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot, c
     drawSkillFields(ctx, state)
     drawEnemySkillEffects(ctx, state)
 
-    state.projectiles.forEach((projectile) => drawProjectileSprite(ctx, projectile, state.elapsedTime, state.equippedWeaponId))
+    state.projectiles
+      .filter((projectile) => (projectile.releaseDelayRemaining ?? 0) <= 0)
+      .forEach((projectile) => drawProjectileSprite(ctx, projectile, state.elapsedTime, state.equippedWeaponId))
     state.enemyProjectiles.forEach((projectile) => drawProjectileSprite(ctx, projectile, state.elapsedTime))
+    drawSkillEvolutionEffectEvents(ctx, state)
     state.beastCompanions.forEach((beast) => {
-      drawBeastCompanionSprite(ctx, beast, state.elapsedTime)
+      drawBeastCompanionSprite(ctx, beast, state.elapsedTime, getBeastCompanionEvolutionVisualScale(beast))
       drawBeastHealthBar(ctx, beast)
     })
     state.enemies.forEach((enemy) => {
-      drawEnemySprite(ctx, enemy, state.elapsedTime, state.level)
+      const actionOverride = state.chainWraithPullVisual?.casterId === enemy.id ? 'skill' : undefined
+      drawEnemySprite(ctx, enemy, state.elapsedTime, state.level, { actionOverride })
       if (enemy.hp > 0) {
         drawEnemyHealthBar(ctx, enemy)
         drawEnemyStatusIndicators(ctx, enemy, state.elapsedTime)
       }
     })
 
-    const isMoving = state.phase === 'running' && state.player.animationState === 'move'
+    drawChainWraithPullVisual(ctx, state)
+
     drawPlayerGrowthEffects(ctx, state)
-    drawPlayerSprite(ctx, state.player, state.elapsedTime, isMoving)
+    drawPlayerSprite(ctx, state.player, state.elapsedTime, getPlayerArcherRenderInput(state))
+    drawJailerChiefBind(ctx, state.player, state.elapsedTime)
     drawPlayerHealthBar(ctx, state.player)
     drawAimCursor(ctx, state)
     drawBursts(ctx, state)

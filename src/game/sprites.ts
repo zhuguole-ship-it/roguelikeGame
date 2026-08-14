@@ -32,6 +32,22 @@ import {
   type DungeonWardenActionSlot,
 } from './dungeonWardenAssetFrames'
 import {
+  JAILER_CHIEF_ACTIONS,
+  getJailerChiefFrameUrls,
+  type JailerChiefActionSlot,
+} from './jailerChiefAssetFrames'
+import {
+  CHAIN_ELITE_ACTIONS,
+  CHAIN_ELITE_FRAME_SIZE,
+  IRON_CHAIN_SOURCE_CROP,
+  getChainEliteFrameUrls,
+  getChainWraithIronChainPath,
+  getChainWraithSkillHandAnchor,
+  getChainWraithSkillVisibleBottom,
+  type ChainEliteActionSlot,
+  type ChainEliteAssetId,
+} from './chainEliteAssetFrames'
+import {
   CORROSIVE_SLIME_ACTIONS,
   CORROSIVE_SLIME_FRAME_SIZE,
   getCorrosiveSlimeFrameUrls,
@@ -44,9 +60,25 @@ import {
   type C1SlimeVariantAssetId,
   type C1SlimeVariantActionSlot,
 } from './c1SlimeVariantAssetFrames'
-import { drawReferenceArt } from './referenceArt'
+import {
+  getPlayerArcherAction,
+  getPlayerArcherFrameAnchor,
+  getPlayerArcherFrameDrawSize,
+  getPlayerArcherFrameRenderRoot,
+  getPlayerArcherFrameRenderScale,
+  getPlayerArcherFlipX,
+  getPlayerArcherFrameIndex,
+  getPlayerArcherPublicFrameSrc,
+  getPlayerArcherRuntimeAssetUrls,
+  getPlayerProjectileSpriteUrl,
+  PLAYER_ARCHER_ACTIONS,
+  type PlayerArcherAction,
+  type PlayerArcherVisualDirections,
+  type PlayerArcherVisualState,
+} from './archerAssetFrames'
+import { getFirstCampaignMonsterBodyAssetReadiness } from './assetManifest'
 import { getRuntimeAssetActionOverride, getRuntimeAssetActionOverrideWithFallback, hasRuntimeAssetEntityOverride } from './runtimeAssetOverrides'
-import type { BeastCompanion, Enemy, EnemyKind, MapObstacle, Pickup, Player, Projectile, WeaponId } from './types'
+import type { BeastCompanion, Enemy, EnemyKind, MapObstacle, Pickup, Player, Projectile, Vector2, WeaponId } from './types'
 
 const pixel = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string) => {
   ctx.fillStyle = color
@@ -58,54 +90,97 @@ const hash = (a: number, b: number, c = 0) => {
   return value - Math.floor(value)
 }
 
-export type PlayerArcherSpriteAction = 'attack' | 'idle' | 'move'
+export type PlayerArcherSpriteAction = PlayerArcherAction
 
-export const PLAYER_ARCHER_SPRITE_FRAME_COUNT = 4
+/** @deprecated Use PLAYER_ARCHER_ACTIONS[action].frameCount. */
+export const PLAYER_ARCHER_SPRITE_FRAME_COUNT = PLAYER_ARCHER_ACTIONS.attack.frameCount
 
-const PLAYER_ARCHER_SPRITE_BASE = `${import.meta.env.BASE_URL}assets/player/elf-archer`
-
-export const getPlayerArcherSpriteFrameSrc = (action: PlayerArcherSpriteAction, frameIndex: number) => {
-  const frame = ((Math.floor(frameIndex) % PLAYER_ARCHER_SPRITE_FRAME_COUNT) + PLAYER_ARCHER_SPRITE_FRAME_COUNT) % PLAYER_ARCHER_SPRITE_FRAME_COUNT
-  return `${PLAYER_ARCHER_SPRITE_BASE}/${action}/elf_archer_${action}_${String(frame + 1).padStart(2, '0')}.png`
+export type PlayerArcherRenderInput = Partial<Pick<PlayerArcherVisualState, 'isDead' | 'isHurt' | 'isCastingSkill' | 'isAttacking'>> & {
+  isMoving: boolean
+  actionProgress?: number
+  aimDirection?: Vector2
+  movementDirection?: Vector2
 }
 
-const createPlayerArcherFrames = () => {
-  if (typeof Image === 'undefined') {
-    return null
-  }
-
-  return {
-    attack: Array.from({ length: PLAYER_ARCHER_SPRITE_FRAME_COUNT }, (_, index) => {
-      const image = new Image()
-      image.src = getPlayerArcherSpriteFrameSrc('attack', index)
-      return image
-    }),
-    idle: Array.from({ length: PLAYER_ARCHER_SPRITE_FRAME_COUNT }, (_, index) => {
-      const image = new Image()
-      image.src = getPlayerArcherSpriteFrameSrc('idle', index)
-      return image
-    }),
-    move: Array.from({ length: PLAYER_ARCHER_SPRITE_FRAME_COUNT }, (_, index) => {
-      const image = new Image()
-      image.src = getPlayerArcherSpriteFrameSrc('move', index)
-      return image
-    }),
-  } satisfies Record<PlayerArcherSpriteAction, HTMLImageElement[]>
+const toLegacyMovementDirection = (player: Player): Vector2 => {
+  if (player.facing === 'left') return { x: -1, y: 0 }
+  if (player.facing === 'right') return { x: 1, y: 0 }
+  if (player.facing === 'up') return { x: 0, y: -1 }
+  return { x: 0, y: 1 }
 }
 
-const playerArcherFrames = createPlayerArcherFrames()
-
-export const getPlayerArcherSpriteAction = (player: Player, isMoving: boolean): PlayerArcherSpriteAction => {
-  if (player.hurtCooldown > 0) {
-    return 'idle'
-  }
-
+const normalizePlayerArcherRenderInput = (
+  player: Player,
+  input: boolean | PlayerArcherRenderInput,
+): { visualState: PlayerArcherVisualState; directions: PlayerArcherVisualDirections; actionProgress?: number } => {
+  const renderInput: PlayerArcherRenderInput = typeof input === 'boolean' ? { isMoving: input } : input
   const attackWindow = player.attackCooldown > Math.max(0, player.attackInterval - 0.18)
-  if (attackWindow) {
-    return 'attack'
+  return {
+    visualState: {
+      isDead: renderInput.isDead ?? player.hp <= 0,
+      isHurt: renderInput.isHurt ?? player.hurtCooldown > 0,
+      isCastingSkill: renderInput.isCastingSkill ?? false,
+      isAttacking: renderInput.isAttacking ?? attackWindow,
+      isMoving: renderInput.isMoving,
+    },
+    directions: {
+      aimDirection: renderInput.aimDirection,
+      movementDirection: renderInput.movementDirection ?? toLegacyMovementDirection(player),
+      fallbackFacing: player.facing,
+    },
+    actionProgress: renderInput.actionProgress,
   }
+}
 
-  return isMoving ? 'move' : 'idle'
+export const getPlayerArcherSpriteFrameSrc = getPlayerArcherPublicFrameSrc
+
+export const getPlayerArcherSpriteAction = (player: Player, input: boolean | PlayerArcherRenderInput): PlayerArcherSpriteAction => (
+  getPlayerArcherAction(normalizePlayerArcherRenderInput(player, input).visualState)
+)
+
+type LastValidPlayerArcherFrame = {
+  source: string
+  action: PlayerArcherAction
+  frameIndex: number
+  image: HTMLImageElement
+}
+
+let lastValidPlayerArcherFrame: LastValidPlayerArcherFrame | null = null
+
+const drawPlayerArcherAnchoredFrame = (
+  ctx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  action: PlayerArcherAction,
+  frameIndex: number,
+  player: Player,
+  flipX: boolean,
+) => {
+  const anchor = getPlayerArcherFrameAnchor(action, frameIndex)
+  const scale = getPlayerArcherFrameRenderScale(action, frameIndex)
+  const drawSize = getPlayerArcherFrameDrawSize(action, frameIndex)
+  // The player root and source scale are shared with the bow-mouth resolver.
+  // Image bounds and mirrored reach cannot add a second frame-local offset.
+  const root = getPlayerArcherFrameRenderRoot(player.position)
+  const previousSmoothing = ctx.imageSmoothingEnabled
+  ctx.imageSmoothingEnabled = false
+  ctx.save()
+  ctx.translate(root.x, root.y)
+  if (flipX) {
+    ctx.scale(-1, 1)
+  }
+  ctx.drawImage(
+    image,
+    0,
+    0,
+    image.naturalWidth,
+    image.naturalHeight,
+    -anchor.anchorX * scale,
+    -anchor.anchorY * scale,
+    drawSize,
+    drawSize,
+  )
+  ctx.restore()
+  ctx.imageSmoothingEnabled = previousSmoothing
 }
 
 const drawPlayerArcherSpriteFrame = (
@@ -113,61 +188,38 @@ const drawPlayerArcherSpriteFrame = (
   player: Player,
   time: number,
   action: PlayerArcherSpriteAction,
-  bounce: number,
+  directions: PlayerArcherVisualDirections,
+  actionProgress?: number,
 ) => {
-  const frames = playerArcherFrames?.[action]
-  if (!frames?.length) {
+  void preloadPlayerArcherAssets()
+  const frameIndex = getPlayerArcherFrameIndex(action, time, actionProgress)
+  const targetSource = normalizeRuntimeAssetUrl(getPlayerArcherSpriteFrameSrc(action, frameIndex))
+  const targetImage = getRuntimeAtlasImage(targetSource)
+  const fallbackFrameIndex = 0
+  const idleFallbackSource = normalizeRuntimeAssetUrl(getPlayerArcherSpriteFrameSrc('idle', fallbackFrameIndex))
+  const idleFallbackImage = getRuntimeAtlasImage(idleFallbackSource)
+  const target = isAtlasImageReady(targetImage)
+    ? { source: targetSource, action, frameIndex, image: targetImage }
+    : lastValidPlayerArcherFrame && isAtlasImageReady(lastValidPlayerArcherFrame.image)
+      ? lastValidPlayerArcherFrame
+      : isAtlasImageReady(idleFallbackImage)
+        ? { source: idleFallbackSource, action: 'idle' as const, frameIndex: fallbackFrameIndex, image: idleFallbackImage }
+        : null
+
+  if (!target) {
     return false
   }
 
-  const frameRate = action === 'attack' ? 12 : action === 'move' ? 10 : 6
-  const image = frames[Math.floor(Math.max(0, time) * frameRate) % frames.length]
-  if (!image.complete || image.naturalWidth <= 0) {
-    return false
-  }
-
-  const drawSize = action === 'attack' ? 54 : 50
-  const x = Math.round(player.position.x)
-  const y = Math.round(player.position.y + bounce)
-  const drawX = Math.round(-drawSize / 2)
-  const drawY = Math.round(-drawSize * 0.77)
-  const flip = player.facing === 'left'
-
-  ctx.save()
-  ctx.translate(x, y)
-  if (flip) {
-    ctx.scale(-1, 1)
-  }
-  ctx.drawImage(image, drawX, drawY, drawSize, drawSize)
-  ctx.restore()
-
+  drawPlayerArcherAnchoredFrame(
+    ctx,
+    target.image,
+    target.action,
+    target.frameIndex,
+    player,
+    getPlayerArcherFlipX(action, directions),
+  )
+  lastValidPlayerArcherFrame = target
   return true
-}
-
-const drawArcherBowPose = (ctx: CanvasRenderingContext2D, player: Player, time: number, bounce: number) => {
-  const attackWindow = player.attackCooldown > Math.max(0, player.attackInterval - 0.18)
-  const readyPulse = Math.sin(time * 12) * 0.5
-  const side = player.facing === 'left' ? -1 : 1
-  const x = player.position.x + side * 11
-  const y = player.position.y - 11 + bounce
-  const drawAmount = attackWindow ? 5 + readyPulse : 2
-
-  pixel(ctx, x - side * 2, y - 16, 3, 32, 'rgba(8, 16, 11, 0.36)')
-  pixel(ctx, x, y - 14, 2, 7, '#c07a3d')
-  pixel(ctx, x + side * 2, y - 8, 2, 8, '#d8a24d')
-  pixel(ctx, x + side * 2, y, 2, 8, '#d8a24d')
-  pixel(ctx, x, y + 8, 2, 7, '#8a552c')
-  pixel(ctx, x - side * drawAmount, y - 13, 1, 27, '#f4f0d7')
-  pixel(ctx, side === 1 ? x - drawAmount - 2 : x + drawAmount - 10, y - 2, 12, 2, '#fde68a')
-  pixel(ctx, side === 1 ? x + 8 : x - 13, y - 4, 5, 6, '#fef3c7')
-
-  if (attackWindow) {
-    pixel(ctx, x - side * 13, y - 5, 5, 10, '#d8b38b')
-    pixel(ctx, x - side * 18, y - 1, 7, 2, '#5b3416')
-    pixel(ctx, x - side * 20, y - 4, 3, 3, '#fbbf24')
-    pixel(ctx, side === 1 ? x + 12 : x - 22, y - 2, 10, 2, '#fef08a')
-    pixel(ctx, side === 1 ? x + 21 : x - 25, y - 5, 4, 7, '#f4f0d7')
-  }
 }
 
 export const drawFloorTile = (
@@ -693,68 +745,20 @@ export const drawPlayerSprite = (
   ctx: CanvasRenderingContext2D,
   player: Player,
   time: number,
-  isMoving: boolean,
+  input: boolean | PlayerArcherRenderInput,
 ) => {
   const x = player.position.x
   const y = player.position.y
-  const bounce = isMoving ? Math.sin(time * 13) * 1.2 : 0
-  const archerSpriteAction = getPlayerArcherSpriteAction(player, isMoving)
+  const { visualState, directions, actionProgress } = normalizePlayerArcherRenderInput(player, input)
+  const archerSpriteAction = getPlayerArcherAction(visualState)
 
-  if (drawPlayerArcherSpriteFrame(ctx, player, time, archerSpriteAction, bounce)) {
-    pixel(ctx, x - 10, y + 8, 20, 4, 'rgba(0, 0, 0, 0.25)')
-
-    if (player.hurtCooldown > 0 && Math.floor(time * 18) % 2 === 0) {
-      pixel(ctx, x - 15, y - 28 + bounce, 30, 33, 'rgba(244, 63, 94, 0.24)')
-    }
-
-    if (player.dashTimer > 0) {
-      pixel(ctx, x - 16, y - 19 + bounce, 32, 20, 'rgba(125, 211, 252, 0.18)')
-    }
-
-    return
-  }
-
-  const spriteKey = isMoving ? 'archerRun' : player.attackCooldown < 0.12 ? 'archerAttack' : 'archerIdle'
-  const drewSprite = drawReferenceArt(ctx, spriteKey, x - 18, y - 35 + bounce, 36, 44, { flipX: player.facing === 'left' })
-
-  if (drewSprite) {
-    pixel(ctx, x - 10, y + 8, 20, 4, 'rgba(0, 0, 0, 0.25)')
-    drawArcherBowPose(ctx, player, time, bounce)
-
-    if (player.hurtCooldown > 0 && Math.floor(time * 18) % 2 === 0) {
-      pixel(ctx, x - 13, y - 25 + bounce, 26, 31, 'rgba(244, 63, 94, 0.28)')
-    }
-
-    if (player.dashTimer > 0) {
-      pixel(ctx, x - 14, y - 18 + bounce, 28, 18, 'rgba(125, 211, 252, 0.2)')
-    }
-
-    return
-  }
-
-  pixel(ctx, x - 7, y + 6, 14, 4, 'rgba(0, 0, 0, 0.25)')
-  pixel(ctx, x - 5, y - 8 + bounce, 10, 5, PALETTE.playerArmor)
-  pixel(ctx, x - 6, y - 3 + bounce, 12, 8, '#58786e')
-  pixel(ctx, x - 4, y - 1 + bounce, 8, 7, PALETTE.playerCape)
-  pixel(ctx, x - 8, y + 4 + bounce, 4, 7, PALETTE.playerArmor)
-  pixel(ctx, x + 4, y + 4 + bounce, 4, 7, PALETTE.playerArmor)
-
-  if (player.facing === 'left') {
-    pixel(ctx, x - 11, y - 1 + bounce, 4, 2, '#f4f0d7')
-  }
-
-  if (player.facing === 'right') {
-    pixel(ctx, x + 7, y - 1 + bounce, 4, 2, '#f4f0d7')
-  }
-
-  drawArcherBowPose(ctx, player, time, bounce)
-
-  if (player.hurtCooldown > 0 && Math.floor(time * 18) % 2 === 0) {
-    pixel(ctx, x - 7, y - 8 + bounce, 14, 16, 'rgba(244, 63, 94, 0.35)')
-  }
+  // The player has its own continuity path: an unreadied frame keeps the
+  // latest project-local frame instead of falling through to a retired model.
+  drawPlayerArcherSpriteFrame(ctx, player, time, archerSpriteAction, directions, actionProgress)
+  pixel(ctx, x - 10, y + 8, 20, 4, 'rgba(0, 0, 0, 0.25)')
 
   if (player.dashTimer > 0) {
-    pixel(ctx, x - 10, y - 5 + bounce, 20, 10, 'rgba(125, 211, 252, 0.22)')
+    pixel(ctx, x - 10, y - 5, 20, 10, 'rgba(125, 211, 252, 0.22)')
   }
 }
 
@@ -920,6 +924,24 @@ export const isExplicitDungeonWarden = (enemy: Pick<Enemy, 'kind' | 'archetypeId
   return identity.includes('dungeon-warden') || identity.includes('典狱长')
 }
 
+export const isExplicitJailerChief = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displayName'>) => {
+  return enemy.kind === 'elite'
+    && (enemy.archetypeId === 'dungeon-jailer-chief' || (!enemy.archetypeId && enemy.displayName === '腐化狱卒长'))
+}
+
+export const getChainEliteAssetId = (enemy: Pick<Enemy, 'kind' | 'archetypeId' | 'displayName'>): ChainEliteAssetId | undefined => {
+  if (enemy.kind !== 'elite') {
+    return undefined
+  }
+  if (enemy.archetypeId === 'dungeon-chain-captain' || (!enemy.archetypeId && enemy.displayName === '断链骷髅队长')) {
+    return 'dungeon-chain-captain'
+  }
+  if (enemy.archetypeId === 'dungeon-chain-wraith-elite' || (!enemy.archetypeId && enemy.displayName === '铁链亡魂')) {
+    return 'dungeon-chain-wraith-elite'
+  }
+  return undefined
+}
+
 export const getC1SlimeVariantAssetId = (enemy: Pick<Enemy, 'archetypeId'>): C1SlimeVariantAssetId | undefined => {
   if (enemy.archetypeId === 'dungeon-splitting-ooze' || enemy.archetypeId === 'dungeon-explosive-fire-sac') {
     return enemy.archetypeId
@@ -1077,14 +1099,21 @@ export const drawEnemySprite = (
   enemy: Enemy,
   time: number,
   level = 1,
-  options: { campaignOverlay?: boolean } = {},
+  options: { campaignOverlay?: boolean; actionOverride?: MonsterFrameAction } = {},
 ) => {
-  const x = enemy.position.x
-  const y = enemy.position.y + (isExplicitDungeonWarden(enemy) ? 0 : Math.sin(time * 10 + enemy.position.x * 0.1) * 1.2)
+  const renderRoot = getEnemySpriteRenderRoot(enemy, time)
+  const { x, y } = renderRoot
   const drawOverlay = () => {
     if (options.campaignOverlay ?? true) {
       drawCampaignEnemyOverlay(ctx, enemy, x, y, time, level)
     }
+  }
+
+  // Formal C1 spawning consumes the same gate. This is a final renderer guard
+  // so a stale snapshot cannot turn an unready body into program-drawn art.
+  const bodyReadiness = getFirstCampaignMonsterBodyAssetReadiness(enemy.archetypeId)
+  if (bodyReadiness && !bodyReadiness.ready) {
+    return
   }
 
   if (isExplicitSkeletonWarrior(enemy)) {
@@ -1096,6 +1125,18 @@ export const drawEnemySprite = (
 
   if (getC1SlimeVariantAssetId(enemy)) {
     drawC1SlimeVariantEnemy(ctx, enemy, x, y, time)
+    drawOverlay()
+    return
+  }
+
+  if (isExplicitJailerChief(enemy)) {
+    drawJailerChiefAssetEnemy(ctx, enemy, x, y, time, options.actionOverride)
+    drawOverlay()
+    return
+  }
+
+  if (getChainEliteAssetId(enemy)) {
+    drawChainEliteAssetEnemy(ctx, enemy, x, y, time, options.actionOverride)
     drawOverlay()
     return
   }
@@ -1324,6 +1365,10 @@ export const CORROSIVE_SLIME_SPRITE_ATLAS: MonsterSpriteAtlas = {
 
 const monsterAtlasImages = new Map<string, HTMLImageElement>()
 const runtimeAssetWarnings = new Set<string>()
+type RuntimeAssetImageState = 'loading' | 'ready' | 'failed'
+const runtimeAssetImageStates = new Map<string, RuntimeAssetImageState>()
+const runtimeAssetDecodePromises = new Map<string, Promise<boolean>>()
+let playerArcherPreloadPromise: Promise<void> | null = null
 type ImageAlphaBounds = {
   left: number
   top: number
@@ -1331,6 +1376,22 @@ type ImageAlphaBounds = {
   bottom: number
 }
 const imageAlphaBoundsCache = new WeakMap<HTMLImageElement, Map<string, ImageAlphaBounds | null>>()
+const playerArrowOutlineCache = new WeakMap<HTMLImageElement, Map<string, HTMLCanvasElement>>()
+// The hard outline is exactly one final canvas pixel outside Charge-1's alpha.
+// Its colour is intentionally half opaque; the source image is drawn last, so
+// Charge-1's internal colours remain untouched.
+export const PLAYER_ARROW_OUTLINE_WIDTH = 1
+export const PLAYER_ARROW_OUTLINE_ALPHA = 0.5
+export const PLAYER_ARROW_OUTLINE_OFFSETS: readonly (readonly [number, number])[] = [
+  [-PLAYER_ARROW_OUTLINE_WIDTH, 0],
+  [PLAYER_ARROW_OUTLINE_WIDTH, 0],
+  [0, -PLAYER_ARROW_OUTLINE_WIDTH],
+  [0, PLAYER_ARROW_OUTLINE_WIDTH],
+  [-PLAYER_ARROW_OUTLINE_WIDTH, -PLAYER_ARROW_OUTLINE_WIDTH],
+  [-PLAYER_ARROW_OUTLINE_WIDTH, PLAYER_ARROW_OUTLINE_WIDTH],
+  [PLAYER_ARROW_OUTLINE_WIDTH, -PLAYER_ARROW_OUTLINE_WIDTH],
+  [PLAYER_ARROW_OUTLINE_WIDTH, PLAYER_ARROW_OUTLINE_WIDTH],
+]
 
 const normalizeRuntimeAssetUrl = (src: string, revision?: string) => {
   if (src.startsWith('data:') || src.startsWith('blob:')) {
@@ -1361,6 +1422,21 @@ const warnRuntimeAssetOnce = (key: string, message: string) => {
   console.warn(message)
 }
 
+const markRuntimeAtlasImageReady = (src: string, image: HTMLImageElement) => {
+  if (isAtlasImageReady(image)) {
+    runtimeAssetImageStates.set(src, 'ready')
+  }
+}
+
+const markRuntimeAtlasImageFailed = (src: string) => {
+  runtimeAssetImageStates.set(src, 'failed')
+  runtimeAssetDecodePromises.delete(src)
+  warnRuntimeAssetOnce(
+    `runtime-asset-load:${src}`,
+    `[assets] Failed to load project asset: ${src}`,
+  )
+}
+
 const getRuntimeAtlasImage = (src: string) => {
   if (typeof Image === 'undefined') {
     return null
@@ -1368,13 +1444,138 @@ const getRuntimeAtlasImage = (src: string) => {
 
   const cached = monsterAtlasImages.get(src)
   if (cached) {
+    markRuntimeAtlasImageReady(src, cached)
     return cached
   }
 
   const image = new Image()
+  runtimeAssetImageStates.set(src, 'loading')
+  if (typeof image.addEventListener === 'function') {
+    image.addEventListener('load', () => markRuntimeAtlasImageReady(src, image), { once: true })
+    image.addEventListener('error', () => markRuntimeAtlasImageFailed(src), { once: true })
+  }
   image.src = src
   monsterAtlasImages.set(src, image)
+  markRuntimeAtlasImageReady(src, image)
   return image
+}
+
+const preloadRuntimeAtlasImage = (src: string) => {
+  const cached = runtimeAssetDecodePromises.get(src)
+  if (cached) {
+    return cached
+  }
+
+  let image = getRuntimeAtlasImage(src)
+  if (!image) {
+    return Promise.resolve(false)
+  }
+
+  // A real error may leave a complete-but-decodeless Image in the cache.
+  // Replace only that failed instance when a later preload pass explicitly
+  // asks for it; render calls keep the shared cache without retry loops.
+  if (runtimeAssetImageStates.get(src) === 'failed') {
+    monsterAtlasImages.delete(src)
+    runtimeAssetImageStates.delete(src)
+    image = getRuntimeAtlasImage(src)
+    if (!image) {
+      return Promise.resolve(false)
+    }
+  }
+
+  const decodePromise = new Promise<boolean>((resolve) => {
+    let settled = false
+    const hasDecodedPixels = () => Boolean(image.complete && image.naturalWidth > 0)
+    const finish = (loaded: boolean) => {
+      if (settled) {
+        return
+      }
+      settled = true
+      resolve(loaded)
+    }
+
+    const finishReady = () => {
+      if (!hasDecodedPixels()) {
+        return
+      }
+      markRuntimeAtlasImageReady(src, image)
+      if (typeof image.decode !== 'function') {
+        finish(true)
+        return
+      }
+      // A decoded image with pixels is safe to draw. Some browser cache paths
+      // reject `decode()` after `load`, so that rejection must not poison the
+      // shared cache or turn a successful resource into a false warning.
+      image.decode().then(
+        () => finish(true),
+        () => finish(hasDecodedPixels()),
+      )
+    }
+
+    const finishFailed = () => {
+      markRuntimeAtlasImageFailed(src)
+      finish(false)
+    }
+
+    if (hasDecodedPixels()) {
+      finishReady()
+      return
+    }
+
+    if (runtimeAssetImageStates.get(src) === 'failed') {
+      finishFailed()
+      return
+    }
+
+    // `complete` without pixels is not a completed successful image.
+    // Cached resources can briefly be complete with naturalWidth 0, then
+    // dispatch `load` with pixels on the same Image instance.
+    if (typeof image.addEventListener === 'function') {
+      image.addEventListener('load', finishReady, { once: true })
+      image.addEventListener('error', finishFailed, { once: true })
+    }
+  })
+  runtimeAssetDecodePromises.set(src, decodePromise)
+  return decodePromise
+}
+
+/**
+ * Starts one manifest-driven decode pass for every player frame and the one
+ * shared arrow.  Both this preloader and every renderer access
+ * `monsterAtlasImages`, so a URL creates only one Image for the application
+ * lifetime regardless of formal/local restarts.
+ */
+export const preloadPlayerArcherAssets = () => {
+  if (!playerArcherPreloadPromise) {
+    const urls = Array.from(new Set(getPlayerArcherRuntimeAssetUrls().map((url) => normalizeRuntimeAssetUrl(url))))
+    const preloadPromise = Promise.all(urls.map((url) => preloadRuntimeAtlasImage(url))).then((results) => {
+      if (!results.every(Boolean) && playerArcherPreloadPromise === preloadPromise) {
+        // A completed failed pass must not persist across formal/local reentry.
+        // The next pass retries only URLs that emitted a real error event.
+        playerArcherPreloadPromise = null
+      }
+    })
+    playerArcherPreloadPromise = preloadPromise
+  }
+  return playerArcherPreloadPromise
+}
+
+/** Shared-cache visibility for focused rendering regression tests. */
+export const getPlayerArcherCachedRuntimeImage = (src: string) => (
+  getRuntimeAtlasImage(normalizeRuntimeAssetUrl(src))
+)
+
+/** Test-only reset for isolated mock Image lifecycles; never called at runtime. */
+export const resetPlayerArcherRuntimeImageCacheForTests = () => {
+  getPlayerArcherRuntimeAssetUrls().forEach((url) => {
+    const normalizedUrl = normalizeRuntimeAssetUrl(url)
+    monsterAtlasImages.delete(normalizedUrl)
+    runtimeAssetImageStates.delete(normalizedUrl)
+    runtimeAssetDecodePromises.delete(normalizedUrl)
+    runtimeAssetWarnings.delete(`runtime-asset-load:${normalizedUrl}`)
+  })
+  playerArcherPreloadPromise = null
+  lastValidPlayerArcherFrame = null
 }
 
 const isAtlasImageReady = (image: HTMLImageElement | null | undefined): image is HTMLImageElement => {
@@ -1437,6 +1638,54 @@ const getImageAlphaBounds = (
     return bounds
   } catch {
     imageCache.set(cacheKey, null)
+    return null
+  }
+}
+
+const getPlayerArrowOutlineMask = (
+  image: HTMLImageElement,
+  sourceX: number,
+  sourceY: number,
+  sourceWidth: number,
+  sourceHeight: number,
+  color: string,
+) => {
+  if (typeof document === 'undefined' || sourceWidth <= 0 || sourceHeight <= 0) {
+    return null
+  }
+
+  let imageCache = playerArrowOutlineCache.get(image)
+  if (!imageCache) {
+    imageCache = new Map<string, HTMLCanvasElement>()
+    playerArrowOutlineCache.set(image, imageCache)
+  }
+
+  const cacheKey = `${sourceX}:${sourceY}:${sourceWidth}:${sourceHeight}:${color}`
+  const cached = imageCache.get(cacheKey)
+  if (cached) {
+    return cached
+  }
+
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = sourceWidth
+    canvas.height = sourceHeight
+    const context = canvas.getContext('2d')
+    if (!context) {
+      return null
+    }
+    context.imageSmoothingEnabled = false
+    context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight)
+    // source-in keeps projectile.color strictly inside the arrow alpha mask.
+    // The final unmodified image is drawn on top of the offset mask copies.
+    context.globalCompositeOperation = 'source-in'
+    context.fillStyle = color
+    context.globalAlpha = PLAYER_ARROW_OUTLINE_ALPHA
+    context.fillRect(0, 0, sourceWidth, sourceHeight)
+    context.globalAlpha = 1
+    imageCache.set(cacheKey, canvas)
+    return canvas
+  } catch {
     return null
   }
 }
@@ -1760,17 +2009,16 @@ const drawMeleeAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x: num
     return false
   }
 
-  const action = getCorrosiveSlimeAtlasAction(enemy)
-  const frameIndex = getCorrosiveSlimeAtlasFrame(enemy, action, time)
-  const drawSize = getCorrosiveSlimeCombatDrawSize(enemy)
+  const presentation = getEnemySpriteVisualPresentation(enemy, time, { renderRoot: { x, y } })
+  const { action, frameIndex, baseDrawSize: drawSize, flipX } = presentation
   drawEnemyShadow(ctx, x, y, enemy.size)
   // Move overrides must consume the same combat frame index as project-local slime frames.
   const overrideAnimationTime = action === 'move' ? undefined : time
-  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize, (enemy.facingDirection?.x ?? 0) < -0.05, overrideAnimationTime, getEnemySpriteGroundY(enemy, y))) {
+  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize, presentation.baseFlipX, overrideAnimationTime, presentation.groundRoot.y)) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
     return true
   }
-  if (!drawCorrosiveSlimeFrame(ctx, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize, (enemy.facingDirection?.x ?? 0) < -0.05, getEnemySpriteGroundY(enemy, y))) {
+  if (!drawCorrosiveSlimeFrame(ctx, action, frameIndex, x - drawSize / 2, y - drawSize, drawSize, flipX, presentation.groundRoot.y)) {
     return false
   }
   drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
@@ -1926,17 +2174,15 @@ const drawSkeletonArcherAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enem
   }
 
   const atlas = SKELETON_ARCHER_SPRITE_ATLAS
-  const action = getSkeletonArcherAtlasAction(enemy)
-  const frameIndex = getSkeletonArcherAtlasFrame(enemy, action, time)
-  const drawSize = Math.max(64, Math.round(enemy.size * 3.7 * SKELETON_ARCHER_IMAGE2_COMBAT_SCALE))
-  const flipX = (enemy.facingDirection?.x ?? 0) < -0.05
+  const presentation = getEnemySpriteVisualPresentation(enemy, time, { renderRoot: { x, y } })
+  const { action, frameIndex, baseDrawSize: drawSize, flipX } = presentation
   drawEnemyShadow(ctx, x, y, enemy.size * 1.1)
   const drawY = y - drawSize * 0.84
-  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, drawY, drawSize, flipX, time, getEnemySpriteGroundY(enemy, y))) {
+  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, drawY, drawSize, presentation.baseFlipX, time, presentation.groundRoot.y)) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.25, enemy.size)
     return true
   }
-  if (drawSkeletonArcherImage2Frame(ctx, action, frameIndex, x - drawSize / 2, drawY, drawSize, flipX, getEnemySpriteGroundY(enemy, y))) {
+  if (drawSkeletonArcherImage2Frame(ctx, action, frameIndex, x - drawSize / 2, drawY, drawSize, flipX, presentation.groundRoot.y)) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.25, enemy.size)
     return true
   }
@@ -1945,7 +2191,7 @@ const drawSkeletonArcherAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enem
     return false
   }
 
-  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX, getEnemySpriteGroundY(enemy, y))
+  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX, presentation.groundRoot.y)
   drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.25, enemy.size)
   return true
 }
@@ -1963,8 +2209,6 @@ const hellhoundImage2SlotByAction: Partial<Record<MonsterFrameAction, HellhoundI
   idle: 'idle',
   move: 'move',
   attack: 'attack',
-  cast: 'cast',
-  skill: 'skill_1',
   hit: 'hit',
   death: 'death',
 }
@@ -2004,10 +2248,7 @@ const getHellhoundAtlasAction = (enemy: Enemy): MonsterFrameAction => {
   if (enemy.hitFlash > 0) {
     return 'hit'
   }
-  if ((enemy.breathTimer ?? 0) > 0) {
-    return 'skill'
-  }
-  if (enemy.behaviorTimer > 0) {
+  if ((enemy.breathTimer ?? 0) > 0 || enemy.behaviorTimer > 0) {
     return 'attack'
   }
   if ((enemy.walkTimer ?? 0) > 0.15) {
@@ -2015,6 +2256,22 @@ const getHellhoundAtlasAction = (enemy: Enemy): MonsterFrameAction => {
   }
   return 'idle'
 }
+
+export const getHellhoundCombatDrawSize = (enemy: Pick<Enemy, 'size'>) => (
+  Math.max(64, Math.round(enemy.size * 3.7))
+)
+
+export const getSkeletonArcherCombatDrawSize = (enemy: Pick<Enemy, 'size'>) => (
+  Math.max(64, Math.round(enemy.size * 3.7 * SKELETON_ARCHER_IMAGE2_COMBAT_SCALE))
+)
+
+export const getSkeletonWarriorCombatDrawSize = (enemy: Pick<Enemy, 'size'>) => (
+  Math.max(64, Math.round(enemy.size * 2.2))
+)
+
+export const getDungeonWardenCombatDrawSize = (enemy: Pick<Enemy, 'size'>) => (
+  Math.max(96, Math.round(enemy.size * 3.25))
+)
 
 export const getHellhoundAtlasFrame = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
   const atlas = MONSTER_SPRITE_ATLASES.charger
@@ -2129,9 +2386,8 @@ const drawC1SlimeVariantEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x:
     return false
   }
 
-  const action = getC1SlimeVariantAtlasAction(enemy)
-  const frameIndex = getC1SlimeVariantAtlasFrame(enemy, action, time)
-  const drawSize = getC1SlimeVariantCombatDrawSize(enemy)
+  const presentation = getEnemySpriteVisualPresentation(enemy, time, { renderRoot: { x, y } })
+  const { action, frameIndex, baseDrawSize: drawSize } = presentation
   drawEnemyShadow(ctx, x, y, enemy.size * 1.05)
   drawC1SlimeVariantFrame(
     ctx,
@@ -2141,8 +2397,378 @@ const drawC1SlimeVariantEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x:
     x - drawSize / 2,
     getEnemySpriteGroundY(enemy, y) - drawSize,
     drawSize,
-    (enemy.facingDirection?.x ?? 0) < -0.05,
-    getEnemySpriteGroundY(enemy, y),
+    presentation.baseFlipX,
+    presentation.groundRoot.y,
+  )
+  drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
+  return true
+}
+
+const jailerChiefSlotByAction: Partial<Record<MonsterFrameAction, JailerChiefActionSlot>> = {
+  idle: 'idle',
+  move: 'move',
+  attack: 'attack',
+  skill: 'skill',
+  death: 'death',
+}
+
+export const getJailerChiefAssetAction = (enemy: Enemy): MonsterFrameAction => {
+  if (enemy.hp <= 0) {
+    return 'death'
+  }
+  if ((enemy.meleeAttackWindup ?? 0) > 0 || enemy.meleeAttackReady) {
+    return 'attack'
+  }
+  // The jailer's authoritative phase is supplied by the combat state machine.
+  // Rendering must not reinterpret the generic caster timer as a lock warning.
+  if (enemy.jailerChiefPhase === 'casting') {
+    return 'skill'
+  }
+  if (enemy.jailerChiefPhase === 'pursuing' || enemy.jailerChiefPhase === 'retreating') {
+    return 'move'
+  }
+  if (enemy.jailerChiefPhase === 'waiting') {
+    // A1 owns the constrained Y-axis dodge. It is the only waiting-state
+    // movement fact rendering may consume; walkTimer must not infer a dodge.
+    return enemy.jailerChiefDodgeActive ? 'move' : 'idle'
+  }
+  return 'idle'
+}
+
+export const getJailerChiefAssetFrame = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
+  const slot = jailerChiefSlotByAction[action] ?? 'idle'
+  const meta = JAILER_CHIEF_ACTIONS[slot]
+  const frameCount = meta.frameNames.length
+
+  if (slot === 'death') {
+    const duration = Math.max(0.01, enemy.deathAnimationDuration ?? 3)
+    const progress = Math.min(1, Math.max(0, enemy.deathAnimationElapsed ?? 0) / duration)
+    return Math.min(frameCount - 1, Math.floor(progress * frameCount))
+  }
+  if (slot === 'skill') {
+    // A1 owns the 0.6 second cast countdown. Do not derive skill timing from
+    // the generic behavior timer, elapsed render time, or a visual timer.
+    const remaining = Math.min(meta.durationSeconds, Math.max(0, enemy.jailerChiefCastTimer ?? 0))
+    const elapsed = meta.durationSeconds - remaining
+    return Math.min(frameCount - 1, Math.max(0, Math.floor((elapsed / meta.durationSeconds) * frameCount)))
+  }
+  if (slot === 'attack') {
+    const windup = enemy.meleeAttackWindup ?? enemy.rangedAttackWindup ?? 0
+    if (windup > 0 || enemy.meleeAttackReady) {
+      const elapsed = enemy.meleeAttackReady ? 0.5 : Math.max(0, 0.5 - windup)
+      return Math.min(frameCount - 1, Math.floor((elapsed / 0.5) * frameCount))
+    }
+  }
+  return Math.floor(Math.max(0, time) * meta.fps) % frameCount
+}
+
+const drawJailerChiefAssetFrame = (
+  ctx: CanvasRenderingContext2D,
+  slot: JailerChiefActionSlot,
+  frameIndex: number,
+  x: number,
+  y: number,
+  size: number,
+  flipX: boolean,
+  visibleBottomY: number,
+) => {
+  const frameUrls = getJailerChiefFrameUrls(slot)
+  const frameUrl = frameUrls[((Math.floor(frameIndex) % frameUrls.length) + frameUrls.length) % frameUrls.length]
+  return drawStandaloneImageFrame(ctx, frameUrl, x, y, size, flipX, visibleBottomY, true)
+}
+
+const drawJailerChiefAssetEnemy = (
+  ctx: CanvasRenderingContext2D,
+  enemy: Enemy,
+  x: number,
+  y: number,
+  time: number,
+  actionOverride?: MonsterFrameAction,
+) => {
+  const presentation = getEnemySpriteVisualPresentation(enemy, time, { renderRoot: { x, y }, actionOverride })
+  const { action, frameIndex, baseDrawSize: drawSize, flipX } = presentation
+  const slot = jailerChiefSlotByAction[action] ?? 'idle'
+  const groundY = presentation.groundRoot.y
+  const runtimeSlot = presentation.assetAction
+
+  drawEnemyShadow(ctx, x, y, enemy.size)
+  if (drawRuntimeAssetOverrideFrame(
+    ctx,
+    enemy.archetypeId,
+    runtimeSlot,
+    frameIndex,
+    x - drawSize / 2,
+    groundY - drawSize,
+    drawSize,
+    presentation.baseFlipX,
+    time,
+    groundY,
+    true,
+    false,
+  )) {
+    drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
+    return true
+  }
+
+  drawJailerChiefAssetFrame(ctx, slot, frameIndex, x - drawSize / 2, groundY - drawSize, drawSize, flipX, groundY)
+  drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
+  return true
+}
+
+const chainEliteSlotByAction: Partial<Record<MonsterFrameAction, ChainEliteActionSlot>> = {
+  idle: 'idle',
+  move: 'move',
+  attack: 'attack',
+  hit: 'hit',
+  skill: 'skill',
+  death: 'death',
+}
+
+// The combat loop advances the captain's local walk phase in approximately ten
+// units per second. Rendering converts that existing local phase to the asset
+// fps instead of sampling the unrelated global render clock.
+const CHAIN_CAPTAIN_WALK_TIMER_UNITS_PER_SECOND = 10
+// A1 owns this pure visual lifetime in the combat state. It intentionally
+// outlives the two 0.18s hit windows so all four 8fps Move+Attack frames are
+// readable without extending the combat action itself.
+const CHAIN_CAPTAIN_SLASH_VISUAL_DURATION_SECONDS = 0.54
+
+/**
+ * Both chain elites have dedicated project frames. This selector consumes only
+ * their combat-owned state and never asks the generic timer to invent a cast.
+ */
+export const getChainEliteAssetAction = (enemy: Enemy): MonsterFrameAction => {
+  const entityId = getChainEliteAssetId(enemy)
+  if (!entityId || enemy.hp <= 0) {
+    return 'death'
+  }
+  if (enemy.hitFlash > 0) {
+    return 'hit'
+  }
+  // The hit window and its longer renderer-owned visual lifetime are both
+  // authoritative core state. The second strike intentionally leaves the
+  // visual timer alone, so the animation cannot jump back to frame one.
+  if (
+    entityId === 'dungeon-chain-captain'
+    && (enemy.chainCaptainSlashWindow || (enemy.chainCaptainSlashVisualTimer ?? 0) > 0)
+  ) {
+    return 'attack'
+  }
+  // Command remains visible while the captain is stationary, but never masks
+  // the real movement state for its five-second duration.
+  if ((enemy.walkTimer ?? 0) > 0.12) {
+    return 'move'
+  }
+  if (
+    (entityId === 'dungeon-chain-captain' && (enemy.chainCaptainCommandTimer ?? 0) > 0)
+    || (entityId === 'dungeon-chain-wraith-elite' && enemy.chainWraithPullPhase !== undefined)
+  ) {
+    return 'skill'
+  }
+  if ((enemy.meleeAttackWindup ?? 0) > 0 || enemy.meleeAttackReady) {
+    return 'attack'
+  }
+  return 'idle'
+}
+
+export const getChainEliteAssetFrame = (enemy: Enemy, action: MonsterFrameAction, time: number) => {
+  const entityId = getChainEliteAssetId(enemy)
+  const slot = entityId ? chainEliteSlotByAction[action] ?? 'idle' : 'idle'
+  const meta = entityId ? CHAIN_ELITE_ACTIONS[entityId][slot] : undefined
+  const frameCount = meta?.frameNames.length ?? 1
+
+  if (slot === 'death') {
+    const duration = Math.max(0.01, enemy.deathAnimationDuration ?? 3)
+    const progress = Math.min(1, Math.max(0, enemy.deathAnimationElapsed ?? 0) / duration)
+    return Math.min(frameCount - 1, Math.floor(progress * frameCount))
+  }
+  if (slot === 'hit') {
+    return Math.min(frameCount - 1, Math.max(0, Math.floor((0.5 - enemy.hitFlash) * meta!.fps)))
+  }
+  if (slot === 'move' && entityId === 'dungeon-chain-captain') {
+    const localMoveSeconds = Math.max(0, enemy.walkTimer ?? 0) / CHAIN_CAPTAIN_WALK_TIMER_UNITS_PER_SECOND
+    return Math.floor(localMoveSeconds * meta!.fps) % frameCount
+  }
+  if (slot === 'attack') {
+    if (
+      entityId === 'dungeon-chain-captain'
+      && (enemy.chainCaptainSlashWindow || (enemy.chainCaptainSlashVisualTimer ?? 0) > 0)
+    ) {
+      // Older in-flight snapshots can lack the optional visual field. They
+      // begin at frame one rather than deriving a new phase from damage timing.
+      const remaining = Math.min(
+        CHAIN_CAPTAIN_SLASH_VISUAL_DURATION_SECONDS,
+        Math.max(0, enemy.chainCaptainSlashVisualTimer ?? CHAIN_CAPTAIN_SLASH_VISUAL_DURATION_SECONDS),
+      )
+      const elapsed = CHAIN_CAPTAIN_SLASH_VISUAL_DURATION_SECONDS - remaining
+      return Math.min(frameCount - 1, Math.floor(elapsed * meta!.fps))
+    }
+    const windup = enemy.meleeAttackWindup ?? enemy.rangedAttackWindup ?? 0
+    if (windup > 0 || enemy.meleeAttackReady) {
+      const elapsed = enemy.meleeAttackReady ? 0.5 : Math.max(0, 0.5 - windup)
+      return Math.min(frameCount - 1, Math.floor((elapsed / 0.5) * frameCount))
+    }
+  }
+  if (slot === 'skill' && entityId === 'dungeon-chain-wraith-elite' && enemy.chainWraithPullPhase === 'warning') {
+    const elapsed = Math.max(0, 0.8 - Math.max(0, enemy.chainWraithPullTimer ?? 0))
+    return Math.min(frameCount - 1, Math.floor((elapsed / 0.8) * frameCount))
+  }
+  return Math.floor(Math.max(0, time) * (meta?.fps ?? 1)) % frameCount
+}
+
+const drawChainEliteAssetFrame = (
+  ctx: CanvasRenderingContext2D,
+  entityId: ChainEliteAssetId,
+  slot: ChainEliteActionSlot,
+  frameIndex: number,
+  x: number,
+  y: number,
+  size: number,
+  flipX: boolean,
+  visibleBottomY: number,
+) => {
+  const frameUrls = getChainEliteFrameUrls(entityId, slot)
+  const frameUrl = frameUrls[((Math.floor(frameIndex) % frameUrls.length) + frameUrls.length) % frameUrls.length]
+  return drawStandaloneImageFrame(ctx, frameUrl, x, y, size, flipX, visibleBottomY)
+}
+
+/** Inputs use the same draw origin/scale/mirror contract as the wraith sprite. */
+export type ChainWraithSkillHandWorldAnchorInput = {
+  frameIndex: number
+  groundRoot: Vector2
+  drawSize: number
+  flipX: boolean
+}
+
+export const getChainWraithSkillHandWorldAnchor = ({
+  frameIndex,
+  groundRoot,
+  drawSize,
+  flipX,
+}: ChainWraithSkillHandWorldAnchorInput): Vector2 => {
+  const hand = getChainWraithSkillHandAnchor(frameIndex)
+  const visibleBottom = getChainWraithSkillVisibleBottom(frameIndex)
+  const drawX = Math.round(groundRoot.x - drawSize / 2)
+  const drawY = Math.round(groundRoot.y - (visibleBottom / CHAIN_ELITE_FRAME_SIZE) * drawSize)
+  const sourceX = flipX ? CHAIN_ELITE_FRAME_SIZE - hand.x : hand.x
+  return {
+    x: Math.round(drawX + (sourceX / CHAIN_ELITE_FRAME_SIZE) * drawSize),
+    y: Math.round(drawY + (hand.y / CHAIN_ELITE_FRAME_SIZE) * drawSize),
+  }
+}
+
+export const getChainWraithSkillHandWorldAnchorForEnemy = (
+  enemy: Enemy,
+  time: number,
+  forceSkill = false,
+): Vector2 | undefined => {
+  if (getChainEliteAssetId(enemy) !== 'dungeon-chain-wraith-elite') {
+    return undefined
+  }
+  const presentation = getEnemySpriteVisualPresentation(enemy, time, { actionOverride: forceSkill ? 'skill' : undefined })
+  if (presentation.action !== 'skill') {
+    return undefined
+  }
+  return getChainWraithSkillHandWorldAnchor({
+    frameIndex: presentation.frameIndex,
+    groundRoot: presentation.groundRoot,
+    drawSize: presentation.baseDrawSize,
+    flipX: presentation.flipX,
+  })
+}
+
+export type ChainWraithIronChainDrawInput = {
+  start: Vector2
+  end: Vector2
+  frameIndex: number
+  scale?: number
+}
+
+/**
+ * Tiles one source strip in world space. The last piece narrows its source
+ * crop and destination by the same ratio, so it reaches the player without
+ * stretching the chain thickness or leaving a gap.
+ */
+export const drawChainWraithIronChain = (
+  ctx: CanvasRenderingContext2D,
+  { start, end, frameIndex, scale = 1 }: ChainWraithIronChainDrawInput,
+) => {
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const length = Math.hypot(dx, dy)
+  if (length <= 0.01) {
+    return false
+  }
+  const image = getRuntimeAtlasImage(normalizeRuntimeAssetUrl(getChainWraithIronChainPath(frameIndex)))
+  if (!isAtlasImageReady(image)) {
+    return false
+  }
+
+  const normalizedScale = Math.max(0.01, scale)
+  const segmentLength = IRON_CHAIN_SOURCE_CROP.width * normalizedScale
+  const segmentHeight = IRON_CHAIN_SOURCE_CROP.height * normalizedScale
+  const previousSmoothing = ctx.imageSmoothingEnabled
+  ctx.imageSmoothingEnabled = false
+  ctx.save()
+  ctx.translate(start.x, start.y)
+  ctx.rotate(Math.atan2(dy, dx))
+
+  let offset = 0
+  while (offset < length - 0.01) {
+    const drawWidth = Math.min(segmentLength, length - offset)
+    const sourceWidth = drawWidth / normalizedScale
+    ctx.drawImage(
+      image,
+      IRON_CHAIN_SOURCE_CROP.x,
+      IRON_CHAIN_SOURCE_CROP.y,
+      sourceWidth,
+      IRON_CHAIN_SOURCE_CROP.height,
+      offset,
+      -segmentHeight / 2,
+      drawWidth,
+      segmentHeight,
+    )
+    offset += drawWidth
+  }
+
+  ctx.restore()
+  ctx.imageSmoothingEnabled = previousSmoothing
+  return true
+}
+
+export const getChainWraithIronChainFrameIndex = (time: number) => (
+  Math.floor(Math.max(0, time) * CHAIN_ELITE_ACTIONS['dungeon-chain-wraith-elite'].skill.fps)
+  % CHAIN_ELITE_ACTIONS['dungeon-chain-wraith-elite'].skill.frameNames.length
+)
+
+const drawChainEliteAssetEnemy = (
+  ctx: CanvasRenderingContext2D,
+  enemy: Enemy,
+  x: number,
+  y: number,
+  time: number,
+  actionOverride?: MonsterFrameAction,
+) => {
+  const entityId = getChainEliteAssetId(enemy)
+  if (!entityId) {
+    return false
+  }
+  const presentation = getEnemySpriteVisualPresentation(enemy, time, { renderRoot: { x, y }, actionOverride })
+  const slot = chainEliteSlotByAction[presentation.action] ?? 'idle'
+  const drawSize = presentation.baseDrawSize
+  const groundY = presentation.groundRoot.y
+
+  drawEnemyShadow(ctx, x, y, enemy.size)
+  drawChainEliteAssetFrame(
+    ctx,
+    entityId,
+    slot,
+    presentation.frameIndex,
+    x - drawSize / 2,
+    groundY - drawSize,
+    drawSize,
+    presentation.flipX,
+    groundY,
   )
   drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.2, enemy.size)
   return true
@@ -2263,17 +2889,15 @@ const drawHellhoundAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x:
     return false
   }
 
-  const action = getHellhoundAtlasAction(enemy)
-  const frameIndex = getHellhoundAtlasFrame(enemy, action, time)
-  const drawSize = Math.max(64, Math.round(enemy.size * 3.7))
-  const flipX = (enemy.facingDirection?.x ?? 0) < -0.05
+  const presentation = getEnemySpriteVisualPresentation(enemy, time, { renderRoot: { x, y } })
+  const { action, frameIndex, baseDrawSize: drawSize, flipX } = presentation
   drawEnemyShadow(ctx, x, y, enemy.size * 1.3)
-  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize * 0.84, drawSize, flipX, time, getEnemySpriteGroundY(enemy, y))) {
+  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize * 0.84, drawSize, presentation.baseFlipX, time, presentation.groundRoot.y)) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.7, enemy.size * 1.1)
     return true
   }
 
-  if (drawHellhoundImage2Frame(ctx, action, frameIndex, x - drawSize / 2, y - drawSize * 0.84, drawSize, flipX, getEnemySpriteGroundY(enemy, y))) {
+  if (drawHellhoundImage2Frame(ctx, action, frameIndex, x - drawSize / 2, y - drawSize * 0.84, drawSize, flipX, presentation.groundRoot.y)) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.7, enemy.size * 1.1)
     return true
   }
@@ -2287,7 +2911,7 @@ const drawHellhoundAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy, x:
     return false
   }
 
-  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize * 0.84, drawSize, flipX, getEnemySpriteGroundY(enemy, y))
+  drawAtlasFrame(ctx, image, atlas, action, frameIndex, x - drawSize / 2, y - drawSize * 0.84, drawSize, flipX, presentation.groundRoot.y)
   drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.7, enemy.size * 1.1)
   return true
 }
@@ -2340,16 +2964,14 @@ const drawSkeletonWarriorAtlasEnemy = (ctx: CanvasRenderingContext2D, enemy: Ene
     return false
   }
 
-  const action = getSkeletonWarriorAtlasAction(enemy)
-  const frameIndex = getSkeletonWarriorAtlasFrame(enemy, action, time)
-  const drawSize = Math.max(64, Math.round(enemy.size * 2.2))
-  const flipX = (enemy.facingDirection?.x ?? 0) < -0.05
+  const presentation = getEnemySpriteVisualPresentation(enemy, time, { renderRoot: { x, y } })
+  const { action, frameIndex, baseDrawSize: drawSize, flipX } = presentation
   drawEnemyShadow(ctx, x, y, enemy.size * 1.25)
-  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX, time, getEnemySpriteGroundY(enemy, y))) {
+  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, presentation.baseFlipX, time, presentation.groundRoot.y)) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.35, enemy.size * 1.2)
     return true
   }
-  if (drawSkeletonWarriorPtFrame(ctx, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX, getEnemySpriteGroundY(enemy, y))) {
+  if (drawSkeletonWarriorPtFrame(ctx, action, frameIndex, x - drawSize / 2, y - drawSize * 0.9, drawSize, flipX, presentation.groundRoot.y)) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.35, enemy.size * 1.2)
     return true
   }
@@ -2470,23 +3092,252 @@ const drawDungeonWardenAssetEnemy = (ctx: CanvasRenderingContext2D, enemy: Enemy
     return false
   }
 
-  const action = getDungeonWardenAssetAction(enemy)
-  const slot = getDungeonWardenAssetSlot(enemy, action)
-  const frameIndex = getDungeonWardenAssetFrame(enemy, action, slot, time)
+  const presentation = getEnemySpriteVisualPresentation(enemy, time, { renderRoot: { x, y } })
+  const { action, frameIndex, baseDrawSize: drawSize, flipX } = presentation
+  const slot = presentation.assetAction as DungeonWardenActionSlot
   const runtimeAnimationTime = getDungeonWardenRuntimeAnimationTime(enemy, action, time)
-  const drawSize = Math.max(96, Math.round(enemy.size * 3.25))
-  const flipX = (enemy.facingDirection?.x ?? 0) < -0.05
   const stabilizeVisibleBounds = slot === 'skill_3'
   drawEnemyShadow(ctx, x, y, enemy.size * 1.45)
-  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, slot, frameIndex, x - drawSize / 2, y - drawSize * 0.87, drawSize, flipX, runtimeAnimationTime, getEnemySpriteGroundY(enemy, y), stabilizeVisibleBounds, false)) {
+  if (drawRuntimeAssetOverrideFrame(ctx, enemy.archetypeId, slot, frameIndex, x - drawSize / 2, y - drawSize * 0.87, drawSize, presentation.baseFlipX, runtimeAnimationTime, presentation.groundRoot.y, stabilizeVisibleBounds, false)) {
     drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.9, enemy.size * 1.35)
     return true
   }
-  if (!drawDungeonWardenImageFrame(ctx, slot, frameIndex, x - drawSize / 2, y - drawSize * 0.87, drawSize, flipX, getEnemySpriteGroundY(enemy, y), stabilizeVisibleBounds)) {
+  if (!drawDungeonWardenImageFrame(ctx, slot, frameIndex, x - drawSize / 2, y - drawSize * 0.87, drawSize, flipX, presentation.groundRoot.y, stabilizeVisibleBounds)) {
     return false
   }
   drawEnemyFlash(ctx, enemy, x, y, enemy.size * 1.9, enemy.size * 1.35)
   return true
+}
+
+/**
+ * Renderer-owned presentation facts. Collision consumers import this instead
+ * of recreating an action, scale, facing, or foot-root decision beside their
+ * own hit tests. It intentionally reads only static manifest/runtime config;
+ * image decode state never changes the returned geometry contract.
+ */
+export type EnemySpriteVisualKind =
+  | 'corrosive-slime'
+  | 'c1-splitting-ooze'
+  | 'c1-explosive-fire-sac'
+  | 'skeleton-warrior'
+  | 'skeleton-archer'
+  | 'hellhound'
+  | 'jailer-chief'
+  | 'chain-captain'
+  | 'chain-wraith-elite'
+  | 'dungeon-warden'
+  | 'generic-melee'
+  | 'generic-ranged'
+  | 'generic-charger'
+  | 'generic-splitter'
+  | 'generic-bomber'
+  | 'generic-elite'
+  | 'generic-boss'
+
+export type EnemySpriteVisualPresentation = {
+  kind: EnemySpriteVisualKind
+  entityId?: string
+  action: MonsterFrameAction
+  assetAction: string
+  frameIndex: number
+  sourceFrameIndex: number
+  baseDrawSize: number
+  drawSize: number
+  combatScale: number
+  /** Facing before a runtime asset override applies its optional flipX. */
+  baseFlipX: boolean
+  flipX: boolean
+  root: Vector2
+  groundRoot: Vector2
+  /** Render time is only used by procedural fallback geometry that visibly bobs. */
+  time: number
+  usesRuntimeOverride: boolean
+}
+
+export type EnemySpriteVisualPresentationOptions = {
+  /** The world position already selected by the renderer, including any bob. */
+  renderRoot?: Vector2
+  /** An authoritative renderer state may pin an action without inventing a timer. */
+  actionOverride?: MonsterFrameAction
+}
+
+export const getEnemySpriteRenderRoot = (enemy: Enemy, time: number): Vector2 => ({
+  x: enemy.position.x,
+  y: enemy.position.y + (isExplicitDungeonWarden(enemy) ? 0 : Math.sin(time * 10 + enemy.position.x * 0.1) * 1.2),
+})
+
+const getRuntimeVisualFrameResolution = (
+  entityId: string | undefined,
+  action: string,
+  sourceFrameIndex: number,
+  animationTime: number | undefined,
+  baseFlipX: boolean,
+) => {
+  const resolved = getRuntimeAssetActionOverrideWithFallback(entityId, action)
+  const override = resolved?.override
+  const hasFrames = Boolean(override?.frameUrls.filter(Boolean).length)
+  if (!override || !hasFrames) {
+    return {
+      frameIndex: sourceFrameIndex,
+      drawScale: 1,
+      flipX: baseFlipX,
+      usesRuntimeOverride: false,
+    }
+  }
+
+  const frameCount = Math.max(1, override.frameCount || override.frameUrls.filter(Boolean).length)
+  const frameIndex = typeof animationTime === 'number'
+    ? override.loop === false
+      ? Math.min(frameCount - 1, Math.max(0, Math.floor(animationTime * Math.max(1, override.fps || 1))))
+      : override.durationSeconds
+        ? Math.floor(((animationTime % override.durationSeconds) / override.durationSeconds) * frameCount)
+        : Math.floor(animationTime * Math.max(1, override.fps || 1))
+    : sourceFrameIndex
+  return {
+    frameIndex,
+    drawScale: Number.isFinite(override.combatScale) ? Math.max(0.2, override.combatScale ?? 1) : 1,
+    flipX: Boolean(baseFlipX) !== Boolean(override.flipX),
+    usesRuntimeOverride: true,
+  }
+}
+
+/**
+ * Resolves exactly the presentation selectors used by formal enemy drawing.
+ * The returned `groundRoot` is the stable feet/body root for static hurtbox
+ * metadata; it deliberately excludes shadows, labels, and effects.
+ */
+export const getEnemySpriteVisualPresentation = (
+  enemy: Enemy,
+  time: number,
+  options: EnemySpriteVisualPresentationOptions = {},
+): EnemySpriteVisualPresentation => {
+  const root = options.renderRoot ?? getEnemySpriteRenderRoot(enemy, time)
+  const groundRoot = { x: root.x, y: getEnemySpriteGroundY(enemy, root.y) }
+  const baseFlipX = (enemy.facingDirection?.x ?? 0) < -0.05
+
+  let kind: EnemySpriteVisualKind
+  let action: MonsterFrameAction
+  let assetAction: string
+  let sourceFrameIndex: number
+  let baseDrawSize: number
+  let animationTime: number | undefined = time
+
+  if (isExplicitSkeletonWarrior(enemy)) {
+    kind = 'skeleton-warrior'
+    action = getSkeletonWarriorAtlasAction(enemy)
+    assetAction = action
+    sourceFrameIndex = getSkeletonWarriorAtlasFrame(enemy, action, time)
+    baseDrawSize = getSkeletonWarriorCombatDrawSize(enemy)
+  } else if (getC1SlimeVariantAssetId(enemy) === 'dungeon-splitting-ooze') {
+    kind = 'c1-splitting-ooze'
+    action = getC1SlimeVariantAtlasAction(enemy)
+    assetAction = action
+    sourceFrameIndex = getC1SlimeVariantAtlasFrame(enemy, action, time)
+    baseDrawSize = getC1SlimeVariantCombatDrawSize(enemy)
+    animationTime = undefined
+  } else if (getC1SlimeVariantAssetId(enemy) === 'dungeon-explosive-fire-sac') {
+    kind = 'c1-explosive-fire-sac'
+    action = getC1SlimeVariantAtlasAction(enemy)
+    assetAction = action
+    sourceFrameIndex = getC1SlimeVariantAtlasFrame(enemy, action, time)
+    baseDrawSize = getC1SlimeVariantCombatDrawSize(enemy)
+    animationTime = undefined
+  } else if (isExplicitCorruptGreenSlime(enemy)) {
+    kind = 'corrosive-slime'
+    action = getCorrosiveSlimeAtlasAction(enemy)
+    assetAction = action
+    sourceFrameIndex = getCorrosiveSlimeAtlasFrame(enemy, action, time)
+    baseDrawSize = getCorrosiveSlimeCombatDrawSize(enemy)
+    animationTime = action === 'move' ? undefined : time
+  } else if (isExplicitSkeletonArcher(enemy)) {
+    kind = 'skeleton-archer'
+    action = getSkeletonArcherAtlasAction(enemy)
+    assetAction = action
+    sourceFrameIndex = getSkeletonArcherAtlasFrame(enemy, action, time)
+    baseDrawSize = getSkeletonArcherCombatDrawSize(enemy)
+  } else if (isExplicitHellhound(enemy)) {
+    kind = 'hellhound'
+    action = getHellhoundAtlasAction(enemy)
+    assetAction = action
+    sourceFrameIndex = getHellhoundAtlasFrame(enemy, action, time)
+    baseDrawSize = getHellhoundCombatDrawSize(enemy)
+  } else if (isExplicitJailerChief(enemy)) {
+    kind = 'jailer-chief'
+    action = options.actionOverride ?? getJailerChiefAssetAction(enemy)
+    assetAction = (jailerChiefSlotByAction[action] ?? 'idle') === 'skill' ? 'cast' : (jailerChiefSlotByAction[action] ?? 'idle')
+    sourceFrameIndex = getJailerChiefAssetFrame(enemy, action, time)
+    baseDrawSize = getGenericRuntimeAssetDrawSize(enemy)
+  } else if (getChainEliteAssetId(enemy) === 'dungeon-chain-captain') {
+    kind = 'chain-captain'
+    action = options.actionOverride ?? getChainEliteAssetAction(enemy)
+    assetAction = (chainEliteSlotByAction[action] ?? 'idle') === 'skill' ? 'cast' : (chainEliteSlotByAction[action] ?? 'idle')
+    sourceFrameIndex = getChainEliteAssetFrame(enemy, action, time)
+    baseDrawSize = getGenericRuntimeAssetDrawSize(enemy)
+  } else if (getChainEliteAssetId(enemy) === 'dungeon-chain-wraith-elite') {
+    kind = 'chain-wraith-elite'
+    action = options.actionOverride ?? getChainEliteAssetAction(enemy)
+    assetAction = (chainEliteSlotByAction[action] ?? 'idle') === 'skill' ? 'cast' : (chainEliteSlotByAction[action] ?? 'idle')
+    sourceFrameIndex = getChainEliteAssetFrame(enemy, action, time)
+    baseDrawSize = getGenericRuntimeAssetDrawSize(enemy)
+  } else if (isExplicitDungeonWarden(enemy)) {
+    kind = 'dungeon-warden'
+    action = getDungeonWardenAssetAction(enemy)
+    assetAction = getDungeonWardenAssetSlot(enemy, action)
+    sourceFrameIndex = getDungeonWardenAssetFrame(enemy, action, assetAction as DungeonWardenActionSlot, time)
+    baseDrawSize = getDungeonWardenCombatDrawSize(enemy)
+    animationTime = getDungeonWardenRuntimeAnimationTime(enemy, action, time)
+  } else {
+    action = getGenericRuntimeAssetAction(enemy)
+    assetAction = action
+    sourceFrameIndex = getGenericRuntimeAssetFrame(enemy, action, time)
+    // Procedural fallback bodies draw in gameplay-size units. Only a configured
+    // project asset takes the generic combat draw-size path below.
+    baseDrawSize = hasRuntimeAssetOverrideFrame(enemy.archetypeId, action)
+      ? getGenericRuntimeAssetDrawSize(enemy)
+      : enemy.size
+    kind = enemy.kind === 'melee'
+      ? 'generic-melee'
+      : enemy.kind === 'ranged'
+        ? 'generic-ranged'
+        : enemy.kind === 'charger'
+          ? 'generic-charger'
+          : enemy.kind === 'splitter'
+            ? 'generic-splitter'
+            : enemy.kind === 'bomber'
+              ? 'generic-bomber'
+              : enemy.kind === 'elite'
+                ? 'generic-elite'
+                : 'generic-boss'
+  }
+
+  const runtime = kind === 'c1-splitting-ooze'
+    || kind === 'c1-explosive-fire-sac'
+    || kind === 'chain-captain'
+    || kind === 'chain-wraith-elite'
+    ? {
+        frameIndex: sourceFrameIndex,
+        drawScale: 1,
+        flipX: baseFlipX,
+        usesRuntimeOverride: false,
+      }
+    : getRuntimeVisualFrameResolution(enemy.archetypeId, assetAction, sourceFrameIndex, animationTime, baseFlipX)
+  return {
+    kind,
+    entityId: enemy.archetypeId,
+    action,
+    assetAction,
+    frameIndex: runtime.frameIndex,
+    sourceFrameIndex,
+    baseDrawSize,
+    drawSize: Math.round(baseDrawSize * runtime.drawScale),
+    combatScale: runtime.drawScale,
+    baseFlipX,
+    flipX: runtime.flipX,
+    root,
+    groundRoot,
+    time,
+    usesRuntimeOverride: runtime.usesRuntimeOverride,
+  }
 }
 
 const createGuideEnemy = (
@@ -2957,6 +3808,7 @@ export const drawBeastCompanionSprite = (
   ctx: CanvasRenderingContext2D,
   beast: BeastCompanion,
   time: number,
+  visualScale = 1,
 ) => {
   const beastEntityIdByKind: Partial<Record<BeastCompanion['kind'], string>> = {
     hawk: 'beast-hawk',
@@ -2981,7 +3833,13 @@ export const drawBeastCompanionSprite = (
           : beast.isAlpha
             ? 'leader'
             : 'idle'
-  const runtimeSize = beast.size * (beast.isAlpha ? 2.6 : 2.25)
+  const normalizedVisualScale = Math.max(1, visualScale)
+  // A1 exposes single-boss evolution scale separately from combat size.
+  // Start that visual branch from the ordinary companion envelope so it is
+  // exactly 2× the base beast without touching collision, AI, or damage size.
+  const runtimeSize = normalizedVisualScale > 1
+    ? beast.size * 2.25 * normalizedVisualScale
+    : beast.size * (beast.isAlpha ? 2.6 : 2.25)
   if (drawRuntimeAssetOverrideFrame(
     ctx,
     beastEntityId,
@@ -3006,57 +3864,131 @@ export const drawBeastCompanionSprite = (
   const bob = Math.sin(time * 9 + x * 0.03) * 1.2
   const tint = beast.hurtCooldown > 0 ? '#dbeafe' : beast.tint
 
-  pixel(ctx, x - beast.size * 0.48, y + beast.size * 0.22, beast.size * 0.96, 3, 'rgba(0, 0, 0, 0.24)')
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.scale(normalizedVisualScale, normalizedVisualScale)
+
+  pixel(ctx, -beast.size * 0.48, beast.size * 0.22, beast.size * 0.96, 3, 'rgba(0, 0, 0, 0.24)')
 
   if (beast.kind === 'hawk') {
-    pixel(ctx, x - 12, y - 6 + bob, 24, 5, tint)
-    pixel(ctx, x - 5, y - 10 + bob, 10, 12, '#92400e')
-    pixel(ctx, x + 4, y - 7 + bob, 6, 3, '#fef3c7')
+    pixel(ctx, -12, -6 + bob, 24, 5, tint)
+    pixel(ctx, -5, -10 + bob, 10, 12, '#92400e')
+    pixel(ctx, 4, -7 + bob, 6, 3, '#fef3c7')
+    ctx.restore()
     return
   }
 
   if (beast.kind === 'wolf') {
-    pixel(ctx, x - 10, y - 8 + bob, 20, 13, tint)
-    pixel(ctx, x - 13, y - 12 + bob, 8, 8, '#bfdbfe')
-    pixel(ctx, x + 6, y - 12 + bob, 6, 7, '#e0f2fe')
-    pixel(ctx, x - 6, y - 1 + bob, 3, 7, '#dbeafe')
-    pixel(ctx, x + 5, y - 1 + bob, 3, 7, '#dbeafe')
+    pixel(ctx, -10, -8 + bob, 20, 13, tint)
+    pixel(ctx, -13, -12 + bob, 8, 8, '#bfdbfe')
+    pixel(ctx, 6, -12 + bob, 6, 7, '#e0f2fe')
+    pixel(ctx, -6, -1 + bob, 3, 7, '#dbeafe')
+    pixel(ctx, 5, -1 + bob, 3, 7, '#dbeafe')
+    ctx.restore()
     return
   }
 
   if (beast.kind === 'boar') {
-    pixel(ctx, x - 12, y - 9 + bob, 24, 16, tint)
-    pixel(ctx, x + 7, y - 5 + bob, 8, 8, '#78350f')
-    pixel(ctx, x + 12, y - 7 + bob, 5, 3, '#fef3c7')
-    pixel(ctx, x + 12, y + 1 + bob, 5, 3, '#fef3c7')
+    pixel(ctx, -12, -9 + bob, 24, 16, tint)
+    pixel(ctx, 7, -5 + bob, 8, 8, '#78350f')
+    pixel(ctx, 12, -7 + bob, 5, 3, '#fef3c7')
+    pixel(ctx, 12, 1 + bob, 5, 3, '#fef3c7')
+    ctx.restore()
     return
   }
 
   if (beast.kind === 'bear') {
-    pixel(ctx, x - 14, y - 13 + bob, 28, 22, tint)
-    pixel(ctx, x - 11, y - 19 + bob, 9, 8, '#3f4f2e')
-    pixel(ctx, x + 4, y - 19 + bob, 9, 8, '#3f4f2e')
-    pixel(ctx, x - 6, y - 1 + bob, 4, 8, '#344026')
-    pixel(ctx, x + 4, y - 1 + bob, 4, 8, '#344026')
+    pixel(ctx, -14, -13 + bob, 28, 22, tint)
+    pixel(ctx, -11, -19 + bob, 9, 8, '#3f4f2e')
+    pixel(ctx, 4, -19 + bob, 9, 8, '#3f4f2e')
+    pixel(ctx, -6, -1 + bob, 4, 8, '#344026')
+    pixel(ctx, 4, -1 + bob, 4, 8, '#344026')
+    ctx.restore()
     return
   }
 
   if (beast.kind === 'snake') {
     const wave = Math.sin(time * 11 + x * 0.04) * 2
-    pixel(ctx, x - 12, y - 4 + bob, 8, 5, tint)
-    pixel(ctx, x - 5, y - 6 + bob + wave * 0.3, 10, 5, '#65a30d')
-    pixel(ctx, x + 4, y - 4 + bob - wave * 0.3, 10, 5, tint)
-    pixel(ctx, x + 11, y - 7 + bob, 6, 7, '#bef264')
-    pixel(ctx, x + 14, y - 5 + bob, 2, 2, '#111827')
+    pixel(ctx, -12, -4 + bob, 8, 5, tint)
+    pixel(ctx, -5, -6 + bob + wave * 0.3, 10, 5, '#65a30d')
+    pixel(ctx, 4, -4 + bob - wave * 0.3, 10, 5, tint)
+    pixel(ctx, 11, -7 + bob, 6, 7, '#bef264')
+    pixel(ctx, 14, -5 + bob, 2, 2, '#111827')
+    ctx.restore()
     return
   }
 
-  pixel(ctx, x - 9, y - 10 + bob, 18, 17, tint)
-  pixel(ctx, x - 4, y - 17 + bob, 8, 8, '#fef3c7')
-  pixel(ctx, x - 9, y - 24 + bob, 3, 9, '#fbbf24')
-  pixel(ctx, x + 6, y - 24 + bob, 3, 9, '#fbbf24')
-  pixel(ctx, x - 5, y + 1 + bob, 3, 8, '#fef3c7')
-  pixel(ctx, x + 3, y + 1 + bob, 3, 8, '#fef3c7')
+  pixel(ctx, -9, -10 + bob, 18, 17, tint)
+  pixel(ctx, -4, -17 + bob, 8, 8, '#fef3c7')
+  pixel(ctx, -9, -24 + bob, 3, 9, '#fbbf24')
+  pixel(ctx, 6, -24 + bob, 3, 9, '#fbbf24')
+  pixel(ctx, -5, 1 + bob, 3, 8, '#fef3c7')
+  pixel(ctx, 3, 1 + bob, 3, 8, '#fef3c7')
+  ctx.restore()
+}
+
+const drawPlayerArrowAsset = (ctx: CanvasRenderingContext2D, projectile: Projectile) => {
+  const frameUrl = getPlayerProjectileSpriteUrl(projectile.owner)
+  if (!frameUrl) {
+    return false
+  }
+
+  const image = getRuntimeAtlasImage(normalizeRuntimeAssetUrl(frameUrl))
+  if (!image || !isAtlasImageReady(image)) {
+    // Do not substitute retired procedural arrows while the project-local
+    // asset is still loading.
+    return true
+  }
+
+  const alphaBounds = getImageAlphaBounds(image)
+  const sourceX = alphaBounds?.left ?? 0
+  const sourceY = alphaBounds?.top ?? 0
+  const sourceWidth = alphaBounds ? alphaBounds.right - alphaBounds.left : image.naturalWidth
+  const sourceHeight = alphaBounds ? alphaBounds.bottom - alphaBounds.top : image.naturalHeight
+  const speed = Math.hypot(projectile.velocity.x, projectile.velocity.y)
+  const drawWidth = Math.max(15, Math.min(30, projectile.size * 3.8 + speed * 0.02))
+  const drawHeight = Math.max(2, drawWidth * (sourceHeight / Math.max(1, sourceWidth)))
+  const angle = Math.atan2(projectile.velocity.y, projectile.velocity.x)
+  const outlineMask = getPlayerArrowOutlineMask(
+    image,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    projectile.color,
+  )
+
+  ctx.save()
+  ctx.imageSmoothingEnabled = false
+  ctx.translate(Math.round(projectile.position.x), Math.round(projectile.position.y))
+  ctx.rotate(angle)
+  if (outlineMask) {
+    PLAYER_ARROW_OUTLINE_OFFSETS.forEach(([offsetX, offsetY]) => {
+      ctx.drawImage(
+        outlineMask,
+        -drawWidth / 2 + offsetX,
+        -drawHeight / 2 + offsetY,
+        drawWidth,
+        drawHeight,
+      )
+    })
+  }
+  // Draw the untouched source last, preserving Charge-1's internal colors,
+  // shading, and transparent background while the offset copies supply the
+  // hard 1px skill-color outline.
+  ctx.drawImage(
+    image,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    -drawWidth / 2,
+    -drawHeight / 2,
+    drawWidth,
+    drawHeight,
+  )
+  ctx.restore()
+  return true
 }
 
 export const drawProjectileSprite = (
@@ -3065,6 +3997,9 @@ export const drawProjectileSprite = (
   time: number,
   equippedWeaponId?: WeaponId | null,
 ) => {
+  if ((projectile.releaseDelayRemaining ?? 0) > 0) {
+    return
+  }
   const x = projectile.position.x
   const y = projectile.position.y
   if (projectile.owner === 'enemy') {
@@ -3094,6 +4029,10 @@ export const drawProjectileSprite = (
       pixel(ctx, -projectile.size * 1.1, 3, 3, 2, '#bfdbfe')
     }
     ctx.restore()
+    return
+  }
+
+  if (drawPlayerArrowAsset(ctx, projectile)) {
     return
   }
 

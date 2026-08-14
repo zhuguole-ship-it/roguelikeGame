@@ -363,6 +363,9 @@ describe('game store persistence', () => {
     })
 
     useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })
+    for (let frame = 0; frame < 20; frame += 1) {
+      useGameStore.getState().tick(0.05, { up: false, down: false, left: false, right: false })
+    }
     const failed = useGameStore.getState()
 
     expect(failed.phase).toBe('running')
@@ -463,6 +466,7 @@ describe('game store persistence', () => {
     expect(restored.runTalentState.selectedBuild).toBe('beast')
     expect(restored.runTalentState.selectedTalentIds).toEqual(['run_beast_01'])
     expect(restored.runTalentState.guarantee.noMainBuildStreak).toBe(2)
+    expect(restored.runTalentState.trajectoryBranches).toEqual({})
   })
 
   it('merges legacy and current meta talent save fields without losing prerequisites', () => {
@@ -531,6 +535,8 @@ describe('game store persistence', () => {
       ...createInitialSnapshot('idle'),
       talentPoints: 3,
       contractLevel: 5,
+      inRunTalentIds: ['run_death_01'],
+      runTalentState: { ...createInitialSnapshot('idle').runTalentState, selectedTalentIds: ['run_death_01'] },
     })
 
     useGameStore.getState().unlockMetaTalent('meta_common_01')
@@ -543,8 +549,8 @@ describe('game store persistence', () => {
     const candidates = useGameStore.getState().generateRunTalentCandidates('store-talent-test')
     expect(candidates.some((candidate) => candidate.node.id === 'run_death_05' && candidate.guaranteed)).toBe(true)
     useGameStore.getState().selectRunTalent('run_death_05')
-    expect(useGameStore.getState().runTalentState.selectedTalentIds).toEqual(['run_death_05'])
-    expect(useGameStore.getState().inRunTalentIds).toEqual(['run_death_05'])
+    expect(useGameStore.getState().runTalentState.selectedTalentIds).toEqual(['run_death_01', 'run_death_05'])
+    expect(useGameStore.getState().inRunTalentIds).toEqual(['run_death_01', 'run_death_05'])
     expect(useGameStore.getState().message).toContain('战斗效果等待内核接入')
   })
 
@@ -554,6 +560,8 @@ describe('game store persistence', () => {
       contractLevel: 5,
       phase: 'running',
       phaseBeforePause: 'running',
+      inRunTalentIds: ['run_death_01'],
+      runTalentState: { ...createInitialSnapshot('idle').runTalentState, selectedTalentIds: ['run_death_01'] },
     })
 
     useGameStore.getState().openRunTalentUpgradeReward('formal-upgrade-test')
@@ -583,6 +591,44 @@ describe('game store persistence', () => {
 
     useGameStore.getState().returnToVillage()
     expect(useGameStore.getState().runTalentState.selectedTalentIds).toEqual([])
+  })
+
+  it('stores a blood trajectory branch for the current run, restores it, and clears it for the next run', () => {
+    const base = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      phaseBeforePause: 'running',
+      pauseMenuOpen: false,
+      pendingSkillReward: {
+        poolKind: 'run-talent',
+        source: 'elite',
+        choices: [{
+          choiceId: 'blood-fan-branch-choice',
+          mode: 'in-run-talent',
+          skillId: 'run_blood_03',
+          talentId: 'run_blood_03',
+          title: '散射织网',
+          description: '散射角度和命中密度小幅提高。',
+          buildTag: 'spread',
+          tacticalTags: ['散射压制'],
+          levelText: '局内 Lv.2+',
+          tacticalText: '局内天赋',
+        }],
+      },
+    })
+
+    useGameStore.getState().acceptSkillReward('blood-fan-branch-choice', 'focused')
+    const selected = useGameStore.getState()
+    expect(selected.pendingSkillReward).toBeNull()
+    expect(selected.runTalentState.selectedTalentIds).toContain('run_blood_03')
+    expect(selected.runTalentState.trajectoryBranches).toEqual({ run_blood_03: 'focused' })
+
+    const restored = restorePersistedGameState(extractPersistedGameState(selected))
+    expect(restored.runTalentState.trajectoryBranches).toEqual({ run_blood_03: 'focused' })
+
+    useGameStore.getState().returnToVillage()
+    expect(useGameStore.getState().runTalentState.trajectoryBranches).toEqual({})
   })
 
   it('clears duplicate in-run talent rewards without opening the manual pause menu', () => {
@@ -1085,7 +1131,7 @@ describe('game store audio events', () => {
 
     const killed = harness!.killBoss()
     expect(killed.settlementEntered).toBe(true)
-    expect(killed.pendingBossLoot).toBe(true)
+    expect(killed.pendingBossLoot).toBe(false)
 
     const dismissed = harness!.dismissBossLoot()
     expect(dismissed.pendingBossLoot).toBe(0)
@@ -1120,7 +1166,7 @@ describe('game store audio events', () => {
     harness.forceBossPhase('p2')
     harness.forceBossPhase('p3')
     const campaign1Kill = harness.killBoss()
-    expect(campaign1Kill.pendingBossLoot).toBe(true)
+    expect(campaign1Kill.pendingBossLoot).toBe(false)
     expect(campaign1Kill.settlementEntered).toBe(true)
     harness.dismissBossLoot()
     useGameStore.getState().returnToVillage()
@@ -1221,12 +1267,12 @@ describe('game store audio events', () => {
     expectFormalStoreUnchanged()
 
     const candidates = harness.generateTalentCandidates('talent-e2e-test')
-    expect(candidates.runTalent.candidateIds).toContain('run_death_05')
-    expect(candidates.runTalent.guaranteedCandidateIds).toContain('run_death_05')
+    expect(candidates.runTalent.candidateIds).toContain('run_death_01')
+    expect(candidates.runTalent.guaranteedCandidateIds).toContain('run_death_01')
 
     const rerolled = harness.rerollTalentCandidates('talent-e2e-reroll-test')
     expect(rerolled.runTalent.candidateIds).not.toEqual(candidates.runTalent.candidateIds)
-    expect(rerolled.runTalent.guaranteedCandidateIds).toContain('run_death_05')
+    expect(rerolled.runTalent.guaranteedCandidateIds).toContain('run_death_01')
     expect(rerolled.runTalent.rerollsUsed).toBe(1)
 
     const selected = harness.selectRunTalentForE2E()

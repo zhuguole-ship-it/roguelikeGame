@@ -75,7 +75,12 @@ const shouldIgnoreLegacyHellhoundAction = (entityId: string, action: RuntimeAsse
     return false
   }
 
-  return action.frameUrls.some(isLegacyHellhoundAssetUrl) ||
+  const normalizedAction = normalizeCombatAction(action.combatAction || action.slot)
+  const unsupportedFormalSlot = action.slot === 'cast' || action.slot === 'skill_1' ||
+    normalizedAction === 'cast' || normalizedAction === 'skill'
+
+  return unsupportedFormalSlot ||
+    action.frameUrls.some(isLegacyHellhoundAssetUrl) ||
     isLegacyHellhoundAssetUrl(action.guideFrame) ||
     isLegacyHellhoundAssetUrl(action.assetPath)
 }
@@ -109,7 +114,7 @@ const shouldIgnoreLegacyRuntimeAssetAction = (entityId: string, action: RuntimeA
 )
 
 export const setRuntimeAssetActionOverride = (override: RuntimeAssetActionOverride) => {
-  if (shouldIgnoreLegacySkeletonWarriorAction(override.entityId, override)) {
+  if (shouldIgnoreLegacyRuntimeAssetAction(override.entityId, override)) {
     return
   }
 
