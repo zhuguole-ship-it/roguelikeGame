@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "first-dungeon-dual-grid-texture-variants-v1",
+  "campaignId": "campaign-1",
+  "runtimeEligible": true,
+  "presentationOnly": true,
+  "appliesTo": [
+    "infinite",
+    "boss-arena"
+  ],
+  "sampling": {
+    "minFilter": "nearest",
+    "magFilter": "nearest",
+    "mipmaps": false,
+    "smoothing": false
+  },
+  "atlasLayout": {
+    "width": 512,
+    "height": 512,
+    "tileSize": 128,
+    "gridColumns": 4,
+    "gridRows": 4,
+    "variantCount": 16,
+    "indexOrder": "row-major"
+  },
+  "stone": {
+    "publicUrl": "/assets/terrain/campaign-1/dual-grid-texture-variants-v1/stone-variants-4x4-512.png",
+    "sha256": "6e88e39cc269159290198dd217c5b9db0ffa52770d93cfa4b6a4f52f7695c305",
+    "variantSaltId": "first-dungeon-stone-texture-variant-v1",
+    "source": {
+      "projectPath": "public/assets/terrain/campaign-1/stone-moss-v1/stone-brick-repeatable.png",
+      "sha256": "8f4bb3c4a3b86155f758a904edc9fb312529a40c62aa67b1cb53c5a0fc84b710",
+      "width": 1024,
+      "height": 1024,
+      "derivation": "nearest-neighbor-full-source-1024-to-512",
+      "workingPixelToSourcePixelRatio": 2
+    }
+  },
+  "moss": {
+    "publicUrl": "/assets/terrain/campaign-1/dual-grid-texture-variants-v1/moss-variants-4x4-512.png",
+    "sha256": "119a600a5bea535ac2b04d0bf6ffc257c05e474ba6692a18257c9fb15fafa000",
+    "variantSaltId": "first-dungeon-moss-texture-variant-v1",
+    "source": {
+      "projectPath": "public/assets/terrain/campaign-1/stone-moss-v1/moss-repeatable.png",
+      "sha256": "472b8f0d4dae7dd891e263220a3d5c7243edea3ce987c8b992109d2737244cb0",
+      "width": 1024,
+      "height": 1024,
+      "derivation": "nearest-neighbor-full-source-1024-to-512",
+      "workingPixelToSourcePixelRatio": 2
+    }
+  },
+  "semantics": {
+    "role": "texture-variant-pool-only",
+    "dualGridGeometryOwner": "A1",
+    "transitionLookupIncluded": false,
+    "indicesAreTransitionMasks": false,
+    "seamContinuityRequired": false,
+    "randomReorderingSeamsAccepted": true,
+    "continuousTextureV2Relationship": "independent-opt-in-resource"
+  }
+}
