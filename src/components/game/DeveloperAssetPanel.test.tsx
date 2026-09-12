@@ -258,6 +258,7 @@ describe('DeveloperAssetPanel', () => {
     expect(useGameStore.getState().equipmentMaterials.buildRune).toBe(1)
     expect(useGameStore.getState().equipmentInventory[0].rolls).toBeUndefined()
     expect(useGameStore.getState().equipmentInventory[0].lockedModifierIndexes).toEqual([0])
+    expect(useGameStore.getState() as Record<string, unknown>).not.toHaveProperty('unsealedEquipmentSlots')
 
     fireEvent.click(screen.getByTestId('reforge-qa-boss-success'))
     expect(screen.getByTestId('reforge-qa-message').textContent).toContain('qa-boss-old-roll-legacy')

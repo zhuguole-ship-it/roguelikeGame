@@ -94,8 +94,8 @@ describe('ArcherEvolutionGuide', () => {
     expect(screen.queryByTestId('archer-evolution-guide-tooltip-test-evolution-with-art')).toBeNull()
   })
 
-  it('adapts the single A1 source into four build groups and twenty-one core families', () => {
-    const liveCatalog = createArcherEvolutionGuideCatalog(['wind-cut'])
+  it('adapts the single A1 21-core/42-evolution source without restoring retired migration IDs', () => {
+    const liveCatalog = createArcherEvolutionGuideCatalog(['wind-cut', 'cross-cut', 'blood-scent'])
 
     expect(liveCatalog.families).toHaveLength(21)
     expect(liveCatalog.families.every((family) => family.evolutions.length === 2)).toBe(true)
@@ -103,11 +103,101 @@ describe('ArcherEvolutionGuide', () => {
     expect(liveCatalog.families.filter((family) => family.buildTag === 'spread')).toHaveLength(5)
     expect(liveCatalog.families.filter((family) => family.buildTag === 'control')).toHaveLength(5)
     expect(liveCatalog.families.filter((family) => family.buildTag === 'beast')).toHaveLength(6)
-    expect(liveCatalog.discoveredEvolutionIds).toEqual(['wind-cut'])
+    expect(liveCatalog.discoveredEvolutionIds).toEqual(['wind-cut', 'cross-cut', 'blood-scent'])
     const windCut = liveCatalog.families.flatMap((family) => family.evolutions).find((entry) => entry.evolutionId === 'wind-cut')
     expect(windCut).toMatchObject({ name: ARCHER_SKILL_EVOLUTION_MAP['wind-cut'].name })
     expect(windCut?.iconUrl).toContain('/assets/skills/archer/icons/')
     const beastEvolution = liveCatalog.families.flatMap((family) => family.evolutions).find((entry) => entry.evolutionId === 'frost-wolf-king')
     expect(beastEvolution?.iconUrl).toBeUndefined()
+    expect(liveCatalog.families.map((family) => family.familyId)).not.toEqual(expect.arrayContaining(['heavy-snipe', 'dawn-bolt', 'weakness-trace']))
+    const spiralBreak = liveCatalog.families.find((family) => family.familyId === 'spiral-break')
+    expect(spiralBreak).toMatchObject({ buildTag: 'pierce' })
+    expect(spiralBreak?.evolutions.map((evolution) => evolution.evolutionId)).toEqual(['cross-cut', 'blood-scent'])
+    expect(spiralBreak?.evolutions.every((evolution) => evolution.tags.includes('螺旋'))).toBe(true)
+  })
+
+  it('keeps E11 concentrated-fan and double-crescent copy in the read-only guide presentation', () => {
+    const liveCatalog = createArcherEvolutionGuideCatalog(['gale-barrage', 'final-hunt', 'double-crescent'])
+    const quickTriple = liveCatalog.families.find((family) => family.familyId === 'quick-triple')
+    const galeBarrage = quickTriple?.evolutions.find((entry) => entry.evolutionId === 'gale-barrage')
+    const finalHunt = quickTriple?.evolutions.find((entry) => entry.evolutionId === 'final-hunt')
+    const doubleCrescent = liveCatalog.families
+      .flatMap((family) => family.evolutions)
+      .find((entry) => entry.evolutionId === 'double-crescent')
+
+    expect(quickTriple?.trajectoryPreview).toContain('45° 集中扇形')
+    expect(quickTriple?.trajectoryPreview).toContain('血羽·血雨时为 60°')
+    expect(galeBarrage?.visualPreview).toContain('追加箭不会扩大扇角')
+    expect(finalHunt?.visualPreview).toContain('45° 集中扇形')
+    expect(doubleCrescent?.visualPreview).toContain('45% 节点')
+    expect(doubleCrescent?.visualPreview).toContain('48 世界单位')
+
+    render(<ArcherEvolutionGuide catalog={liveCatalog} />)
+    expect(screen.getByTestId('archer-evolution-guide-family-quick-triple').textContent).toContain('真总角 45° 集中扇形')
+    fireEvent.focus(screen.getByTestId('archer-evolution-guide-discovered-double-crescent'))
+    expect(screen.getByTestId('archer-evolution-guide-tooltip-double-crescent').textContent).toContain('固定 60° 双月内收')
+  })
+
+  it('uses the spiral-break flight presentation copy without static orbit or execute-threshold claims', () => {
+    const liveCatalog = createArcherEvolutionGuideCatalog(['cross-cut', 'blood-scent'])
+    const spiralBreak = liveCatalog.families.find((family) => family.familyId === 'spiral-break')
+    const crossCut = spiralBreak?.evolutions.find((entry) => entry.evolutionId === 'cross-cut')
+    const bloodScent = spiralBreak?.evolutions.find((entry) => entry.evolutionId === 'blood-scent')
+
+    expect(spiralBreak?.trajectoryPreview).toContain('持续至时间或命中预算耗尽后开始CD')
+    expect(crossCut?.visualPreview).toContain('交叉切击 2x')
+    expect(crossCut?.visualPreview).toContain('持续至时间或命中预算耗尽后开始CD')
+    expect(crossCut?.level4Description).toContain('交叉切击 2x')
+    expect(crossCut?.level5Description).toContain('交叉切击 2x')
+    expect(bloodScent?.visualPreview).toContain('真实伤害斩杀优先、无斩杀立即正常追击')
+    expect(bloodScent?.level4Description).toContain('真实伤害斩杀优先、无斩杀立即正常追击')
+    expect(bloodScent?.level5Description).toContain('真实伤害判定斩杀优先')
+    expect(bloodScent?.visualPreview).not.toContain('30%')
+    expect(bloodScent?.visualPreview).not.toContain('低血必斩')
+
+    render(<ArcherEvolutionGuide catalog={liveCatalog} />)
+    expect(screen.getByTestId('archer-evolution-guide-family-spiral-break').textContent).toContain('持续至时间或命中预算耗尽后开始CD')
+    fireEvent.focus(screen.getByTestId('archer-evolution-guide-discovered-cross-cut'))
+    expect(screen.getByTestId('archer-evolution-guide-tooltip-cross-cut').textContent).toContain('交叉切击 2x')
+    fireEvent.blur(screen.getByTestId('archer-evolution-guide-discovered-cross-cut'))
+    fireEvent.focus(screen.getByTestId('archer-evolution-guide-discovered-blood-scent'))
+    expect(screen.getByTestId('archer-evolution-guide-tooltip-blood-scent').textContent).toContain('真实伤害斩杀优先、无斩杀立即正常追击')
+  })
+
+  it('keeps legacy arrow-screen and independent arrow-turret branches isolated on the shared codex contract', () => {
+    const liveCatalog = createArcherEvolutionGuideCatalog([
+      'moonshard-volley',
+      'sunflare-sweep',
+      'feather-resonance',
+      'bait-bastion',
+    ])
+    const screenFamily = liveCatalog.families.find((family) => family.familyId === 'arrow-screen')
+    const turretFamily = liveCatalog.families.find((family) => family.familyId === 'arrow-turret')
+    const moonshard = screenFamily?.evolutions.find((entry) => entry.evolutionId === 'moonshard-volley')
+    const sunflare = screenFamily?.evolutions.find((entry) => entry.evolutionId === 'sunflare-sweep')
+    const resonance = turretFamily?.evolutions.find((entry) => entry.evolutionId === 'feather-resonance')
+    const taunt = turretFamily?.evolutions.find((entry) => entry.evolutionId === 'bait-bastion')
+
+    expect(screenFamily).toMatchObject({ name: '箭幕推进', buildTag: 'spread' })
+    expect(moonshard).toMatchObject({ name: '月碎连矢', level5Description: '列数和减速提高' })
+    expect(sunflare).toMatchObject({ name: '炽阳扫射', level5Description: '更多灼热箭与延长灼烧' })
+    expect(turretFamily).toMatchObject({ name: '箭幕哨塔', buildTag: 'spread' })
+    expect(resonance).toMatchObject({
+      name: '百羽共鸣',
+      level4Description: '每组哨塔继承一种其他散射核心箭效。',
+      level5Description: '共鸣效果提高 25%',
+    })
+    expect(taunt).toMatchObject({
+      name: '诱敌战垒',
+      level4Description: '双塔嘲讽普通怪并可进入狂暴。',
+      level5Description: '生命、范围与狂暴窗口强化',
+    })
+
+    render(<ArcherEvolutionGuide catalog={liveCatalog} />)
+    fireEvent.focus(screen.getByTestId('archer-evolution-guide-discovered-moonshard-volley'))
+    expect(screen.getByTestId('archer-evolution-guide-tooltip-moonshard-volley').textContent).toContain('Lv.5：列数和减速提高')
+    fireEvent.blur(screen.getByTestId('archer-evolution-guide-discovered-moonshard-volley'))
+    fireEvent.focus(screen.getByTestId('archer-evolution-guide-discovered-feather-resonance'))
+    expect(screen.getByTestId('archer-evolution-guide-tooltip-feather-resonance').textContent).toContain('Lv.5：共鸣效果提高 25%')
   })
 })

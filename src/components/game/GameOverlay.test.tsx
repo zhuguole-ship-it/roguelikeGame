@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import { ARCHER_FIXED_PASSIVE, SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
 import { CAMPAIGN_MONSTER_THEMES, getCampaignLootProfile } from '../../game/campaignMonsters'
 import { createInitialSnapshot } from '../../game/engine'
+import { createIdleCombatLaunchGate } from '../../game/combatLoading'
 import { developerAssetEntities } from '../../game/assetManifest'
 import {
   C1_SLIME_VARIANT_ACTIONS,
@@ -18,7 +19,6 @@ import { CORROSIVE_SLIME_ACTIONS, getCorrosiveSlimeFrameUrls } from '../../game/
 import { getHellhoundImage2FrameUrls } from '../../game/hellhoundAssetFrames'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
 import { ARCHER_SKILL_EVOLUTION_MAP } from '../../game/archerSkillEvolution'
-import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
 import type { RunSettlementSummary } from '../../game/types'
 import {
   MONSTER_SPRITE_ATLASES,
@@ -47,15 +47,61 @@ import {
 } from './GameOverlay'
 
 const defaultStartGame = useGameStore.getState().startGame
+const defaultPrepareFormalCombatLaunch = useGameStore.getState().prepareFormalCombatLaunch
 
 afterEach(() => {
-  useGameStore.setState({ ...createInitialSnapshot(), metaTalentRanks: {}, startGame: defaultStartGame })
+  useGameStore.setState({
+    ...createInitialSnapshot(),
+    metaTalentRanks: {},
+    combatLaunchGate: createIdleCombatLaunchGate(),
+    startGame: defaultStartGame,
+    prepareFormalCombatLaunch: defaultPrepareFormalCombatLaunch,
+  })
   vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })
 
 describe('GameOverlay', () => {
+  it('prioritizes the formal Boss legal-spawn search status over the generic floor objective and clears it after spawn', () => {
+    const snapshot = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...snapshot,
+      level: 22,
+      levelTargetKills: 99,
+      message: '第 22 层，剩余目标 99，技能跟随准星方向',
+      battlefield: {
+        ...snapshot.battlefield,
+        mode: 'boss-arena',
+        bossSpawnState: 'searching',
+        bossSpawnSearchStep: 1,
+      },
+    })
+
+    render(<GameOverlay />)
+
+    const searchStatus = screen.getByTestId('boss-spawn-search-status')
+    expect(searchStatus.textContent).toBe('Boss 正在寻找合法入场位置')
+    expect(searchStatus.getAttribute('role')).toBe('status')
+    expect(searchStatus.getAttribute('aria-live')).toBe('polite')
+    expect(screen.queryByText('22层 / 目标99')).toBeNull()
+
+    act(() => {
+      const current = useGameStore.getState()
+      useGameStore.setState({
+        battlefield: {
+          ...current.battlefield,
+          bossSpawnState: 'spawned',
+          bossSpawnSearchStep: undefined,
+        },
+      })
+    })
+
+    expect(screen.queryByTestId('boss-spawn-search-status')).toBeNull()
+    expect(screen.getByTestId('combat-floor-objective').textContent).toBe('22层 / 目标99')
+  })
+
   it('renders a non-formal test failure screen instead of the formal settlement overlay', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.localBattleTest = {
@@ -207,7 +253,7 @@ describe('GameOverlay', () => {
     expect(screen.getByTestId('inventory-modal-header').className).toContain('bg-[#101913]')
     expect(within(screen.getByTestId('inventory-modal-header')).getByText('仓库')).toBeTruthy()
     expect(within(screen.getByTestId('inventory-modal-header')).getByRole('button', { name: '关闭' })).toBeTruthy()
-    expect(screen.getByTestId('inventory-modal-scroll').className).toContain('overflow-y-auto')
+    expect(screen.getByTestId('inventory-modal-scroll').className).toContain('overflow-hidden')
     expect(screen.getByTestId('inventory-modal-scroll').className).toContain('flex-1')
     fireEvent.click(within(screen.getByTestId('inventory-modal-header')).getByRole('button', { name: '关闭' }))
     expect(screen.queryByTestId('inventory-modal-shell')).toBeNull()
@@ -245,10 +291,14 @@ describe('GameOverlay', () => {
     const evolutionGuide = screen.getByTestId('archer-evolution-guide')
     expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-build-"]')).toHaveLength(4)
     expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-family-"]')).toHaveLength(21)
-    expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-core-image-"]')).toHaveLength(21)
+    expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-core-image-"]')).toHaveLength(20)
     expect(screen.getByTestId('archer-evolution-guide-core-image-pierce-arrow').getAttribute('src')).toBe(getArcherSkillIconAssetUrl('pierce-arrow'))
+    expect(screen.getByTestId('archer-evolution-guide-core-placeholder-arrow-turret').textContent).toContain('箭幕哨塔')
     expect(screen.getByTestId('archer-evolution-guide-discovered-wind-cut')).toBeTruthy()
     expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-undiscovered-"]')).toHaveLength(41)
+    expect(evolutionGuide.querySelector('[data-testid="archer-evolution-guide-family-heavy-snipe"]')).toBeNull()
+    expect(evolutionGuide.querySelector('[data-testid="archer-evolution-guide-discovered-dawn-bolt"]')).toBeNull()
+    expect(evolutionGuide.querySelector('[data-testid="archer-evolution-guide-discovered-weakness-trace"]')).toBeNull()
 
     const windCut = ARCHER_SKILL_EVOLUTION_MAP['wind-cut']
     const discoveredEvolution = screen.getByTestId('archer-evolution-guide-discovered-wind-cut')
@@ -312,6 +362,8 @@ describe('GameOverlay', () => {
     expect(screen.getByRole('tab', { name: '功能天赋' }).className).toContain('text-sm')
     expect(screen.getByRole('tab', { name: '战斗天赋' }).getAttribute('aria-selected')).toBe('false')
     expect(screen.getByRole('tab', { name: '战斗天赋' }).className).toContain('text-sm')
+    expect(screen.getByRole('tab', { name: '装备图鉴' }).getAttribute('aria-selected')).toBe('false')
+    expect(screen.getByRole('tab', { name: '装备图鉴' }).className).toContain('text-sm')
     expect(screen.getByRole('tab', { name: '历史冒险' }).getAttribute('aria-selected')).toBe('false')
     expect(screen.getByRole('tab', { name: '历史冒险' }).className).toContain('text-sm')
     expect(screen.getByTestId('hunter-home-talent-balance-label').className).toContain('text-xs')
@@ -358,8 +410,8 @@ describe('GameOverlay', () => {
     expect(screen.getByTestId('hunter-home-talent-balance-label').parentElement).toBe(screen.getByTestId('hunter-home-talent-balance').parentElement)
     expect(screen.getByTestId('hunter-home-meta-unlocked-label').parentElement).toBe(screen.getByTestId('hunter-home-meta-unlocked-count').parentElement)
     expect(screen.getByTestId('meta-talent-group-common-base').textContent).toContain('契约记忆')
-    expect(screen.getByTestId('meta-talent-node-meta_common_01').getAttribute('data-state')).toBe('unlockable')
-    expect(screen.getByTestId('meta-talent-meta_common_01').textContent).toContain('0/1')
+    expect(screen.getByTestId('meta-talent-node-meta_common_01').getAttribute('data-state')).toBe('locked')
+    expect(screen.getByTestId('meta-talent-meta_common_01').textContent).toContain('0/3')
     expect(screen.getByTestId('meta-talent-node-progress-meta_common_01').parentElement).toBe(screen.getByTestId('meta-talent-meta_common_01'))
     expect(screen.getByTestId('meta-talent-node-progress-meta_common_01').parentElement).not.toBe(screen.getByTestId('meta-talent-node-meta_common_01'))
     expect(screen.getByTestId('meta-talent-node-icon-meta_common_01').className).toContain('h-full')
@@ -373,12 +425,12 @@ describe('GameOverlay', () => {
     expect(screen.getByTestId('meta-talent-tooltip-meta_common_01').className).toContain('block')
     expect(screen.getByTestId('meta-talent-tooltip-name-meta_common_01').textContent).toContain('契约记忆')
     expect(screen.getByTestId('meta-talent-tooltip-id-meta_common_01').textContent).toContain('meta_common_01')
-    expect(screen.getByTestId('meta-talent-tooltip-level-meta_common_01').textContent).toContain('0/1')
-    expect(screen.getByTestId('meta-talent-tooltip-cost-meta_common_01').textContent).toContain('消耗：0 天赋点')
+    expect(screen.getByTestId('meta-talent-tooltip-level-meta_common_01').textContent).toContain('0/3')
+    expect(screen.getByTestId('meta-talent-tooltip-cost-meta_common_01').textContent).toContain('消耗：1 天赋点')
     expect(screen.getByTestId('meta-talent-tooltip-current-effect-meta_common_01').textContent).toContain('未解锁')
-    expect(screen.getByTestId('meta-talent-tooltip-next-effect-meta_common_01').textContent).toContain('解锁局外天赋系统和天赋点记录。')
+    expect(screen.getByTestId('meta-talent-tooltip-next-effect-meta_common_01').textContent).toContain('相关候选权重提高 8%')
     expect(screen.getByTestId('meta-talent-tooltip-prerequisites-meta_common_01').textContent).toContain('前置条件：无')
-    expect(screen.getByTestId('meta-talent-tooltip-status-meta_common_01').textContent).toContain('可解锁')
+    expect(screen.getByTestId('meta-talent-tooltip-status-meta_common_01').textContent).toContain('需要 1 天赋点')
     expect(screen.getByTestId('meta-talent-tooltip-icon-meta_common_01').className).toContain('overflow-hidden')
     expect(screen.getByTestId('meta-talent-tooltip-icon-meta_common_01').className).toContain('p-0')
     expect(screen.getByTestId('meta-talent-tooltip-icon-image-meta_common_01').className).toContain('h-full')
@@ -409,70 +461,24 @@ describe('GameOverlay', () => {
     expect(hunterEvolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-family-"]')).toHaveLength(21)
     expect(within(hunterEvolutionGuide).getByTestId('archer-evolution-guide-discovered-wind-cut')).toBeTruthy()
     expect(hunterEvolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-undiscovered-"]')).toHaveLength(41)
-    expect(screen.getByTestId('run-talent-guide').textContent).toContain('契约定向')
-    const runTalentReadonlyNote = screen.getByText('战斗天赋只在冒险奖励中选择；这里仅作只读预览，不消耗天赋点，也不提供重置或解锁操作。')
-    expect(screen.getAllByText('战斗天赋只在冒险奖励中选择；这里仅作只读预览，不消耗天赋点，也不提供重置或解锁操作。')).toHaveLength(1)
-    expect(screen.getByTestId('run-talent-guide').contains(runTalentReadonlyNote)).toBe(true)
-    const commonRunTalentModule = screen.getByTestId('run-talent-guide-module-common')
-    expect(runTalentReadonlyNote.compareDocumentPosition(commonRunTalentModule) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(commonRunTalentModule.textContent).toContain('通用')
-    expect(screen.getByTestId('run-talent-guide-row-title-common').textContent).toBe('通用')
-    expect(screen.queryByTestId('run-talent-guide-row-progress-common')).toBeNull()
-    expect(screen.getByTestId('run-talent-guide-row-common').textContent).not.toMatch(/\d+\/8/)
-    expect(commonRunTalentModule.textContent).toContain('契约定向')
-    expect(commonRunTalentModule.className).toContain('bg-transparent')
-    expect(commonRunTalentModule.className).not.toContain('grid-cols-2')
-    for (const module of ['common', 'death', 'blood', 'beast', 'crystal']) {
-      expect(screen.queryByTestId(`run-talent-guide-row-progress-${module}`)).toBeNull()
-      expect(screen.getByTestId(`run-talent-guide-row-${module}`).textContent).not.toMatch(/\d+\/8/)
-    }
-    expect(screen.getByTestId('run-talent-guide-shelf-common')).toBeTruthy()
-    expect(screen.getByTestId('run-talent-guide').querySelectorAll('[data-testid^="run-talent-guide-node-"][data-form-group]')).toHaveLength(32)
-    expect(screen.getByTestId('run-talent-guide-module-death').textContent).toContain('死契标记')
-    expect(screen.getByTestId('run-talent-guide-module-blood').textContent).toContain('血羽印记')
-    expect(screen.getByTestId('run-talent-guide-module-beast').textContent).toContain('主兽绑定')
-    expect(screen.getByTestId('run-talent-guide-module-crystal').textContent).toContain('蓝晶充能')
-    expect(screen.getByTestId('run-talent-guide-node-run_crystal_05').textContent).toContain('Lv5')
-    const deathFormNode = screen.getByTestId('run-talent-guide-node-run_death_09')
-    expect(deathFormNode.getAttribute('data-form-group')).toBe('1')
-    expect(screen.getByTestId('run-talent-guide-placeholder-run_death_09').textContent).toContain('形态')
-    expect(screen.queryByTestId('run-talent-guide-image-run_death_09')).toBeNull()
-    expect(screen.getByTestId('run-talent-guide-icon-run_common_01')).toBeTruthy()
-    expect(screen.getByTestId('run-talent-guide-image-run_common_01').getAttribute('src')).toBe(
-      getRunTalentIconAssetUrl({ module: 'common', name: '契约定向' }),
-    )
-    expect(screen.getByTestId('run-talent-guide-image-run_blood_02').getAttribute('src')).toBe(
-      getRunTalentIconAssetUrl({ module: 'blood', name: '流血箭簇' }),
-    )
-    expect(screen.getByTestId('run-talent-guide-image-run_blood_02').getAttribute('src')).toContain(encodeURIComponent('流血箭簇.png'))
-    expect(screen.getByTestId('run-talent-guide-image-run_blood_02').getAttribute('src')).not.toContain(encodeURIComponent('流血箭族.png'))
-    expect(screen.queryByText('run_common_01')).toBeNull()
-    const commonRunTalentTooltip = screen.getByTestId('run-talent-guide-tooltip-run_common_01')
-    fireEvent.focus(screen.getByTestId('run-talent-guide-icon-run_common_01'))
-    expect(commonRunTalentTooltip.className).toContain('fixed')
-    expect(commonRunTalentTooltip.className).toContain('block')
-    expect(screen.getByTestId('run-talent-guide-tooltip-image-run_common_01').getAttribute('src')).toBe(
-      getRunTalentIconAssetUrl({ module: 'common', name: '契约定向' }),
-    )
-    expect(commonRunTalentTooltip.textContent).toContain('契约定向')
-    expect(commonRunTalentTooltip.textContent).toContain('本局后续奖励更容易出现当前流派相关技能 / 装备。')
-    expect(screen.getByTestId('run-talent-guide-tooltip-status-run_common_01').textContent).toContain('满足前置（当前可用）')
-    expect(commonRunTalentTooltip.textContent).toContain('run_common_01')
-    expect(commonRunTalentTooltip.textContent).not.toContain('天赋点')
-    expect(commonRunTalentTooltip.textContent).not.toContain('前置条件')
-    expect(commonRunTalentTooltip.textContent).not.toContain('重置天赋')
-    expect(commonRunTalentTooltip.textContent).not.toContain('消耗：')
-    fireEvent.focus(screen.getByTestId('run-talent-guide-icon-run_death_09'))
-    const deathFormTooltip = screen.getByTestId('run-talent-guide-tooltip-run_death_09')
-    expect(screen.getByTestId('run-talent-guide-tooltip-placeholder-run_death_09').textContent).toContain('G1')
-    expect(deathFormTooltip.textContent).toContain('形态组：G1 / 局内 Lv.5')
-    expect(deathFormTooltip.textContent).toContain('锚定核心技能：等待最近完成的合法 Lv.4 进化')
-    expect(deathFormTooltip.textContent).toContain('关键数值：宽度 +40%')
-    expect(screen.getByTestId('run-talent-guide-tooltip-sibling-run_death_09').textContent).toContain('冥火爆矢')
+    expect(hunterEvolutionGuide.querySelector('[data-testid="archer-evolution-guide-family-heavy-snipe"]')).toBeNull()
+    expect(within(hunterEvolutionGuide).getByTestId('archer-evolution-guide-family-spiral-break').textContent).toContain('螺旋破空')
+    expect(within(hunterEvolutionGuide).getByTestId('archer-evolution-guide-family-spiral-break').textContent).toContain('持续至时间或命中预算耗尽后开始CD')
+    const combatTalentCatalog = screen.getByTestId('hunter-home-combat-talent-v3-catalog')
+    expect(combatTalentCatalog.textContent).toContain('V3 战斗天赋图鉴')
+    expect(screen.getByTestId('combat-talent-v3-finite-grid').children).toHaveLength(102)
+    expect(screen.getByTestId('combat-talent-v3-infinite-grid').children.length).toBeGreaterThan(0)
+    expect(screen.queryByTestId('run-talent-guide')).toBeNull()
     expect(screen.queryByTestId('hunter-home-meta-reset')).toBeNull()
     expect(screen.queryByTestId('hunter-home-run-talent-generate')).toBeNull()
     expect(screen.queryByTestId('hunter-home-run-talent-reroll')).toBeNull()
     expect(screen.queryByRole('button', { name: '选择' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('tab', { name: '装备图鉴' }))
+    expect(screen.getByRole('tab', { name: '装备图鉴' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.queryByTestId('hunter-home-run-talent-tree')).toBeNull()
+    expect(screen.getByTestId('equipment-codex-count').textContent).toContain('466 项目录：456 项普通模板与 10 把 Boss 传承武器。')
+    expect(screen.getByTestId('equipment-codex-grid').querySelectorAll('[data-template-id]')).toHaveLength(466)
 
     fireEvent.click(screen.getByRole('tab', { name: '历史冒险' }))
     expect(screen.getByRole('tab', { name: '功能天赋' }).getAttribute('aria-selected')).toBe('false')
@@ -484,28 +490,16 @@ describe('GameOverlay', () => {
     expect(screen.getByText('暂无记录。完成一次冒险后会显示层数与所用技能。')).toBeTruthy()
   })
 
-  it('uses the live run-talent presentation contract for the strict 72-node hunter-home catalogue', () => {
+  it('uses the live V3 combat-talent presentation for the 102-node finite catalogue and current infinite catalogue', () => {
     const snapshot = createInitialSnapshot('idle')
-    snapshot.contractLevel = 17
     snapshot.activeSkills = [
       { skillId: 'pierce-arrow', familyId: 'pierce-arrow', evolutionId: 'wind-cut', level: 4, cooldownRemaining: 0 },
-      { skillId: 'ring-volley', familyId: 'ring-volley', evolutionId: 'gale-barrage', level: 4, cooldownRemaining: 0 },
     ]
-    snapshot.runTalentState = {
-      ...snapshot.runTalentState,
-      selectedTalentIds: ['run_common_01', 'run_death_09', 'run_death_15'],
-      lastOfferedCandidateIds: ['run_common_03'],
-      formAnchors: {
-        run_death_09: { familyId: 'pierce-arrow', evolutionId: 'wind-cut', anchoredAt: 3 },
-        run_death_15: { familyId: 'pierce-arrow', evolutionId: 'wind-cut', anchoredAt: 3 },
-      },
-      formCycle: {
-        casts: [
-          { familyId: 'pierce-arrow', evolutionId: 'wind-cut', at: 9 },
-          { familyId: 'ring-volley', evolutionId: 'gale-barrage', at: 10 },
-        ],
-      },
-      formCooldowns: { run_death_15: 12 },
+    snapshot.runTalentState.combatTalentV3 = {
+      ...snapshot.runTalentState.combatTalentV3!,
+      main: { archetype: 'pierce', routeId: 'pierce-armor' },
+      finiteRanks: { BT001: 2 },
+      infiniteRanks: { 'INF-COMMON-DAMAGE': 3 },
     }
     useGameStore.setState(snapshot)
 
@@ -513,23 +507,13 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
     fireEvent.click(screen.getByRole('tab', { name: '战斗天赋' }))
 
-    const guide = screen.getByTestId('run-talent-guide')
-    expect(guide.querySelectorAll('[data-testid^="run-talent-guide-node-"][data-icon-id]')).toHaveLength(72)
-    expect(screen.queryByTestId('run-talent-guide-node-run_beast_legendary_hunt')).toBeNull()
-    expect(screen.queryByText('百兽协猎')).toBeNull()
-    expect(screen.getByTestId('run-talent-guide-node-run_common_01').getAttribute('data-status')).toBe('selected')
-    expect(screen.getByTestId('run-talent-guide-node-run_common_03').getAttribute('data-status')).toBe('candidate')
-    expect(screen.getByTestId('run-talent-guide-node-run_death_09').getAttribute('data-status')).toBe('selected')
-
-    fireEvent.focus(screen.getByTestId('run-talent-guide-icon-run_common_03'))
-    expect(screen.getByTestId('run-talent-guide-tooltip-status-run_common_03').textContent).toContain('当前候选')
-    expect(screen.getByTestId('run-talent-guide-tooltip-prerequisites-run_common_03').textContent).toContain('无')
-
-    fireEvent.focus(screen.getByTestId('run-talent-guide-icon-run_death_15'))
-    const selectedFormTooltip = screen.getByTestId('run-talent-guide-tooltip-run_death_15')
-    expect(selectedFormTooltip.textContent).toContain('锚定核心技能：穿刺箭 / 已选进化：风切箭')
-    expect(selectedFormTooltip.textContent).toContain('形态区域强化：2/3')
-    expect(selectedFormTooltip.textContent).toContain('区域冷却：12 秒')
+    const catalog = screen.getByTestId('hunter-home-combat-talent-v3-catalog')
+    expect(screen.getByTestId('combat-talent-v3-finite-grid').children).toHaveLength(102)
+    expect(screen.getByTestId('combat-talent-v3-catalog-BT001').textContent).toContain('2/')
+    expect(catalog.textContent).toContain('贯穿破甲')
+    expect(screen.getByTestId('combat-talent-v3-infinite-grid').children.length).toBeGreaterThan(0)
+    expect(catalog.textContent).toContain('无限成长')
+    expect(screen.queryByTestId('run-talent-guide')).toBeNull()
   })
 
   it('uses project-local archer assets for the character selection and returns through selection without starting a run', () => {
@@ -936,12 +920,200 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
 
     expect(screen.getByTestId('hunter-home-meta-unlocked-count').textContent).toBe('1/84')
-    expect(screen.getByTestId('meta-talent-node-meta_common_01').getAttribute('data-state')).toBe('full')
-    expect(screen.getByTestId('meta-talent-meta_common_01').textContent).toContain('1/1')
+    expect(screen.getByTestId('meta-talent-node-meta_common_01').getAttribute('data-state')).toBe('unlocked')
+    expect(screen.getByTestId('meta-talent-meta_common_01').textContent).toContain('1/3')
     expect(screen.getByTestId('meta-talent-node-meta_campaign_01').getAttribute('data-state')).toBe('unlockable')
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_campaign_01'))
     expect(screen.getByTestId('meta-talent-tooltip-status-meta_campaign_01').textContent).toContain('可解锁')
     expect(screen.getByTestId('meta-talent-tooltip-status-meta_campaign_01').textContent).not.toContain('契约记忆')
+  })
+
+  it('renders hunter-home candidate weight feedback only from the active E7 presentation scope', () => {
+    const base = createInitialSnapshot('idle')
+    useGameStore.setState({
+      ...base,
+      level: 1,
+      selectedCampaign: 1,
+      selectedCampaignDifficulty: 'normal',
+      selectedDifficulty: 'normal',
+      unlockedMetaTalentIds: ['meta_common_01', 'meta_campaign_01', 'meta_campaign_02'],
+      metaTalentRanks: {
+        meta_common_01: 1,
+        meta_campaign_01: 1,
+        meta_campaign_02: 1,
+      },
+    })
+
+    const { unmount } = render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_campaign_01'))
+    const campaignOneWeight = screen.getByTestId('meta-talent-candidate-weight-meta_campaign_01-meta_campaign_01:death-pierce-normal')
+    expect(campaignOneWeight.textContent).toContain('常规装备候选 · 第 1 关 · 普通 · +10%')
+
+    fireEvent.blur(screen.getByTestId('meta-talent-node-meta_campaign_01'))
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_campaign_02'))
+    expect(screen.queryByTestId('meta-talent-candidate-weight-meta_campaign_02-meta_campaign_02:blood-bleed-normal')).toBeNull()
+    unmount()
+
+    const lockedCampaignBase = createInitialSnapshot('idle')
+    useGameStore.setState({
+      ...lockedCampaignBase,
+      level: 23,
+      selectedCampaign: 2,
+      selectedCampaignDifficulty: 'normal',
+      selectedDifficulty: 'normal',
+      unlockedMetaTalentIds: ['meta_common_01'],
+      metaTalentRanks: { meta_common_01: 1 },
+    })
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_campaign_02'))
+    expect(screen.queryByTestId('meta-talent-candidate-weight-meta_campaign_02-meta_campaign_02:blood-bleed-normal')).toBeNull()
+  })
+
+  it('keeps boss-only E7 rules scoped and does not promise D16 protection without its Boss contract', () => {
+    const hardBossBase = createInitialSnapshot('idle')
+    useGameStore.setState({
+      ...hardBossBase,
+      level: 22,
+      selectedCampaign: 1,
+      selectedCampaignDifficulty: 'hard',
+      selectedDifficulty: 'hard',
+      unlockedMetaTalentIds: ['meta_common_01', 'meta_difficulty_08'],
+      metaTalentRanks: { meta_common_01: 1, meta_difficulty_08: 1 },
+    })
+
+    const { unmount } = render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_difficulty_08'))
+    expect(screen.getByTestId('meta-talent-candidate-weight-meta_difficulty_08-meta_difficulty_08:hard-boss-boss').textContent).toContain('Boss 装备候选 · 第 1 关 · 困难 · +8%')
+    expect(screen.queryByTestId('meta-talent-candidate-weight-meta_difficulty_08-meta_difficulty_08:hard-boss-normal')).toBeNull()
+    expect(screen.queryByTestId('meta-talent-candidate-weight-meta_difficulty_08-meta_difficulty_08:hard-boss-elite')).toBeNull()
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_endgame_02'))
+    expect(screen.queryByTestId('boss-extra-equipment-protection-meta_endgame_02')).toBeNull()
+    unmount()
+
+    const nightmareBossBase = createInitialSnapshot('idle')
+    useGameStore.setState({
+      ...nightmareBossBase,
+      level: 22,
+      selectedCampaign: 1,
+      selectedCampaignDifficulty: 'nightmare',
+      selectedDifficulty: 'nightmare',
+      unlockedMetaTalentIds: ['meta_common_01', 'meta_difficulty_14', 'meta_difficulty_16'],
+      metaTalentRanks: { meta_common_01: 1, meta_difficulty_14: 1, meta_difficulty_16: 1 },
+    })
+
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_difficulty_16'))
+    expect(screen.queryByTestId('boss-extra-equipment-protection-meta_difficulty_16')).toBeNull()
+    expect(screen.queryByText('待产品规则（当前不生效）')).toBeNull()
+  })
+
+  it('presents only the Boss extra-equipment protection contract for owned endgame protection and D16', () => {
+    const normalBossBase = createInitialSnapshot('idle')
+    normalBossBase.level = 22
+    normalBossBase.selectedCampaignDifficulty = 'normal'
+    normalBossBase.selectedDifficulty = 'normal'
+    normalBossBase.bossExtraEquipmentProtectionLayers[1].normal = 5
+    useGameStore.setState({
+      ...normalBossBase,
+      unlockedMetaTalentIds: ['meta_endgame_02'],
+      metaTalentRanks: { meta_endgame_02: 1 },
+    })
+
+    const { unmount } = render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_endgame_02'))
+    const normalProtection = screen.getByTestId('boss-extra-equipment-protection-meta_endgame_02')
+    expect(normalProtection.textContent).toContain('Boss额外装备掉落保护')
+    expect(normalProtection.textContent).toContain('第 1 关 · 普通')
+    expect(normalProtection.textContent).toContain('当前层数：5 / 5')
+    expect(normalProtection.textContent).toContain('保护已就绪')
+    expect(normalProtection.textContent).toContain('不涉及 Boss 传承保底')
+    expect(normalProtection.getAttribute('aria-live')).toBe('polite')
+    unmount()
+
+    const nightmareBossBase = createInitialSnapshot('idle')
+    nightmareBossBase.level = 22
+    nightmareBossBase.selectedCampaignDifficulty = 'nightmare'
+    nightmareBossBase.selectedDifficulty = 'nightmare'
+    nightmareBossBase.bossExtraEquipmentProtectionLayers[1].nightmare = 4
+    useGameStore.setState({
+      ...nightmareBossBase,
+      unlockedMetaTalentIds: ['meta_endgame_02', 'meta_difficulty_16'],
+      metaTalentRanks: { meta_endgame_02: 1, meta_difficulty_16: 1 },
+    })
+
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_difficulty_16'))
+    const nightmareProtection = screen.getByTestId('boss-extra-equipment-protection-meta_difficulty_16')
+    expect(nightmareProtection.textContent).toContain('第 1 关 · 折磨')
+    expect(nightmareProtection.textContent).toContain('当前层数：4 / 6')
+    expect(screen.getByTestId('boss-extra-equipment-protection-d16-status').textContent).toContain('每次符合条件的空结果 +2 层')
+    expect(nightmareProtection.textContent).not.toContain('待产品规则')
+  })
+
+  it('keeps owned D16 at its base protection status outside nightmare without promising the +2 rule', () => {
+    const base = createInitialSnapshot('idle')
+    base.level = 22
+    base.selectedCampaignDifficulty = 'hell'
+    base.selectedDifficulty = 'hell'
+    base.bossExtraEquipmentProtectionLayers[1].hell = 3
+    useGameStore.setState({
+      ...base,
+      unlockedMetaTalentIds: ['meta_endgame_02', 'meta_difficulty_16'],
+      metaTalentRanks: { meta_endgame_02: 1, meta_difficulty_16: 1 },
+    })
+
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_difficulty_16'))
+    const status = screen.getByTestId('boss-extra-equipment-protection-d16-status')
+    expect(status.textContent).toContain('仅在折磨 Boss额外装备掉落时生效')
+    expect(status.textContent).not.toContain('空结果 +2 层')
+    expect(screen.getByTestId('boss-extra-equipment-protection-meta_difficulty_16').textContent).toContain('当前层数：3 / 5')
+  })
+
+
+  it('does not promise campaign archive progress before meta_endgame_06 is owned, even for retroactive clears', () => {
+    const base = createInitialSnapshot('idle')
+    useGameStore.setState({
+      ...base,
+      level: 22,
+      completedCampaignDifficulties: { ...base.completedCampaignDifficulties, 1: ['normal', 'hard', 'hell', 'nightmare'] },
+    })
+
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_endgame_06'))
+    expect(screen.queryByTestId('endgame-archive-candidate-weight')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
+    expect(screen.queryByTestId('inventory-archive-candidate-context')).toBeNull()
+  })
+
+  it('keeps the archive presentation isolated to the current campaign selector output', () => {
+    const base = createInitialSnapshot('idle')
+    useGameStore.setState({
+      ...base,
+      level: 23,
+      selectedCampaign: 2,
+      unlockedMetaTalentIds: ['meta_endgame_06'],
+      metaTalentRanks: { meta_endgame_06: 1 },
+      completedCampaignDifficulties: { ...base.completedCampaignDifficulties, 1: ['normal', 'hard', 'hell', 'nightmare'] },
+    })
+
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_endgame_06'))
+    const archive = screen.getByTestId('endgame-archive-candidate-weight')
+    expect(archive.textContent).toContain('第 2 关 · 层数 0 / 4 · 当前 +0%')
+    expect(archive.textContent).toContain('下一项所需首次通关：普通')
+    expect(archive.textContent).toContain('当前关卡合法装备候选池尚未获得档案权重')
   })
 
   it('shows only confirmed talent point balance and settlement records in hunter home', () => {
@@ -1001,6 +1173,41 @@ describe('GameOverlay', () => {
     expect(screen.getByTestId('meta-talent-node-meta_death_base_01')).toBeTruthy()
   })
 
+  it('renders missing functional talent art as readable group and BRANCH/DEEP/KEY emblems', () => {
+    render(<GameOverlay />)
+
+    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+
+    const programmaticNodeIcons = document.querySelectorAll(
+      '[data-icon-kind="programmatic"][data-testid^="meta-talent-node-icon-"]',
+    )
+    expect(programmaticNodeIcons).toHaveLength(67)
+
+    const deathBranch = screen.getByTestId('meta-talent-node-icon-meta_death_base_01')
+    expect(deathBranch.getAttribute('data-emblem-group')).toBe('death')
+    expect(deathBranch.getAttribute('data-emblem-tier')).toBe('BRANCH')
+    expect(deathBranch.textContent).toContain('死契')
+    expect(deathBranch.textContent).toContain('BRANCH')
+
+    const bloodDeep = screen.getByTestId('meta-talent-node-icon-meta_blood_advanced_01')
+    expect(bloodDeep.getAttribute('data-emblem-group')).toBe('blood')
+    expect(bloodDeep.getAttribute('data-emblem-tier')).toBe('DEEP')
+    expect(bloodDeep.textContent).toContain('血羽')
+
+    const endgameKey = screen.getByTestId('meta-talent-node-icon-meta_endgame_01')
+    expect(endgameKey.getAttribute('data-emblem-group')).toBe('endgame')
+    expect(endgameKey.getAttribute('data-emblem-tier')).toBe('KEY')
+    expect(endgameKey.textContent).toContain('终局')
+
+    fireEvent.focus(screen.getByTestId('meta-talent-node-meta_death_base_01'))
+    const tooltipEmblem = screen.getByTestId('meta-talent-tooltip-icon-emblem-meta_death_base_01')
+    expect(tooltipEmblem.getAttribute('data-emblem-group')).toBe('death')
+    expect(tooltipEmblem.getAttribute('data-emblem-tier')).toBe('BRANCH')
+    expect(tooltipEmblem.textContent).toContain('死契')
+
+    expect(screen.getByTestId('meta-talent-node-icon-meta_common_01').tagName).toBe('IMG')
+  })
+
   it('unlocks confirmed meta talents without exposing in-run talent selection in hunter home', () => {
     const base = createInitialSnapshot('idle')
     useGameStore.setState({
@@ -1015,15 +1222,15 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByTestId('meta-talent-node-meta_common_01'))
     fireEvent.click(screen.getByTestId('meta-talent-node-meta_common_02'))
 
-    expect(screen.getByTestId('hunter-home-talent-balance').textContent).toBe('0')
+    expect(screen.getByTestId('hunter-home-talent-balance').textContent).toBe('1')
     expect(screen.getByTestId('hunter-home-meta-unlocked-count').textContent).toBe('2/84')
     expect(useGameStore.getState().unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
     expect(useGameStore.getState().talentUnlockRecords).toHaveLength(2)
-    expect(screen.getByTestId('meta-talent-node-meta_common_01').getAttribute('data-state')).toBe('full')
-    expect(screen.getByTestId('meta-talent-meta_common_01').textContent).toContain('1/1')
+    expect(screen.getByTestId('meta-talent-node-meta_common_01').getAttribute('data-state')).toBe('unlocked')
+    expect(screen.getByTestId('meta-talent-meta_common_01').textContent).toContain('1/3')
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_common_02'))
     expect(screen.getByTestId('meta-talent-node-meta_common_02').getAttribute('data-state')).toBe('unlocked')
-    expect(screen.getByTestId('meta-talent-meta_common_02').textContent).toContain('1/3')
+    expect(screen.getByTestId('meta-talent-meta_common_02').textContent).toContain('1/2')
     expect(screen.getByTestId('meta-talent-tooltip-next-effect-meta_common_02').textContent).toContain('每局技能奖励可额外重掷 2 次。')
     expect(screen.getByTestId('meta-talent-tooltip-current-effect-meta_common_02').textContent).toContain('每局技能奖励可额外重掷 1 次。')
     expect(screen.getByTestId('meta-talent-tooltip-meta_common_02').textContent).not.toContain('reroll-bonus')
@@ -1051,19 +1258,19 @@ describe('GameOverlay', () => {
 
     const rerollNode = screen.getByTestId('meta-talent-node-meta_common_02')
     expect(rerollNode.getAttribute('data-rank')).toBe('0')
-    expect(rerollNode.getAttribute('data-max-rank')).toBe('3')
-    expect(screen.getByTestId('meta-talent-meta_common_02').textContent).toContain('0/3')
+    expect(rerollNode.getAttribute('data-max-rank')).toBe('2')
+    expect(screen.getByTestId('meta-talent-meta_common_02').textContent).toContain('0/2')
     fireEvent.click(rerollNode)
     fireEvent.click(rerollNode)
     fireEvent.click(rerollNode)
 
-    expect(useGameStore.getState().metaTalentRanks).toEqual({ meta_common_01: 1, meta_common_02: 3 })
+    expect(useGameStore.getState().metaTalentRanks).toEqual({ meta_common_01: 1, meta_common_02: 2 })
     expect(useGameStore.getState().unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
     expect(screen.getByTestId('hunter-home-meta-unlocked-count').textContent).toBe('2/84')
     expect(rerollNode.getAttribute('data-state')).toBe('full')
-    expect(screen.getByTestId('meta-talent-meta_common_02').textContent).toContain('3/3')
+    expect(screen.getByTestId('meta-talent-meta_common_02').textContent).toContain('2/2')
     fireEvent.focus(rerollNode)
-    expect(screen.getByTestId('meta-talent-tooltip-current-effect-meta_common_02').textContent).toContain('每局技能奖励可额外重掷 3 次。')
+    expect(screen.getByTestId('meta-talent-tooltip-current-effect-meta_common_02').textContent).toContain('每局技能奖励可额外重掷 2 次')
     expect(screen.getByTestId('meta-talent-tooltip-next-effect-meta_common_02').textContent).toContain('无')
   })
 
@@ -1088,9 +1295,9 @@ describe('GameOverlay', () => {
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_common_04'))
     const weightTooltip = screen.getByTestId('meta-talent-tooltip-meta_common_04').textContent ?? ''
 
-    expect(systemTooltip).toContain('解锁局外天赋系统和天赋点记录。')
-    expect(rerollTooltip).toContain('每局技能奖励可额外重掷 1 次。')
-    expect(weightTooltip).toContain('开局流派对应候选权重提高 15%。')
+    expect(systemTooltip).toContain('当前已持有技能的 Lv2、Lv3、进化与 Lv5 候选权重 +8%/+16%/+24%。')
+    expect(rerollTooltip).toContain('开局三轮技能选择每轮独立获得 1/2 次重掷。')
+    expect(weightTooltip).toContain('战斗前选定的目标技能流派')
     expect(`${systemTooltip}${rerollTooltip}${weightTooltip}`).not.toContain('unlock-system')
     expect(`${systemTooltip}${rerollTooltip}${weightTooltip}`).not.toContain('reroll-bonus')
     expect(`${systemTooltip}${rerollTooltip}${weightTooltip}`).not.toContain('candidate-weight')
@@ -1114,12 +1321,12 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
 
     expect(screen.getByTestId('meta-talent-row-death').textContent).toContain('死契处刑')
-    expect(screen.getByTestId('meta-talent-group-death-base').textContent).toContain('处刑入门')
+    expect(screen.getByTestId('meta-talent-group-death-base').textContent).toContain('流派寻迹')
     expect(screen.getByTestId('meta-talent-node-meta_common_01')).toBeTruthy()
     expect(screen.getByTestId('meta-talent-node-meta_death_base_01').getAttribute('data-state')).toBe('locked')
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_death_base_01'))
-    expect(screen.getByTestId('meta-talent-tooltip-status-meta_death_base_01').textContent).toContain('需要前置')
-    expect(screen.getByTestId('meta-talent-tooltip-prerequisites-meta_death_base_01').textContent).toContain('契约记忆')
+    expect(screen.getByTestId('meta-talent-tooltip-status-meta_death_base_01').textContent).toContain('通用功能天赋需累计投入 3 点')
+    expect(screen.getByTestId('meta-talent-tooltip-prerequisites-meta_death_base_01').textContent).toContain('无')
     expect(screen.getByTestId('meta-talent-node-meta_death_base_01').textContent).not.toContain('前置条件')
     expect(screen.getByTestId('meta-talent-node-meta_death_base_01').textContent).not.toContain('锁定原因')
 
@@ -1127,7 +1334,7 @@ describe('GameOverlay', () => {
     expect(useGameStore.getState().unlockedMetaTalentIds).toEqual([])
 
     expect(screen.getByTestId('meta-talent-row-crystal').textContent).toContain('蓝晶契约')
-    expect(screen.getByTestId('meta-talent-group-crystal-base').textContent).toContain('蓝晶入门')
+    expect(screen.getByTestId('meta-talent-group-crystal-base').textContent).toContain('流派寻迹')
     expect(screen.getByTestId('meta-talent-node-meta_death_base_01')).toBeTruthy()
     expect(screen.getByTestId('hunter-home-meta-reset')).toBeTruthy()
   })
@@ -1486,227 +1693,13 @@ describe('GameOverlay', () => {
     expect(getMonsterSpriteAtlasForEnemy({ kind: 'bomber', archetypeId: 'goblin-sapper', displayName: '地精爆破手' })).toBeUndefined()
   })
 
-  it('shows readable slot icons for dungeon equipment in the inventory', () => {
-    const base = createInitialSnapshot('idle')
-    const weaponDrop = {
-      id: 'equipment-test-weapon',
-      slot: 'weapon' as const,
-      rarity: 'rare' as const,
-      name: '蓝晶猎弓',
-      affix: '蓝晶契约',
-      buildTag: 'pierce' as const,
-      level: 3,
-      score: 92,
-      bonus: { attackDamage: 12, attackRange: 18 },
-      modifiers: [],
-    }
-    const chest = {
-      id: 'equipment-test-chest',
-      slot: 'chest' as const,
-      rarity: 'epic' as const,
-      name: '死契回响胸甲',
-      affix: '死契回响',
-      buildTag: 'general' as const,
-      level: 3,
-      score: 88,
-      bonus: { maxHp: 36 },
-      modifiers: [{ type: 'projectile-count' as const, amount: 1 }],
-    }
 
-    useGameStore.setState({
-      ...base,
-      unlockedWeapons: ['woodland-shortbow'],
-      equipmentInventory: [weaponDrop, chest],
-      equippedItems: { chest },
-      discoveredHighRarityEquipmentIds: ['legacy-bow-template'],
-      equipmentMaterials: {
-        ...base.equipmentMaterials,
-        ironScraps: 12,
-        contractAsh: 4,
-      },
-    })
 
-    render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
 
-    const slotTabs = screen.getAllByRole('tab')
-    expect(slotTabs.map((tab) => tab.textContent?.replace(/\s+/g, ' ').trim())).toEqual([
-      '武器 1',
-      '头盔 0',
-      '胸甲 1',
-      '护肩 0',
-      '手腕 0',
-      '手部 0',
-      '腿部 0',
-      '鞋子 0',
-      '戒指 1 0',
-      '戒指 2 0',
-      '披风 0',
-      '项链 0',
-    ])
-    expect(screen.getByRole('tab', { name: '头盔 0' }).hasAttribute('disabled')).toBe(true)
-    expect(screen.getByText('蓝晶猎弓')).toBeTruthy()
-    expect(screen.getByText(/精良 · 武器 · 评分 92/)).toBeTruthy()
-    expect(screen.getAllByText('仓库').length).toBeGreaterThan(0)
-    expect(screen.getByText('装备')).toBeTruthy()
-    expect(screen.getByText('背包')).toBeTruthy()
-    expect(screen.getByText('属性')).toBeTruthy()
-    expect(screen.queryByText('角色装备面板')).toBeNull()
-    expect(screen.queryByText('全部装备列表')).toBeNull()
-    expect(screen.queryByText('核心角色属性')).toBeNull()
-    expect(screen.queryByText(/购买武器|前往铁匠铺/)).toBeNull()
 
-    fireEvent.click(screen.getByRole('tab', { name: '胸甲 1' }))
-    expect(screen.getAllByText('死契回响胸甲').length).toBeGreaterThan(0)
-    expect(screen.getByLabelText('胸甲图标')).toBeTruthy()
-    expect(screen.getByText('符文：1 项')).toBeTruthy()
-    expect(screen.getAllByTestId('equipment-slot')).toHaveLength(12)
-    expect(screen.getByText('材料')).toBeTruthy()
-    expect(screen.getByText(/铁屑 12/)).toBeTruthy()
-    screen.getAllByTestId('equipment-slot').forEach((slot) => {
-      expect(within(slot).queryByRole('button', { name: '强化' })).toBeNull()
-      expect(within(slot).queryByRole('button', { name: '卸下' })).toBeNull()
-    })
-    expect(screen.getAllByText(/锁定|解锁/).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/锁词条|解锁词条/).length).toBeGreaterThan(0)
-    expect(screen.getAllByRole('button', { name: '副属性重铸' }).length).toBeGreaterThan(0)
-    expect(screen.getAllByText('解封').length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/分解/).length).toBeGreaterThan(0)
-    expect(screen.getByRole('button', { name: '分解灰白绿' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '分解低分蓝装' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '分解非本流派蓝装' })).toBeTruthy()
-  })
 
-  it('shows same-name equipment roll diffs and high-rarity discovery labels in the inventory', () => {
-    const base = createInitialSnapshot('idle')
-    const equippedBow = {
-      id: 'roll-current-bow',
-      equipmentId: 'legacy-bow-template',
-      slot: 'weapon' as const,
-      rarity: 'legacy' as const,
-      name: '黑月兽骨弓',
-      affix: '兽王契约',
-      buildTag: 'beast' as const,
-      setId: 'beast-king-pardon' as const,
-      level: 22,
-      score: 260,
-      bonus: { attackDamage: 18, beastDamageMultiplier: 0.18 },
-      modifiers: [{ type: 'beast-extra-summon' as const, triggerSlot: 2, duration: 6 }],
-      locked: true,
-      lockedModifierIndexes: [],
-    }
-    const betterBow = {
-      ...equippedBow,
-      id: 'roll-better-bow',
-      score: 294,
-      bonus: { attackDamage: 24, beastDamageMultiplier: 0.24, skillDamageMultiplier: 0.08 },
-      modifiers: [
-        { type: 'beast-extra-summon' as const, triggerSlot: 2, duration: 6 },
-        { type: 'beast-shield' as const, shieldAmount: 24, duration: 1.4 },
-      ],
-    }
 
-    useGameStore.setState({
-      ...base,
-      unsealedEquipmentSlots: ['weapon'],
-      equipmentInventory: [equippedBow, betterBow],
-      equippedItems: { weapon: equippedBow },
-      discoveredHighRarityEquipmentIds: ['legacy-bow-template'],
-    })
-
-    render(<GameOverlay />)
-
-    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
-
-    expect(screen.getAllByText('黑月兽骨弓').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('高稀有 · 默认锁定').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('已发现 · 追刷激活').length).toBeGreaterThan(0)
-    expect(screen.getAllByRole('button', { name: 'Boss 传承重铸' }).length).toBeGreaterThan(0)
-    expect(screen.getByTestId('equipment-roll-diff-roll-better-bow').textContent).toContain('对比当前：评分 +34')
-    expect(screen.getByTestId('equipment-roll-diff-roll-better-bow').textContent).toContain('攻击 +6')
-    expect(screen.getByTestId('equipment-roll-diff-roll-better-bow').textContent).toContain('野兽伤害 +6%')
-    expect(screen.getByTestId('equipment-roll-diff-roll-better-bow').textContent).toContain('技能伤害 +8%')
-    expect(screen.getByTestId('equipment-roll-diff-roll-better-bow').textContent).toContain('符文 +1')
-  })
-
-  it('shows reforge availability, confirmation ranges and full cost rows in inventory', () => {
-    const base = createInitialSnapshot('idle')
-    const rareBow = {
-      id: 'rare-reforge-bow',
-      slot: 'weapon' as const,
-      rarity: 'rare' as const,
-      name: '蓝晶猎弓',
-      affix: '蓝晶',
-      buildTag: 'control' as const,
-      level: 18,
-      score: 92,
-      bonus: { attackDamage: 12 },
-      modifiers: [],
-    }
-    const legacyBow = {
-      id: 'legacy-reforge-bow',
-      equipmentId: 'boss-legacy-weapon-3',
-      slot: 'weapon' as const,
-      rarity: 'legacy' as const,
-      name: '黑月兽骨弓',
-      affix: '兽王契约',
-      buildTag: 'beast' as const,
-      setId: 'beast-king-pardon' as const,
-      level: 22,
-      score: 260,
-      bonus: { attackDamage: 18, beastDamageMultiplier: 0.18 },
-      modifiers: [{ type: 'beast-extra-summon' as const, triggerSlot: 2, duration: 6 }],
-      lockedModifierIndexes: [0],
-      rolls: { main: 1.15, secondary: 1.2, skillOrBuild: 1.35 },
-    }
-
-    useGameStore.setState({
-      ...base,
-      unsealedEquipmentSlots: ['weapon'],
-      equipmentInventory: [rareBow, legacyBow],
-      equippedItems: {},
-      equipmentMaterials: {
-        ...base.equipmentMaterials,
-        refinedIron: 10,
-        crystalDust: 28,
-        buildRune: 2,
-        skillPage: 2,
-        legacyEmber: 2,
-        campaignSigil: 2,
-      },
-      currency: 2000,
-    })
-
-    render(<GameOverlay />)
-
-    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
-
-    expect(screen.getAllByRole('button', { name: '副属性重铸不可用' }).some((button) => button.hasAttribute('disabled'))).toBe(true)
-    expect(screen.getAllByRole('button', { name: 'Boss 传承不可用' }).some((button) => button.hasAttribute('disabled'))).toBe(true)
-    expect(screen.getAllByRole('button', { name: '副属性重铸' }).length).toBeGreaterThan(0)
-    expect(screen.getAllByRole('button', { name: 'Boss 传承重铸' }).length).toBeGreaterThan(0)
-
-    fireEvent.click(screen.getAllByRole('button', { name: 'Boss 传承重铸' })[0])
-
-    expect(screen.getByRole('dialog', { name: 'Boss 传承重铸确认' })).toBeTruthy()
-    expect(screen.getByTestId('reforge-current-roll').textContent).toContain('135%')
-    expect(screen.getByTestId('reforge-roll-range').textContent).toContain('120% - 160%')
-    expect(screen.getByTestId('reforge-lock-note').textContent).toContain('不参与本阶段重铸')
-    expect(screen.getByTestId('reforge-cost-ironScraps').textContent).toContain('铁屑')
-    expect(screen.getByTestId('reforge-cost-ironScraps').textContent).toContain('0')
-    expect(screen.getByTestId('reforge-cost-contractAsh').textContent).toContain('契约灰烬')
-    expect(screen.getByTestId('reforge-cost-refinedIron').textContent).toContain('精炼铁片')
-    expect(screen.getByTestId('reforge-cost-crystalDust').textContent).toContain('蓝晶粉尘')
-    expect(screen.getByTestId('reforge-cost-buildShard').textContent).toContain('流派碎片')
-    expect(screen.getByTestId('reforge-cost-buildRune').textContent).toContain('流派符文')
-    expect(screen.getByTestId('reforge-cost-skillPage').textContent).toContain('技能残页')
-    expect(screen.getByTestId('reforge-cost-legacyEmber').textContent).toContain('传承余烬')
-    expect(screen.getByTestId('reforge-cost-campaignSigil').textContent).toContain('本关印记')
-    expect(screen.getByTestId('reforge-cost-legendaryCore').textContent).toContain('传奇星核')
-    expect(screen.getByTestId('reforge-cost-gold').textContent).toContain('金币')
-    expect(screen.getByTestId('reforge-cost-gold').textContent).toContain('1000')
-  })
 
   it('executes secondary reforge from the blacksmith and refreshes rolls, score, materials and gold', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5)
@@ -1822,161 +1815,10 @@ describe('GameOverlay', () => {
     expect(afterCost).not.toBe(beforeCost)
   })
 
-  it('keeps equipment unchanged and shows a clear prompt when reforge gold is insufficient', () => {
-    const base = createInitialSnapshot('idle')
-    const epicBow = {
-      id: 'gold-blocked-epic-bow',
-      slot: 'weapon' as const,
-      rarity: 'epic' as const,
-      name: '手续费不足弓',
-      affix: '血羽',
-      buildTag: 'spread' as const,
-      level: 20,
-      score: 120,
-      bonus: { attackDamage: 22, attackRange: 44 },
-      modifiers: [],
-      rolls: { main: 1, secondary: 1.1, skillOrBuild: 1 },
-    }
 
-    useGameStore.setState({
-      ...base,
-      equipmentInventory: [epicBow],
-      equippedItems: {},
-      equipmentMaterials: {
-        ...base.equipmentMaterials,
-        refinedIron: 6,
-        crystalDust: 18,
-        buildRune: 1,
-      },
-      currency: 299,
-    })
 
-    render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
-    fireEvent.click(screen.getByRole('button', { name: '副属性重铸' }))
-    fireEvent.click(screen.getByRole('button', { name: '确认重铸' }))
-
-    const state = useGameStore.getState()
-    expect(state.currency).toBe(299)
-    expect(state.equipmentInventory[0].score).toBe(120)
-    expect(state.equipmentInventory[0].rolls?.secondary).toBe(1.1)
-    expect(screen.getByTestId('reforge-message').textContent).toContain('金币不足，重铸需要 300G')
-    expect(screen.getByTestId('reforge-current-roll').textContent).toContain('110%')
-  })
-
-  it('uses compact empty inventory copy and disables empty slot tabs', () => {
-    useGameStore.setState({
-      ...createInitialSnapshot('idle'),
-      equipmentInventory: [],
-      equippedItems: {},
-    })
-
-    render(<GameOverlay />)
-
-    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
-
-    expect(screen.getAllByText('仓库').length).toBeGreaterThan(0)
-    expect(screen.getByText('暂无装备')).toBeTruthy()
-    expect(screen.getByRole('tab', { name: '武器 0' }).hasAttribute('disabled')).toBe(true)
-    expect(screen.getByRole('tab', { name: '头盔 0' }).hasAttribute('disabled')).toBe(true)
-    expect(screen.queryByText(/该部位还没有获得装备/)).toBeNull()
-  })
-
-  it('updates the left equipment panel after equip and replace actions and shows hover details', () => {
-    const base = createInitialSnapshot('idle')
-    const oldChest = {
-      id: 'sync-old-chest',
-      slot: 'chest' as const,
-      rarity: 'rare' as const,
-      name: '旧胸甲',
-      affix: '旧',
-      buildTag: 'general' as const,
-      level: 2,
-      score: 42,
-      bonus: { maxHp: 12 },
-      modifiers: [],
-    }
-    const newChest = {
-      ...oldChest,
-      id: 'sync-new-chest',
-      name: '新胸甲',
-      score: 88,
-      bonus: { maxHp: 32 },
-    }
-    const ringOne = {
-      id: 'sync-ring-one',
-      slot: 'ring1' as const,
-      rarity: 'epic' as const,
-      name: '一号戒指',
-      affix: '一号',
-      buildTag: 'pierce' as const,
-      level: 3,
-      score: 61,
-      bonus: { attackDamage: 4 },
-      modifiers: [{ type: 'projectile-count' as const, amount: 1 }],
-      setId: 'death-contract-executioner' as const,
-    }
-    const ringTwo = {
-      ...ringOne,
-      id: 'sync-ring-two',
-      slot: 'ring2' as const,
-      name: '二号戒指',
-      affix: '二号',
-    }
-    const weapon = {
-      id: 'sync-weapon',
-      slot: 'weapon' as const,
-      rarity: 'common' as const,
-      name: '林地短弓',
-      affix: '新手',
-      buildTag: 'general' as const,
-      level: 1,
-      score: 36,
-      bonus: { attackDamage: 4 },
-      modifiers: [],
-      source: 'system' as const,
-    }
-
-    useGameStore.setState({
-      ...base,
-      unsealedEquipmentSlots: ['weapon', 'helmet', 'chest', 'shoulders', 'wrists', 'hands', 'legs', 'boots', 'ring1', 'ring2', 'cloak', 'necklace'],
-      equipmentInventory: [weapon, oldChest, newChest, ringOne, ringTwo],
-      equippedItems: {
-        weapon,
-        ring1: ringOne,
-        ring2: ringTwo,
-      },
-    })
-
-    render(<GameOverlay />)
-
-    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
-
-    expect(screen.getByLabelText('武器：林地短弓')).toBeTruthy()
-    expect(screen.getByLabelText('戒指 1：一号戒指')).toBeTruthy()
-    expect(screen.getByLabelText('戒指 2：二号戒指')).toBeTruthy()
-    expect(screen.getByLabelText('胸甲：未装备')).toBeTruthy()
-    expect(within(screen.getByLabelText('武器：林地短弓')).queryByRole('button', { name: '强化' })).toBeNull()
-    expect(within(screen.getByLabelText('武器：林地短弓')).queryByRole('button', { name: '卸下' })).toBeNull()
-    expect(within(screen.getByLabelText('戒指 1：一号戒指')).getByText('属性：攻击 +4')).toBeTruthy()
-    expect(within(screen.getByLabelText('戒指 1：一号戒指')).getByText('套装：死契处刑者')).toBeTruthy()
-    expect(within(screen.getByLabelText('戒指 1：一号戒指')).getByText('符文：弹道 +1')).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('tab', { name: '胸甲 2' }))
-    fireEvent.click(screen.getAllByRole('button', { name: '穿戴' })[0])
-    expect(screen.getByLabelText('胸甲：旧胸甲')).toBeTruthy()
-
-    fireEvent.click(screen.getAllByRole('button', { name: '穿戴' })[0])
-    expect(screen.getByLabelText('胸甲：新胸甲')).toBeTruthy()
-    expect(within(screen.getByLabelText('胸甲：新胸甲')).getByText('属性：生命 +32')).toBeTruthy()
-    expect(within(screen.getByLabelText('胸甲：新胸甲')).getByText('套装：无套装')).toBeTruthy()
-    expect(within(screen.getByLabelText('胸甲：新胸甲')).getByText('符文：无')).toBeTruthy()
-    expect(within(screen.getByLabelText('胸甲：新胸甲')).queryByRole('button', { name: '强化' })).toBeNull()
-    expect(within(screen.getByLabelText('胸甲：新胸甲')).queryByRole('button', { name: '卸下' })).toBeNull()
-  })
-
-  it('starts a dungeon run from the village portal', () => {
+  it('prepares a dungeon run from the village portal without starting simulation early', () => {
     useGameStore.setState({ ...createInitialSnapshot('idle') })
 
     render(<GameOverlay />)
@@ -1990,7 +1832,139 @@ describe('GameOverlay', () => {
     expect(useGameStore.getState().selectedCampaign).toBe(10)
     fireEvent.click(screen.getByRole('button', { name: '进入' }))
 
-    expect(useGameStore.getState().phase).toBe('running')
-    expect(useGameStore.getState().level).toBe(199)
+    expect(useGameStore.getState().phase).toBe('idle')
+    expect(useGameStore.getState().combatLaunchGate).toMatchObject({
+      status: 'awaiting-resources',
+      active: true,
+      inputBlocked: true,
+      simulationBlocked: true,
+      descriptor: {
+        target: { campaign: 10, level: 199, runtimeMode: 'formal-run' },
+      },
+    })
+    expect(screen.queryByText('关卡')).toBeNull()
+  })
+
+
+  it('uses the simplified warehouse icon grids and real equipment actions without lock or slot-filter controls', () => {
+    const weapon = {
+      id: 'warehouse-simple-weapon', slot: 'weapon' as const, rarity: 'rare' as const, name: '仓库测试猎弓', affix: '测试', buildTag: 'general' as const,
+      level: 4, score: 40, bonus: { attackDamage: 10 }, modifiers: [],
+    }
+    const chest = {
+      id: 'warehouse-simple-chest', slot: 'chest' as const, rarity: 'epic' as const, name: '仓库测试胸甲', affix: '测试', buildTag: 'general' as const,
+      level: 4, score: 42, bonus: { maxHp: 20 }, modifiers: [],
+    }
+    const replacementWeapon = {
+      id: 'warehouse-replacement-weapon', slot: 'weapon' as const, rarity: 'epic' as const, name: '替换测试猎弓', affix: '测试', buildTag: 'general' as const,
+      level: 4, score: 44, bonus: { attackDamage: 14 }, modifiers: [],
+    }
+    const base = createInitialSnapshot('idle')
+    useGameStore.setState({ ...base, equipmentInventory: [weapon, chest, replacementWeapon], equipmentMaterials: { ...base.equipmentMaterials, ironScraps: 7 } })
+
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
+
+    expect(screen.getByTestId('simplified-equipment-warehouse')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '装备' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '材料' })).toBeTruthy()
+    expect(screen.queryByTestId('inventory-management-controls')).toBeNull()
+    expect(screen.queryByText('解封')).toBeNull()
+    expect(screen.queryByText(/^锁定$/)).toBeNull()
+    expect(screen.queryByText('已穿戴')).toBeNull()
+    expect(screen.queryByText(/拖拽背包图标到对应槽位/)).toBeNull()
+    expect(screen.getByTestId('simplified-equipment-warehouse').className).toContain('overflow-hidden')
+    expect(screen.getByTestId('warehouse-equipment-icon-scroll').className).toContain('overflow-y-auto')
+    expect(screen.getByTestId('warehouse-equipment-icon-scroll').className).toContain('overscroll-contain')
+
+    fireEvent.click(screen.getByTestId(`warehouse-inventory-icon-${weapon.id}`))
+    expect(screen.getByTestId(`warehouse-detail-${weapon.id}`).textContent).toContain('仓库测试猎弓')
+    expect(within(screen.getByTestId('warehouse-detail-tooltip')).queryByRole('button')).toBeNull()
+    expect(screen.queryByTestId('warehouse-detail-popover')).toBeNull()
+    fireEvent.doubleClick(screen.getByTestId(`warehouse-inventory-icon-${weapon.id}`))
+    expect(useGameStore.getState().equippedItems.weapon?.id).toBe(weapon.id)
+
+    fireEvent.dragStart(screen.getByTestId(`warehouse-inventory-icon-${chest.id}`), { dataTransfer: { setData: vi.fn() } })
+    fireEvent.drop(screen.getByTestId('warehouse-equipped-slot-weapon'), { dataTransfer: { getData: vi.fn() } })
+    expect(useGameStore.getState().equippedItems.weapon?.id).toBe(weapon.id)
+
+    fireEvent.doubleClick(screen.getByTestId(`warehouse-inventory-icon-${replacementWeapon.id}`))
+    expect(useGameStore.getState().equippedItems.weapon?.id).toBe(replacementWeapon.id)
+    fireEvent.dragStart(screen.getByTestId(`warehouse-equipped-icon-${replacementWeapon.id}`), { dataTransfer: { setData: vi.fn() } })
+    fireEvent.drop(screen.getByTestId('warehouse-equipment-icon-grid'), { dataTransfer: { getData: vi.fn() } })
+    expect(useGameStore.getState().equippedItems.weapon).toBeUndefined()
+
+    fireEvent.doubleClick(screen.getByTestId(`warehouse-inventory-icon-${weapon.id}`))
+    expect(useGameStore.getState().equippedItems.weapon?.id).toBe(weapon.id)
+
+    fireEvent.keyDown(screen.getByTestId(`warehouse-equipped-icon-${weapon.id}`), { key: 'e' })
+    expect(useGameStore.getState().equippedItems.weapon).toBeUndefined()
+
+    fireEvent.touchEnd(screen.getByTestId(`warehouse-inventory-icon-${weapon.id}`))
+    fireEvent.touchEnd(screen.getByTestId(`warehouse-inventory-icon-${weapon.id}`))
+    expect(useGameStore.getState().equippedItems.weapon?.id).toBe(weapon.id)
+    fireEvent.touchEnd(screen.getByTestId(`warehouse-equipped-icon-${weapon.id}`))
+    fireEvent.touchEnd(screen.getByTestId(`warehouse-equipped-icon-${weapon.id}`))
+    expect(useGameStore.getState().equippedItems.weapon).toBeUndefined()
+
+    fireEvent.click(screen.getByRole('tab', { name: '材料' }))
+    expect(screen.getByTestId('warehouse-material-count-ironScraps').textContent).toBe('7')
+    fireEvent.click(screen.getByTestId('warehouse-material-icon-ironScraps'))
+    expect(screen.getByTestId('warehouse-material-detail-ironScraps').textContent).toContain('铁屑')
+  })
+
+  it('uses the same Beast Contract 2/3/5 loadout truth in warehouse hover details, relics, and Boss replacement bows', () => {
+    const makeItem = (id: string, equipmentId: string, slot: 'weapon' | 'helmet' | 'chest' | 'wrists', name = '旧存档名称') => ({
+      id, equipmentId, slot, rarity: 'legacy' as const, name, affix: '兽王契约', buildTag: 'beast' as const,
+      level: 10, score: 100, bonus: { attackDamage: 10 }, modifiers: [],
+    })
+    const weapon = makeItem('beast-core-weapon', 'equipment-template-legacy-weapon-beast-兽王契约', 'weapon')
+    const helmet = makeItem('beast-core-helmet', 'equipment-template-legacy-helmet-beast-兽王契约', 'helmet')
+    const chest = makeItem('beast-core-chest', 'equipment-template-legacy-chest-beast-兽王契约', 'chest')
+    const relic = makeItem('beast-relic-wrists', 'equipment-template-legacy-wrists-beast-兽王契约', 'wrists')
+    const bossBow = makeItem('beast-boss-bow', 'boss-legacy-weapon-3', 'weapon')
+    const base = createInitialSnapshot('idle')
+    useGameStore.setState({
+      ...base,
+      equippedItems: { weapon, helmet, chest },
+      equipmentInventory: [relic, bossBow],
+    })
+
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
+
+    const equippedName = screen.getByTestId(`warehouse-equipped-name-${weapon.id}`)
+    expect(equippedName.textContent).toBe('万兽契弓')
+    fireEvent.focus(equippedName)
+    const corePrefix = `warehouse-beast-domain-${weapon.id}`
+    expect(screen.getByTestId(`${corePrefix}-set-count`).textContent).toContain('3/6')
+    expect(screen.getByTestId(`${corePrefix}-threshold-2`).dataset.active).toBe('true')
+    expect(screen.getByTestId(`${corePrefix}-threshold-3`).dataset.active).toBe('true')
+    expect(screen.getByTestId(`${corePrefix}-threshold-5`).dataset.active).toBe('false')
+    expect(screen.getByTestId(`${corePrefix}-single-effect`).textContent).toContain('野兽伙伴伤害 +12%')
+    fireEvent.blur(equippedName)
+
+    fireEvent.click(screen.getByTestId(`warehouse-inventory-icon-${relic.id}`))
+    const relicPrefix = `warehouse-beast-domain-${relic.id}`
+    expect(screen.getByTestId(`${relicPrefix}-identity`).textContent).toContain('协同散件，不计套装件数')
+    expect(screen.queryByTestId(`${relicPrefix}-set-effects`)).toBeNull()
+
+    fireEvent.click(screen.getByTestId(`warehouse-inventory-icon-${bossBow.id}`))
+    const bossPrefix = `warehouse-beast-domain-${bossBow.id}`
+    expect(screen.getByTestId(`warehouse-detail-${bossBow.id}`).textContent).toContain('黑月兽骨弓')
+    expect(screen.getByTestId(`${bossPrefix}-identity`).textContent).toContain('计入对应套装 1 件')
+    expect(screen.getByTestId(`${bossPrefix}-identity`).textContent).toContain('互斥')
+    expect(screen.getByTestId(`${bossPrefix}-single-effect`).textContent).toContain('野兽伙伴')
+  })
+
+  it('does not expose the destructive high-rarity equipment reset in production', () => {
+    vi.stubEnv('PROD', true)
+    useGameStore.setState({ ...createInitialSnapshot('idle') })
+
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '物品仓库' }))
+
+    expect(screen.queryByTestId('local-high-rarity-equipment-reset')).toBeNull()
+    expect(screen.queryByRole('button', { name: '清空本地装备并写入全装备' })).toBeNull()
   })
 })

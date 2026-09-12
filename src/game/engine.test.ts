@@ -4,9 +4,12 @@ import {
   acceptSkillRewardSnapshot,
   advanceGame,
   applyLocalBattleTestMonsterConfigSnapshot,
+  banSkillRewardTypeSnapshot,
   batchDismantleEquipmentSnapshot,
   buildPendingReward,
   clearLocalBattleTestMonstersSnapshot,
+  closePendingSkillRewardSnapshot,
+  createInitialSkillDraftState,
   createInitialSnapshot,
   declineSkillRewardSnapshot,
   dismissBossLootSnapshot,
@@ -24,7 +27,17 @@ import {
   getDungeonWardenArenaRadius,
   getQuickTripleHalfArrowReleaseInterval,
   getHealthPackDropChanceForHealthRatio,
+  getInitialSkillDraftPresentation,
+  getSkillRewardChoiceMetaWeightPresentation,
   getCampaignRewardPresentationSnapshot,
+  getEquipmentCandidateWeightPresentation,
+  getEndgameArchiveCandidateWeightPresentation,
+  getBossExtraEquipmentProtectionPresentation,
+  getArrowTurretPresentation,
+  getBeastContractDomainPresentationSnapshot,
+  getSoulCrystalDirectCollectionPresentation,
+  getSoulCrystalDirectCollectionRadius,
+  evaluateLocalFirstDungeonChunkObservability,
   getLocalBattleTestSpawnOptions,
   getMetaTalentRuntimeEffectsForSnapshot,
   getRunTalentPresentationSnapshot,
@@ -35,10 +48,16 @@ import {
   HEALTH_PACK_DROP_CHANCE,
   HEALTH_PACK_FINAL_DROP_MULTIPLIER,
   purchaseWeaponSnapshot,
+  prepareDevelopmentAcceptanceTargetSnapshot,
+  prepareDevelopmentAcceptanceSnapshot,
   reforgeEquipmentSnapshot,
+  rerollInitialSkillDraftSnapshot,
+  rerollNormalEliteSkillRewardSnapshot,
   restartRunSnapshot,
   returnToVillageSnapshot,
+  runLocalFirstDungeonChunkObservabilityProbe,
   selectCampaignSnapshot,
+  selectInitialSkillDraftCandidateSnapshot,
   startLocalBattleTestSnapshot,
   startRunSnapshot,
   synchronizeRunTalentFeedbackSnapshot,
@@ -48,12 +67,16 @@ import {
   toggleEquipmentLockSnapshot,
   togglePauseSnapshot,
   togglePrioritySnapshot,
-  unlockEquipmentSlotSnapshot,
   upgradeEquippedEquipmentSnapshot,
   updateAimPointSnapshot,
 } from './engine'
+import {
+  clearFirstDungeonChunkObservability,
+  getFirstDungeonChunkObservabilitySnapshot,
+  recordFirstDungeonChunkFrameTiming,
+} from './firstDungeonChunkObservability'
 import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_ACTIVE_SKILLS, LV5_QUALITATIVE_TEXT } from './archerSkills'
-import { ARCHER_CORE_SKILL_IDS, ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTIONS, getActiveSkillRuntimePresentation, getEffectiveActiveSkillDefinition } from './archerSkillEvolution'
+import { ARCHER_CORE_SKILL_IDS, ARCHER_CORE_SKILLS, ARCHER_CORE_SKILL_DEFINITION_MAP, ARCHER_SKILL_EVOLUTIONS, getActiveSkillRuntimePresentation, getEffectiveActiveSkillDefinition } from './archerSkillEvolution'
 import { getPlayerArcherBowMouthWorldPosition } from './archerAssetFrames'
 import { getMonsterHurtboxGeometry } from './monsterHurtboxGeometry'
 import {
@@ -64,30 +87,36 @@ import {
 } from './visibleBodyEnvelope'
 import { getMetaTalentBonusSummary, META_TALENT_NODES, RUN_TALENT_DEATH_SHOT_INTERVAL_SECONDS } from './talents'
 import { CAMPAIGN_LOOT_PROFILES, CAMPAIGN_MONSTER_THEMES, CORROSIVE_SLIME_ARCHETYPE, getCampaignFloorEnemyPool, getCampaignLootProfile } from './campaignMonsters'
-import { FLOORS_PER_CAMPAIGN, INFINITE_ACTIVE_CHUNK_LIMIT, INFINITE_ACTIVE_CHUNK_RADIUS, INFINITE_ENEMY_RECYCLE_DISTANCE, INFINITE_OBSTACLE_SAFE_RADIUS, INFINITE_SPAWN_MAX_DISTANCE, INFINITE_SPAWN_MIN_DISTANCE, WORLD_HEIGHT, WORLD_WIDTH, getCampaignFloorPhase, getCorrosiveSlimeRatio, getEliteBudget, getEnemyStats, getHordeMultiplier, getHordeNormalTarget, getLegacyHordeMultiplier, getLevelGoal, getMaxEnemiesOnField, hasCampaignEnvironmentMechanic, isBossPreludeLevel } from './config'
+import { FLOORS_PER_CAMPAIGN, INFINITE_ACTIVE_CHUNK_LIMIT, INFINITE_ACTIVE_CHUNK_RADIUS, INFINITE_ENEMY_RECYCLE_DISTANCE, INFINITE_OBSTACLE_SAFE_RADIUS, INFINITE_SPAWN_MAX_DISTANCE, INFINITE_SPAWN_MIN_DISTANCE, PROJECTILE_SPEED, WORLD_HEIGHT, WORLD_WIDTH, getCampaignFloorPhase, getCorrosiveSlimeRatio, getEliteBudget, getEnemyStats, getHordeMultiplier, getHordeNormalTarget, getLegacyHordeMultiplier, getLevelGoal, getMaxEnemiesOnField, hasCampaignEnvironmentMechanic, isBossPreludeLevel } from './config'
 import { getBossCombatTable } from './bossStages'
 import { getCampaignDifficultyConfig } from './difficulty'
 import {
   applyDiscoveredEquipmentCandidateWeights,
   createEmptyEquipmentMaterials,
   createHighRarityEquipmentCandidatePool,
+  createStandardEquipmentCandidatePool,
   createEquipmentDrop,
+  getEquipmentCandidateTags,
   getBossLegacyWeaponForCampaign,
   getEquipmentDismantlePreview,
   getEquipmentBonusSummary,
   getEquipmentDropChanceForTier,
   getEquipmentReforgeCost,
   getEquipmentReforgeGoldCost,
+  getEquipmentUpgradeCost,
   getEquipmentUpgradeGoldCost,
   getLegendaryRateForDroppedEquipment,
   rollDroppedEquipmentRarity,
   rollEquipmentRarity,
+  scaleEquipmentMaterialCost,
   SKILL_EQUIPMENT_LINKS,
+  BEAST_CONTRACT_DOMAIN_EQUIPMENT_DEFINITIONS,
 } from './equipment'
 import { getMonsterDropProfile } from './monsterDataCards'
 import { CAMPAIGN_ONE_DECORATION_ASSETS, CAMPAIGN_ONE_OBSTACLE_ASSETS } from './terrainAssets'
 import type { Enemy, EquipmentItem, EquipmentSetId, EquipmentSlot, GameSnapshot, MapObstacle, Projectile, SkillField, Vector2 } from './types'
 import { distance, normalize } from '../utils/math'
+import { extractPersistedGameState, restorePersistedGameState } from '../store/useGameStore'
 
 describe('game engine', () => {
   afterEach(() => {
@@ -133,14 +162,14 @@ describe('game engine', () => {
     const current = startRunSnapshot(createInitialSnapshot('idle'))
     current.currency = 321
     current.skillAllocations.power = 2
-    current.activeSkills[0].cooldownRemaining = 3
-    current.activeSkills[0].cooldownDuration = 3
+    current.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 3, cooldownDuration: 3 }]
 
     const snapshot = startLocalBattleTestSnapshot(current)
     const obstacleCount = snapshot.mapObstacles.length + snapshot.battlefield.activeChunks.reduce((sum, chunk) => sum + chunk.obstacles.length, 0)
     const decorationCount = snapshot.mapDecorations.length + snapshot.battlefield.activeChunks.reduce((sum, chunk) => sum + chunk.decorations.length, 0)
 
     expect(snapshot.localBattleTest?.active).toBe(true)
+    expect(snapshot.initialSkillDraft).toBeUndefined()
     expect(snapshot.selectedCampaign).toBe(1)
     expect(snapshot.level).toBe(1)
     expect(snapshot.battlefield.mode).toBe('infinite')
@@ -162,6 +191,188 @@ describe('game engine', () => {
     expect(advanced.remainingToSpawn).toBe(0)
     expect(advanced.floorTransition).toBeUndefined()
     expect(advanced.phase).toBe('running')
+  })
+
+  it('runs three mandatory, Lv1-only initial skill drafts before formal combat starts', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    let snapshot = startRunSnapshot(createInitialSnapshot('idle'))
+    const initialProgress = structuredClone(snapshot.campaignRewardProgress)
+    const initialElapsed = snapshot.elapsedTime
+
+    expect(snapshot.activeSkills).toEqual([])
+    expect(snapshot.initialSkillDraft).toMatchObject({ currentRound: 1, totalRounds: 3 })
+    expect(snapshot.initialSkillDraft?.candidates).toHaveLength(3)
+    expect(snapshot.initialSkillDraft?.candidates.every((candidate) => ARCHER_CORE_SKILL_IDS.includes(candidate.familyId))).toBe(true)
+
+    const frozen = advanceGame(snapshot, noInput, 0.05)
+    expect(frozen.elapsedTime).toBe(initialElapsed)
+    expect(frozen.enemies).toEqual([])
+    expect(frozen.campaignRewardProgress).toEqual(initialProgress)
+
+    const first = snapshot.initialSkillDraft!.candidates.find((candidate) => candidate.buildTag === 'pierce')!
+    snapshot = selectInitialSkillDraftCandidateSnapshot(snapshot, first.choiceId)
+    expect(snapshot.activeSkills).toEqual([expect.objectContaining({ familyId: first.familyId, level: 1 })])
+    expect(snapshot.activeSkills[0].evolutionId).toBeUndefined()
+    expect(snapshot.initialSkillDraft?.currentRound).toBe(2)
+    const firstBuild = first.buildTag
+    expect(snapshot.initialSkillDraft?.candidates.filter((candidate) => candidate.buildTag === firstBuild)).toHaveLength(2)
+    expect(snapshot.initialSkillDraft?.candidates.filter((candidate) => candidate.buildTag !== firstBuild)).toHaveLength(1)
+
+    const crossBuild = snapshot.initialSkillDraft!.candidates.find((candidate) => candidate.buildTag !== firstBuild)!
+    snapshot = selectInitialSkillDraftCandidateSnapshot(snapshot, crossBuild.choiceId)
+    expect(snapshot.initialSkillDraft?.currentRound).toBe(3)
+    const selectedBuilds = new Set([first.buildTag, crossBuild.buildTag])
+    expect(snapshot.initialSkillDraft?.candidates.filter((candidate) => selectedBuilds.has(candidate.buildTag))).toHaveLength(2)
+    expect(snapshot.initialSkillDraft?.candidates.filter((candidate) => !selectedBuilds.has(candidate.buildTag))).toHaveLength(1)
+    expect(new Set(snapshot.initialSkillDraft?.candidates.map((candidate) => candidate.familyId)).size).toBe(3)
+    expect(snapshot.initialSkillDraft?.candidates.some((candidate) => snapshot.activeSkills.some((skill) => skill.familyId === candidate.familyId))).toBe(false)
+
+    snapshot = selectInitialSkillDraftCandidateSnapshot(snapshot, snapshot.initialSkillDraft!.candidates[0].choiceId)
+    expect(snapshot.initialSkillDraft).toBeUndefined()
+    expect(snapshot.activeSkills).toHaveLength(3)
+    expect(new Set(snapshot.activeSkills.map((skill) => skill.familyId)).size).toBe(3)
+    expect(snapshot.activeSkills.every((skill) => skill.level === 1 && !skill.evolutionId)).toBe(true)
+    expect(snapshot.levelTimer).toBe(0)
+
+    const combat = advanceGame(snapshot, noInput, 0.05)
+    expect(combat.elapsedTime).toBeGreaterThan(initialElapsed)
+    expect(combat.enemies.length).toBeGreaterThan(0)
+  })
+
+  it('keeps the initial draft pause-only and abandons it without rewards or run records', () => {
+    let snapshot = startRunSnapshot(createInitialSnapshot('idle'))
+    const firstDraft = structuredClone(snapshot.initialSkillDraft!)
+    snapshot = togglePauseSnapshot(snapshot)
+    expect(getInitialSkillDraftPresentation(snapshot)).toMatchObject({ active: true, status: 'paused', canPause: true, blockedReason: 'paused' })
+    expect(selectInitialSkillDraftCandidateSnapshot(snapshot, firstDraft.candidates[0].choiceId).activeSkills).toEqual([])
+    snapshot = togglePauseSnapshot(snapshot)
+    expect(getInitialSkillDraftPresentation(snapshot)).toMatchObject({ active: true, status: 'selecting', currentRound: 1 })
+    expect(snapshot.initialSkillDraft).toEqual(firstDraft)
+
+    const forfeited = forfeitRunSnapshot(snapshot)
+    expect(forfeited.phase).toBe('idle')
+    expect(forfeited.activeSkills).toEqual([])
+    expect(forfeited.initialSkillDraft).toBeUndefined()
+    expect(forfeited.runHistory).toEqual([])
+    expect(forfeited.runSettlementSummary).toBeUndefined()
+    expect(forfeited.currency).toBe(snapshot.currency)
+    expect(forfeited.inRunTalentIds).toEqual([])
+  })
+
+  it('preserves real legacy active skills while sanitizing malformed transient initial drafts', () => {
+    const legacy = createInitialSnapshot('running')
+    legacy.activeSkills = [{ skillId: 'fan-burst', familyId: 'fan-burst', level: 3, cooldownRemaining: 0 }]
+    expect(migrateArcherSkillEvolutionSnapshot(legacy)).toMatchObject({
+      initialSkillDraft: undefined,
+      activeSkills: [expect.objectContaining({ familyId: 'fan-burst', level: 3 })],
+    })
+
+    const malformed = startRunSnapshot(createInitialSnapshot('idle'))
+    malformed.initialSkillDraft!.candidates = []
+    const recovered = migrateArcherSkillEvolutionSnapshot(malformed)
+    expect(recovered.activeSkills).toEqual([])
+    expect(recovered.initialSkillDraft).toMatchObject({ currentRound: 1, totalRounds: 3 })
+    expect(recovered.initialSkillDraft?.candidates).toHaveLength(3)
+    expect(createInitialSkillDraftState(() => 0).candidates.map((candidate) => candidate.familyId)).toEqual(
+      ARCHER_CORE_SKILL_IDS.slice(0, 3),
+    )
+
+    const legacyDraft = startRunSnapshot(createInitialSnapshot('idle'))
+    delete (legacyDraft.initialSkillDraft as Partial<NonNullable<typeof legacyDraft.initialSkillDraft>>).rerollsRemaining
+    delete (legacyDraft.initialSkillDraft as Partial<NonNullable<typeof legacyDraft.initialSkillDraft>>).rerollsUsedThisRound
+    expect(migrateArcherSkillEvolutionSnapshot(legacyDraft).initialSkillDraft).toMatchObject({
+      currentRound: 1,
+      rerollsRemaining: 0,
+      rerollsUsedThisRound: 0,
+    })
+  })
+
+  it('fires common resonance only from the first real hits of three distinct active skills', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 1
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+    clearCombatObstacles(snapshot)
+    snapshot.inRunTalentIds = ['run_common_09']
+    snapshot.runTalentState.selectedTalentIds = ['run_common_09']
+    snapshot.activeSkills = [
+      { skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 9 },
+      { skillId: 'fan-burst', familyId: 'fan-burst', level: 1, cooldownRemaining: 9 },
+      { skillId: 'curve-return', familyId: 'curve-return', level: 1, cooldownRemaining: 9 },
+    ]
+    snapshot.enemies = [
+      makeEnemy({ id: 'resonance-a', position: { x: 220, y: 180 }, hp: 100, maxHp: 100 }),
+      makeEnemy({ id: 'resonance-b', position: { x: 220, y: 200 }, hp: 100, maxHp: 100 }),
+      makeEnemy({ id: 'resonance-c', position: { x: 220, y: 220 }, hp: 100, maxHp: 100 }),
+    ]
+    snapshot.projectiles = [
+      makeProjectile({ id: 'resonance-a', sourceSkillId: 'pierce-arrow', position: { x: 220, y: 180 }, velocity: { x: 0, y: 0 }, damage: 10 }),
+      makeProjectile({ id: 'resonance-b', sourceSkillId: 'fan-burst', position: { x: 220, y: 200 }, velocity: { x: 0, y: 0 }, damage: 10 }),
+      makeProjectile({ id: 'resonance-c', sourceSkillId: 'curve-return', position: { x: 220, y: 220 }, velocity: { x: 0, y: 0 }, damage: 10 }),
+    ]
+
+    const next = advanceGame(snapshot, noInput, 0.016)
+    expect(next.bursts.some((burst) => burst.radius === 42)).toBe(true)
+    expect(next.talentCombatState?.resonanceEcho?.skillHits).toEqual([])
+    expect(next.enemies.find((enemy) => enemy.id === 'resonance-a')?.hp).toBeLessThan(90)
+  })
+
+  it('arms dash pursuit only after dash completion and consumes it on the next active-skill real hit', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 1
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+    snapshot.player.dashTimer = 0.01
+    snapshot.inRunTalentIds = ['run_common_10']
+    snapshot.runTalentState.selectedTalentIds = ['run_common_10']
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 9 }]
+    clearCombatObstacles(snapshot)
+    const armed = advanceGame(snapshot, noInput, 0.05)
+    expect(armed.talentCombatState?.dashPursuit).toMatchObject({ armed: true, remaining: 1.5 })
+    armed.enemies = [makeEnemy({ id: 'pursuit-target', position: { x: 220, y: 200 }, hp: 100, maxHp: 100 })]
+    armed.projectiles = [makeProjectile({ id: 'pursuit-skill', sourceSkillId: 'pierce-arrow', position: { x: 220, y: 200 }, velocity: { x: 0, y: 0 }, damage: 10 })]
+
+    const consumed = advanceGame(armed, noInput, 0.016)
+    expect(consumed.talentCombatState?.dashPursuit).toEqual({ armed: false, remaining: 0 })
+    expect(consumed.bursts.some((burst) => burst.radius === 36)).toBe(true)
+  })
+
+  it('rejects a stale ninth common talent at the actual acceptance boundary', () => {
+    const snapshot = createInitialSnapshot('running')
+    const existingGeneralIds = Array.from({ length: 8 }, (_, index) => `run_common_${String(index + 1).padStart(2, '0')}`)
+    snapshot.phase = 'paused'
+    snapshot.phaseBeforePause = 'running'
+    snapshot.inRunTalentIds = [...existingGeneralIds]
+    snapshot.runTalentState.selectedTalentIds = [...existingGeneralIds]
+    snapshot.runTalentState.rerollsRemaining = 1
+    snapshot.pendingSkillReward = {
+      poolKind: 'crystal-talent',
+      source: 'crystal-talent',
+      campaignRewardSemantics: 'talent-choice',
+      campaignRewardCategory: 'universal',
+      choices: [{
+        choiceId: 'stale-ninth-general',
+        mode: 'in-run-talent',
+        skillId: 'run_common_09',
+        talentId: 'run_common_09',
+        title: '连携余响',
+        description: 'stale candidate',
+        buildTag: 'general',
+        tacticalTags: [],
+        levelText: '局内战斗天赋',
+        tacticalText: '',
+      }],
+    }
+
+    const rejected = acceptSkillRewardSnapshot(snapshot, 'stale-ninth-general')
+    expect(rejected.runTalentState.selectedTalentIds).toEqual(existingGeneralIds)
+    expect(rejected.inRunTalentIds).toEqual(existingGeneralIds)
+    expect(rejected.runTalentState.rerollsRemaining).toBe(1)
+    expect(rejected.pendingSkillReward?.choices[0]?.choiceId).toBe('stale-ninth-general')
+    expect(rejected.phase).toBe('paused')
+    expect(rejected.message).toContain('通用局内天赋已达 8 项上限')
   })
 
   it('reports project-ready local battle entities and uses the complete warden asset manifest', () => {
@@ -347,6 +558,7 @@ describe('game engine', () => {
   it('keeps local and formal dungeon warden combat initialization on the same source path', () => {
     const input = { up: false, down: false, left: false, right: false }
     const prepareBossSpawn = (snapshot: ReturnType<typeof createInitialSnapshot>) => {
+      snapshot.initialSkillDraft = undefined
       snapshot.level = 22
       snapshot.levelTimer = 0
       snapshot.levelTargetKills = 1
@@ -521,6 +733,7 @@ describe('game engine', () => {
     id: overrides.id ?? 'enemy-1',
     kind: overrides.kind ?? 'melee',
     grantsEliteReward: overrides.grantsEliteReward ?? false,
+    campaignRewardSource: overrides.campaignRewardSource,
     archetypeId: overrides.archetypeId,
     c1SlimeVariantParentSize: overrides.c1SlimeVariantParentSize,
     deathAnimationElapsed: overrides.deathAnimationElapsed,
@@ -871,7 +1084,10 @@ describe('game engine', () => {
     expect(selected.selectedCampaign).toBe(6)
     expect(started.selectedCampaign).toBe(6)
     expect(started.level).toBe((6 - 1) * FLOORS_PER_CAMPAIGN + 1)
-    expect(started.message).toContain('精灵失落圣林')
+    expect(started).toMatchObject({
+      message: '初始技能选择 1/3',
+      initialSkillDraft: { currentRound: 1, totalRounds: 3 },
+    })
   })
 
   it('keeps real start and portal entrances in infinite mode for ordinary floors', () => {
@@ -906,6 +1122,7 @@ describe('game engine', () => {
   it('spawns the first waves as campaign-specific hordes with corrosive slime filler', () => {
     CAMPAIGN_MONSTER_THEMES.forEach((theme) => {
       let run = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), theme.campaign))
+      run.initialSkillDraft = undefined
       run.levelTimer = 0
       run.spawnCooldown = 0
       run.remainingToSpawn = 24
@@ -1086,6 +1303,7 @@ describe('game engine', () => {
       { floor: 15, expectedLimit: 3 },
     ].forEach(({ floor, expectedLimit }) => {
       let snapshot = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), 5))
+      snapshot.initialSkillDraft = undefined
       snapshot.level = (5 - 1) * FLOORS_PER_CAMPAIGN + floor
       snapshot.levelTimer = 0
       snapshot.spawnCooldown = 999
@@ -1110,6 +1328,7 @@ describe('game engine', () => {
   it('keeps route objective rewards and extra threats under their documented caps', () => {
     const level = (8 - 1) * FLOORS_PER_CAMPAIGN + 16
     const snapshot = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), 8))
+    snapshot.initialSkillDraft = undefined
     snapshot.level = level
     snapshot.levelTimer = 0
     snapshot.spawnCooldown = 999
@@ -1146,6 +1365,7 @@ describe('game engine', () => {
     const campaign = 2
     const level = (campaign - 1) * FLOORS_PER_CAMPAIGN + 8
     const snapshot = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), campaign))
+    snapshot.initialSkillDraft = undefined
     snapshot.level = level
     snapshot.levelTimer = 0
     snapshot.spawnCooldown = 999
@@ -1178,6 +1398,7 @@ describe('game engine', () => {
 
   it('expires route objectives without punishing the player', () => {
     const snapshot = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), 4))
+    snapshot.initialSkillDraft = undefined
     snapshot.level = (4 - 1) * FLOORS_PER_CAMPAIGN + 8
     snapshot.levelTimer = 0
     snapshot.spawnCooldown = 999
@@ -1240,6 +1461,7 @@ describe('game engine', () => {
 
   it('lets relic crates pay small materials without producing orange or bright-orange equipment', () => {
     const snapshot = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), 7))
+    snapshot.initialSkillDraft = undefined
     snapshot.level = (7 - 1) * FLOORS_PER_CAMPAIGN + 18
     snapshot.levelTimer = 0
     snapshot.spawnCooldown = 999
@@ -1274,9 +1496,10 @@ describe('game engine', () => {
     expect(next.pickups.every((pickup) => !pickup.equipment || !['legacy', 'legendary'].includes(pickup.equipment.rarity))).toBe(true)
   })
 
-  it('applies v2 material-drop only to the existing campaign material reward entry', () => {
+  it('does not revive the removed V2 campaign material modifier', () => {
     const makeRun = (withTalent: boolean) => {
       const snapshot = restartRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), 7))
+      snapshot.initialSkillDraft = undefined
       snapshot.level = (7 - 1) * FLOORS_PER_CAMPAIGN + 12
       snapshot.levelTimer = 0
       snapshot.spawnCooldown = 999
@@ -1311,16 +1534,12 @@ describe('game engine', () => {
     const talented = finishPlayerDeathAnimation(makeRun(true))
 
     expect(base.lastTalentMaterialDrop).toBeUndefined()
-    expect(talented.lastTalentMaterialDrop).toMatchObject({
-      source: 'route-objective',
-      targets: ['campaign-7'],
-      multiplier: 1.1,
-    })
-    expect(talented.equipmentMaterials.ironScraps).toBeGreaterThan(base.equipmentMaterials.ironScraps)
+    expect(talented.lastTalentMaterialDrop).toBeUndefined()
+    expect(talented.equipmentMaterials).toEqual(base.equipmentMaterials)
     expect(talented.pickups.length).toBe(base.pickups.length)
   })
 
-  it('applies v2 material-drop to hard and torment elite combat material rewards only', () => {
+  it('applies FT010 only to existing direct elite base-material rewards', () => {
     const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.99)
     const makeRun = (difficulty: 'hard' | 'nightmare', talentIds: string[]) => {
       const snapshot = createInitialSnapshot('running')
@@ -1338,6 +1557,7 @@ describe('game engine', () => {
         id: `${difficulty}-material-elite`,
         kind: 'elite',
         grantsEliteReward: true,
+        archetypeId: 'v3-recorded-elite',
         hp: 1,
         maxHp: 80,
         position: { x: 300, y: 200 },
@@ -1349,30 +1569,71 @@ describe('game engine', () => {
 
     try {
       const hardBase = advanceGame(makeRun('hard', []), { up: false, down: false, left: false, right: false }, 0.016)
-      const hardTalented = advanceGame(makeRun('hard', ['meta_difficulty_07']), { up: false, down: false, left: false, right: false }, 0.016)
-      const tormentTalented = advanceGame(makeRun('nightmare', ['meta_difficulty_07', 'meta_difficulty_15']), { up: false, down: false, left: false, right: false }, 0.016)
+      const hardRun = makeRun('hard', ['meta_common_10'])
+      hardRun.metaTalentRanks = { meta_common_10: 5 }
+      const nightmareRun = makeRun('nightmare', ['meta_common_10'])
+      nightmareRun.metaTalentRanks = { meta_common_10: 5 }
+      const hardTalented = advanceGame(hardRun, { up: false, down: false, left: false, right: false }, 0.016)
+      const tormentTalented = advanceGame(nightmareRun, { up: false, down: false, left: false, right: false }, 0.016)
 
       expect(hardBase.equipmentMaterials.ironScraps).toBe(10)
       expect(hardBase.lastTalentMaterialDrop).toBeUndefined()
       expect(hardTalented.lastTalentMaterialDrop).toMatchObject({
         source: 'elite',
-        targets: ['hard-elite'],
+        targets: ['hard-elite', 'all-elite-base-materials'],
         base: expect.objectContaining({ ironScraps: 10 }),
-        multiplier: 1.1,
+        multiplier: 1.15,
         final: expect.objectContaining({ ironScraps: 11 }),
       })
       expect(tormentTalented.lastTalentMaterialDrop).toMatchObject({
         source: 'elite',
-        targets: ['hard-elite', 'nightmare-elite'],
-        multiplier: 1.25,
-        final: expect.objectContaining({ ironScraps: 12 }),
+        targets: ['nightmare-elite', 'all-elite-base-materials'],
+        multiplier: 1.15,
+        final: expect.objectContaining({ ironScraps: 11 }),
       })
+      expect(hardTalented.metaTalentEliteMaterialRemainders).toMatchObject({ ironScraps: 0.5 })
+      expect(hardTalented.metaTalentRecordedEliteArchetypeIds).toEqual(['v3-recorded-elite'])
+      expect(hardTalented.talentPoints).toBe(1)
       expect(hardTalented.pickups.every((pickup) => pickup.kind !== 'health-pack')).toBe(true)
       expect(hardTalented.pickups.filter((pickup) => pickup.kind === 'soul-crystal')).toHaveLength(hardBase.pickups.filter((pickup) => pickup.kind === 'soul-crystal').length)
       expect(hardTalented.pickups.filter((pickup) => pickup.kind === 'equipment')).toHaveLength(hardBase.pickups.filter((pickup) => pickup.kind === 'equipment').length)
     } finally {
       randomSpy.mockRestore()
     }
+  })
+
+  it('awards the FT010 rank-five point once per persistent elite archetype', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.selectedCampaignDifficulty = 'hard'
+    snapshot.selectedDifficulty = 'hard'
+    snapshot.unlockedMetaTalentIds = ['meta_common_10']
+    snapshot.metaTalentRanks = { meta_common_10: 5 }
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 1
+    snapshot.levelTargetKills = 99
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+    snapshot.mapObstacles = []
+    const killElite = (current: GameSnapshot, id: string, archetypeId: string) => {
+      const elite = makeEnemy({ id, archetypeId, kind: 'elite', grantsEliteReward: true, hp: 1, maxHp: 80, position: { x: 300, y: 200 } })
+      return advanceGame({
+        ...current,
+        phase: 'running',
+        pendingSkillReward: null,
+        enemies: [elite],
+        projectiles: [makeProjectile({ id: `${id}-hit`, position: elite.position, damage: 20 })],
+      }, noInput, 0.016)
+    }
+
+    const first = killElite(snapshot, 'record-a-1', 'elite-a')
+    expect(first.talentPoints).toBe(1)
+    expect(first.metaTalentRecordedEliteArchetypeIds).toEqual(['elite-a'])
+    const duplicate = killElite(first, 'record-a-2', 'elite-a')
+    expect(duplicate.talentPoints).toBe(1)
+    expect(duplicate.metaTalentRecordedEliteArchetypeIds).toEqual(['elite-a'])
+    const second = killElite(duplicate, 'record-b-1', 'elite-b')
+    expect(second.talentPoints).toBe(2)
+    expect(second.metaTalentRecordedEliteArchetypeIds).toEqual(['elite-a', 'elite-b'])
   })
 
   it('keeps every campaign opening enemy within its constant move speed cap', () => {
@@ -2365,7 +2626,7 @@ describe('game engine', () => {
     expect(snapshot.player.position).toEqual(playerPosition)
   })
 
-  it('measures a warden stuck timer after the final boss-boundary clamp while preserving p1 and other boss fallback', () => {
+  it('lets a P1 warden preserve its player-origin world lane while keeping other Boss and P2 boundary rules', () => {
     const createBoundarySnapshot = (enemy: Enemy) => {
       const snapshot = createInitialSnapshot('running')
       snapshot.level = FLOORS_PER_CAMPAIGN
@@ -2427,8 +2688,11 @@ describe('game engine', () => {
     p2BoundarySnapshot.player.position = { x: 480, y: 320 }
     const p2Result = advanceGame(p2BoundarySnapshot, { up: false, down: false, left: false, right: false }, 0.05)
 
-    expect(p1Result.enemies[0].position).toEqual(p1Warden.position)
-    expect(p1Result.enemies[0].stuckTimer).toBeGreaterThan(0)
+    expect(p1Result.enemies[0].position.x).toBeGreaterThan(p1Warden.position.x)
+    expect(distance(p1Result.enemies[0].position, p1Result.player.position)).toBeLessThan(
+      distance(p1Warden.position, p1Result.player.position),
+    )
+    expect(p1Result.enemies[0].stuckTimer).toBe(0)
     expect(distance(otherBossResult.enemies[0].position, { x: 480, y: 320 })).toBeLessThanOrEqual(160.001)
     expect(otherBossResult.battlefield.wardenArena).toBeUndefined()
     expect(p2Result.enemies[0].position).toEqual(p2BoundaryWarden.position)
@@ -2994,19 +3258,20 @@ describe('game engine', () => {
     expect(next.enemies.filter((enemy) => enemy.role === 'guard')).toHaveLength(3)
   })
 
-  it('gives a short safe entry before the first wave spawns', () => {
+  it('holds combat at the mandatory initial draft and removes the old entry wait after the third choice', () => {
     const snapshot = createInitialSnapshot('idle')
-    const started = restartRunSnapshot(snapshot)
+    let started = restartRunSnapshot(snapshot)
 
-    expect(started.levelTimer).toBeGreaterThan(0)
-    expect(started.player.hurtCooldown).toBeGreaterThan(0)
+    expect(started.levelTimer).toBe(0)
+    expect(started.player.hurtCooldown).toBe(0)
+    expect(advanceGame(started, { up: false, down: false, left: false, right: true }, 0.2).player.position).toEqual(started.player.position)
 
-    const next = advanceGame(started, { up: false, down: false, left: false, right: true }, 0.2)
-
-    expect(next.player.position.x).toBeGreaterThan(started.player.position.x)
-    expect(next.enemies).toHaveLength(0)
-    expect(next.remainingToSpawn).toBe(started.remainingToSpawn)
-    expect(next.levelTimer).toBeLessThan(started.levelTimer)
+    for (let round = 0; round < 3; round += 1) {
+      started = selectInitialSkillDraftCandidateSnapshot(started, started.initialSkillDraft!.candidates[0].choiceId)
+    }
+    const next = advanceGame(started, { up: false, down: false, left: false, right: true }, 0.05)
+    expect(next.levelTimer).toBe(0)
+    expect(next.enemies.length).toBeGreaterThan(0)
   })
 
   it('tracks mouse aim point', () => {
@@ -3129,7 +3394,8 @@ describe('game engine', () => {
     const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.1)
 
     expect(next.phase).toBe('running')
-    expect(next.floorTransition?.nextLevel).toBe(2)
+    expect(next.level).toBe(2)
+    expect(next.floorTransition).toBeUndefined()
     expect(next.skillPoints).toBe(0)
     expect(next.pendingSkillReward).toBeNull()
     expect(next.levelClearConfirmed).toBe(false)
@@ -3210,7 +3476,8 @@ describe('game engine', () => {
     const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
 
     expect(next.phase).toBe('running')
-    expect(next.floorTransition?.nextLevel).toBe(2)
+    expect(next.level).toBe(2)
+    expect(next.floorTransition).toBeUndefined()
     expect(next.enemyProjectiles.some((projectile) => projectile.id === 'lingering-enemy-projectile')).toBe(true)
     expect(next.projectiles.some((projectile) => projectile.id === 'lingering-player-projectile')).toBe(true)
     expect(next.lastLevelSettlement?.rewardKind).toBe('light')
@@ -3243,6 +3510,9 @@ describe('game engine', () => {
       expect(stillWaiting.pendingSkillReward).not.toBeNull()
 
       const accepted = acceptSkillRewardSnapshot(stillWaiting, stillWaiting.pendingSkillReward!.choices[0].choiceId)
+      expect(accepted.level).toBe(level + 1)
+      expect(accepted.phase).toBe('running')
+      expect(accepted.floorTransition).toBeUndefined()
       const advanced = advancePastFloorTransition(accepted)
       expect(advanced.level).toBe(level + 1)
       expect(advanced.phase).toBe('running')
@@ -3301,6 +3571,7 @@ describe('game engine', () => {
     expect(started.debugControls).toEqual({ infiniteHealth: true, disableAttacks: false })
 
     started.player.hp = 0
+    started.initialSkillDraft = undefined
     started.levelTimer = 0
     started.player.hurtCooldown = 0
     started.remainingToSpawn = 1
@@ -3709,6 +3980,7 @@ describe('game engine', () => {
     expect(startLocalBattleTestSnapshot(success).runSettlementSummary).toBeUndefined()
 
     const failure = startRunSnapshot(current)
+    failure.initialSkillDraft = undefined
     failure.player.hp = 0
     const failed = finishPlayerDeathAnimation(failure)
     expect(failed.runSettlementSummary).toMatchObject({
@@ -3725,13 +3997,14 @@ describe('game engine', () => {
     expect(localFailed.runSettlementSummary).toBeUndefined()
   })
 
-  it('applies unlocked meta talent material bonuses to automatic below-epic dismantle results', () => {
+  it('applies FT007 to automatic dismantle materials without reviving legacy material talents', () => {
     const makeRun = (withTalent: boolean) => {
       const snapshot = createInitialSnapshot('running')
       snapshot.level = 8
       snapshot.kills = 26
       snapshot.player.hp = 0
-      snapshot.unlockedMetaTalentIds = withTalent ? ['meta_common_08'] : []
+      snapshot.unlockedMetaTalentIds = withTalent ? ['meta_common_07'] : []
+      snapshot.metaTalentRanks = withTalent ? { meta_common_07: 5 } : {}
       snapshot.equipmentInventory = Array.from({ length: 8 }, (_, index) => (
         makeEquipment({
           id: `temporary-rare-${index}`,
@@ -3751,6 +4024,35 @@ describe('game engine', () => {
     expect(talented.lastAutoDismantleSummary?.count).toBe(base.lastAutoDismantleSummary?.count)
     expect(talented.lastAutoDismantleSummary?.materials.crystalDust ?? 0).toBeGreaterThan(base.lastAutoDismantleSummary?.materials.crystalDust ?? 0)
     expect(talented.equipmentMaterials.crystalDust).toBe(talented.lastAutoDismantleSummary?.materials.crystalDust)
+  })
+
+  it('carries FT007 fractional dismantle bonuses independently by material and through persisted state', () => {
+    let snapshot = createInitialSnapshot('running')
+    snapshot.unlockedMetaTalentIds = ['meta_common_07']
+    snapshot.metaTalentRanks = { meta_common_07: 1 }
+    const items = Array.from({ length: 10 }, (_, index) => makeEquipment({
+      id: `fractional-dismantle-${index}`,
+      slot: 'weapon',
+      rarity: 'rare',
+      buildTag: 'pierce',
+      score: 96,
+      source: 'dungeon',
+    }))
+    snapshot.equipmentInventory = items
+
+    for (const item of items.slice(0, 2)) {
+      snapshot = dismantleEquipmentSnapshot(snapshot, item.id)
+    }
+    expect(snapshot.equipmentMaterials).toMatchObject({ crystalDust: 14, buildShard: 4 })
+    expect(snapshot.metaTalentDismantleMaterialRemainders).toMatchObject({ crystalDust: 0.7, buildShard: 0.2 })
+
+    snapshot = restorePersistedGameState(extractPersistedGameState(snapshot))
+    for (const item of items.slice(2)) {
+      snapshot = dismantleEquipmentSnapshot(snapshot, item.id)
+    }
+    expect(snapshot.equipmentMaterials).toMatchObject({ crystalDust: 73, buildShard: 21 })
+    expect(snapshot.metaTalentDismantleMaterialRemainders?.crystalDust).toBeCloseTo(0.5)
+    expect(snapshot.metaTalentDismantleMaterialRemainders?.buildShard).toBeCloseTo(0)
   })
 
   it('does not apply v2 material-drop bonuses to below-epic auto dismantle', () => {
@@ -3876,6 +4178,120 @@ describe('game engine', () => {
     expect(upgraded.player.attackDamage).toBeGreaterThan(snapshot.player.attackDamage)
   })
 
+  it('applies FT008 to gold and material costs at every equipment upgrade level', () => {
+    const cases: Array<EquipmentItem['rarity']> = ['common', 'rare', 'epic', 'legacy', 'legendary']
+    cases.forEach((rarity) => {
+      const run = createInitialSnapshot('running')
+      const item = makeEquipment({
+        id: `discount-${rarity}`,
+        slot: 'weapon',
+        rarity,
+        buildTag: rarity === 'common' ? 'general' : 'pierce',
+        level: 200,
+        score: 160,
+        bonus: { attackDamage: 8 },
+        upgradeLevel: 4,
+      })
+      run.unlockedMetaTalentIds = ['meta_common_08']
+      run.metaTalentRanks = { meta_common_08: 5 }
+      run.equipmentInventory = [item]
+      run.equippedItems = { weapon: item }
+      run.currency = 50_000
+      run.equipmentMaterials = Object.fromEntries(Object.keys(run.equipmentMaterials).map((id) => [id, 50_000])) as typeof run.equipmentMaterials
+
+      const baseCost = getEquipmentUpgradeCost(item)
+      const discountedCost = Object.fromEntries(Object.entries(baseCost).map(([id, amount]) => [id, Math.ceil(amount * 0.85)])) as typeof baseCost
+      const baseGoldCost = getEquipmentUpgradeGoldCost(item)
+      const upgraded = upgradeEquippedEquipmentSnapshot(run, 'weapon')
+      Object.keys(baseCost).forEach((id) => {
+        const materialId = id as keyof typeof baseCost
+        expect(run.equipmentMaterials[materialId] - upgraded.equipmentMaterials[materialId]).toBe(discountedCost[materialId])
+        expect(upgraded.equipmentMaterials[materialId]).toBeGreaterThanOrEqual(0)
+      })
+      expect(run.currency - upgraded.currency).toBe(Math.ceil(baseGoldCost * 0.85))
+
+      const levelSixItem = { ...item, id: `level-six-discount-${rarity}`, upgradeLevel: 5 }
+      const levelSix = createInitialSnapshot('running')
+      levelSix.unlockedMetaTalentIds = ['meta_common_08']
+      levelSix.metaTalentRanks = { meta_common_08: 5 }
+      levelSix.equipmentInventory = [levelSixItem]
+      levelSix.equippedItems = { weapon: levelSixItem }
+      levelSix.currency = 50_000
+      levelSix.equipmentMaterials = Object.fromEntries(Object.keys(levelSix.equipmentMaterials).map((id) => [id, 50_000])) as typeof levelSix.equipmentMaterials
+      const sixCost = getEquipmentUpgradeCost(levelSixItem)
+      const discountedSixCost = Object.fromEntries(Object.entries(sixCost).map(([id, amount]) => [id, Math.ceil(amount * 0.85)])) as typeof sixCost
+      const sixGoldCost = getEquipmentUpgradeGoldCost(levelSixItem)
+      const upgradedSix = upgradeEquippedEquipmentSnapshot(levelSix, 'weapon')
+      Object.keys(sixCost).forEach((id) => {
+        const materialId = id as keyof typeof sixCost
+        expect(levelSix.equipmentMaterials[materialId] - upgradedSix.equipmentMaterials[materialId]).toBe(discountedSixCost[materialId])
+      })
+      expect(levelSix.currency - upgradedSix.currency).toBe(Math.ceil(sixGoldCost * 0.85))
+    })
+  })
+
+  it('retains exactly one owned core modifier through reforge, rerolls unlocked modifiers, and charges materials only', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+    const snapshot = createInitialSnapshot('running')
+    const item = makeEquipment({
+      id: 'endgame-lock-reforge',
+      slot: 'chest',
+      rarity: 'epic',
+      buildTag: 'spread',
+      modifiers: [
+        { ...SKILL_EQUIPMENT_LINKS.spread[0] },
+        { ...SKILL_EQUIPMENT_LINKS.spread[1] },
+      ],
+      bonus: { maxHp: 60, attackDamage: 11 },
+      rolls: { main: 1.1, secondary: 1.1, skillOrBuild: 1.1 },
+    })
+    snapshot.unlockedMetaTalentIds = ['meta_endgame_01']
+    snapshot.equipmentInventory = [item]
+    snapshot.equippedItems = { chest: item }
+    snapshot.pendingBossLoot = [item]
+    snapshot.currency = 1_000
+    snapshot.equipmentMaterials = Object.fromEntries(Object.keys(snapshot.equipmentMaterials).map((id) => [id, 1_000])) as typeof snapshot.equipmentMaterials
+
+    const locked = toggleEquipmentModifierLockSnapshot(snapshot, item.id, 0)
+    expect(locked.equipmentInventory[0].lockedModifierIndexes).toEqual([0])
+    const baseCost = getEquipmentReforgeCost(item, 'secondary')
+    const lockedCost = scaleEquipmentMaterialCost(baseCost, 1.4)
+    const reforged = reforgeEquipmentSnapshot(locked, item.id)
+    const reforgedItem = reforged.equipmentInventory[0]
+    expect(reforgedItem.modifiers[0]).toEqual(item.modifiers[0])
+    expect(reforgedItem.modifiers[1]).not.toEqual(item.modifiers[1])
+    expect(reforgedItem.lockedModifierIndexes).toEqual([0])
+    expect(reforged.equippedItems.chest?.modifiers).toEqual(reforgedItem.modifiers)
+    expect(reforged.pendingBossLoot[0]?.modifiers).toEqual(reforgedItem.modifiers)
+    expect(reforged.currency).toBe(1_000 - getEquipmentReforgeGoldCost(item, 'secondary'))
+    Object.keys(baseCost).forEach((id) => {
+      const materialId = id as keyof typeof baseCost
+      expect(locked.equipmentMaterials[materialId] - reforged.equipmentMaterials[materialId]).toBe(lockedCost[materialId])
+    })
+
+    const insufficient = { ...locked, equipmentMaterials: { ...locked.equipmentMaterials } }
+    Object.keys(baseCost).forEach((id) => {
+      const materialId = id as keyof typeof baseCost
+      insufficient.equipmentMaterials[materialId] = Math.max(0, lockedCost[materialId] - 1)
+    })
+    const rejected = reforgeEquipmentSnapshot(insufficient, item.id)
+    expect(rejected.equipmentInventory[0]).toEqual(insufficient.equipmentInventory[0])
+    expect(rejected.currency).toBe(insufficient.currency)
+
+    const unowned = createInitialSnapshot('running')
+    unowned.equipmentInventory = [item]
+    unowned.equippedItems = { chest: item }
+    unowned.currency = 1_000
+    unowned.equipmentMaterials = Object.fromEntries(Object.keys(unowned.equipmentMaterials).map((id) => [id, 1_000])) as typeof unowned.equipmentMaterials
+    const unownedLocked = toggleEquipmentModifierLockSnapshot(unowned, item.id, 0)
+    const unownedReforge = reforgeEquipmentSnapshot(unownedLocked, item.id)
+    expect(unownedReforge.equipmentInventory[0].modifiers).toEqual(item.modifiers)
+    Object.keys(baseCost).forEach((id) => {
+      const materialId = id as keyof typeof baseCost
+      expect(unownedLocked.equipmentMaterials[materialId] - unownedReforge.equipmentMaterials[materialId]).toBe(baseCost[materialId])
+    })
+  })
+
   it('reforges only secondary rolls while preserving identity, affixes, modifiers, and locks', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5)
     const snapshot = createInitialSnapshot('running')
@@ -3943,7 +4359,7 @@ describe('game engine', () => {
     expect(reforged.currency).toBe(700)
   })
 
-  it('reforges boss legacy equipment by changing only skill/build rolls and then unlocks sealed slots', () => {
+  it('reforges boss legacy equipment by changing only skill/build rolls', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5)
     const snapshot = createInitialSnapshot('running')
     const legacy = makeEquipment({
@@ -3984,9 +4400,6 @@ describe('game engine', () => {
     expect(reforged.equipmentMaterials.campaignSigil).toBe(198)
     expect(reforged.currency).toBe(1000)
 
-    const unlocked = unlockEquipmentSlotSnapshot(reforged, 'necklace')
-    expect(unlocked.unsealedEquipmentSlots).toContain('necklace')
-    expect(unlocked.equipmentMaterials.campaignSigil).toBeLessThan(reforged.equipmentMaterials.campaignSigil)
   })
 
   it('does not change equipment or consume resources when reforge materials or gold are insufficient', () => {
@@ -4071,7 +4484,7 @@ describe('game engine', () => {
     expect(reforged.currency).toBe(0)
   })
 
-  it('biases equipment drops toward the current build when a preferred build tag is supplied', () => {
+  it('biases equipment drops toward the current build and preserves the fixed V2 core identity', () => {
     vi.spyOn(Math, 'random').mockReturnValueOnce(0.99).mockReturnValueOnce(0.99).mockReturnValueOnce(0.65).mockReturnValue(0)
     const drop = createEquipmentDrop(44, 'boss-legacy', () => 'targeted', {
       preferredBuildTag: 'beast',
@@ -4081,7 +4494,12 @@ describe('game engine', () => {
     expect(drop?.rarity).toBe('legacy')
     expect(drop?.slot).toBe('weapon')
     expect(drop?.buildTag).toBe('beast')
-    expect(drop?.modifiers.some((modifier) => modifier.type.startsWith('beast'))).toBe(true)
+    expect(BEAST_CONTRACT_DOMAIN_EQUIPMENT_DEFINITIONS.find((entry) => entry.templateId === drop?.equipmentId)).toMatchObject({
+      collection: 'beast',
+      identity: 'core',
+      slot: 'weapon',
+    })
+    expect(drop?.modifiers).toEqual([])
     vi.restoreAllMocks()
   })
 
@@ -4156,6 +4574,54 @@ describe('game engine', () => {
     expect(next.projectiles[0].ricochetRemaining).toBeGreaterThan(0)
     expect(next.projectiles[0].velocity.x).toBeGreaterThan(0)
     expect(next.enemySkillEffects.some((effect) => effect.kind === 'ricochet-link')).toBe(true)
+  })
+
+  it('keeps elite parallel-line limited to elite and Boss hits with two 55-percent side arrows', () => {
+    const fireAtTarget = (kind: 'melee' | 'elite' | 'boss') => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.remainingToSpawn = 1
+      snapshot.levelTargetKills = 99
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.enemies = [
+        makeEnemy({ id: 'trigger', kind, position: { x: 300, y: 200 }, hp: 1000, maxHp: 1000, speed: 0 }),
+        makeEnemy({ id: 'upper-side', position: { x: 350, y: 182 }, hp: 100, maxHp: 100, speed: 0 }),
+        makeEnemy({ id: 'lower-side', position: { x: 350, y: 218 }, hp: 100, maxHp: 100, speed: 0 }),
+      ]
+      snapshot.projectiles = [makeProjectile({
+        id: `elite-parallel-${kind}`,
+        position: { x: 300, y: 200 },
+        previousPosition: { x: 280, y: 200 },
+        origin: { x: 280, y: 200 },
+        velocity: { x: 200, y: 0 },
+        damage: 20,
+        size: 5,
+        modifiers: [{
+          type: 'elite-parallel-line',
+          familyIds: ['pierce-arrow', 'spiral-break'],
+          damageMultiplier: 0.55,
+        }],
+      })]
+
+      return advanceGame(snapshot, noInput, 0.016)
+    }
+
+    ;(['elite', 'boss'] as const).forEach((kind) => {
+      const next = fireAtTarget(kind)
+      const sideEffects = next.enemySkillEffects.filter((effect) => effect.id.startsWith('parallel-line-'))
+
+      expect(next.enemies.find((enemy) => enemy.id === 'upper-side')?.hp).toBeCloseTo(89)
+      expect(next.enemies.find((enemy) => enemy.id === 'lower-side')?.hp).toBeCloseTo(89)
+      expect(sideEffects).toHaveLength(2)
+      expect(sideEffects.map((effect) => effect.position.y).sort((a, b) => a - b)).toEqual([182, 218])
+      expect(sideEffects.every((effect) => effect.targetPosition?.y === effect.position.y && (effect.targetPosition?.x ?? 0) > effect.position.x)).toBe(true)
+    })
+
+    const ordinary = fireAtTarget('melee')
+    expect(ordinary.enemies.find((enemy) => enemy.id === 'upper-side')?.hp).toBe(100)
+    expect(ordinary.enemies.find((enemy) => enemy.id === 'lower-side')?.hp).toBe(100)
+    expect(ordinary.enemySkillEffects.some((effect) => effect.id.startsWith('parallel-line-'))).toBe(false)
   })
 
   it('turns curve return arrows back toward their origin after the first flight stage', () => {
@@ -4532,11 +4998,23 @@ describe('game engine', () => {
     })])
 
     const ranged = createLogSnapshot()
+    ranged.enemies = [makeEnemy({
+      id: 'ranged-log-anchor',
+      position: { x: 500, y: 500 },
+      speed: 0,
+      attackCooldown: 999,
+      behaviorCooldown: 999,
+    })]
     ranged.enemyProjectiles = [makeProjectile({
-      id: 'log-ranged-shot', owner: 'enemy', position: { ...ranged.player.position }, velocity: { x: 0, y: 0 }, damage: 11,
+      id: 'log-ranged-shot', owner: 'enemy', position: { x: ranged.player.position.x - 48, y: ranged.player.position.y }, velocity: { x: PROJECTILE_SPEED, y: 0 }, damage: 11,
       attackerId: 'log-archer', attackerName: '骷髅弓手', sourceSkillId: 'enemy-ranged-shot', sourceName: '远程射击',
     })]
-    const rangedAfter = advanceGame(ranged, { up: false, down: false, left: false, right: false }, 0.016)
+    let rangedAfter = ranged
+    for (let frame = 0; frame < 20
+      && rangedAfter.enemyProjectiles.some((projectile) => projectile.id === 'log-ranged-shot')
+      && !rangedAfter.combatDamageLog.some((entry) => entry.sourceId === 'enemy-ranged-shot'); frame += 1) {
+      rangedAfter = advanceGame(rangedAfter, { up: false, down: false, left: false, right: false }, 0.016)
+    }
     expect(rangedAfter.combatDamageLog).toEqual([expect.objectContaining({
       side: 'enemy', isCritical: false, attackerId: 'log-archer', attackerName: '骷髅弓手', sourceId: 'enemy-ranged-shot', sourceName: '远程射击', damage: 11,
     })])
@@ -4938,32 +5416,27 @@ describe('game engine', () => {
     expect(Math.hypot(thunder!.velocity.x, thunder!.velocity.y)).toBe(380)
   })
 
-  it('scales dawn bolt damage by travel distance', () => {
-    const createDawnSnapshot = (enemyX: number) => {
-      const snapshot = createInitialSnapshot('running')
-      snapshot.remainingToSpawn = 0
-      snapshot.mapObstacles = []
-      snapshot.player.position = { x: 180, y: 200 }
-      snapshot.aimPoint = { x: 720, y: 200 }
-      snapshot.player.attackCooldown = 99
-      snapshot.activeSkills = [{ skillId: 'dawn-bolt', level: 5, cooldownRemaining: 0 }]
-      snapshot.enemies = [makeEnemy({ id: 'target', position: { x: enemyX, y: 200 }, hp: 400, maxHp: 400 })]
-      return snapshot
+  it('migrates retired heavy-snipe branches into the spiral tracking family without empty slots', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.activeSkills = [
+      { skillId: 'heavy-snipe', evolutionId: 'dawn-bolt', level: 3, cooldownRemaining: 1.2 },
+      { skillId: 'weakness-trace', level: 5, cooldownRemaining: 0.4 },
+    ]
+    snapshot.runTalentState.selectedTalentIds = ['run_blood_09', 'run_death_09']
+    snapshot.inRunTalentIds = ['run_blood_09', 'run_death_09']
+    snapshot.runTalentState.formAnchors = {
+      run_blood_09: { familyId: 'spiral-break', evolutionId: 'cross-cut', anchoredAt: 1 },
+      run_death_09: { familyId: 'spiral-break', evolutionId: 'cross-cut', anchoredAt: 2 },
     }
 
-    const closeCast = triggerActiveSkillSnapshot(createDawnSnapshot(230), 0)
-    releasePlayerProjectilesForImpact(closeCast)
-    closeCast.projectiles[0].position = { ...closeCast.enemies[0].position }
-    const closeHit = advanceGame(closeCast, { up: false, down: false, left: false, right: false }, 0.016)
-    const closeDamage = 400 - closeHit.enemies[0].hp
+    const migrated = migrateArcherSkillEvolutionSnapshot(snapshot)
 
-    const farCast = triggerActiveSkillSnapshot(createDawnSnapshot(660), 0)
-    releasePlayerProjectilesForImpact(farCast)
-    farCast.projectiles[0].position = { ...farCast.enemies[0].position }
-    const farHit = advanceGame(farCast, { up: false, down: false, left: false, right: false }, 0.016)
-    const farDamage = 400 - farHit.enemies[0].hp
-
-    expect(farDamage).toBeGreaterThan(closeDamage * 1.4)
+    expect(migrated.activeSkills).toHaveLength(1)
+    expect(migrated.activeSkills[0]).toMatchObject({ skillId: 'spiral-break', familyId: 'spiral-break', evolutionId: 'blood-scent', level: 5 })
+    expect(migrated.runTalentState.selectedTalentIds).not.toContain('run_blood_09')
+    expect(migrated.inRunTalentIds).not.toContain('run_blood_09')
+    expect(migrated.runTalentState.formAnchors?.run_blood_09).toBeUndefined()
+    expect(migrated.runTalentState.formAnchors?.run_death_09).toMatchObject({ familyId: 'spiral-break', evolutionId: 'cross-cut' })
   })
 
   it('lets double star arrows auto-track and keep pierce', () => {
@@ -5005,23 +5478,7 @@ describe('game engine', () => {
     expect(next.enemySkillEffects.some((effect) => effect.kind === 'ricochet-link')).toBe(true)
   })
 
-  it('applies level five heavy snipe single-target burst and shock bolt area stun', () => {
-    const snipe = createInitialSnapshot('running')
-    snipe.remainingToSpawn = 0
-    snipe.mapObstacles = []
-    snipe.player.position = { x: 180, y: 200 }
-    snipe.aimPoint = { x: 320, y: 200 }
-    snipe.player.attackCooldown = 99
-    snipe.activeSkills = [{ skillId: 'heavy-snipe', level: 5, cooldownRemaining: 0 }]
-    snipe.enemies = [makeEnemy({ id: 'snipe-target', position: { x: 260, y: 200 }, hp: 240, maxHp: 240 })]
-
-    const snipeCast = triggerActiveSkillSnapshot(snipe, 0)
-    expect(snipeCast.projectiles[0].singleTargetDamageMultiplier).toBeGreaterThanOrEqual(1.25)
-    releasePlayerProjectilesForImpact(snipeCast)
-    snipeCast.projectiles[0].position = { ...snipeCast.enemies[0].position }
-    const snipeHit = advanceGame(snipeCast, { up: false, down: false, left: false, right: false }, 0.016)
-    expect(snipeHit.enemies[0].hp).toBeLessThan(240 - ARCHER_ACTIVE_SKILL_MAP['heavy-snipe'].levels[4].damage)
-
+  it('keeps shock bolt area stun after retiring heavy-snipe', () => {
     const shock = createInitialSnapshot('running')
     shock.remainingToSpawn = 0
     shock.mapObstacles = []
@@ -5190,7 +5647,7 @@ describe('game engine', () => {
       expect(released.projectiles.every((projectile) => projectile.velocity.x > 0 && Math.abs(projectile.velocity.y) < 0.000001)).toBe(true)
     })
 
-    ;(['pierce-arrow', 'sun-piercer', 'weakness-trace'] as const).forEach((skillId) => {
+    ;(['pierce-arrow', 'sun-piercer'] as const).forEach((skillId) => {
       const selected = createFormalPierceRun(2)
       selected.activeSkills = [{ skillId, level: 1, cooldownRemaining: 0 }]
       selected.runTalentState.selectedTalentIds = ['run_death_03']
@@ -5540,7 +5997,7 @@ describe('game engine', () => {
     expect(nonDirectCast.skillFields.some((field) => field.sourceSkillId === 'arrow-rain')).toBe(true)
   })
 
-  it('consumes the blood trajectory branch only for fan-burst and keeps focused fans above the configured minimum', () => {
+  it('consumes the blood trajectory branch only for fan-burst and clamps its total fan angle', () => {
     const createSpreadSnapshot = (skillId: 'fan-burst' | 'quick-triple', branch?: 'wide' | 'focused', level = 1) => {
       const snapshot = createInitialSnapshot('running')
       snapshot.remainingToSpawn = 1
@@ -5562,17 +6019,406 @@ describe('game engine', () => {
     const wideFan = triggerActiveSkillSnapshot(createSpreadSnapshot('fan-burst', 'wide'), 0)
     const legacyDefaultFan = triggerActiveSkillSnapshot(createSpreadSnapshot('fan-burst'), 0)
     const focusedFan = triggerActiveSkillSnapshot(createSpreadSnapshot('fan-burst', 'focused'), 0)
-    expect(totalAngle(focusedFan.projectiles)).toBeCloseTo(14 * Math.PI / 180, 6)
+    expect(totalAngle(wideFan.projectiles)).toBeCloseTo(68 * Math.PI / 180, 6)
+    expect(totalAngle(focusedFan.projectiles)).toBeCloseTo(45 * Math.PI / 180, 6)
     expect(totalAngle(focusedFan.projectiles)).toBeLessThan(totalAngle(wideFan.projectiles))
     expect(totalAngle(focusedFan.projectiles)).toBeGreaterThan(0)
     expect(totalAngle(legacyDefaultFan.projectiles)).toBeCloseTo(totalAngle(wideFan.projectiles), 6)
 
     const focusedSixArrowFan = triggerActiveSkillSnapshot(createSpreadSnapshot('fan-burst', 'focused', 2), 0)
-    expect(totalAngle(focusedSixArrowFan.projectiles)).toBeCloseTo(16 * Math.PI / 180, 6)
+    expect(totalAngle(focusedSixArrowFan.projectiles)).toBeCloseTo(45 * Math.PI / 180, 6)
 
     const baseOtherSpread = triggerActiveSkillSnapshot(createSpreadSnapshot('quick-triple'), 0)
     const bloodOtherSpread = triggerActiveSkillSnapshot(createSpreadSnapshot('quick-triple', 'wide'), 0)
     expect(totalAngle(bloodOtherSpread.projectiles)).toBeCloseTo(totalAngle(baseOtherSpread.projectiles), 6)
+  })
+
+  it('uses one immutable total fan snapshot for scatter arrows, hits, and evolution presentation', () => {
+    const createFanSnapshot = (skillId: string, evolutionId: string, level = 4) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.player.attackCooldown = 999
+      snapshot.player.position = { x: 200, y: 200 }
+      snapshot.aimPoint = { x: 520, y: 200 }
+      snapshot.activeSkills = [{ skillId, familyId: skillId, evolutionId, level, cooldownRemaining: 0 }]
+      return snapshot
+    }
+    const totalAngleDegrees = (projectiles: Projectile[]) => {
+      const angles = projectiles.map((projectile) => Math.atan2(projectile.velocity.y, projectile.velocity.x))
+      return (Math.max(...angles) - Math.min(...angles)) * 180 / Math.PI
+    }
+    const assertFan = (skillId: string, evolutionId: string, expectedDegrees: number) => {
+      const cast = triggerActiveSkillSnapshot(createFanSnapshot(skillId, evolutionId), 0)
+      const projectiles = cast.projectiles.filter((projectile) => projectile.sourceEvolutionId === evolutionId)
+      const geometry = projectiles[0]?.evolutionFanGeometry
+      const event = cast.skillEvolutionEffectEvents.find((item) => item.evolutionId === evolutionId && item.layer === 'warning')
+      expect(projectiles.length).toBeGreaterThan(1)
+      expect(totalAngleDegrees(projectiles)).toBeCloseTo(expectedDegrees, 6)
+      expect(geometry).toMatchObject({
+        skillLevel: 4,
+        projectileCount: projectiles.length,
+        totalFanAngleDegrees: expectedDegrees,
+        range: expect.any(Number),
+        origin: { x: 200, y: 200 },
+        direction: { x: 1, y: 0 },
+      })
+      expect(event?.fanGeometry).toEqual(geometry)
+      expect(event?.length).toBe(geometry?.range)
+      const cloned = togglePauseSnapshot(cast)
+      expect(cloned.projectiles[0].evolutionFanGeometry).toEqual(geometry)
+      expect(cloned.projectiles[0].evolutionFanGeometry).not.toBe(geometry)
+    }
+
+    assertFan('fan-burst', 'double-crescent', 60)
+    assertFan('fan-burst', 'hawk-wing', 75)
+    assertFan('afterimage-salvo', 'light-split', 60)
+    assertFan('afterimage-salvo', 'chain-reflect', 60)
+
+    const capped = createFanSnapshot('fan-burst', 'hawk-wing')
+    capped.equippedItems = {
+      weapon: makeEquipment({
+        id: 'fan-angle-cap',
+        buildTag: 'spread',
+        bonus: {},
+        modifiers: [{ type: 'spread-angle', familyIds: ['fan-burst'], multiplier: 3 }],
+      }),
+    }
+    const cappedCast = triggerActiveSkillSnapshot(capped, 0)
+    expect(totalAngleDegrees(cappedCast.projectiles)).toBeCloseTo(90, 6)
+    expect(cappedCast.projectiles[0].evolutionFanGeometry?.totalFanAngleDegrees).toBe(90)
+
+    const bloodRain = createFanSnapshot('fan-burst', 'hawk-wing')
+    bloodRain.runTalentState.selectedTalentIds = ['run_blood_09']
+    bloodRain.inRunTalentIds = ['run_blood_09']
+    bloodRain.runTalentState.formAnchors = {
+      run_blood_09: { familyId: 'fan-burst', evolutionId: 'hawk-wing', anchoredAt: 1 },
+    }
+    const bloodRainCast = triggerActiveSkillSnapshot(bloodRain, 0)
+    const plainHawkCast = triggerActiveSkillSnapshot(createFanSnapshot('fan-burst', 'hawk-wing'), 0)
+    expect(bloodRainCast.projectiles[0].evolutionFanGeometry).toMatchObject({ totalFanAngleDegrees: 90, projectileCount: 9 })
+    expect(bloodRainCast.projectiles[0].damage).toBeCloseTo(plainHawkCast.projectiles[0].damage * 0.85, 6)
+
+    const bloodSpear = createFanSnapshot('fan-burst', 'hawk-wing')
+    bloodSpear.runTalentState.selectedTalentIds = ['run_blood_10']
+    bloodSpear.inRunTalentIds = ['run_blood_10']
+    bloodSpear.runTalentState.formAnchors = {
+      run_blood_10: { familyId: 'fan-burst', evolutionId: 'hawk-wing', anchoredAt: 1 },
+    }
+    const bloodSpearCast = triggerActiveSkillSnapshot(bloodSpear, 0)
+    expect(totalAngleDegrees(bloodSpearCast.projectiles)).toBeCloseTo(45, 6)
+    expect(bloodSpearCast.projectiles[1].evolutionFanGeometry).toMatchObject({ totalFanAngleDegrees: 45, projectileCount: 3 })
+
+    const orbit = createFanSnapshot('spiral-break', 'cross-cut')
+    const orbitCast = triggerActiveSkillSnapshot(orbit, 0)
+    expect(orbitCast.projectiles.some((projectile) => projectile.evolutionFanGeometry)).toBe(false)
+    ;(['cross-cut', 'blood-scent'] as const).forEach((evolutionId) => {
+      const definition = ARCHER_SKILL_EVOLUTIONS.find((item) => item.id === evolutionId)
+      const cast = evolutionId === 'cross-cut'
+        ? orbitCast
+        : triggerActiveSkillSnapshot(createFanSnapshot('spiral-break', evolutionId), 0)
+      expect(definition?.effectProfile.shape).toBe('orbit')
+      expect(cast.skillEvolutionEffectEvents
+        .filter((event) => event.evolutionId === evolutionId)
+        .every((event) => event.fanGeometry === undefined)).toBe(true)
+    })
+  })
+
+  it('keeps spiral-break branches as one real flight cast with deferred cooldown and branch budgets', () => {
+    const createSpiralSnapshot = (evolutionId?: 'cross-cut' | 'blood-scent', level = 4) => {
+      const snapshot = createInitialSnapshot('running')
+      clearCombatObstacles(snapshot)
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 999
+      snapshot.player.position = { x: 200, y: 200 }
+      snapshot.aimPoint = { x: 680, y: 200 }
+      snapshot.activeSkills = [{ skillId: 'spiral-break', familyId: 'spiral-break', evolutionId, level, cooldownRemaining: 0 }]
+      return snapshot
+    }
+
+    const base = triggerActiveSkillSnapshot(createSpiralSnapshot(), 0)
+    expect(base.projectiles.filter((projectile) => projectile.spiralBreakFlight).length).toBe(1)
+    expect(base.spiralBreakFlights?.[0]).toMatchObject({ hitBudget: 16, hitsRemaining: 16, remainingDuration: 3.2 })
+    expect(base.activeSkills[0].cooldownRemaining).toBe(0)
+    expect(base.activeSkills[0].activeSpiralBreakCastId).toBe(base.spiralBreakFlights?.[0].castId)
+
+    const cross = triggerActiveSkillSnapshot(createSpiralSnapshot('cross-cut', 4), 0)
+    expect(cross.projectiles.filter((projectile) => projectile.spiralBreakFlight).length).toBe(2)
+    expect(cross.spiralBreakFlights?.[0]).toMatchObject({ evolutionId: 'cross-cut', hitBudget: 6, hitsRemaining: 6 })
+    expect(cross.spiralBreakFlights?.[0].arrows.map((arrow) => arrow.hitsRemaining)).toEqual([3, 3])
+
+    const blood = triggerActiveSkillSnapshot(createSpiralSnapshot('blood-scent', 5), 0)
+    expect(blood.projectiles.filter((projectile) => projectile.spiralBreakFlight).length).toBe(1)
+    expect(blood.spiralBreakFlights?.[0]).toMatchObject({ evolutionId: 'blood-scent', hitBudget: 6 })
+
+    let noTarget = base
+    for (let index = 0; index < 12; index += 1) {
+      noTarget = advanceGame(noTarget, { up: false, down: false, left: false, right: false }, 0.05)
+    }
+    expect(noTarget.activeSkills[0].activeSpiralBreakCastId).toBeUndefined()
+    expect(noTarget.activeSkills[0].cooldownRemaining).toBeGreaterThan(0)
+    expect(noTarget.spiralBreakFlights?.[0]?.endReason).toBe('no-target')
+  })
+
+  it('keeps death-contract effects and death forms on the real spiral tracking path', () => {
+    const snapshot = createInitialSnapshot('running')
+    clearCombatObstacles(snapshot)
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+    snapshot.player.position = { x: 200, y: 200 }
+    snapshot.aimPoint = { x: 520, y: 200 }
+    snapshot.activeSkills = [{ skillId: 'spiral-break', familyId: 'spiral-break', evolutionId: 'cross-cut', level: 4, cooldownRemaining: 0 }]
+    snapshot.runTalentState.selectedTalentIds = ['run_death_01', 'run_death_03', 'run_death_06', 'run_death_09', 'run_death_11', 'run_death_13', 'run_death_15']
+    snapshot.inRunTalentIds = [...snapshot.runTalentState.selectedTalentIds]
+    snapshot.runTalentState.formAnchors = {
+      run_death_09: { familyId: 'spiral-break', evolutionId: 'cross-cut', anchoredAt: 1 },
+      run_death_11: { familyId: 'spiral-break', evolutionId: 'cross-cut', anchoredAt: 1 },
+      run_death_13: { familyId: 'spiral-break', evolutionId: 'cross-cut', anchoredAt: 1 },
+      run_death_15: { familyId: 'spiral-break', evolutionId: 'cross-cut', anchoredAt: 1 },
+    }
+    snapshot.runTalentState.formCycle = { casts: [], chargedUntil: 10 }
+    snapshot.enemies = [makeEnemy({
+      id: 'marked-tracking-target',
+      position: { x: 420, y: 200 },
+      hp: 600,
+      maxHp: 600,
+      talentStates: { deathMark: { ttl: 4, stacks: 1, source: 'test' } },
+    })]
+
+    let cast = triggerActiveSkillSnapshot(snapshot, 0)
+    expect(cast.spiralBreakFlights?.[0]).toMatchObject({ hitBudget: 8, hitsRemaining: 8 })
+    expect(cast.spiralBreakFlights?.[0]?.arrows.map((arrow) => arrow.hitsRemaining)).toEqual([4, 4])
+    expect(cast.projectiles.every((projectile) => projectile.formTalentIds?.includes('run_death_09'))).toBe(true)
+    expect(cast.projectiles.every((projectile) => (
+      projectile.formTalentIds?.includes('run_death_11')
+      && projectile.formTalentIds?.includes('run_death_13')
+      && projectile.formAreaTalentIds?.includes('run_death_15')
+    ))).toBe(true)
+    expect(cast.projectiles.every((projectile) => projectile.size > 5)).toBe(true)
+    expect(cast.pendingProjectileLaunches).toHaveLength(0)
+    cast.projectiles.forEach((projectile) => { projectile.releaseDelayRemaining = 0 })
+
+    for (let frame = 0; frame < 90 && !(cast.talentCombatState?.soulFireCooldowns?.['marked-tracking-target']); frame += 1) {
+      cast = advanceGame(cast, noInput, 0.05)
+    }
+    expect(cast.talentCombatState?.soulFireCooldowns?.['marked-tracking-target']).toBeGreaterThanOrEqual(0)
+    expect(cast.projectiles.some((projectile) => projectile.talentPierceJudgmentReady)).toBe(true)
+    expect(cast.combatDamageLog.some((event) => event.sourceId === 'run_death_03')).toBe(true)
+    expect(cast.skillFields.some((field) => field.sourceSkillId === 'run_death_11')).toBe(true)
+    expect(cast.skillFields.some((field) => field.formTalentId === 'run_death_15')).toBe(true)
+    expect(cast.bursts.some((burst) => burst.radius === 115)).toBe(true)
+  })
+
+  it('consumes the death tracking endpoint form only when a real spiral arrow ends', () => {
+    const snapshot = createInitialSnapshot('running')
+    clearCombatObstacles(snapshot)
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+    snapshot.player.position = { x: 200, y: 200 }
+    snapshot.aimPoint = { x: 480, y: 200 }
+    snapshot.activeSkills = [{ skillId: 'spiral-break', familyId: 'spiral-break', evolutionId: 'cross-cut', level: 4, cooldownRemaining: 0 }]
+    snapshot.runTalentState.selectedTalentIds = ['run_death_14']
+    snapshot.inRunTalentIds = ['run_death_14']
+    snapshot.runTalentState.formAnchors = {
+      run_death_14: { familyId: 'spiral-break', evolutionId: 'cross-cut', anchoredAt: 1 },
+    }
+    snapshot.enemies = [makeEnemy({ id: 'endpoint-target', position: { x: 320, y: 200 }, hp: 300, maxHp: 300 })]
+
+    let cast = triggerActiveSkillSnapshot(snapshot, 0)
+    const trackingArrow = cast.projectiles.find((projectile) => projectile.spiralBreakFlight)
+    expect(trackingArrow).toBeTruthy()
+    trackingArrow!.releaseDelayRemaining = 0
+    trackingArrow!.spiralBreakFlight!.hitsRemaining = 0
+    cast = advanceGame(cast, noInput, 0.05)
+
+    const followup = cast.projectiles.find((projectile) => projectile.sourceSkillId === 'run_death_14')
+    expect(followup).toMatchObject({
+      owner: 'player',
+      sourceSkillFamilyId: 'spiral-break',
+      releaseDelayRemaining: 0.25,
+    })
+    expect(followup?.damage).toBeCloseTo((trackingArrow?.formBaseDamage ?? 0) * 0.5)
+  })
+
+  it('uses final non-critical direct damage, not raw projectile damage, for blood-scent execute targeting', () => {
+    const createBloodScent = () => {
+      const snapshot = createInitialSnapshot('running')
+      clearCombatObstacles(snapshot)
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 999
+      snapshot.player.position = { x: 200, y: 200 }
+      snapshot.aimPoint = { x: 520, y: 200 }
+      snapshot.activeSkills = [{ skillId: 'spiral-break', familyId: 'spiral-break', evolutionId: 'blood-scent', level: 4, cooldownRemaining: 0 }]
+      return snapshot
+    }
+    const cast = triggerActiveSkillSnapshot(createBloodScent(), 0)
+    const projectile = cast.projectiles[0]
+    projectile.releaseDelayRemaining = 0
+    const rawDamage = projectile.damage
+    // The left target would satisfy the old raw-damage check but its active
+    // frontal defense reduces the real direct hit below its current HP.
+    const defended = makeEnemy({
+      id: 'defended-not-executable',
+      archetypeId: 'dungeon-skeleton-warrior',
+      position: { x: 520, y: 200 },
+      hp: rawDamage * 0.5,
+      maxHp: rawDamage * 0.5,
+      facingDirection: { x: -1, y: 0 },
+      skeletonWarriorDefenseTimer: 3,
+      skeletonWarriorDefenseCooldown: 5,
+    })
+    const executable = makeEnemy({
+      id: 'real-executable',
+      position: { x: 470, y: 220 },
+      hp: rawDamage * 0.5,
+      maxHp: rawDamage * 0.5,
+    })
+    cast.enemies = [defended, executable]
+    const selected = advanceGame(cast, { up: false, down: false, left: false, right: false }, 0.05)
+    expect(selected.projectiles[0].spiralBreakFlight?.lockedTargetId).toBe('real-executable')
+
+    const fallback = triggerActiveSkillSnapshot(createBloodScent(), 0)
+    fallback.projectiles[0].releaseDelayRemaining = 0
+    fallback.enemies = [
+      makeEnemy({ ...defended, hp: rawDamage * 2, maxHp: rawDamage * 2 }),
+      makeEnemy({ ...executable, hp: rawDamage * 2, maxHp: rawDamage * 2 }),
+    ]
+    const noExecute = advanceGame(fallback, { up: false, down: false, left: false, right: false }, 0.05)
+    expect(noExecute.projectiles[0].spiralBreakFlight?.lockedTargetId).toBe('defended-not-executable')
+
+    const markedPreview = triggerActiveSkillSnapshot(createBloodScent(), 0)
+    markedPreview.projectiles[0].releaseDelayRemaining = 0
+    markedPreview.inRunTalentIds = ['run_death_02']
+    markedPreview.runTalentState.selectedTalentIds = ['run_death_02']
+    const markedLowHp = makeEnemy({
+      id: 'marked-preview-only',
+      position: { x: 500, y: 200 },
+      hp: rawDamage * 0.2,
+      maxHp: rawDamage * 2,
+      markStacks: 1,
+      talentStates: { deathMark: { ttl: 4, stacks: 1, source: 'test' } },
+    })
+    markedPreview.enemies = [markedLowHp]
+    const previewOnly = advanceGame(markedPreview, { up: false, down: false, left: false, right: false }, 0.05)
+    expect(previewOnly.enemies[0].talentStates?.deathMark).toMatchObject({ stacks: 1, source: 'test' })
+    // The regular frame timer may tick down, but target selection itself must
+    // not add the real-hit-only execute-line state.
+    expect(previewOnly.enemies[0].talentStates?.deathMark?.ttl).toBeCloseTo(3.95, 6)
+    expect(previewOnly.enemies[0].talentStates?.executeLine).toBeUndefined()
+  })
+
+  it('keeps concentrated quick-triple evolutions and double-crescent sweeps on one frozen cast path', () => {
+    const createProjectileCast = (skillId: string, evolutionId?: string, level = 4) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 999
+      snapshot.player.position = { x: 200, y: 200 }
+      snapshot.aimPoint = { x: 760, y: 200 }
+      snapshot.activeSkills = [{ skillId, familyId: skillId, evolutionId, level, cooldownRemaining: 0 }]
+      clearCombatObstacles(snapshot)
+      return snapshot
+    }
+    const castProjectiles = (snapshot: GameSnapshot) => [
+      ...snapshot.projectiles,
+      ...(snapshot.pendingProjectileLaunches ?? []).map((launch) => launch.projectile),
+    ]
+    const totalAngleDegrees = (projectiles: Projectile[]) => {
+      const angles = projectiles.map((projectile) => Math.atan2(projectile.velocity.y, projectile.velocity.x))
+      return (Math.max(...angles) - Math.min(...angles)) * 180 / Math.PI
+    }
+
+    const quickTriple = triggerActiveSkillSnapshot(createProjectileCast('quick-triple', undefined, 5), 0)
+    const gale = triggerActiveSkillSnapshot(createProjectileCast('quick-triple', 'gale-barrage', 4), 0)
+    const finalHunt = triggerActiveSkillSnapshot(createProjectileCast('quick-triple', 'final-hunt', 4), 0)
+    ;[quickTriple, gale, finalHunt].forEach((cast) => {
+      const projectiles = castProjectiles(cast)
+      expect(totalAngleDegrees(projectiles)).toBeCloseTo(45, 6)
+      expect(projectiles.every((projectile) => projectile.evolutionFanGeometry?.totalFanAngleDegrees === 45)).toBe(true)
+      projectiles.forEach((projectile) => {
+        expect(Math.hypot(projectile.velocity.x, projectile.velocity.y))
+          .toBeCloseTo(Math.hypot(projectiles[0].velocity.x, projectiles[0].velocity.y), 8)
+      })
+    })
+
+    const bloodRain = createProjectileCast('quick-triple', 'gale-barrage', 4)
+    bloodRain.runTalentState.selectedTalentIds = ['run_blood_09']
+    bloodRain.inRunTalentIds = ['run_blood_09']
+    bloodRain.runTalentState.formAnchors = {
+      run_blood_09: { familyId: 'quick-triple', evolutionId: 'gale-barrage', anchoredAt: 1 },
+    }
+    const bloodRainCast = triggerActiveSkillSnapshot(bloodRain, 0)
+    expect(totalAngleDegrees(castProjectiles(bloodRainCast))).toBeCloseTo(60, 6)
+    expect(castProjectiles(bloodRainCast).every((projectile) => projectile.evolutionFanGeometry?.totalFanAngleDegrees === 60)).toBe(true)
+
+    const bloodWeb = createProjectileCast('quick-triple', 'gale-barrage', 4)
+    bloodWeb.runTalentState.selectedTalentIds = ['run_blood_03']
+    bloodWeb.runTalentState.trajectoryBranches = { run_blood_03: 'wide' }
+    const bloodWebCast = triggerActiveSkillSnapshot(bloodWeb, 0)
+    expect(totalAngleDegrees(castProjectiles(bloodWebCast))).toBeCloseTo(45, 6)
+
+    const levelFourCrescent = triggerActiveSkillSnapshot(createProjectileCast('fan-burst', 'double-crescent', 4), 0)
+    expect(castProjectiles(levelFourCrescent)).toHaveLength(6)
+    expect(ARCHER_SKILL_EVOLUTIONS.find((item) => item.id === 'double-crescent')?.level5Config.damage).toBe(1.25)
+    const crescentCast = triggerActiveSkillSnapshot(createProjectileCast('fan-burst', 'double-crescent', 5), 0)
+    const crescentEvent = crescentCast.skillEvolutionEffectEvents.find((event) => (
+      event.evolutionId === 'double-crescent' && event.layer === 'warning' && event.fanGeometry
+    ))
+    expect(crescentEvent?.fanGeometry?.path).toMatchObject({
+      kind: 'double-crescent',
+      expansionRatio: 0.45,
+      exitLength: 48,
+    })
+    let crescent = crescentCast
+    for (let frame = 0; frame < 30 && !crescent.projectiles.some((projectile) => projectile.doubleCrescentPath); frame += 1) {
+      crescent = advanceGame(crescent, noInput, 0.05)
+    }
+    const releasedCrescents = crescent.projectiles.filter((projectile) => projectile.sourceEvolutionId === 'double-crescent')
+    expect(releasedCrescents).toHaveLength(10)
+    const firstCrescent = releasedCrescents[0]
+    expect(firstCrescent.effectStrength).toBe(0.25)
+    expect(firstCrescent.slowDurationOverride).toBe(1.84)
+    expect(firstCrescent.evolutionFanGeometry?.path).toBeTruthy()
+    const path = firstCrescent.doubleCrescentPath!
+    expect(firstCrescent.evolutionFanGeometry?.path).toMatchObject({
+      kind: 'double-crescent',
+      expansionRatio: 0.45,
+      exitLength: 48,
+      convergencePoint: path.convergencePoint,
+    })
+    expect(distance(firstCrescent.origin!, path.expansionPoint)).toBeCloseTo(
+      distance(firstCrescent.origin!, path.convergencePoint) * 0.45,
+      5,
+    )
+    expect(distance(path.convergencePoint, path.exitPoint)).toBeCloseTo(48, 5)
+    expect(firstCrescent.evolutionFanGeometry?.path).toMatchObject(crescentEvent?.fanGeometry?.path ?? {})
+    const clonedCrescent = togglePauseSnapshot(crescent)
+    expect(clonedCrescent.projectiles[0].doubleCrescentPath).toEqual(firstCrescent.doubleCrescentPath)
+    expect(clonedCrescent.projectiles[0].doubleCrescentPath).not.toBe(firstCrescent.doubleCrescentPath)
+
+    crescent.enemies = [
+      makeEnemy({ id: 'crescent-intercept', position: { ...path.expansionPoint }, hp: 100_000, maxHp: 100_000 }),
+      makeEnemy({ id: 'crescent-convergence', position: { ...path.convergencePoint }, hp: 100_000, maxHp: 100_000 }),
+    ]
+    const convergenceHp = crescent.enemies[1].hp
+    const perArrowDamage = firstCrescent.damage
+    vi.spyOn(Math, 'random').mockReturnValue(0.99)
+    for (let frame = 0; frame < 100 && crescent.projectiles.some((projectile) => projectile.sourceEvolutionId === 'double-crescent'); frame += 1) {
+      crescent = advanceGame(crescent, noInput, 0.05)
+    }
+    const convergence = crescent.enemies.find((enemy) => enemy.id === 'crescent-convergence')!
+    expect(convergenceHp - convergence.hp).toBeCloseTo(perArrowDamage * 10, 5)
+    expect(crescent.enemies.find((enemy) => enemy.id === 'crescent-intercept')!.hp).toBeLessThan(100_000)
+    expect(crescent.projectiles.some((projectile) => projectile.sourceEvolutionId === 'double-crescent')).toBe(false)
   })
 
   it('triggers a zone overlap reaction between fire and ice fields', () => {
@@ -5634,6 +6480,137 @@ describe('game engine', () => {
     expect(next.beastCompanions[0].isAlpha).toBe(true)
   })
 
+  it('places every beast core and evolution companion outside aimed terrain while preserving the cast-facing command', () => {
+    const variants: Array<{
+      skillId: string
+      kind: GameSnapshot['beastCompanions'][number]['kind']
+      evolutionId?: string
+      level: number
+    }> = [
+      { skillId: 'ring-volley', kind: 'wolf', level: 1 },
+      { skillId: 'decoy-feather', kind: 'deer', level: 1 },
+      { skillId: 'sentry-tower', kind: 'bear', level: 1 },
+      { skillId: 'poison-ambush', kind: 'snake', level: 1 },
+      { skillId: 'revolving-feather', kind: 'boar', level: 1 },
+      { skillId: 'raptor-dive', kind: 'hawk', level: 1 },
+      { skillId: 'ring-volley', kind: 'wolf', evolutionId: 'frost-wolf-king', level: 4 },
+      { skillId: 'ring-volley', kind: 'wolf', evolutionId: 'frost-wolf-pack', level: 4 },
+      { skillId: 'decoy-feather', kind: 'deer', evolutionId: 'sacred-deer', level: 4 },
+      { skillId: 'decoy-feather', kind: 'deer', evolutionId: 'phantom-deer-pack', level: 4 },
+      { skillId: 'sentry-tower', kind: 'bear', evolutionId: 'ironwall-bear-king', level: 4 },
+      { skillId: 'sentry-tower', kind: 'bear', evolutionId: 'fury-war-bear', level: 4 },
+      { skillId: 'poison-ambush', kind: 'snake', evolutionId: 'bone-serpent-queen', level: 4 },
+      { skillId: 'poison-ambush', kind: 'snake', evolutionId: 'venom-serpent-nest', level: 4 },
+      { skillId: 'revolving-feather', kind: 'boar', evolutionId: 'breaker-boar-king', level: 4 },
+      { skillId: 'revolving-feather', kind: 'boar', evolutionId: 'stampede-herd', level: 4 },
+      { skillId: 'raptor-dive', kind: 'hawk', evolutionId: 'sky-raptor-king', level: 4 },
+      { skillId: 'raptor-dive', kind: 'hawk', evolutionId: 'night-falcon-pack', level: 4 },
+    ]
+    const obstacle = { id: 'aimed-wall', kind: 'pillar' as const, position: { x: 234, y: 200 }, width: 32, height: 32 }
+    const overlapsObstacle = (beast: { position: { x: number; y: number }; size: number }) => {
+      const nearestX = Math.max(obstacle.position.x - obstacle.width / 2, Math.min(beast.position.x, obstacle.position.x + obstacle.width / 2))
+      const nearestY = Math.max(obstacle.position.y - obstacle.height / 2, Math.min(beast.position.y, obstacle.position.y + obstacle.height / 2))
+      return Math.hypot(beast.position.x - nearestX, beast.position.y - nearestY) < beast.size * 0.5
+    }
+
+    variants.forEach((variant) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.player.position = { x: 200, y: 200 }
+      snapshot.aimPoint = { x: 234, y: 200 }
+      snapshot.mapObstacles = [obstacle]
+      snapshot.activeSkills = [{
+        skillId: variant.skillId,
+        familyId: variant.skillId,
+        evolutionId: variant.evolutionId,
+        level: variant.level,
+        cooldownRemaining: 0,
+      }]
+
+      const cast = triggerActiveSkillSnapshot(snapshot, 0)
+      const companions = cast.beastCompanions.filter((beast) => beast.kind === variant.kind)
+
+      expect(companions.length, `${variant.skillId}:${variant.evolutionId ?? 'core'}`).toBeGreaterThan(0)
+      expect(cast.activeSkills[0].cooldownRemaining).toBeGreaterThan(0)
+      companions.forEach((beast) => {
+        expect(overlapsObstacle(beast)).toBe(false)
+        // The command target and captured facing survive legal placement
+        // displacement and any existing special-move landing.
+        expect(beast.commandPoint).toEqual({ x: 234, y: 200 })
+        expect(beast.facingDirection).toEqual({ x: 1, y: 0 })
+      })
+
+      const advanced = advanceGame(cast, noInput, 0.05)
+      advanced.beastCompanions.filter((beast) => beast.kind === variant.kind).forEach((beast) => {
+        expect(overlapsObstacle(beast)).toBe(false)
+      })
+    })
+  })
+
+  it('backs a blocked beast landing along the cast axis before using the shared nearby legal search', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.remainingToSpawn = 0
+    snapshot.player.position = { x: 200, y: 200 }
+    snapshot.aimPoint = { x: 234, y: 200 }
+    snapshot.mapObstacles = [{ id: 'narrow-wall', kind: 'pillar', position: { x: 234, y: 200 }, width: 2, height: 2 }]
+    snapshot.activeSkills = [{ skillId: 'ring-volley', familyId: 'ring-volley', level: 1, cooldownRemaining: 0 }]
+
+    const alongAxis = triggerActiveSkillSnapshot(snapshot, 0)
+    expect(alongAxis.beastCompanions[0].position).toEqual({ x: 223, y: 200 })
+
+    const fallback = createInitialSnapshot('running')
+    fallback.remainingToSpawn = 0
+    fallback.player.position = { x: 200, y: 200 }
+    fallback.aimPoint = { x: 234, y: 200 }
+    fallback.mapObstacles = [{ id: 'wide-wall', kind: 'pillar', position: { x: 234, y: 200 }, width: 32, height: 32 }]
+    fallback.activeSkills = [{ skillId: 'ring-volley', familyId: 'ring-volley', level: 1, cooldownRemaining: 0 }]
+
+    const nearby = triggerActiveSkillSnapshot(fallback, 0).beastCompanions[0]
+    expect(nearby.position.y).toBeGreaterThan(200)
+    expect(Math.hypot(nearby.position.x - 200, nearby.position.y - 200)).toBeCloseTo(30)
+    expect(nearby.commandPoint).toEqual({ x: 234, y: 200 })
+  })
+
+  it('rejects blocked beast placement without refunding the cast or creating an embedded companion', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.remainingToSpawn = 0
+    snapshot.player.position = { x: 200, y: 200 }
+    snapshot.aimPoint = { x: 234, y: 200 }
+    snapshot.mapObstacles = [{ id: 'sealed-arena', kind: 'pillar', position: { x: 200, y: 200 }, width: 1000, height: 1000 }]
+    snapshot.activeSkills = [{ skillId: 'raptor-dive', familyId: 'raptor-dive', level: 1, cooldownRemaining: 0 }]
+
+    const next = triggerActiveSkillSnapshot(snapshot, 0)
+
+    expect(next.beastCompanions).toHaveLength(0)
+    expect(next.activeSkills[0].cooldownRemaining).toBeGreaterThan(0)
+    expect(next.activeSkills[0].cooldownDuration).toBe(next.activeSkills[0].cooldownRemaining)
+  })
+
+  it('keeps legal beast landings unchanged and rejects occupied entity positions', () => {
+    const legal = createInitialSnapshot('running')
+    legal.remainingToSpawn = 0
+    legal.player.position = { x: 200, y: 200 }
+    legal.aimPoint = { x: 400, y: 200 }
+    clearCombatObstacles(legal)
+    legal.activeSkills = [{ skillId: 'raptor-dive', familyId: 'raptor-dive', level: 1, cooldownRemaining: 0 }]
+
+    const unchanged = triggerActiveSkillSnapshot(legal, 0)
+    expect(unchanged.beastCompanions[0].position).toEqual({ x: 326, y: 200 })
+    expect(unchanged.beastCompanions[0].commandPoint).toEqual({ x: 400, y: 200 })
+
+    const occupied = createInitialSnapshot('running')
+    occupied.remainingToSpawn = 0
+    occupied.player.position = { x: 200, y: 200 }
+    occupied.aimPoint = { x: 234, y: 200 }
+    clearCombatObstacles(occupied)
+    occupied.enemies = [makeEnemy({ id: 'occupied-landing', position: { x: 234, y: 200 }, size: 16 })]
+    occupied.activeSkills = [{ skillId: 'ring-volley', familyId: 'ring-volley', level: 1, cooldownRemaining: 0 }]
+
+    const rerouted = triggerActiveSkillSnapshot(occupied, 0).beastCompanions[0]
+    expect(Math.hypot(rerouted.position.x - 234, rerouted.position.y - 200)).toBeGreaterThanOrEqual(26)
+  })
+
   it('highlights level five qualitative upgrades in reward choices', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.fixedPassiveLevel = 4
@@ -5651,16 +6628,17 @@ describe('game engine', () => {
     expect(reward.choices.some((choice) => choice.tacticalText.includes('额外受到 35%') || choice.tacticalText.includes('鹰眼暴击'))).toBe(true)
   })
 
-  it('offers a mandatory mutually exclusive Lv4 evolution instead of an ordinary upgrade', () => {
+  it('offers both mutually exclusive Lv4 evolutions plus one other legal choice', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 3, cooldownRemaining: 0 }]
     snapshot.phase = 'level-clear'
     const reward = buildPendingReward(snapshot)
 
     expect(reward.poolKind).toBe('skill-evolution')
-    expect(reward.mandatoryEvolutionFamilyId).toBe('pierce-arrow')
-    expect(reward.choices.map((choice) => choice.evolutionId).sort()).toEqual(['sun-piercer', 'wind-cut'])
-    expect(declineSkillRewardSnapshot({ ...snapshot, pendingSkillReward: reward }).pendingSkillReward).not.toBeNull()
+    expect(reward.mandatoryEvolutionFamilyId).toBeUndefined()
+    expect(reward.choices).toHaveLength(3)
+    expect(reward.choices.map((choice) => choice.evolutionId).filter(Boolean).sort()).toEqual(['sun-piercer', 'wind-cut'])
+    expect(declineSkillRewardSnapshot({ ...snapshot, pendingSkillReward: reward }).pendingSkillReward).toBeNull()
 
     const evolved = acceptSkillRewardSnapshot({ ...snapshot, pendingSkillReward: reward }, reward.choices[0].choiceId)
     expect(evolved.activeSkills[0]).toMatchObject({ familyId: 'pierce-arrow', skillId: 'pierce-arrow', evolutionId: reward.choices[0].evolutionId, level: 4 })
@@ -5696,6 +6674,17 @@ describe('game engine', () => {
   it('exposes one stable core/evolution presentation contract for B2', () => {
     expect(ARCHER_CORE_SKILL_IDS).toHaveLength(21)
     expect(ARCHER_SKILL_EVOLUTIONS).toHaveLength(42)
+    expect(ARCHER_CORE_SKILL_IDS).not.toContain('heavy-snipe')
+    expect(ARCHER_CORE_SKILL_DEFINITION_MAP['spiral-break']?.buildTag).toBe('pierce')
+    expect(ARCHER_CORE_SKILL_IDS).toEqual(expect.arrayContaining(['arrow-screen', 'arrow-turret']))
+    expect(ARCHER_SKILL_EVOLUTIONS.find((evolution) => evolution.id === 'moonshard-volley')).toMatchObject({
+      familyId: 'arrow-screen',
+      name: '月碎连矢',
+    })
+    expect(ARCHER_SKILL_EVOLUTIONS.find((evolution) => evolution.id === 'feather-resonance')).toMatchObject({
+      familyId: 'arrow-turret',
+      name: '百羽共鸣',
+    })
     expect(getActiveSkillRuntimePresentation({ skillId: 'curve-return', familyId: 'curve-return', evolutionId: 'sky-judgement', level: 4 })).toMatchObject({
       familyId: 'curve-return',
       evolutionId: 'sky-judgement',
@@ -5717,7 +6706,7 @@ describe('game engine', () => {
     snapshot.runTalentState.legendaryBeastHunt = { commandCount: 2, cooldownRemaining: 7 }
     const presentation = getRunTalentPresentationSnapshot(snapshot)
 
-    expect(presentation).toHaveLength(72)
+    expect(presentation).toHaveLength(74)
     expect(presentation.find((item) => item.id === 'run_beast_legendary_hunt')).toBeUndefined()
   })
 
@@ -5857,11 +6846,20 @@ describe('game engine', () => {
     snapshot.player.position = { x: 200, y: 200 }
     snapshot.aimPoint = { x: 260, y: 200 }
     snapshot.activeSkills = [{ skillId: 'sentry-tower', level: 1, cooldownRemaining: 0 }]
-    snapshot.enemies = [{
+
+    const summoned = triggerActiveSkillSnapshot(snapshot, 0)
+    const beast = summoned.beastCompanions[0]
+    // Let the command cast finish without a target, then exercise the normal
+    // companion attack path independently from command-special damage and the
+    // player's automatic attack.
+    beast.commandTtl = 0
+    beast.attackCooldown = 0
+    summoned.player.attackCooldown = 999
+    summoned.enemies = [{
       id: 'melee-1',
       kind: 'melee',
       grantsEliteReward: false,
-      position: { x: 228, y: 200 },
+      position: { x: beast.position.x + beast.attackRange * 0.5, y: beast.position.y },
       hp: 80,
       maxHp: 80,
       speed: 0,
@@ -5873,16 +6871,13 @@ describe('game engine', () => {
       behaviorTimer: 0,
       behaviorDirection: { x: 0, y: 0 },
       stuckTimer: 0,
-      lastPosition: { x: 228, y: 200 },
+      lastPosition: { x: beast.position.x + beast.attackRange * 0.5, y: beast.position.y },
       burnTtl: 0,
       burnDamagePerSecond: 0,
       slowTtl: 0,
       slowFactor: 0,
       markStacks: 0,
     }]
-
-    const summoned = triggerActiveSkillSnapshot(snapshot, 0)
-    summoned.beastCompanions[0].attackCooldown = 0
     const attacked = advanceGame(summoned, { up: false, down: false, left: false, right: false }, 0.1)
 
     expect(attacked.enemies[0].hp).toBeLessThan(80)
@@ -5900,6 +6895,459 @@ describe('game engine', () => {
 
     expect(revived.beastCompanions[0].reviveTimer).toBe(0)
     expect(revived.beastCompanions[0].hp).toBeGreaterThan(0)
+  })
+
+  it('consumes V3 beast route ranks in real BeastInstance health, attack, and attack-speed paths', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.99)
+    const snapshot = createInitialSnapshot('running')
+    snapshot.remainingToSpawn = 0
+    snapshot.player.position = { x: 200, y: 200 }
+    snapshot.aimPoint = { x: 260, y: 200 }
+    snapshot.activeSkills = [{ skillId: 'sentry-tower', familyId: 'sentry-tower', level: 5, cooldownRemaining: 0 }]
+    snapshot.runTalentState.combatTalentV3!.finiteRanks = {
+      BTB001: 3,
+      BTB101: 3,
+      BTB111: 3,
+      BTB112: 1,
+      BTB121: 3,
+      BTB122: 1,
+      BTB201: 3,
+      BTB204: 1,
+      BTB212: 3,
+      BTB214: 1,
+      BTB222: 3,
+    }
+    snapshot.runTalentState.combatTalentV3!.infiniteRanks = {
+      'INF-BC-DAMAGE': 1,
+      'INF-BC-SPEED': 2,
+      'INF-BK-DAMAGE': 1,
+      'INF-BK-HP': 1,
+      'INF-BK-ELITE': 2,
+      'INF-BK-SYNERGY': 2,
+    }
+
+    const summoned = triggerActiveSkillSnapshot(snapshot, 0)
+    const primary = summoned.beastCompanions[0]
+    expect(primary.isAlpha).toBe(true)
+    expect(primary.maxHp).toBeCloseTo((135 + 4 * 12) * 1.09 * 1.2, 5)
+
+    const kinds = ['hawk', 'wolf', 'boar', 'snake', 'deer', 'bear', 'bear'] as const
+    kinds.forEach((kind, index) => {
+      summoned.beastCompanions.push({
+        ...structuredClone(primary),
+        id: `v3-beast-${kind}-${index}`,
+        kind,
+        position: { x: primary.position.x + 120 + index * 8, y: primary.position.y + 120 },
+        attackCooldown: 999,
+      })
+    })
+    primary.commandTtl = 0
+    primary.attackCooldown = 0
+    summoned.player.attackCooldown = 999
+    summoned.enemies = [makeEnemy({
+      id: 'v3-beast-target',
+      kind: 'elite',
+      position: { x: primary.position.x + primary.attackRange * 0.5, y: primary.position.y },
+      hp: 5000,
+      maxHp: 5000,
+      speed: 0,
+    })]
+
+    const baseline = structuredClone(summoned)
+    baseline.runTalentState.combatTalentV3!.finiteRanks = {}
+    baseline.runTalentState.combatTalentV3!.infiniteRanks = {}
+    const baselineAdvanced = advanceGame(baseline, { up: false, down: false, left: false, right: false }, 0.01)
+    const baselineDamage = 5000 - baselineAdvanced.enemies[0].hp
+    const baselineCooldown = baselineAdvanced.beastCompanions[0].attackCooldown
+
+    const advanced = advanceGame(summoned, { up: false, down: false, left: false, right: false }, 0.01)
+    const talentedDamage = 5000 - advanced.enemies[0].hp
+    const talentedCooldown = advanced.beastCompanions[0].attackCooldown
+
+    // +9% entry, +20% 3/5-kind thresholds, +12% six-kind, +24% three king kinds,
+    // +18% elite/boss king damage, +4% from two same-kind allies, and +20%
+    // from owned coordination/king route infinite growth.
+    expect(talentedDamage / baselineDamage).toBeCloseTo(2.07, 5)
+    // Finite +51%, plus +6% species speed and +6% king synergy from route growth.
+    expect(talentedCooldown / baselineCooldown).toBeCloseTo(1 / 1.63, 5)
+  })
+
+  it('consumes V3 barrage proximity and trajectory turn/revisit modifiers on real projectile hits', () => {
+    const resolveHit = (
+      familyId: string,
+      routeId: 'spread-barrage' | 'pierce-trajectory',
+      finiteRanks: Record<string, number>,
+      infiniteRanks: Record<string, number>,
+      priorTargetIds: string[] = [],
+    ) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.remainingToSpawn = 0
+      snapshot.player.position = { x: 200, y: 200 }
+      snapshot.aimPoint = { x: 300, y: 200 }
+      snapshot.player.attackCooldown = 999
+      const castFamilyId = familyId
+      snapshot.activeSkills = [{ skillId: castFamilyId, familyId: castFamilyId, level: 1, cooldownRemaining: 0 }]
+      snapshot.runTalentState.combatTalentV3!.main = {
+        archetype: routeId === 'spread-barrage' ? 'spread' : 'pierce',
+        routeId,
+      }
+      snapshot.runTalentState.combatTalentV3!.finiteRanks = finiteRanks
+      snapshot.runTalentState.combatTalentV3!.infiniteRanks = infiniteRanks
+      const cast = triggerActiveSkillSnapshot(snapshot, 0)
+      const projectile = cast.projectiles[0]
+      cast.projectiles = [projectile]
+      projectile.sourceSkillId = familyId
+      projectile.sourceSkillFamilyId = familyId
+      projectile.releaseDelayRemaining = undefined
+      projectile.hitEnemyIds = [...priorTargetIds]
+      projectile.hitEnemyCounts = Object.fromEntries(priorTargetIds.map((id) => [id, 1]))
+      if (projectile.combatTalentPierceTrajectory) {
+        projectile.combatTalentPierceTrajectory.turnCount = priorTargetIds.length
+      }
+      const target = makeEnemy({
+        id: 'route-hit-target',
+        position: { x: 300, y: 200 },
+        hp: 5000,
+        maxHp: 5000,
+        speed: 0,
+      })
+      projectile.position = { ...target.position }
+      projectile.previousPosition = { ...target.position }
+      cast.enemies = [target]
+      const advanced = advanceGame(cast, { up: false, down: false, left: false, right: false }, 0.001)
+      return 5000 - advanced.enemies[0].hp
+    }
+
+    const barrageBaseline = resolveHit('fan-burst', 'spread-barrage', {}, { 'INF-SB-DAMAGE': 1 })
+    const barrageBoosted = resolveHit('fan-burst', 'spread-barrage', { ST101: 3 }, {
+      'INF-SB-DAMAGE': 1,
+      'INF-SB-CLOSE': 1,
+    })
+    expect(barrageBoosted / barrageBaseline).toBeCloseTo(1.17, 5)
+
+    const trajectoryBaseline = resolveHit('ricochet-feather', 'pierce-trajectory', {}, {}, ['other-target', 'third-target'])
+    const trajectoryBoosted = resolveHit(
+      'ricochet-feather',
+      'pierce-trajectory',
+      { PT111: 3, PT212: 3 },
+      { 'INF-PT-TURN': 2, 'INF-PT-REVISIT': 2 },
+      ['other-target', 'third-target'],
+    )
+    expect(trajectoryBoosted / trajectoryBaseline).toBeCloseTo(1.18, 5)
+  })
+
+  it('freezes and consumes pierce-armor stack, charged, and infinite-line values once per real cast', () => {
+    const createCast = (talented: boolean) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.remainingToSpawn = 0
+      snapshot.player.position = { x: 200, y: 200 }
+      snapshot.aimPoint = { x: 420, y: 200 }
+      snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+      snapshot.runTalentState.combatTalentV3!.main = { archetype: 'pierce', routeId: 'pierce-armor' }
+      if (talented) {
+        snapshot.runTalentState.combatTalentV3!.finiteRanks = { PT101: 3, PT203: 3, PT301: 1 }
+        snapshot.runTalentState.combatTalentV3!.pierceArmorState!.penetrationStacks = 4
+        snapshot.runTalentState.combatTalentV3!.pierceArmorState!.infiniteCharge = 6
+      }
+      return triggerActiveSkillSnapshot(snapshot, 0)
+    }
+
+    const baseline = createCast(false)
+    const cast = createCast(true)
+    expect(cast.projectiles).not.toHaveLength(0)
+    expect(cast.projectiles[0].damage / baseline.projectiles[0].damage).toBeCloseTo(1.66, 5)
+    expect(cast.projectiles[0].size / baseline.projectiles[0].size).toBeCloseTo(1.4, 5)
+    expect(cast.projectiles.every((projectile) => projectile.combatTalentPierceArmor?.infinitePierce)).toBe(true)
+    expect(cast.runTalentState.combatTalentV3?.pierceArmorState).toMatchObject({
+      penetrationStacks: 0,
+      infiniteCharge: 0,
+      bossHitCharge: 0,
+    })
+  })
+
+  it('records capped pierce events and elite streaks only from real pierce-armor hits', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.remainingToSpawn = 0
+    snapshot.player.attackCooldown = 999
+    snapshot.player.position = { x: 200, y: 200 }
+    snapshot.aimPoint = { x: 420, y: 200 }
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    snapshot.runTalentState.combatTalentV3!.main = { archetype: 'pierce', routeId: 'pierce-armor' }
+    snapshot.runTalentState.combatTalentV3!.finiteRanks = {
+      PT101: 3,
+      PT102: 3,
+      PT201: 3,
+      PT204: 1,
+      PT301: 1,
+    }
+    const cast = triggerActiveSkillSnapshot(snapshot, 0)
+    const projectile = cast.projectiles[0]
+    projectile.releaseDelayRemaining = undefined
+    projectile.position = { x: 320, y: 200 }
+    projectile.previousPosition = { x: 320, y: 200 }
+    projectile.velocity = { x: 0, y: 0 }
+    projectile.pierceRemaining = 10
+    projectile.criticalChance = 0
+    cast.projectiles = [projectile]
+    cast.enemies = Array.from({ length: 5 }, (_, index) => makeEnemy({
+      id: `armor-elite-${index}`,
+      kind: 'elite',
+      grantsEliteReward: false,
+      position: { x: 320, y: 200 },
+      hp: 5000,
+      maxHp: 5000,
+      speed: 0,
+    }))
+
+    const hit = advanceGame(cast, { up: false, down: false, left: false, right: false }, 0.001)
+    const armor = hit.runTalentState.combatTalentV3!.pierceArmorState!
+    expect(hit.enemies.every((enemy) => enemy.hp < 5000)).toBe(true)
+    expect(armor.castPenetrationEvents[projectile.castId!]).toBe(4)
+    expect(armor.infiniteCharge).toBe(4)
+    expect(armor.penetrationStacks).toBe(4)
+    expect(armor.eliteBossHitStreak).toBe(0)
+    expect(armor.eliteBonusCooldownRemaining).toBeCloseTo(2, 3)
+    expect(armor.damageBoostRemaining).toBeCloseTo(4, 3)
+    expect(Object.keys(armor.targetDebuffs)).toHaveLength(4)
+  })
+
+  it('applies trajectory armor on a later route hit and resolves one end-point echo per cast', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.remainingToSpawn = 0
+    snapshot.player.attackCooldown = 999
+    snapshot.player.position = { x: 200, y: 200 }
+    snapshot.aimPoint = { x: 420, y: 200 }
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    snapshot.runTalentState.combatTalentV3!.main = { archetype: 'pierce', routeId: 'pierce-armor' }
+    snapshot.runTalentState.combatTalentV3!.finiteRanks = { PT102: 3 }
+    let cast = triggerActiveSkillSnapshot(snapshot, 0)
+    let projectile = cast.projectiles[0]
+    projectile.releaseDelayRemaining = undefined
+    projectile.position = { x: 300, y: 200 }
+    projectile.previousPosition = { x: 180, y: 200 }
+    projectile.hitEnemyIds = ['already-pierced']
+    projectile.pierceRemaining = 0
+    projectile.criticalChance = 0
+    cast.projectiles = [projectile]
+    cast.enemies = [makeEnemy({ id: 'armor-target', position: { x: 300, y: 200 }, hp: 5000, maxHp: 5000, speed: 0 })]
+    const first = advanceGame(cast, { up: false, down: false, left: false, right: false }, 0.001)
+    const firstDamage = 5000 - first.enemies[0].hp
+    expect(first.runTalentState.combatTalentV3?.pierceArmorState?.targetDebuffs['armor-target']?.damageBonus).toBeCloseTo(0.1, 6)
+
+    first.activeSkills[0].cooldownRemaining = 0
+    cast = triggerActiveSkillSnapshot(first, 0)
+    projectile = cast.projectiles[0]
+    projectile.releaseDelayRemaining = undefined
+    projectile.position = { ...cast.enemies[0].position }
+    projectile.previousPosition = { ...cast.enemies[0].position }
+    projectile.pierceRemaining = 1
+    projectile.criticalChance = 0
+    cast.projectiles = [projectile]
+    const hpBeforeSecond = cast.enemies[0].hp
+    const second = advanceGame(cast, { up: false, down: false, left: false, right: false }, 0.001)
+    expect((hpBeforeSecond - second.enemies[0].hp) / firstDamage).toBeCloseTo(1.1, 3)
+
+    const echoSource = createInitialSnapshot('running')
+    echoSource.remainingToSpawn = 0
+    echoSource.player.attackCooldown = 999
+    echoSource.player.position = { x: 200, y: 200 }
+    echoSource.aimPoint = { x: 420, y: 200 }
+    echoSource.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    echoSource.runTalentState.combatTalentV3!.main = { archetype: 'pierce', routeId: 'pierce-armor' }
+    echoSource.runTalentState.combatTalentV3!.finiteRanks = { PT202: 1 }
+    const echoCast = triggerActiveSkillSnapshot(echoSource, 0)
+    const echoProjectile = echoCast.projectiles[0]
+    echoProjectile.releaseDelayRemaining = undefined
+    echoProjectile.position = { x: 500, y: 200 }
+    echoProjectile.previousPosition = { x: 500, y: 200 }
+    echoProjectile.ttl = 0
+    echoCast.projectiles = [echoProjectile, { ...echoProjectile, id: `${echoProjectile.id}-duplicate`, combatTalentPierceArmor: { ...echoProjectile.combatTalentPierceArmor! } }]
+    echoCast.enemies = [makeEnemy({ id: 'echo-target', position: { x: 560, y: 200 }, hp: 500, maxHp: 500, speed: 0 })]
+    const echoed = advanceGame(echoCast, { up: false, down: false, left: false, right: false }, 0.001)
+    expect(echoed.enemies[0].hp).toBeCloseTo(500 - echoed.player.attackDamage * 0.7, 5)
+    expect(echoed.combatDamageLog.filter((entry) => entry.sourceId === 'PT202')).toHaveLength(1)
+    expect(echoed.bursts.filter((burst) => burst.radius === 200)).toHaveLength(1)
+  })
+
+  it('drives trajectory turns, inertia, shock, and unity from the real ricochet lifecycle', () => {
+    let snapshot = createInitialSnapshot('running')
+    clearCombatObstacles(snapshot)
+    snapshot.remainingToSpawn = 0
+    snapshot.player.attackCooldown = 999
+    snapshot.player.position = { x: 100, y: 200 }
+    snapshot.aimPoint = { x: 250, y: 200 }
+    snapshot.activeSkills = [{ skillId: 'ricochet-feather', familyId: 'ricochet-feather', level: 5, cooldownRemaining: 0 }]
+    snapshot.runTalentState.combatTalentV3!.main = { archetype: 'pierce', routeId: 'pierce-trajectory' }
+    snapshot.runTalentState.combatTalentV3!.finiteRanks = {
+      PT111: 3,
+      PT112: 1,
+      PT211: 3,
+      PT212: 3,
+      PT213: 1,
+      PT214: 3,
+      PT311: 1,
+    }
+    snapshot.runTalentState.combatTalentV3!.infiniteRanks = {
+      'INF-PT-FINAL': 2,
+      'INF-PT-SHOCK-RADIUS': 2,
+      'INF-PT-UNITY-DAMAGE': 1,
+    }
+    snapshot = triggerActiveSkillSnapshot(snapshot, 0)
+    snapshot.projectiles = [snapshot.projectiles[0]]
+    snapshot.projectiles[0].releaseDelayRemaining = undefined
+    snapshot.projectiles[0].criticalChance = 0
+    snapshot.projectiles[0].ricochetRemaining = 10
+    snapshot.enemies = Array.from({ length: 5 }, (_, index) => makeEnemy({
+      id: `turn-target-${index}`,
+      position: { x: 250 + index * 90, y: 200 },
+      hp: 5000,
+      maxHp: 5000,
+      speed: 0,
+    }))
+
+    for (let index = 0; index < 4; index += 1) {
+      const projectile = snapshot.projectiles[0]
+      projectile.position = { ...snapshot.enemies[index].position }
+      projectile.previousPosition = { ...projectile.position }
+      if (index === 0) projectile.velocity = { x: 0, y: 0 }
+      snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.001)
+    }
+
+    const projectile = snapshot.projectiles[0]
+    expect(projectile.combatTalentPierceTrajectory).toMatchObject({
+      turnCount: 4,
+      shockCount: 1,
+      inertiaApplied: true,
+    })
+    expect(Math.hypot(projectile.velocity.x, projectile.velocity.y)).toBeCloseTo(PROJECTILE_SPEED * 1.12, 5)
+    expect(snapshot.combatDamageLog.some((entry) => entry.sourceId === 'PT213')).toBe(true)
+
+    projectile.ttl = 0
+    const ended = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.001)
+    expect(ended.combatDamageLog.some((entry) => entry.sourceId === 'PT311')).toBe(true)
+    expect(ended.bursts.some((burst) => burst.radius === 176)).toBe(true)
+  })
+
+  it('drives pierce execution marks, thresholds, soul fire, and death-chain state from real hits', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+    let snapshot = createInitialSnapshot('running')
+    snapshot.remainingToSpawn = 0
+    snapshot.player.attackCooldown = 999
+    snapshot.player.position = { x: 100, y: 200 }
+    snapshot.aimPoint = { x: 250, y: 200 }
+    snapshot.runTalentState.combatTalentV3!.main = { archetype: 'pierce', routeId: 'pierce-execution' }
+    snapshot.runTalentState.combatTalentV3!.finiteRanks = {
+      PT121: 1,
+      PT122: 3,
+      PT123: 1,
+      PT221: 3,
+      PT222: 3,
+      PT223: 1,
+      PT224: 3,
+      PT321: 1,
+    }
+    snapshot.runTalentState.combatTalentV3!.infiniteRanks = {
+      'INF-PE-MARK': 2,
+      'INF-PE-THRESHOLD': 2,
+      'INF-PE-SOULFIRE': 1,
+      'INF-PE-CHAIN': 2,
+    }
+
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    snapshot = triggerActiveSkillSnapshot(snapshot, 0)
+    let projectile = snapshot.projectiles[0]
+    projectile.releaseDelayRemaining = undefined
+    projectile.criticalChance = 0
+    const markTarget = makeEnemy({ id: 'execution-mark-target', position: { x: 250, y: 200 }, hp: 5000, maxHp: 5000, speed: 0 })
+    projectile.position = { ...markTarget.position }
+    projectile.previousPosition = { ...markTarget.position }
+    snapshot.projectiles = [projectile]
+    snapshot.enemies = [markTarget]
+    snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.001)
+    expect(snapshot.enemies[0].markStacks).toBe(1)
+
+    snapshot.activeSkills = [{ skillId: 'hunter-mark', familyId: 'hunter-mark', level: 1, cooldownRemaining: 0 }]
+    snapshot.aimPoint = { x: 300, y: 200 }
+    const executeTarget = makeEnemy({ id: 'execution-target', position: { x: 300, y: 200 }, hp: 11, maxHp: 100, speed: 0 })
+    executeTarget.markStacks = 3
+    const soulTarget = makeEnemy({ id: 'soul-fire-target', position: { x: 340, y: 200 }, hp: 8, maxHp: 100, speed: 0 })
+    const chainedTarget = makeEnemy({ id: 'soul-fire-chain-target', position: { x: 560, y: 200 }, hp: 8, maxHp: 100, speed: 0 })
+    snapshot.enemies = [executeTarget, soulTarget, chainedTarget]
+    snapshot = triggerActiveSkillSnapshot(snapshot, 0)
+    projectile = snapshot.projectiles.find((candidate) => candidate.sourceSkillFamilyId === 'hunter-mark')!
+    projectile.releaseDelayRemaining = undefined
+    projectile.criticalChance = 0
+    projectile.position = { ...executeTarget.position }
+    projectile.previousPosition = { ...executeTarget.position }
+    snapshot.projectiles = [projectile]
+    snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.001)
+
+    const execution = snapshot.runTalentState.combatTalentV3!.pierceExecutionState!
+    expect(snapshot.enemies.find((enemy) => enemy.id === 'execution-target')?.hp ?? 0).toBeLessThanOrEqual(0)
+    expect(snapshot.combatDamageLog.map((entry) => entry.sourceId)).toContain('PT123')
+    expect(snapshot.enemies.find((enemy) => enemy.id === 'soul-fire-target')?.hp ?? 0).toBeLessThanOrEqual(0)
+    expect(snapshot.enemies.find((enemy) => enemy.id === 'soul-fire-chain-target')?.hp ?? 0).toBeLessThanOrEqual(0)
+    expect(execution.deathChainStacks).toBe(1)
+    expect(execution.deathChainRemaining).toBeCloseTo(4.5, 2)
+    expect(snapshot.combatDamageLog.some((entry) => entry.sourceId === 'PT223')).toBe(true)
+    random.mockRestore()
+  })
+
+  it('drives barrage target gates, rain, chorus, and next-cast geometry from real hits', () => {
+    let snapshot = createInitialSnapshot('running')
+    snapshot.remainingToSpawn = 0
+    snapshot.player.attackCooldown = 999
+    snapshot.player.position = { x: 100, y: 200 }
+    snapshot.aimPoint = { x: 300, y: 200 }
+    snapshot.activeSkills = [{ skillId: 'fan-burst', familyId: 'fan-burst', level: 3, cooldownRemaining: 0 }]
+    snapshot.runTalentState.combatTalentV3!.main = { archetype: 'spread', routeId: 'spread-barrage' }
+    snapshot.runTalentState.combatTalentV3!.finiteRanks = {
+      ST101: 3,
+      ST102: 1,
+      ST201: 3,
+      ST202: 3,
+      ST203: 1,
+      ST204: 1,
+      ST301: 1,
+    }
+    snapshot.runTalentState.combatTalentV3!.infiniteRanks = {
+      'INF-SB-THRESHOLD': 2,
+      'INF-SB-CHORUS': 2,
+      'INF-SB-RAIN': 2,
+    }
+    snapshot.enemies = Array.from({ length: 7 }, (_, index) => makeEnemy({
+      id: `barrage-target-${index}`,
+      position: { x: 220 + index * 28, y: 200 },
+      hp: 5000,
+      maxHp: 5000,
+      speed: 0,
+    }))
+    snapshot = triggerActiveSkillSnapshot(snapshot, 0)
+    const castProjectiles = snapshot.projectiles.filter((projectile) => projectile.castId)
+    expect(castProjectiles).toHaveLength(7)
+    castProjectiles.forEach((projectile, index) => {
+      projectile.releaseDelayRemaining = undefined
+      projectile.criticalChance = 0
+      projectile.position = { ...snapshot.enemies[index].position }
+      projectile.previousPosition = { ...projectile.position }
+    })
+    snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.001)
+
+    const barrage = snapshot.runTalentState.combatTalentV3!.spreadBarrageState!
+    expect(barrage.nextRangeCharged).toBe(true)
+    expect(barrage.nextFanAngleCharged).toBe(true)
+    expect(barrage.closeCombatRemaining).toBeGreaterThan(1.9)
+    expect(snapshot.skillFields.some((field) => field.sourceSkillId === 'ST204' && field.ttl > 2.4)).toBe(true)
+    expect(snapshot.projectiles.some((projectile) => projectile.combatTalentSpreadBarrage?.isChorusReplica)).toBe(true)
+
+    snapshot.projectiles = []
+    snapshot.activeSkills[0].cooldownRemaining = 0
+    snapshot = triggerActiveSkillSnapshot(snapshot, 0)
+    const next = snapshot.projectiles[0]
+    expect(next.combatTalentSpreadBarrage).toMatchObject({ rangeMultiplier: 1.2, fanAngleBonusDegrees: 20 })
+    expect(next.evolutionFanGeometry?.totalFanAngleDegrees).toBe(80)
+    expect(snapshot.runTalentState.combatTalentV3!.spreadBarrageState!.nextRangeCharged).toBe(false)
+    expect(snapshot.runTalentState.combatTalentV3!.spreadBarrageState!.nextFanAngleCharged).toBe(false)
   })
 
   it('lets dungeon buildings block projectiles', () => {
@@ -6854,7 +8302,9 @@ describe('game engine', () => {
 
     expect(next.activeSkills.some((skill) => skill.skillId === 'arrow-rain')).toBe(true)
     expect(next.pendingSkillReward).toBeNull()
-    expect(next.levelClearConfirmed).toBe(true)
+    expect(next.level).toBe(2)
+    expect(next.phase).toBe('running')
+    expect(next.levelClearConfirmed).toBe(false)
   })
 
   it('resumes combat after replacing an equipped skill from an elite reward', () => {
@@ -6924,7 +8374,9 @@ describe('game engine', () => {
 
     const next = declineSkillRewardSnapshot(snapshot)
     expect(next.pendingSkillReward).toBeNull()
-    expect(next.levelClearConfirmed).toBe(true)
+    expect(next.level).toBe(2)
+    expect(next.phase).toBe('running')
+    expect(next.levelClearConfirmed).toBe(false)
   })
 
   it('stops on elite reward screens and does not advance until a skill reward is selected', () => {
@@ -6951,6 +8403,9 @@ describe('game engine', () => {
 
     const accepted = acceptSkillRewardSnapshot(stillWaiting, stillWaiting.pendingSkillReward!.choices[0].choiceId)
 
+    expect(accepted.level).toBe(4)
+    expect(accepted.phase).toBe('running')
+    expect(accepted.floorTransition).toBeUndefined()
     const advanced = advancePastFloorTransition(accepted)
     expect(advanced.level).toBe(4)
     expect(advanced.phase).toBe('running')
@@ -6968,14 +8423,54 @@ describe('game engine', () => {
     snapshot.pendingSkillReward = null
     snapshot.levelClearConfirmed = false
 
-    const waiting = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
-    expect(waiting.level).toBe(2)
-    expect(waiting.phase).toBe('running')
-    expect(waiting.floorTransition?.nextLevel).toBe(3)
-
-    const advanced = advancePastFloorTransition(waiting)
+    const advanced = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
     expect(advanced.level).toBe(3)
     expect(advanced.phase).toBe('running')
+    expect(advanced.floorTransition).toBeUndefined()
+  })
+
+  it('keeps a same-tick crystal reward open and resumes every reward-owned pause through one contract', () => {
+    const crystal = createInitialSnapshot('running')
+    crystal.level = 1
+    crystal.levelTimer = 0
+    crystal.remainingToSpawn = 0
+    crystal.levelKills = crystal.levelTargetKills
+    crystal.enemies = []
+    crystal.contractLevel = 5
+    crystal.campaignRewardProgress.crystalNextAwardAt = 1
+    crystal.pickups = [{
+      id: 'same-tick-crystal-reward',
+      kind: 'soul-crystal',
+      position: { ...crystal.player.position },
+      radius: 8,
+      expValue: 1,
+      ttl: 30,
+    }]
+
+    const opened = advanceGame(crystal, noInput, 0.016)
+    expect(opened.phase).toBe('paused')
+    expect(opened.pendingSkillReward).toMatchObject({ poolKind: 'crystal-talent', source: 'crystal-talent' })
+    expect(opened.level).toBe(1)
+    expect(opened.floorTransition).toMatchObject({ nextLevel: 2, awaitingReward: true })
+
+    const accepted = acceptSkillRewardSnapshot(opened, opened.pendingSkillReward!.choices[0].choiceId)
+    expect(accepted.pendingSkillReward).toBeNull()
+    expect(accepted.phase).toBe('running')
+    expect(accepted.pauseMenuOpen).toBe(false)
+    expect(accepted.level).toBe(2)
+    expect(accepted.floorTransition).toBeUndefined()
+
+    ;(['elite', 'fixed-skill', 'elite-raid'] as const).forEach((source) => {
+      const reward = createInitialSnapshot('running')
+      reward.phase = 'paused'
+      reward.phaseBeforePause = 'running'
+      reward.pendingSkillReward = { ...buildPendingReward(reward), source }
+
+      const closed = closePendingSkillRewardSnapshot(reward)
+      expect(closed.pendingSkillReward).toBeNull()
+      expect(closed.phase).toBe('running')
+      expect(closed.pauseMenuOpen).toBe(false)
+    })
   })
 
   it('carries blue-crystal world state and campaign reward progress across a floor transition', () => {
@@ -6995,7 +8490,7 @@ describe('game engine', () => {
       fixedSkillNodesClaimed: ['elite-death:3'],
       eliteRaidRollResolvedLevels: [3],
       eliteRaidPendingLevels: [3],
-      eliteRaidLevels: [4],
+      eliteRaidLevels: [4, 2],
     }
     snapshot.pickups = [{
       id: 'cross-floor-crystal',
@@ -7019,9 +8514,12 @@ describe('game engine', () => {
       crystalNextAwardAt: 4567,
       fixedSkillNodesClaimed: ['elite-death:3'],
       eliteRaidPendingLevels: [3],
-      eliteRaidLevels: [4],
+      eliteRaidLevels: [4, 2],
+      // The next floor begins in the same transition update. Its independent
+      // raid roll resolves on the following gameplay tick.
+      eliteRaidRollResolvedLevels: [3],
     })
-    expect(advanced.campaignRewardProgress.eliteRaidRollResolvedLevels).toContain(3)
+    expect(advanced.campaignRewardProgress.eliteRaidRollResolvedLevels).toEqual([3])
     expect(advanced.pickups[0]).toMatchObject({
       id: 'cross-floor-crystal',
       kind: 'soul-crystal',
@@ -7118,7 +8616,74 @@ describe('game engine', () => {
     expect(talentedHealth?.magnetized).toBeUndefined()
   })
 
-  it('consumes every selected three-rank meta effect through the runtime effect contract', () => {
+  it('keeps V3 blue-crystal affinity on experience while direct collection uses only equipment and run talent', () => {
+    const makeCrystalRun = (rank: 0 | 1 | 2 | 3 | 4 | 5, gap: number) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.enemies = []
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 999
+      snapshot.player.position = { x: 400, y: 300 }
+      if (rank > 0) {
+        snapshot.unlockedMetaTalentIds = ['meta_common_06']
+        snapshot.metaTalentRanks = { meta_common_06: rank }
+      }
+      snapshot.pickups = [{
+        id: `direct-rank-${rank}-${gap}`,
+        kind: 'soul-crystal',
+        position: { x: 400 + gap, y: 300 },
+        radius: 8,
+        expValue: 100,
+        ttl: 30,
+      }]
+      return snapshot
+    }
+
+    const radii = ([0, 1, 2, 3, 4, 5] as const).map((rank) => {
+      const snapshot = makeCrystalRun(rank, 100)
+      return getSoulCrystalDirectCollectionRadius(snapshot, snapshot.pickups[0])
+    })
+    radii.forEach((radius) => expect(radius).toBeCloseTo(17.8, 6))
+
+    ;([0, 1, 2, 3, 4, 5] as const).forEach((rank, index) => {
+      const accepted = advanceGame(makeCrystalRun(rank, radii[index] - 0.001), noInput, 0.05)
+      const rejected = advanceGame(makeCrystalRun(rank, radii[index] + 0.01), noInput, 0.05)
+      expect(accepted.pickups).toHaveLength(0)
+      expect(accepted.runExpGained).toBe([100, 103, 106, 109, 112, 115][index])
+      expect(accepted.campaignRewardProgress.crystalExperienceCollected).toBe([100, 103, 106, 109, 112, 115][index])
+      expect(rejected.pickups[0]).toMatchObject({ position: { x: 400 + radii[index] + 0.01, y: 300 }, ttl: 29.95 })
+      expect(rejected.pickups[0]?.magnetized).toBeUndefined()
+    })
+
+    const stacked = makeCrystalRun(1, 100)
+    stacked.inRunTalentIds = ['run_common_02']
+    stacked.runTalentState.selectedTalentIds = ['run_common_02']
+    stacked.equippedItems = { ring1: makeEquipment({ id: 'crystal-range-ring', bonus: { pickupRange: 10 } }) }
+    const stackedRadius = getSoulCrystalDirectCollectionRadius(stacked, stacked.pickups[0])
+    expect(stackedRadius).toBeCloseTo((17.8 + 10) * 1.18, 6)
+    const stackedAccepted = advanceGame({ ...stacked, pickups: [{ ...stacked.pickups[0], position: { x: 400 + stackedRadius - 0.001, y: 300 } }] }, noInput, 0.05)
+    expect(stackedAccepted.pickups).toHaveLength(0)
+
+    const healthBoundary = { ...stacked, pickups: [
+      { ...stacked.pickups[0], id: 'stacked-crystal', position: { x: 430, y: 300 } },
+      { id: 'unaffected-health', kind: 'health-pack' as const, position: { x: 430, y: 300 }, radius: 8, healAmount: 25, ttl: 10 },
+    ] }
+    const projected = getSoulCrystalDirectCollectionPresentation(healthBoundary, { x: 300, y: 300 })
+    expect(projected.metaRank).toBe(0)
+    expect(projected.metaDirectRadius).toBe(17.8)
+    expect(projected.runTalentMultiplier).toBe(1.18)
+    expect(projected.equipmentBonus).toBe(10)
+    expect(projected.baseRadius).toBeCloseTo(17.8, 6)
+    expect(projected.directRadiusBeforeRunTalent).toBe(27.8)
+    expect(projected.formula).toBe('(metaDirectRadius + equipmentBonus) * runTalentMultiplier')
+    expect(projected.crystals[0]).toMatchObject({ isInside: true, justEntered: true })
+    expect(healthBoundary.pickups[0]).toMatchObject({ position: { x: 430, y: 300 }, ttl: 30 })
+    const healthUnaffected = advanceGame(healthBoundary, noInput, 0.05)
+    expect(healthUnaffected.pickups).toEqual([expect.objectContaining({ id: 'unaffected-health', position: { x: 430, y: 300 }, ttl: 9.95 })])
+  })
+
+  it('resolves every three-rank V3 effect at its authoritative cumulative value', () => {
     const threeRankNodes = META_TALENT_NODES.filter((node) => node.maxRank === 3)
     const snapshot = createInitialSnapshot('running')
     snapshot.unlockedMetaTalentIds = threeRankNodes.map((node) => node.id)
@@ -7127,29 +8692,214 @@ describe('game engine', () => {
     const resolvedEffects = getMetaTalentBonusSummary(snapshot.unlockedMetaTalentIds, snapshot.metaTalentRanks)
       .resolvedEffects
       .filter(({ maxRank }) => maxRank === 3)
-    const runtime = getMetaTalentRuntimeEffectsForSnapshot(snapshot)
-
-    expect(threeRankNodes).toHaveLength(42)
-    expect(resolvedEffects).toHaveLength(42)
-    expect(runtime.unconsumedThreeRankEffectKeys).toEqual([])
-    expect(runtime.consumedThreeRankEffectKeys).toHaveLength(42)
-    expect(resolvedEffects.every(({ effect }) => (
-      runtime.consumedThreeRankEffectKeys.includes(`${effect.type}:${effect.target ?? effect.type}`)
-    ))).toBe(true)
+    expect(threeRankNodes).toHaveLength(45)
+    expect(resolvedEffects).toHaveLength(45)
+    expect(resolvedEffects.every(({ effect }) => effect.value === effect.values?.[2])).toBe(true)
+    expect(resolvedEffects.find(({ nodeId }) => nodeId === 'meta_common_01')?.effect.value).toBe(24)
+    expect(resolvedEffects.find(({ nodeId }) => nodeId === 'meta_death_base_03')?.effect.value).toBe(2)
   })
 
-  it('applies each rank of initial rerolls to the real run reward state', () => {
-    ;([1, 2, 3] as const).forEach((rank) => {
+  it('applies FT002 as independent rerolls on each opening draft round', () => {
+    ;([1, 2] as const).forEach((rank) => {
       const village = createInitialSnapshot('idle')
       village.unlockedMetaTalentIds = ['meta_common_02']
       village.metaTalentRanks = { meta_common_02: rank }
 
       const started = startRunSnapshot(village)
+      expect(started.initialSkillDraft).toMatchObject({ currentRound: 1, rerollsRemaining: rank, rerollsUsedThisRound: 0 })
+      expect(started.runTalentState.rerollsRemaining).toBe(1)
+      expect(started.inRunRewardRerolls).toBe(1)
 
-      expect(started.runTalentState.rerollsRemaining).toBe(1 + rank)
-      expect(started.runTalentState.rerollsUsed).toBe(0)
-      expect(started.inRunRewardRerolls).toBe(1 + rank)
+      const values = [0.99, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65]
+      let index = 0
+      const rerolled = rerollInitialSkillDraftSnapshot(started, () => values[index++ % values.length])
+      expect(rerolled.initialSkillDraft).toMatchObject({ rerollsRemaining: rank - 1, rerollsUsedThisRound: 1 })
+      const selected = selectInitialSkillDraftCandidateSnapshot(rerolled, rerolled.initialSkillDraft!.candidates[0].choiceId)
+      expect(selected.initialSkillDraft).toMatchObject({ currentRound: 2, rerollsRemaining: rank, rerollsUsedThisRound: 0 })
     })
+  })
+
+  it('applies V3 skill candidate weights only to each legal matching choice', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.runTalentState.selectedBuild = 'death'
+    snapshot.activeSkills = [
+      { skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 3, cooldownRemaining: 0 },
+      { skillId: 'fan-burst', familyId: 'fan-burst', level: 1, cooldownRemaining: 0 },
+    ]
+    snapshot.unlockedMetaTalentIds = [
+      'meta_common_01',
+      'meta_common_04',
+      'meta_common_05',
+      'meta_death_base_01',
+      'meta_death_base_02',
+    ]
+    snapshot.metaTalentRanks = Object.fromEntries(snapshot.unlockedMetaTalentIds.map((id) => [id, 3]))
+
+    const makeChoice = (
+      mode: 'new-active' | 'upgrade-active',
+      skillId: string,
+      buildTag: 'pierce' | 'spread',
+      evolutionId?: string,
+    ) => ({
+      choiceId: `${mode}:${skillId}:${evolutionId ?? ''}`,
+      mode,
+      skillId,
+      familyId: skillId,
+      evolutionId,
+      title: skillId,
+      description: skillId,
+      buildTag,
+      tacticalTags: [],
+      levelText: '',
+      tacticalText: '',
+    })
+
+    expect(getSkillRewardChoiceMetaWeightPresentation(snapshot, makeChoice('new-active', 'recurve-arrow', 'pierce'))).toEqual({
+      percent: 60,
+      sourceIds: ['meta_common_04', 'meta_common_05', 'meta_death_base_01'],
+    })
+    expect(getSkillRewardChoiceMetaWeightPresentation(snapshot, makeChoice('upgrade-active', 'pierce-arrow', 'pierce'))).toEqual({
+      percent: 84,
+      sourceIds: ['meta_common_01', 'meta_common_04', 'meta_common_05', 'meta_death_base_02'],
+    })
+    expect(getSkillRewardChoiceMetaWeightPresentation(snapshot, makeChoice('upgrade-active', 'pierce-arrow', 'pierce', 'pierce-echo'))).toEqual({
+      percent: 84,
+      sourceIds: ['meta_common_01', 'meta_common_04', 'meta_common_05', 'meta_death_base_02'],
+    })
+    expect(getSkillRewardChoiceMetaWeightPresentation(snapshot, makeChoice('new-active', 'arrow-screen', 'spread'))).toEqual({
+      percent: 0,
+      sourceIds: [],
+    })
+
+    const reward = buildPendingReward(snapshot)
+    reward.choices.forEach((choice) => {
+      const expected = getSkillRewardChoiceMetaWeightPresentation(snapshot, choice)
+      expect(choice.talentWeightPercent).toBe(expected.percent)
+      expect(choice.talentSourceIds).toEqual(expect.arrayContaining(expected.sourceIds))
+    })
+  })
+
+  it('consumes V3 common movement, basic-arrow speed, and armed crit state in real combat', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 1
+    snapshot.spawnCooldown = 999
+    snapshot.debugControls.disableAttacks = true
+    clearCombatObstacles(snapshot)
+    snapshot.runTalentState.combatTalentV3!.finiteRanks = { BT001: 3, BT003: 3 }
+    snapshot.enemies = [makeEnemy({ id: 'v3-basic-target', position: { x: snapshot.player.position.x + 90, y: snapshot.player.position.y }, speed: 0 })]
+
+    let moved = snapshot
+    for (let frame = 0; frame < 30; frame += 1) {
+      moved = advanceGame(moved, { ...noInput, right: true }, 0.05)
+    }
+    expect(moved.runTalentState.combatTalentV3?.commonState?.continuousMoveSeconds).toBeCloseTo(1.5, 6)
+    expect(moved.runTalentState.combatTalentV3?.commonState?.nextBasicMoveCritArmed).toBe(true)
+
+    moved.debugControls.disableAttacks = false
+    moved.player.attackCooldown = 0
+    moved.enemies[0].position = { x: moved.player.position.x + 90, y: moved.player.position.y }
+    const attacked = advanceGame(moved, noInput, 0.016)
+    const projectile = attacked.projectiles.find((candidate) => candidate.sourceSkillId === 'basic-arrow')!
+    expect(Math.hypot(projectile.velocity.x, projectile.velocity.y)).toBeCloseTo(272 * 1.09, 5)
+    expect(projectile.criticalChance).toBeCloseTo(0.08, 6)
+    expect(attacked.runTalentState.combatTalentV3?.commonState?.nextBasicMoveCritArmed).toBe(false)
+  })
+
+  it('builds steady stacks, preserves them on shield absorption, and clears them on direct hp damage', () => {
+    let snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 1
+    snapshot.spawnCooldown = 999
+    snapshot.debugControls.disableAttacks = true
+    snapshot.runTalentState.combatTalentV3!.finiteRanks = { BT004: 3 }
+    snapshot.enemies = []
+    for (let frame = 0; frame < 61; frame += 1) snapshot = advanceGame(snapshot, noInput, 0.05)
+    expect(snapshot.runTalentState.combatTalentV3?.commonState?.steadyStacks).toBe(3)
+
+    snapshot.player.shield = 20
+    snapshot.player.hurtCooldown = 0
+    snapshot.enemyProjectiles = [makeProjectile({
+      id: 'v3-shielded-direct', owner: 'enemy', position: { ...snapshot.player.position }, velocity: { x: 0, y: 0 }, damage: 10,
+    })]
+    const shielded = advanceGame(snapshot, noInput, 0.016)
+    expect(shielded.player.hp).toBe(snapshot.player.hp)
+    expect(shielded.runTalentState.combatTalentV3?.commonState?.steadyStacks).toBe(3)
+
+    shielded.player.shield = 0
+    shielded.player.hurtCooldown = 0
+    shielded.enemyProjectiles = [makeProjectile({
+      id: 'v3-unshielded-direct', owner: 'enemy', position: { ...shielded.player.position }, velocity: { x: 0, y: 0 }, damage: 10,
+    })]
+    const hurt = advanceGame(shielded, noInput, 0.016)
+    expect(hurt.player.hp).toBeLessThan(shielded.player.hp)
+    expect(hurt.runTalentState.combatTalentV3?.commonState).toMatchObject({ steadySafeSeconds: 0, steadyStacks: 0 })
+  })
+
+  it('applies V3 moving mitigation and low-health dodge only to direct enemy damage', () => {
+    const moving = createInitialSnapshot('running')
+    moving.levelTimer = 0
+    moving.remainingToSpawn = 1
+    moving.spawnCooldown = 999
+    moving.debugControls.disableAttacks = true
+    clearCombatObstacles(moving)
+    moving.runTalentState.combatTalentV3!.finiteRanks = { BT111: 3, BT113: 3 }
+    moving.player.hp = moving.player.maxHp * 0.3
+    moving.player.hurtCooldown = 0
+    moving.enemyProjectiles = [makeProjectile({
+      id: 'v3-dodge-shot', owner: 'enemy', position: { x: moving.player.position.x + moving.player.speed * 0.05, y: moving.player.position.y }, velocity: { x: 0, y: 0 }, damage: 10,
+    })]
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const dodged = advanceGame(moving, { ...noInput, right: true }, 0.05)
+    expect(dodged.player.hp).toBe(moving.player.hp)
+    expect(dodged.floatingTexts.some((entry) => entry.value === '闪避')).toBe(true)
+
+    vi.spyOn(Math, 'random').mockReturnValue(0.99)
+    const baseline = createInitialSnapshot('running')
+    baseline.levelTimer = 0
+    baseline.remainingToSpawn = 1
+    baseline.spawnCooldown = 999
+    baseline.debugControls.disableAttacks = true
+    clearCombatObstacles(baseline)
+    baseline.player.hurtCooldown = 0
+    baseline.enemyProjectiles = [makeProjectile({
+      id: 'v3-baseline-shot', owner: 'enemy', position: { x: baseline.player.position.x + baseline.player.speed * 0.05, y: baseline.player.position.y }, velocity: { x: 0, y: 0 }, damage: 10,
+    })]
+    const baselineHurt = advanceGame(baseline, { ...noInput, right: true }, 0.05)
+
+    moving.player.hurtCooldown = 0
+    moving.enemyProjectiles = [makeProjectile({
+      id: 'v3-mitigated-shot', owner: 'enemy', position: { x: moving.player.position.x + moving.player.speed * 0.05, y: moving.player.position.y }, velocity: { x: 0, y: 0 }, damage: 10,
+    })]
+    const mitigated = advanceGame(moving, { ...noInput, right: true }, 0.05)
+    expect(moving.player.hp - mitigated.player.hp).toBeCloseTo((baseline.player.hp - baselineHurt.player.hp) * 0.94, 5)
+  })
+
+  it('records per-stack kill haste and activates the three-kill damage window from real player hits', () => {
+    let snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 1
+    snapshot.spawnCooldown = 999
+    snapshot.player.attackCooldown = 999
+    snapshot.runTalentState.combatTalentV3!.finiteRanks = { BT121: 3, BT122: 3 }
+    clearCombatObstacles(snapshot)
+
+    for (let index = 0; index < 3; index += 1) {
+      snapshot.enemies = [makeEnemy({ id: `v3-kill-${index}`, position: { ...snapshot.player.position }, hp: 1, maxHp: 10, speed: 0 })]
+      snapshot.projectiles = [makeProjectile({
+        id: `v3-kill-arrow-${index}`,
+        owner: 'player',
+        sourceSkillId: 'basic-arrow',
+        playerDirectArrow: true,
+        position: { ...snapshot.player.position },
+        velocity: { x: 0, y: 0 },
+        damage: 10,
+      })]
+      snapshot = advanceGame(snapshot, noInput, 0.016)
+    }
+
+    expect(snapshot.runTalentState.combatTalentV3?.commonState?.killAttackSpeedExpiresAt).toHaveLength(3)
+    expect(snapshot.runTalentState.combatTalentV3?.commonState?.huntDamageRemaining).toBe(4)
   })
 
   it('does not let blue-crystal pickup range ranks enable magnetism', () => {
@@ -7175,9 +8925,8 @@ describe('game engine', () => {
     }
 
     expect(magnetizesAt(1, 82)).toBe(false)
-    expect(magnetizesAt(2, 82)).toBe(false)
-    expect(magnetizesAt(2, 89)).toBe(false)
-    expect(magnetizesAt(3, 89)).toBe(false)
+    expect(magnetizesAt(2, 100)).toBe(false)
+    expect(magnetizesAt(3, 120)).toBe(false)
   })
 
   it('owns blue-crystal lifetime and its talent-only reward contract in the formal runtime', () => {
@@ -7225,6 +8974,8 @@ describe('game engine', () => {
     const rewarded = advanceGame(rewardRun, noInput, 0.016)
     const presentation = getCampaignRewardPresentationSnapshot(rewarded)
     expect(rewarded.pendingSkillReward?.poolKind).toBe('crystal-talent')
+    expect(rewarded.pendingSkillReward?.choices).toHaveLength(3)
+    expect(new Set(rewarded.pendingSkillReward?.choices.map((choice) => choice.talentId)).size).toBe(3)
     expect(presentation.currentReward).toMatchObject({
       source: 'crystal-talent',
       semantics: 'talent-choice',
@@ -7258,7 +9009,7 @@ describe('game engine', () => {
     expect(second.enemies.filter((enemy) => enemy.campaignRewardSource === 'elite-raid')).toHaveLength(1)
   })
 
-  it('applies rank-scaled death, blood, beast, and crystal effects in combat', () => {
+  it('does not revive removed V2 combat effects from repurposed V3 meta nodes', () => {
     const resolveDeathDamage = (rank: 0 | 1 | 2 | 3) => {
       const snapshot = createInitialSnapshot('running')
       snapshot.enemies = [makeEnemy({
@@ -7337,7 +9088,8 @@ describe('game engine', () => {
     const deathRankTwo = resolveDeathDamage(2)
     const deathRankThree = resolveDeathDamage(3)
     ;[deathRankOne, deathRankTwo, deathRankThree].forEach(({ damage, bonus }) => {
-      expect(damage).toBeCloseTo(deathBase.damage + bonus, 5)
+      expect(damage).toBeCloseTo(deathBase.damage, 5)
+      expect(bonus).toBe(0)
     })
 
     const bloodBase = resolveBloodBleedTtl(0)
@@ -7345,7 +9097,8 @@ describe('game engine', () => {
     const bloodRankTwo = resolveBloodBleedTtl(2)
     const bloodRankThree = resolveBloodBleedTtl(3)
     ;[bloodRankOne, bloodRankTwo, bloodRankThree].forEach(({ ttl, bonus }) => {
-      expect(ttl).toBeCloseTo(bloodBase.ttl * (1 + bonus / 100), 5)
+      expect(ttl).toBeCloseTo(bloodBase.ttl, 5)
+      expect(bonus).toBe(0)
     })
 
     const beastBase = resolveBeastCooldown(0)
@@ -7353,19 +9106,18 @@ describe('game engine', () => {
     const beastRankTwo = resolveBeastCooldown(2)
     const beastRankThree = resolveBeastCooldown(3)
     ;[beastRankOne, beastRankTwo, beastRankThree].forEach(({ cooldown, bonus }) => {
-      expect(cooldown).toBeCloseTo(beastBase.cooldown * (1 + bonus / 100), 5)
+      expect(cooldown).toBeCloseTo(beastBase.cooldown, 5)
+      expect(bonus).toBe(0)
     })
 
     const crystalBase = resolveCrystalFieldTtl(0)
     const crystalRankOne = resolveCrystalFieldTtl(1)
     const crystalRankTwo = resolveCrystalFieldTtl(2)
     const crystalRankThree = resolveCrystalFieldTtl(3)
-    expect(crystalRankOne.ttl).toBeGreaterThan(crystalBase.ttl)
-    expect(crystalRankTwo.ttl).toBeGreaterThanOrEqual(crystalRankOne.ttl)
-    expect(crystalRankThree.ttl).toBeGreaterThanOrEqual(crystalRankTwo.ttl)
-    expect(crystalRankOne.bonus).toBeGreaterThan(0)
-    expect(crystalRankTwo.bonus).toBe(crystalRankOne.bonus * 2)
-    expect(crystalRankThree.bonus).toBe(crystalRankOne.bonus * 3)
+    ;[crystalRankOne, crystalRankTwo, crystalRankThree].forEach(({ ttl, bonus }) => {
+      expect(ttl).toBeCloseTo(crystalBase.ttl, 5)
+      expect(bonus).toBe(0)
+    })
   })
 
   it('applies each inheritance rank to set candidates and the matching boss legacy weapon only', () => {
@@ -7406,6 +9158,149 @@ describe('game engine', () => {
     expect(baselineDrop?.equipmentId).not.toBe('boss-legacy-weapon-1')
     expect(inheritedDrop?.equipmentId).toBe('boss-legacy-weapon-1')
     expect(getLegendaryRateForDroppedEquipment('elite', 'nightmare')).toBeLessThan(0.005)
+  })
+
+  it('resolves V3 equipment candidate weights only for the owned build and current difficulty', () => {
+    const makeSnapshot = (
+      talentIds: string[],
+      difficulty: 'normal' | 'hard' | 'hell' | 'nightmare' = 'normal',
+    ) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.selectedCampaignDifficulty = difficulty
+      snapshot.selectedDifficulty = difficulty
+      snapshot.unlockedMetaTalentIds = talentIds
+      snapshot.activeSkills[0].skillId = 'pierce-arrow'
+      snapshot.activeSkills[0].familyId = 'pierce-arrow'
+      return snapshot
+    }
+
+    const difficultyMatrix = [
+      ['meta_difficulty_02', 'normal', 5],
+      ['meta_difficulty_06', 'hard', 8],
+      ['meta_difficulty_10', 'hell', 12],
+      ['meta_difficulty_14', 'nightmare', 16],
+    ] as const
+
+    difficultyMatrix.forEach(([talentId, difficulty, percent]) => {
+      const inScope = getEquipmentCandidateWeightPresentation(makeSnapshot([talentId], difficulty), 'normal')
+      expect(inScope.activeRules).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: `${talentId}:${difficulty}-active-skill-archetype-equipment`,
+          sourceTalentId: talentId,
+          percent,
+          buildTag: 'pierce',
+        }),
+      ]))
+      const outOfScope = getEquipmentCandidateWeightPresentation(makeSnapshot([talentId], difficulty === 'normal' ? 'hard' : 'normal'), 'normal')
+      expect(outOfScope.activeRules.some((rule) => rule.sourceTalentId === talentId)).toBe(false)
+    })
+
+    const oldV2Nodes = makeSnapshot(['meta_common_07', ...Array.from({ length: 10 }, (_, index) => `meta_campaign_${String(index + 1).padStart(2, '0')}`)])
+    expect(getEquipmentCandidateWeightPresentation(oldV2Nodes, 'boss').activeRules).toHaveLength(0)
+  })
+
+  it('applies V3 build and difficulty weights only inside legal equipment candidate pools without changing rarity rolls', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.unlockedMetaTalentIds = ['meta_death_base_04', 'meta_difficulty_02']
+    snapshot.metaTalentRanks = { meta_death_base_04: 3, meta_difficulty_02: 1 }
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    const normalRules = getEquipmentCandidateWeightPresentation(snapshot, 'normal').activeRules
+    const runtime = getMetaTalentRuntimeEffectsForSnapshot(snapshot)
+    const baselineStandard = createStandardEquipmentCandidatePool('epic', ['weapon'], undefined, [], 1)
+    const weightedStandard = createStandardEquipmentCandidatePool('epic', ['weapon'], undefined, normalRules, 1, runtime.equipmentWeightByBuild)
+    const deathBaseline = baselineStandard.find((candidate) => candidate.tags.includes('death'))
+    const deathWeighted = weightedStandard.find((candidate) => candidate.affix === deathBaseline?.affix && candidate.baseName === deathBaseline.baseName)
+    const neutralBaseline = baselineStandard.find((candidate) => !candidate.tags.includes('death') && !candidate.tags.includes('pierce'))
+    const neutralWeighted = weightedStandard.find((candidate) => candidate.affix === neutralBaseline?.affix && candidate.baseName === neutralBaseline.baseName)
+
+    expect(deathBaseline).toBeDefined()
+    expect(runtime.equipmentWeightByBuild.pierce).toBe(15)
+    expect(deathWeighted?.weight).toBeCloseTo((deathBaseline?.weight ?? 0) * 1.15 * 1.05, 8)
+    expect(neutralWeighted?.weight).toBeCloseTo(neutralBaseline?.weight ?? 0, 8)
+    expect(rollEquipmentRarity('normal', 44, 0.331, 1)).toBe('rare')
+    expect(rollEquipmentRarity('normal', 44, 0.331, 1)).toBe('rare')
+  })
+
+  it('does not revive the removed V2 campaign-archive effect for V3 ENDGAME-06', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.unlockedMetaTalentIds = ['meta_endgame_06']
+    snapshot.completedCampaignDifficulties[1] = ['normal', 'hard', 'hell', 'nightmare']
+    snapshot.selectedCampaignDifficulty = 'nightmare'
+    snapshot.selectedDifficulty = 'nightmare'
+
+    expect(getEquipmentCandidateWeightPresentation(snapshot, 'normal').activeRules).toHaveLength(0)
+    expect(getEquipmentCandidateWeightPresentation(snapshot, 'boss').activeRules).toHaveLength(0)
+    expect(getEquipmentCandidateWeightPresentation(snapshot, 'boss-legacy').activeRules).toHaveLength(0)
+    expect(getEndgameArchiveCandidateWeightPresentation(snapshot, 'boss-legacy')).toMatchObject({
+      layers: 4,
+      percent: 0,
+      eligible: false,
+      owned: false,
+    })
+  })
+
+  it('uses explicit equipment metadata tags rather than display-name matching for E7 candidate rules', () => {
+    expect(getEquipmentCandidateTags({ rarity: 'legacy', buildTag: 'spread', affix: '血羽封场', campaign: 2 })).toEqual(expect.arrayContaining([
+      'blood', 'bleed', 'life-steal-resistance', 'inheritance', 'core-affix',
+    ]))
+    expect(getEquipmentCandidateTags({ rarity: 'epic', buildTag: 'spread', affix: '战场封锁', campaign: 7 })).toEqual(expect.arrayContaining([
+      'trap', 'explosion',
+    ]))
+    expect(getEquipmentCandidateTags({ rarity: 'legendary', buildTag: 'control', affix: '禁域审判', campaign: 10 })).toEqual(expect.arrayContaining([
+      'endgame-fire', 'cross-build-legacy', 'legendary',
+    ]))
+  })
+
+  it('consumes active E7 rules in the real equipment-drop candidate choice without altering forced rarity', () => {
+    const baselineRules = [{
+      id: 'test-zero',
+      sourceTalentId: 'test-zero',
+      percent: 0,
+      tags: ['death'] as const,
+    }]
+    const boostedRules = [{
+      id: 'test-campaign-death',
+      sourceTalentId: 'meta_campaign_01',
+      percent: 10,
+      tags: ['death', 'pierce'] as const,
+    }]
+    const baselinePool = createStandardEquipmentCandidatePool('epic', ['weapon'], undefined, baselineRules, 1)
+    const boostedPool = createStandardEquipmentCandidatePool('epic', ['weapon'], undefined, boostedRules, 1)
+    const pickAt = <T extends { weight: number }>(pool: readonly T[], roll: number) => {
+      const threshold = pool.reduce((sum, candidate) => sum + candidate.weight, 0) * roll
+      let accumulated = 0
+      return pool.find((candidate) => {
+        accumulated += candidate.weight
+        return accumulated >= threshold
+      })
+    }
+    const selection = Array.from({ length: 999 }, (_, index) => (index + 0.5) / 1000).find((roll) => {
+      const baseline = pickAt(baselinePool, roll)
+      const boosted = pickAt(boostedPool, roll)
+      return !baseline?.tags.some((tag) => tag === 'death' || tag === 'pierce') && Boolean(boosted?.tags.some((tag) => tag === 'death' || tag === 'pierce'))
+    })
+    expect(selection).toBeDefined()
+
+    vi.spyOn(Math, 'random').mockReturnValueOnce(selection ?? 0).mockReturnValue(0)
+    const baseline = createEquipmentDrop(1, 'normal', () => 'e7-baseline', {
+      forceDrop: true,
+      forcedRarity: 'epic',
+      unlockedSlots: ['weapon'],
+      candidateWeightRules: baselineRules,
+    })
+    vi.restoreAllMocks()
+    vi.spyOn(Math, 'random').mockReturnValueOnce(selection ?? 0).mockReturnValue(0)
+    const boosted = createEquipmentDrop(1, 'normal', () => 'e7-boosted', {
+      forceDrop: true,
+      forcedRarity: 'epic',
+      unlockedSlots: ['weapon'],
+      candidateWeightRules: boostedRules,
+    })
+
+    expect(baseline?.rarity).toBe('epic')
+    expect(boosted?.rarity).toBe('epic')
+    expect(getEquipmentCandidateTags({ rarity: baseline!.rarity, buildTag: baseline!.buildTag, affix: baseline!.affix, setId: baseline!.setId, campaign: 1 })).not.toEqual(expect.arrayContaining(['death', 'pierce']))
+    expect(getEquipmentCandidateTags({ rarity: boosted!.rarity, buildTag: boosted!.buildTag, affix: boosted!.affix, setId: boosted!.setId, campaign: 1 })).toEqual(expect.arrayContaining(['death', 'pierce']))
   })
 
   it('consumes v2 cooldown refund only for effective Q/E/R hits once per cast', () => {
@@ -7755,7 +9650,7 @@ describe('game engine', () => {
     expect(elite?.hp).toBeLessThan(200)
     expect(elite?.talentStates?.armorBreak?.ttl).toBeGreaterThan(0)
     expect(outside?.hp).toBe(200)
-    expect(soulBurst?.radius).toBeCloseTo(86 * 1.08 / 3, 5)
+    expect(soulBurst?.radius).toBeCloseTo(86 / 3, 5)
   })
 
   it('keeps ordinary health pickup burst radius unchanged by the soulBurst visual scale', () => {
@@ -7878,7 +9773,7 @@ describe('game engine', () => {
     expect(clearResult.completedCampaigns).toContain(1)
   })
 
-  it('does not let meta talent summaries bypass the death settlement 30 percent rule', () => {
+  it('applies FT009 after settlement retention to base gold but not talent points or forfeits', () => {
     const makeDeathRun = (withTalents: boolean) => {
       const snapshot = createInitialSnapshot('running')
       snapshot.runExpGained = 1600
@@ -7886,7 +9781,8 @@ describe('game engine', () => {
       snapshot.runEliteKills = 3
       snapshot.kills = 96
       snapshot.player.hp = 0
-      snapshot.unlockedMetaTalentIds = withTalents ? ['meta_common_11', 'meta_difficulty_01'] : []
+      snapshot.unlockedMetaTalentIds = withTalents ? ['meta_common_09'] : []
+      snapshot.metaTalentRanks = withTalents ? { meta_common_09: 5 } : {}
       return snapshot
     }
 
@@ -7897,8 +9793,57 @@ describe('game engine', () => {
     expect(talented.lastTalentPointRecord?.source).toBe('death')
     expect(base.lastTalentPointRecord?.points).toBe(5)
     expect(talented.lastTalentPointRecord?.points).toBe(5)
+    expect(talented.earnedGold).toBe(Math.floor(base.earnedGold * 1.2))
     expect(talented.runExpGained).toBe(1600)
     expect(talented.exp).toBe(base.exp)
+
+    const forfeit = makeDeathRun(true)
+    forfeit.player.hp = forfeit.player.maxHp
+    const forfeited = forfeitRunSnapshot(forfeit)
+    expect(forfeited.earnedGold).toBe(0)
+    expect(forfeited.currency).toBe(0)
+  })
+
+  it('does not revive the removed V2 settlement soft-cap effect for V3 ENDGAME-05', () => {
+    const makeSettlement = (
+      difficulty: GameSnapshot['selectedCampaignDifficulty'],
+      source: 'campaign-clear' | 'death',
+      owned: boolean,
+    ) => {
+      const snapshot = createInitialSnapshot(source === 'campaign-clear' ? 'level-clear' : 'running')
+      snapshot.level = FLOORS_PER_CAMPAIGN
+      snapshot.selectedCampaignDifficulty = difficulty
+      snapshot.selectedDifficulty = difficulty
+      snapshot.runExpGained = 80_000
+      snapshot.runHighestContractLevel = 40
+      snapshot.runEliteKills = 30
+      snapshot.runBossKills = source === 'campaign-clear' ? 1 : 0
+      snapshot.kills = 500
+      snapshot.unlockedMetaTalentIds = owned ? ['meta_endgame_05'] : []
+      if (source === 'campaign-clear') {
+        snapshot.remainingToSpawn = 0
+        snapshot.levelTargetKills = 1
+        snapshot.levelKills = 1
+        snapshot.bossDefeatedThisLevel = true
+        snapshot.levelClearConfirmed = true
+        return advanceGame(snapshot, noInput, 0.1)
+      }
+      snapshot.player.hp = 0
+      return finishPlayerDeathAnimation(snapshot)
+    }
+
+    const hellBase = makeSettlement('hell', 'campaign-clear', false)
+    const hellOwned = makeSettlement('hell', 'campaign-clear', true)
+    const nightmareBase = makeSettlement('nightmare', 'campaign-clear', false)
+    const nightmareOwned = makeSettlement('nightmare', 'campaign-clear', true)
+    expect(hellOwned.lastTalentPointRecord?.points).toBe(hellBase.lastTalentPointRecord?.points)
+    expect(nightmareOwned.lastTalentPointRecord?.points).toBe(nightmareBase.lastTalentPointRecord?.points)
+    expect(makeSettlement('hard', 'campaign-clear', true).lastTalentPointRecord?.points).toBe(
+      makeSettlement('hard', 'campaign-clear', false).lastTalentPointRecord?.points,
+    )
+    expect(makeSettlement('hell', 'death', true).lastTalentPointRecord?.points).toBe(
+      makeSettlement('hell', 'death', false).lastTalentPointRecord?.points,
+    )
   })
 
   it('clears in-run experience and level after returning to the village and starting again', () => {
@@ -10409,7 +12354,6 @@ describe('game engine', () => {
         ...(cast.pendingProjectileLaunches ?? []).map((launch) => launch.projectile),
       ].some((projectile) => projectile.forceCritical)).toBe(true),
       'fan-burst': (cast) => expect(Math.max(...cast.projectiles.map((projectile) => projectile.damage))).toBeGreaterThan(Math.min(...cast.projectiles.map((projectile) => projectile.damage))),
-      'heavy-snipe': (cast) => expect(expectProjectile(cast, 'heavy-snipe').damage).toBeGreaterThan(ARCHER_ACTIVE_SKILL_MAP['heavy-snipe'].levels[4].damage),
       'curve-return': (cast) => {
         const projectile = expectProjectile(cast, 'curve-return')
         expect(projectile.returnAfter).toBeLessThan(projectile.ttl * 0.4)
@@ -10426,7 +12370,11 @@ describe('game engine', () => {
         ...(cast.pendingProjectileLaunches ?? []).map((launch) => launch.projectile),
       ].filter((projectile) => projectile.sourceSkillId === 'gale-barrage').length).toBeGreaterThan(ARCHER_ACTIVE_SKILL_MAP['gale-barrage'].levels[4].projectileCount),
       'arrow-rain': centerStrikeHook('arrow-rain'),
-      'arrow-screen': (cast) => expect(expectProjectile(cast, 'arrow-screen').slowOnHit).toBeTruthy(),
+      'arrow-screen': (cast) => expect([
+        ...cast.projectiles,
+        ...(cast.pendingProjectileLaunches ?? []).map((launch) => launch.projectile),
+      ].some((projectile) => projectile.sourceSkillId === 'arrow-screen')).toBe(true),
+      'arrow-turret': (cast) => expect(getArrowTurretPresentation(cast)).toHaveLength(2),
       'meteor-cluster': centerStrikeHook('meteor-cluster'),
       'ring-volley': (cast) => expectAlphaBeast(cast, 'ring-volley'),
       'double-crescent': (cast) => expect(expectProjectile(cast, 'double-crescent').slowOnHit).toBeTruthy(),
@@ -10447,7 +12395,6 @@ describe('game engine', () => {
         expect(projectile.explosionRadius).toBeGreaterThanOrEqual(26)
         expect(cast.projectiles.filter((item) => item.sourceSkillId === 'light-split').length).toBeGreaterThan(ARCHER_ACTIVE_SKILL_MAP['light-split'].levels[4].projectileCount)
       },
-      'dawn-bolt': (cast) => expect(expectProjectile(cast, 'dawn-bolt').distanceDamageBonusMax).toBe(0.8),
       'hunter-net': genericEndBurstHook('hunter-net'),
       'pit-spikes': genericEndBurstHook('pit-spikes'),
       'snare-line': genericEndBurstHook('snare-line'),
@@ -10470,7 +12417,6 @@ describe('game engine', () => {
         expect(projectile.linePullMaxDistance).toBe(96)
       },
       'hunter-mark': (cast) => expect(expectProjectile(cast, 'hunter-mark').effect).toBe('mark'),
-      'weakness-trace': (cast) => expect(expectProjectile(cast, 'weakness-trace').lowHpDamageMultiplier).toBe(1.5),
       'death-line': centerStrikeHook('death-line'),
       'blood-scent': (cast) => expect(expectProjectile(cast, 'blood-scent').velocity.y).toBeGreaterThan(0),
       'raptor-dive': (cast) => expect(cast.beastCompanions.some((beast) => beast.skillId === 'raptor-dive')).toBe(true),
@@ -10502,7 +12448,10 @@ describe('game engine', () => {
     ARCHER_CORE_SKILLS.forEach((core) => {
       expect(core.levels).toHaveLength(5)
       expect(core.levels.slice(0, 3).every((level) => level.mechanics.length > 0)).toBe(true)
-      expect(modifiers.some((modifier) => modifier.familyIds?.includes(core.id) || ('buildTag' in modifier && modifier.buildTag === core.buildTag))).toBe(true)
+      expect(
+        modifiers.some((modifier) => modifier.familyIds?.includes(core.id) || ('buildTag' in modifier && modifier.buildTag === core.buildTag))
+        || core.id === 'arrow-turret',
+      ).toBe(true)
       core.evolutionIds.forEach((evolutionId) => {
         const evolution = ARCHER_SKILL_EVOLUTIONS.find((entry) => entry.id === evolutionId)
         expect(evolution?.familyId).toBe(core.id)
@@ -10540,6 +12489,8 @@ describe('game engine', () => {
       expect(evolution.effectProfile.shape).toBeTruthy()
       if (evolution.visualKind === 'field') {
         expect(cast.skillFields.some((field) => field.sourceEvolutionId === evolution.id)).toBe(true)
+      } else if (evolution.visualKind === 'tower') {
+        expect(getArrowTurretPresentation(cast).some((tower) => tower.variant !== 'base')).toBe(true)
       } else if (evolution.visualKind === 'beast') {
         expect(cast.beastCompanions.some((beast) => beast.evolutionId === evolution.id)).toBe(true)
       } else {
@@ -10589,6 +12540,14 @@ describe('game engine', () => {
         field!.position = { ...next.enemies[0].position }
         field!.tickCooldown = 0
         next = advanceGame(next, noInput, 0.016)
+      } else if (evolution.visualKind === 'tower') {
+        next = advanceGame(next, noInput, 0.016)
+        const projectile = next.projectiles.find((item) => item.sourceEvolutionId === evolution.id)
+        expect(projectile, `${evolution.id} should create an evolved tower projectile before a hit`).toBeTruthy()
+        projectile!.previousPosition = { ...(projectile!.origin ?? projectile!.position) }
+        projectile!.position = { ...next.enemies[0].position }
+        next.projectiles = [projectile!]
+        next = advanceGame(next, noInput, 0.016)
       } else {
         const projectile = next.projectiles.find((item) => item.sourceEvolutionId === evolution.id)
           ?? next.pendingProjectileLaunches?.find((launch) => launch.projectile.sourceEvolutionId === evolution.id)?.projectile
@@ -10610,14 +12569,26 @@ describe('game engine', () => {
       expect(hit?.origin).toBeTruthy()
       expect(hit?.targetPosition).toEqual(next.enemies.find((enemy) => enemy.id === `evolution-hit-${evolution.id}`)?.position)
       expect(hit?.duration).toBeGreaterThan(0)
+      if (['double-crescent', 'hawk-wing', 'moonshard-volley', 'sunflare-sweep', 'light-split', 'chain-reflect'].includes(evolution.id)) {
+        expect(hit?.fanGeometry).toMatchObject({
+          skillLevel: 5,
+          projectileCount: expect.any(Number),
+          totalFanAngleDegrees: expect.any(Number),
+          range: expect.any(Number),
+        })
+      }
     })
   })
 
   it('caps core big-affix projectile growth even when multiple sources stack', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.player.attackCooldown = 999
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 0
+    snapshot.spawnCooldown = 999
     snapshot.aimPoint = { x: 520, y: 200 }
-    snapshot.activeSkills = [{ skillId: 'arrow-screen', level: 1, cooldownRemaining: 0 }]
+    snapshot.activeSkills = [{ skillId: 'arrow-turret', level: 1, cooldownRemaining: 0 }]
+    snapshot.enemies = [makeEnemy({ id: 'tower-cap-target', position: { x: 760, y: 200 }, hp: 999, maxHp: 999, speed: 0 })]
     snapshot.equippedItems = {
       weapon: makeEquipment({
         id: 'stacked-spread-core',
@@ -10625,17 +12596,268 @@ describe('game engine', () => {
         buildTag: 'spread',
         bonus: { spreadProjectileBonus: 9 },
         modifiers: [
-          { type: 'projectile-count', skillIds: ['arrow-screen'], amount: 2 },
-          { type: 'projectile-count', skillIds: ['arrow-screen'], amount: 2 },
-          { type: 'projectile-count', skillIds: ['arrow-screen'], amount: 2 },
+          { type: 'projectile-count', familyIds: ['arrow-screen'], amount: 2 },
+          { type: 'projectile-count', familyIds: ['arrow-screen'], amount: 2 },
+          { type: 'projectile-count', familyIds: ['arrow-screen'], amount: 2 },
         ],
       }),
     }
 
     const cast = triggerActiveSkillSnapshot(snapshot, 0)
-    const baseCount = ARCHER_ACTIVE_SKILL_MAP['arrow-screen'].levels[0].projectileCount
+    expect(getArrowTurretPresentation(cast)).toHaveLength(1)
+    const advanced = advanceGame(cast, noInput, 0.016)
+    const baseCount = ARCHER_ACTIVE_SKILL_MAP['fan-burst'].levels[0].projectileCount
+    expect(advanced.projectiles.filter((projectile) => projectile.sourceSkillId === 'arrow-turret')).toHaveLength(baseCount + 3)
+  })
 
-    expect(cast.projectiles.filter((projectile) => projectile.sourceSkillId === 'arrow-screen')).toHaveLength(baseCount + 3)
+  it('deploys independent arrow-turrets through the shared fan, resonance, and taunt runtime contracts', () => {
+    const createTowerSnapshot = (level: number, evolutionId?: 'feather-resonance' | 'bait-bastion') => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.player.attackCooldown = 999
+      snapshot.player.position = { x: 200, y: 200 }
+      snapshot.aimPoint = { x: 520, y: 200 }
+      snapshot.activeSkills = [{
+        skillId: 'arrow-turret',
+        familyId: 'arrow-turret',
+        evolutionId,
+        level,
+        cooldownRemaining: 0,
+      }]
+      snapshot.enemies = [makeEnemy({
+        id: 'tower-target',
+        position: { x: 780, y: 200 },
+        hp: 999,
+        maxHp: 999,
+        speed: 0,
+        attackCooldown: 999,
+      })]
+      return snapshot
+    }
+
+    const levelOne = triggerActiveSkillSnapshot(createTowerSnapshot(1), 0)
+    expect(levelOne.activeSkills[0]).toMatchObject({ cooldownRemaining: 9, cooldownDuration: 9 })
+    expect(getArrowTurretPresentation(levelOne)).toEqual([expect.objectContaining({
+      variant: 'base', remaining: 8, attackInterval: 1.2, totalFanAngleDegrees: 60,
+    })])
+
+    const levelTwo = triggerActiveSkillSnapshot(createTowerSnapshot(2), 0)
+    expect(getArrowTurretPresentation(levelTwo)[0].attackInterval).toBeCloseTo(0.96, 6)
+
+    const resonanceSource = createTowerSnapshot(4, 'feather-resonance')
+    resonanceSource.activeSkills.push({ skillId: 'fan-burst', familyId: 'fan-burst', level: 3, cooldownRemaining: 99 })
+    const resonance = triggerActiveSkillSnapshot(resonanceSource, 0)
+    const firstResonanceGroup = getArrowTurretPresentation(resonance)
+    expect(firstResonanceGroup).toHaveLength(2)
+    expect(firstResonanceGroup.every((tower) => tower.variant === 'resonance')).toBe(true)
+    expect(firstResonanceGroup[0].groupId).toBe(firstResonanceGroup[1].groupId)
+    expect(firstResonanceGroup[0].inheritedEffect).toMatchObject({ familyId: 'fan-burst' })
+    expect(firstResonanceGroup[0].inheritedEffect?.familyId).not.toBe('arrow-turret')
+
+    resonance.activeSkills[0].cooldownRemaining = 0
+    const replaced = triggerActiveSkillSnapshot(resonance, 0)
+    const replacementGroup = getArrowTurretPresentation(replaced)
+    expect(replacementGroup).toHaveLength(2)
+    expect(replacementGroup.every((tower) => tower.groupId !== firstResonanceGroup[0].groupId)).toBe(true)
+
+    const carriedBase = triggerActiveSkillSnapshot(createTowerSnapshot(3), 0)
+    const baseTowerId = getArrowTurretPresentation(carriedBase)[0].id
+    carriedBase.activeSkills[0] = {
+      ...carriedBase.activeSkills[0],
+      evolutionId: 'feather-resonance',
+      level: 4,
+      cooldownRemaining: 0,
+    }
+    const firstPair = triggerActiveSkillSnapshot(carriedBase, 0)
+    const firstPairPresentation = getArrowTurretPresentation(firstPair)
+    expect(firstPairPresentation).toHaveLength(3)
+    const firstPairGroupId = firstPairPresentation.find((tower) => tower.id !== baseTowerId)!.groupId
+    firstPair.activeSkills[0].cooldownRemaining = 0
+    const replacedPair = triggerActiveSkillSnapshot(firstPair, 0)
+    const replacedPairPresentation = getArrowTurretPresentation(replacedPair)
+    expect(replacedPairPresentation).toHaveLength(3)
+    expect(replacedPairPresentation.some((tower) => tower.id === baseTowerId)).toBe(true)
+    expect(replacedPairPresentation.filter((tower) => tower.id !== baseTowerId)
+      .every((tower) => tower.groupId !== firstPairGroupId)).toBe(true)
+
+    const rainSource = createTowerSnapshot(4, 'feather-resonance')
+    rainSource.runTalentState.selectedTalentIds = ['run_blood_09']
+    rainSource.inRunTalentIds = ['run_blood_09']
+    rainSource.runTalentState.formAnchors = {
+      run_blood_09: { familyId: 'arrow-turret', evolutionId: 'feather-resonance', anchoredAt: 0 },
+    }
+    rainSource.activeSkills.push({ skillId: 'fan-burst', familyId: 'fan-burst', level: 4, cooldownRemaining: 99 })
+    const rain = advanceGame(triggerActiveSkillSnapshot(rainSource, 0), noInput, 0.016)
+    const rainProjectiles = rain.projectiles.filter((projectile) => projectile.sourceSkillId === 'arrow-turret')
+    const rainVolleyCounts = Array.from(rainProjectiles.reduce((counts, projectile) => {
+      const originKey = `${projectile.origin?.x ?? 0}:${projectile.origin?.y ?? 0}`
+      counts.set(originKey, (counts.get(originKey) ?? 0) + 1)
+      return counts
+    }, new Map<string, number>()).values())
+    // Resonance can legally add its inherited spread effect, but blood rain
+    // always contributes three arrows to each of the Lv4 pair's volleys.
+    expect(rainVolleyCounts).toHaveLength(2)
+    expect(rainVolleyCounts.every((count) => count >= 11)).toBe(true)
+    expect(rainProjectiles.every((projectile) => projectile.playerDirectArrow === false)).toBe(true)
+    expect(rainProjectiles.every((projectile) => projectile.evolutionFanGeometry?.totalFanAngleDegrees === 75)).toBe(true)
+
+    const webSource = createTowerSnapshot(1)
+    webSource.runTalentState.selectedTalentIds = ['run_blood_03']
+    webSource.inRunTalentIds = ['run_blood_03']
+    webSource.runTalentState.trajectoryBranches = { run_blood_03: 'wide' }
+    const web = advanceGame(triggerActiveSkillSnapshot(webSource, 0), noInput, 0.016)
+    expect(web.projectiles.filter((projectile) => projectile.sourceSkillId === 'arrow-turret')
+      .every((projectile) => projectile.evolutionFanGeometry?.totalFanAngleDegrees === 68)).toBe(true)
+
+    const spearSource = createTowerSnapshot(4, 'feather-resonance')
+    spearSource.runTalentState.selectedTalentIds = ['run_blood_10']
+    spearSource.inRunTalentIds = ['run_blood_10']
+    spearSource.runTalentState.formAnchors = {
+      run_blood_10: { familyId: 'arrow-turret', evolutionId: 'feather-resonance', anchoredAt: 0 },
+    }
+    const spear = advanceGame(triggerActiveSkillSnapshot(spearSource, 0), noInput, 0.016)
+    const spearProjectiles = spear.projectiles.filter((projectile) => projectile.sourceSkillId === 'arrow-turret')
+    expect(spearProjectiles).toHaveLength(6)
+    expect(spearProjectiles.every((projectile) => projectile.evolutionFanGeometry?.totalFanAngleDegrees === 45)).toBe(true)
+    expect(Math.max(...spearProjectiles.map((projectile) => projectile.pierceRemaining))).toBeGreaterThan(0)
+
+    const tauntSource = createTowerSnapshot(5, 'bait-bastion')
+    tauntSource.enemies = [makeEnemy({
+      id: 'taunted-ordinary',
+      position: { x: 466, y: 183 },
+      hp: 999,
+      maxHp: 999,
+      speed: 0,
+      attackCooldown: 0,
+      behaviorCooldown: 0,
+    })]
+    const taunt = advanceGame(triggerActiveSkillSnapshot(tauntSource, 0), noInput, 0.016)
+    const tauntTowers = getArrowTurretPresentation(taunt)
+    expect(tauntTowers).toHaveLength(2)
+    expect(tauntTowers.every((tower) => tower.variant === 'taunt' && tower.tauntRadius === 340)).toBe(true)
+    expect(tauntTowers.every((tower) => (tower.tauntRemaining ?? 0) > 1.9)).toBe(true)
+    expect(taunt.enemies[0].meleeAttackTargetTowerId).toBeTruthy()
+    expect(tauntTowers.map((tower) => tower.id)).toContain(taunt.enemies[0].meleeAttackTargetTowerId!)
+
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const targetTowerId = taunt.enemies[0].meleeAttackTargetTowerId!
+    taunt.enemies[0].meleeAttackReady = true
+    taunt.enemies[0].meleeAttackImpactDelay = 0
+    const targetTowerHp = tauntTowers.find((tower) => tower.id === targetTowerId)!.hp
+    const berserk = advanceGame(taunt, noInput, 0.016)
+    expect(getArrowTurretPresentation(berserk).find((tower) => tower.id === targetTowerId)?.hp).toBeLessThan(targetTowerHp)
+    expect(getArrowTurretPresentation(berserk).some((tower) => (tower.berserkRemaining ?? 0) > 5.9)).toBe(true)
+
+    berserk.enemies[0].position = { x: 900, y: 900 }
+    berserk.enemies[0].attackCooldown = 999
+    berserk.enemies[0].behaviorCooldown = 999
+    berserk.enemies[0].meleeAttackReady = false
+    berserk.enemies[0].meleeAttackTargetTowerId = undefined
+    let expiredTaunt = berserk
+    for (let tick = 0; tick < 42; tick += 1) {
+      expiredTaunt = advanceGame(expiredTaunt, noInput, 0.05)
+    }
+    const stillStandingTower = getArrowTurretPresentation(expiredTaunt)[0]
+    expiredTaunt.enemies = [makeEnemy({
+      id: 'after-taunt-window',
+      position: { x: stillStandingTower.position.x - 34, y: stillStandingTower.position.y },
+      hp: 999,
+      maxHp: 999,
+      speed: 0,
+      attackCooldown: 0,
+      behaviorCooldown: 0,
+    })]
+    const afterTauntWindow = advanceGame(expiredTaunt, noInput, 0.016)
+    expect(getArrowTurretPresentation(afterTauntWindow)[0].tauntRemaining).toBe(0)
+    expect(afterTauntWindow.enemies[0].meleeAttackTargetTowerId).toBeUndefined()
+  })
+
+  it('keeps the restored arrow-screen tree independent from the new arrow-turret tree', () => {
+    const makeEvolutionRewardSnapshot = (familyId: 'arrow-screen' | 'arrow-turret') => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.phase = 'level-clear'
+      snapshot.activeSkills = [{ skillId: familyId, familyId, level: 3, cooldownRemaining: 0 }]
+      return snapshot
+    }
+
+    const screenReward = buildPendingReward(makeEvolutionRewardSnapshot('arrow-screen'))
+    expect(screenReward.mandatoryEvolutionFamilyId).toBeUndefined()
+    expect(screenReward.choices.map((choice) => choice.evolutionId).filter(Boolean).sort()).toEqual(['moonshard-volley', 'sunflare-sweep'])
+
+    const turretReward = buildPendingReward(makeEvolutionRewardSnapshot('arrow-turret'))
+    expect(turretReward.mandatoryEvolutionFamilyId).toBeUndefined()
+    expect(turretReward.choices.map((choice) => choice.evolutionId).filter(Boolean).sort()).toEqual(['bait-bastion', 'feather-resonance'])
+
+    const legacy = createInitialSnapshot('running')
+    legacy.player.attackCooldown = 999
+    legacy.aimPoint = { x: legacy.player.position.x + 240, y: legacy.player.position.y }
+    legacy.activeSkills = [{
+      skillId: 'arrow-screen',
+      familyId: 'arrow-screen',
+      evolutionId: 'moonshard-volley',
+      level: 4,
+      cooldownRemaining: 0,
+    }]
+    legacy.runTalentState.selectedTalentIds = ['run_blood_03']
+    legacy.runTalentState.trajectoryBranches = { run_blood_03: 'wide' }
+    legacy.inRunTalentIds = ['run_blood_03']
+    const migrated = migrateArcherSkillEvolutionSnapshot(legacy)
+    expect(migrated.activeSkills).toEqual([expect.objectContaining({
+      skillId: 'arrow-screen',
+      familyId: 'arrow-screen',
+      evolutionId: 'moonshard-volley',
+      level: 4,
+    })])
+
+    const cast = triggerActiveSkillSnapshot(migrated, 0)
+    expect(getArrowTurretPresentation(cast)).toEqual([])
+    expect([
+      ...cast.projectiles,
+      ...(cast.pendingProjectileLaunches ?? []).map((launch) => launch.projectile),
+    ]).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceSkillId: 'moonshard-volley',
+        sourceSkillFamilyId: 'arrow-screen',
+        sourceEvolutionId: 'moonshard-volley',
+      }),
+    ]))
+    expect(cast.projectiles.every((projectile) => projectile.evolutionFanGeometry?.totalFanAngleDegrees === 68)).toBe(true)
+
+    const modifier = { type: 'projectile-count' as const, familyIds: ['arrow-screen'], amount: 1 }
+    const createEquipmentIsolationSnapshot = (familyId: 'arrow-screen' | 'arrow-turret') => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      clearCombatObstacles(snapshot)
+      snapshot.player.attackCooldown = 999
+      snapshot.aimPoint = { x: snapshot.player.position.x + 240, y: snapshot.player.position.y }
+      snapshot.activeSkills = [{ skillId: familyId, familyId, level: 1, cooldownRemaining: 0 }]
+      snapshot.equippedItems = {
+        weapon: makeEquipment({ id: `screen-only-${familyId}`, rarity: 'rare', modifiers: [modifier] }),
+      }
+      snapshot.enemies = [makeEnemy({
+        id: `target-${familyId}`,
+        position: { x: snapshot.aimPoint.x + 120, y: snapshot.aimPoint.y },
+        hp: 999,
+        maxHp: 999,
+        speed: 0,
+      })]
+      return snapshot
+    }
+    const screenWithItsExistingModifier = triggerActiveSkillSnapshot(createEquipmentIsolationSnapshot('arrow-screen'), 0)
+    expect([
+      ...screenWithItsExistingModifier.projectiles,
+      ...(screenWithItsExistingModifier.pendingProjectileLaunches ?? []).map((launch) => launch.projectile),
+    ].filter((projectile) => projectile.sourceSkillFamilyId === 'arrow-screen')).toHaveLength(9)
+
+    let turretWithScreenOnlyModifier = triggerActiveSkillSnapshot(createEquipmentIsolationSnapshot('arrow-turret'), 0)
+    for (let tick = 0; tick < 6 && turretWithScreenOnlyModifier.projectiles.length === 0; tick += 1) {
+      turretWithScreenOnlyModifier = advanceGame(turretWithScreenOnlyModifier, noInput, 0.05)
+    }
+    expect(turretWithScreenOnlyModifier.projectiles.filter((projectile) => projectile.sourceSkillFamilyId === 'arrow-turret')).toHaveLength(5)
   })
 
   it('caps area radius, duration, and cooldown compression from core affixes', () => {
@@ -10850,7 +13072,7 @@ describe('game engine', () => {
     expect(next.beastCompanions.filter((beast) => beast.skillId.startsWith('legendary-beast-hunt-'))).toHaveLength(0)
   })
 
-  it('applies equipment set bonuses to combat stats', () => {
+  it('does not activate Death/Blood collection effects from broad legacy set ids', () => {
     const weapon = makeEquipment({ id: 'set-weapon', slot: 'weapon', rarity: 'epic', setId: 'death-contract-executioner', bonus: {} })
     const ring = makeEquipment({ id: 'set-ring', slot: 'ring1', rarity: 'epic', setId: 'death-contract-executioner', bonus: {} })
     const chest = makeEquipment({ id: 'set-chest', slot: 'chest', rarity: 'epic', setId: 'death-contract-executioner', bonus: {} })
@@ -10858,15 +13080,15 @@ describe('game engine', () => {
 
     const summary = getEquipmentBonusSummary({ weapon, ring1: ring, chest, boots })
 
-    expect(summary.skillDamageMultiplier).toBeGreaterThanOrEqual(0.08)
-    expect(summary.pierceProjectileBonus).toBeGreaterThanOrEqual(1)
+    expect(summary.skillDamageMultiplier).toBe(0)
+    expect(summary.pierceProjectileBonus).toBe(0)
   })
 
-  it('activates death contract two, four, and six piece effects', () => {
+  it('retires the old death-contract generic two/four/six stat and elite-reset hooks', () => {
     const twoPiece = getEquipmentBonusSummary(makeSetItems('death-contract-executioner', ['weapon', 'ring1']))
     const fourPiece = getEquipmentBonusSummary(makeSetItems('death-contract-executioner', ['weapon', 'ring1', 'chest', 'boots']))
-    expect(twoPiece.skillDamageMultiplier).toBeGreaterThanOrEqual(0.08)
-    expect(fourPiece.pierceProjectileBonus).toBeGreaterThanOrEqual(1)
+    expect(twoPiece.skillDamageMultiplier).toBe(0)
+    expect(fourPiece.pierceProjectileBonus).toBe(0)
 
     const snapshot = createInitialSnapshot('running')
     snapshot.equippedItems = makeSetItems('death-contract-executioner')
@@ -10879,16 +13101,95 @@ describe('game engine', () => {
 
     const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
 
-    expect(next.activeSkills[0].cooldownRemaining).toBe(0)
+    expect(next.activeSkills[0].cooldownRemaining).toBeGreaterThan(0)
     expect(next.activeSkills[0].cooldownDuration).toBe(7)
-    expect(next.floatingTexts.some((text) => text.value.includes('死契重置'))).toBe(true)
+    expect(next.floatingTexts.some((text) => text.value.includes('死契重置'))).toBe(false)
   })
 
-  it('activates bloodfeather two, four, and six piece effects', () => {
+  it('opens Death Contract execution on the break hit and consumes it once on the next pierce impact', () => {
+    const makeDeathCore = (slot: EquipmentSlot) => makeEquipment({
+      id: `death-${slot}`,
+      equipmentId: `equipment-template-legacy-${slot}-pierce-死契处刑线`,
+      slot,
+      rarity: 'epic',
+      bonus: {},
+    })
+    const seed = () => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.player.attackCooldown = 999
+      snapshot.mapObstacles = []
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 999
+      snapshot.equippedItems = {
+        weapon: makeDeathCore('weapon'),
+        helmet: makeDeathCore('helmet'),
+        chest: makeDeathCore('chest'),
+        shoulders: makeDeathCore('shoulders'),
+      }
+      snapshot.enemies = [makeEnemy({ id: 'execution-target', kind: 'elite', grantsEliteReward: true, hp: 1_000, maxHp: 1_000, position: { x: 300, y: 200 } })]
+      snapshot.talentCombatState = {
+        deathBlood: {
+          targets: {
+            'execution-target': {
+              armorPoints: 11,
+              distinctFamilyIds: ['prior-pierce-family'],
+              lastFamilyId: 'prior-pierce-family',
+              comboRemaining: 15,
+              brokenRemaining: 0,
+            },
+          },
+        },
+      }
+      return snapshot
+    }
+    const strike = (id: string, sourceSkillId = 'pierce-arrow') => makeProjectile({
+      id,
+      sourceSkillId,
+      sourceSkillFamilyId: sourceSkillId,
+      playerDirectArrow: true,
+      position: { x: 300, y: 200 },
+      previousPosition: { x: 300, y: 200 },
+      origin: { x: 260, y: 200 },
+      velocity: { x: 400, y: 0 },
+      damage: 10,
+      ttl: 1,
+    })
+
+    const opened = advanceGame({ ...seed(), projectiles: [strike('break-hit')] }, noInput, 0)
+    const openedTarget = opened.enemies[0]
+    expect(openedTarget.hp).toBe(990)
+    expect(opened.talentCombatState?.deathBlood?.targets?.['execution-target']).toMatchObject({ armorPoints: 12, brokenRemaining: 45, executionConsumed: false })
+
+    const consumed = advanceGame({ ...opened, projectiles: [strike('execution-hit')] }, noInput, 0)
+    const consumedTarget = consumed.enemies[0]
+    // The normal broken-target pierce multiplier still applies (10 -> 16);
+    // execution contributes exactly one additional 25% max-HP hit.
+    expect(consumedTarget.hp).toBe(724)
+    expect(consumed.talentCombatState?.deathBlood?.targets?.['execution-target']).toMatchObject({ armorPoints: 12, brokenRemaining: 0, executionConsumed: true })
+
+    const twoPiece = seed()
+    twoPiece.equippedItems = { weapon: makeDeathCore('weapon'), helmet: makeDeathCore('helmet') }
+    const noFourPiece = advanceGame({ ...twoPiece, projectiles: [strike('two-piece-break')] }, noInput, 0)
+    const noFourPieceNext = advanceGame({ ...noFourPiece, projectiles: [strike('two-piece-next')] }, noInput, 0)
+    // Two-piece broken-target damage remains, but there is no 25% execution.
+    expect(noFourPieceNext.enemies[0].hp).toBe(974)
+
+    const expired = seed()
+    expired.talentCombatState!.deathBlood!.targets!['execution-target'].brokenRemaining = 0
+    const expiredHit = advanceGame({ ...expired, projectiles: [strike('expired-hit')] }, noInput, 0)
+    expect(expiredHit.enemies[0].hp).toBe(990)
+
+    const nonPierce = seed()
+    nonPierce.talentCombatState!.deathBlood!.targets!['execution-target'].brokenRemaining = 5
+    const nonPierceHit = advanceGame({ ...nonPierce, projectiles: [strike('non-pierce-hit', 'fan-burst')] }, noInput, 0)
+    expect(nonPierceHit.enemies[0].hp).toBe(990)
+  })
+
+  it('retires the old bloodfeather generic two/four/six hit counter', () => {
     const twoPiece = getEquipmentBonusSummary(makeSetItems('bloodfeather-ranger', ['weapon', 'ring1']))
     const fourPiece = getEquipmentBonusSummary(makeSetItems('bloodfeather-ranger', ['weapon', 'ring1', 'chest', 'boots']))
-    expect(twoPiece.spreadProjectileBonus).toBeGreaterThanOrEqual(1)
-    expect(fourPiece.skillDamageMultiplier).toBeGreaterThanOrEqual(0.06)
+    expect(twoPiece.spreadProjectileBonus).toBe(0)
+    expect(fourPiece.skillDamageMultiplier).toBe(0)
 
     const snapshot = createInitialSnapshot('running')
     snapshot.equippedItems = makeSetItems('bloodfeather-ranger')
@@ -10905,16 +13206,15 @@ describe('game engine', () => {
 
     const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
 
-    expect(next.equipmentSetCounters['bloodfeather-ranger']).toBe(0)
-    expect(next.floatingTexts.some((text) => text.value === '血羽爆发')).toBe(true)
-    expect(next.enemies[0].bleedStacks?.length).toBeGreaterThan(0)
+    expect(next.equipmentSetCounters['bloodfeather-ranger']).toBeUndefined()
+    expect(next.floatingTexts.some((text) => text.value === '血羽爆发')).toBe(false)
   })
 
-  it('activates beast king two, four, and six piece effects', () => {
+  it('retires broad beast setId counting and the old six-piece reinforcement', () => {
     const twoPiece = getEquipmentBonusSummary(makeSetItems('beast-king-pardon', ['weapon', 'ring1']))
     const fourPiece = getEquipmentBonusSummary(makeSetItems('beast-king-pardon', ['weapon', 'ring1', 'chest', 'boots']))
-    expect(twoPiece.beastDamageMultiplier).toBeGreaterThanOrEqual(0.12)
-    expect(fourPiece.maxHp).toBeGreaterThanOrEqual(18)
+    expect(twoPiece.beastDamageMultiplier).toBe(0)
+    expect(fourPiece.maxHp).toBe(0)
 
     const snapshot = createInitialSnapshot('running')
     snapshot.equippedItems = makeSetItems('beast-king-pardon')
@@ -10927,16 +13227,16 @@ describe('game engine', () => {
 
     const next = triggerActiveSkillSnapshot(snapshot, 2)
 
-    expect(next.beastCompanions.some((beast) => beast.skillId.startsWith('set-beast-king-'))).toBe(true)
-    expect(next.floatingTexts.some((text) => text.value.includes('兽王增援'))).toBe(true)
+    expect(next.beastCompanions.some((beast) => beast.skillId.startsWith('set-beast-king-'))).toBe(false)
+    expect(next.floatingTexts.some((text) => text.value.includes('兽王增援'))).toBe(false)
   })
 
-  it('activates blue crystal two, four, and six piece effects', () => {
+  it('retires broad blue-crystal setId bonuses and legacy elite crystal output', () => {
     const twoPiece = getEquipmentBonusSummary(makeSetItems('blue-crystal-contract', ['weapon', 'ring1']))
     const fourPiece = getEquipmentBonusSummary(makeSetItems('blue-crystal-contract', ['weapon', 'ring1', 'chest', 'boots']))
-    expect(twoPiece.pickupRange).toBeGreaterThanOrEqual(22)
-    expect(twoPiece.crystalXpMultiplier).toBeGreaterThanOrEqual(0.12)
-    expect(fourPiece.dropRateMultiplier).toBeGreaterThanOrEqual(0.08)
+    expect(twoPiece.pickupRange).toBe(0)
+    expect(twoPiece.crystalXpMultiplier).toBe(0)
+    expect(fourPiece.dropRateMultiplier).toBe(0)
 
     const snapshot = createInitialSnapshot('running')
     snapshot.equippedItems = makeSetItems('blue-crystal-contract')
@@ -10948,8 +13248,401 @@ describe('game engine', () => {
 
     const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
 
-    expect(next.pickups.filter((pickup) => pickup.kind === 'soul-crystal' && pickup.expValue === 26)).toHaveLength(1)
-    expect(next.floatingTexts.some((text) => text.value === '蓝晶契约')).toBe(true)
+    expect(next.pickups.filter((pickup) => pickup.kind === 'soul-crystal' && pickup.expValue === 26)).toHaveLength(0)
+    expect(next.floatingTexts.some((text) => text.value === '蓝晶契约')).toBe(false)
+  })
+
+  const makeBeastDomainEquipment = (collection: 'beast' | 'domain', slots: EquipmentSlot[]) => Object.fromEntries(slots.map((slot) => {
+    const definition = BEAST_CONTRACT_DOMAIN_EQUIPMENT_DEFINITIONS.find((entry) => entry.collection === collection && entry.slot === slot && entry.identity !== 'boss-core-replacement')!
+    return [slot, makeEquipment({
+      id: `${collection}-${slot}`,
+      equipmentId: definition.templateId,
+      slot,
+      rarity: 'legacy',
+      setId: definition.coreContribution ? (collection === 'beast' ? 'beast-king-pardon' : 'blue-crystal-contract') : undefined,
+      bonus: {},
+      modifiers: [],
+    })]
+  })) as Partial<Record<EquipmentSlot, EquipmentItem>>
+
+  it('drives Beast Contract marks, hunt, retained marks, and five-piece domain from real beast hits', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.player.attackCooldown = 999
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 1
+    snapshot.mapObstacles = []
+    snapshot.equippedItems = {
+      ...makeBeastDomainEquipment('beast', ['weapon', 'helmet', 'chest', 'shoulders', 'hands']),
+      ...makeBeastDomainEquipment('beast', ['wrists', 'legs', 'ring1', 'necklace']),
+    }
+    snapshot.activeSkills = [{ skillId: 'ring-volley', familyId: 'ring-volley', level: 1, cooldownRemaining: 0 }]
+    snapshot.aimPoint = { x: snapshot.player.position.x + 40, y: snapshot.player.position.y }
+    snapshot.enemies = [makeEnemy({ id: 'marked-target', kind: 'elite', grantsEliteReward: true, hp: 1_000_000, maxHp: 1_000_000, position: { ...snapshot.aimPoint } })]
+
+    let next = triggerActiveSkillSnapshot(snapshot, 0)
+    expect(next.beastCompanions).toHaveLength(1)
+    const beastId = next.beastCompanions[0].id
+    const wolf = next.beastCompanions[0]
+    next.beastCompanions.push(
+      { ...wolf, id: 'beast-v2-bear', kind: 'bear', skillId: 'sentry-tower', tint: '#bef264' },
+      { ...wolf, id: 'beast-v2-deer', kind: 'deer', skillId: 'decoy-feather', tint: '#f7e8bf' },
+    )
+    // Keep driving real attacks until four successful hunts start the
+    // necklace-reduced domain. Enemy movement can occasionally consume a
+    // frame while the companion closes its own attack range.
+    for (let hit = 0; hit < 40 && (next.beastContractDomainState?.beast.domainRemaining ?? 0) <= 0; hit += 1) {
+      next.beastCompanions.find((beast) => beast.id === beastId)!.attackCooldown = 0
+      const targetState = next.beastContractDomainState?.beast.targets['marked-target']
+      if (targetState) targetState.huntCooldownRemaining = 0
+      next = advanceGame(next, noInput, 0.01)
+    }
+
+    const presentation = getBeastContractDomainPresentationSnapshot(next)
+    expect(presentation.loadout.beast).toMatchObject({ coreCount: 5, twoPieceActive: true, threePieceActive: true, fivePieceActive: true })
+    expect(presentation.beast.domainRemaining).toBeGreaterThan(0)
+    expect(presentation.beast.marksByEnemyId['marked-target']).toBe(2)
+    expect(next.beastCompanions[0].durationTimer).toBeGreaterThan(9_000)
+    expect(next.combatDamageLog.some((event) => event.sourceId === 'beast-hunt-attack')).toBe(true)
+    expect(next.combatDamageLog.some((event) => event.sourceId === 'beast-contract-stampede')).toBe(true)
+  })
+
+  it('uses current owned beast skill level for domain autos and Lv1 when that family is absent', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const seed = (ownedLevel?: number) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.player.attackCooldown = 999
+      snapshot.spawnCooldown = 999
+      snapshot.remainingToSpawn = 1
+      snapshot.mapObstacles = []
+      snapshot.equippedItems = makeBeastDomainEquipment('beast', ['weapon', 'helmet', 'chest', 'shoulders', 'hands'])
+      snapshot.activeSkills = ownedLevel ? [{ skillId: 'ring-volley', familyId: 'ring-volley', level: ownedLevel, cooldownRemaining: 99 }] : []
+      snapshot.enemies = [makeEnemy({ id: 'domain-target', hp: 10_000, maxHp: 10_000, position: { x: snapshot.player.position.x + 40, y: snapshot.player.position.y } })]
+      snapshot.beastContractDomainState!.beast.domainRemaining = 2
+      snapshot.beastContractDomainState!.beast.domainAutoCooldown = 0
+      return snapshot
+    }
+
+    const levelOneFallback = advanceGame(seed(), noInput, 0.01)
+    const ownedLevelThree = advanceGame(seed(3), noInput, 0.01)
+    const fallbackDamage = 10_000 - levelOneFallback.enemies[0].hp
+    const currentLevelDamage = 10_000 - ownedLevelThree.enemies[0].hp
+
+    expect(fallbackDamage).toBeGreaterThan(0)
+    expect(currentLevelDamage).toBeGreaterThan(fallbackDamage)
+    expect(levelOneFallback.beastCompanions).toHaveLength(0)
+    expect(levelOneFallback.combatDamageLog.some((event) => event.sourceId === 'beast-domain-auto')).toBe(true)
+  })
+
+  it('routes commanded beast damage through direct marks and applies the hunt-ring damage modifier', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const runUntilFirstHunt = (withRing: boolean) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.player.attackCooldown = 999
+      snapshot.spawnCooldown = 999
+      snapshot.remainingToSpawn = 1
+      snapshot.mapObstacles = []
+      snapshot.equippedItems = {
+        ...makeBeastDomainEquipment('beast', ['weapon', 'helmet', 'chest']),
+        ...(withRing ? makeBeastDomainEquipment('beast', ['ring1']) : {}),
+      }
+      snapshot.activeSkills = [{ skillId: 'ring-volley', familyId: 'ring-volley', level: 1, cooldownRemaining: 0 }]
+      snapshot.aimPoint = { x: snapshot.player.position.x + 40, y: snapshot.player.position.y }
+      snapshot.enemies = [makeEnemy({ id: 'command-mark-target', hp: 1_000_000, maxHp: 1_000_000, position: { ...snapshot.aimPoint } })]
+
+      let next = triggerActiveSkillSnapshot(snapshot, 0)
+      expect(next.beastContractDomainState!.beast.targets['command-mark-target']?.marks).toBeGreaterThan(0)
+      for (let step = 0; step < 40 && !next.combatDamageLog.some((event) => event.sourceId === 'beast-hunt-attack'); step += 1) {
+        next.beastCompanions[0].attackCooldown = 0
+        next = advanceGame(next, noInput, 0.01)
+      }
+      return next.combatDamageLog.find((event) => event.sourceId === 'beast-hunt-attack')!.damage
+    }
+
+    const baseHuntDamage = runUntilFirstHunt(false)
+    const ringHuntDamage = runUntilFirstHunt(true)
+    expect(ringHuntDamage).toBeCloseTo(baseHuntDamage * 1.25, 5)
+  })
+
+  it('pushes only ordinary boar targets toward the highest-mark enemy through obstacle-safe movement', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.99)
+    const runTarget = (kind: Enemy['kind'], grantsEliteReward = false) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.player.attackCooldown = 999
+      snapshot.spawnCooldown = 999
+      snapshot.remainingToSpawn = 1
+      snapshot.mapObstacles = []
+      snapshot.equippedItems = makeBeastDomainEquipment('beast', ['weapon', 'helmet', 'chest'])
+      snapshot.activeSkills = [{ skillId: 'revolving-feather', familyId: 'revolving-feather', level: 3, cooldownRemaining: 0 }]
+      const origin = { ...snapshot.player.position }
+      snapshot.aimPoint = { x: origin.x + 80, y: origin.y }
+      const pushed = makeEnemy({ id: 'boar-push-target', kind, grantsEliteReward, hp: 10_000, maxHp: 10_000, speed: 0, position: { x: origin.x + 80, y: origin.y } })
+      const marked = makeEnemy({ id: 'boar-mark-anchor', hp: 10_000, maxHp: 10_000, speed: 0, position: { x: origin.x + 140, y: origin.y } })
+      snapshot.enemies = [pushed, marked]
+      snapshot.beastContractDomainState!.beast.targets[marked.id] = { marks: 5, lastMarkedAt: 0, huntCooldownRemaining: 99 }
+      const next = triggerActiveSkillSnapshot(snapshot, 0)
+      const position = next.enemies.find((enemy) => enemy.id === pushed.id)!.position
+      return { x: position.x - origin.x, y: position.y - origin.y }
+    }
+
+    expect(runTarget('melee').x).toBeCloseTo(104, 5)
+    expect(runTarget('elite', true)).toEqual({ x: 80, y: 0 })
+  })
+
+  it('adds exactly one non-critical, non-marking stampede charge for each hunt during the five-piece domain', () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.99)
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.player.attackCooldown = 999
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 1
+    snapshot.mapObstacles = []
+    snapshot.equippedItems = {
+      ...makeBeastDomainEquipment('beast', ['weapon', 'helmet', 'chest', 'shoulders', 'boots']),
+      ...makeBeastDomainEquipment('beast', ['ring1']),
+    }
+    snapshot.activeSkills = [{ skillId: 'revolving-feather', familyId: 'revolving-feather', evolutionId: 'stampede-herd', level: 5, cooldownRemaining: 0 }]
+    snapshot.aimPoint = { x: snapshot.player.position.x + 40, y: snapshot.player.position.y }
+    snapshot.beastContractDomainState!.beast.domainRemaining = 5
+    snapshot.enemies = [makeEnemy({ id: 'stampede-command-baseline', hp: 1_000_000, maxHp: 1_000_000, speed: 0, position: { ...snapshot.aimPoint } })]
+    let next = triggerActiveSkillSnapshot(snapshot, 0)
+    const commandDamage = next.combatDamageLog.find((event) => event.sourceId === 'beast-boar-command')!.damage
+    random.mockReturnValue(0)
+    const target = makeEnemy({ id: 'stampede-hunt-target', hp: 1_000_000, maxHp: 1_000_000, speed: 0, position: { x: 120, y: 100 } })
+    next.enemies = [target]
+    const origin = { x: next.player.position.x + 20, y: next.player.position.y }
+    target.position = { x: origin.x + 20, y: origin.y }
+    next.beastCompanions.forEach((beast, index) => {
+      beast.position = { x: origin.x - index, y: origin.y }
+      beast.attackRange = 80
+      beast.attackCooldown = index === 0 ? 0 : 99
+      if (beast.kind === 'boar') beast.evolutionId = 'stampede-herd'
+    })
+    next.beastContractDomainState!.beast.targets[target.id] = { marks: 4, lastMarkedAt: 0, huntCooldownRemaining: 0 }
+    next.combatDamageLog = []
+
+    const beforeHunt = next
+    next = advanceGame(next, noInput, 0.01)
+
+    const charges = next.combatDamageLog.filter((event) => event.sourceId === 'beast-stampede-domain-charge')
+    expect(charges).toHaveLength(1)
+    expect(charges[0]).toMatchObject({ isCritical: false, targetId: target.id })
+    expect(charges[0].damage).toBeCloseTo(commandDamage * 0.5 * 1.25, 5)
+    expect(next.beastContractDomainState!.beast.targets[target.id]).toMatchObject({ marks: 2 })
+    expect(next.beastContractDomainState!.beast.huntCount).toBe(1)
+    expect(beforeHunt.beastContractDomainState!.beast.packHuntEventSequence).toBe(0)
+    expect(getBeastContractDomainPresentationSnapshot(next).beast).toMatchObject({
+      lastPackHuntTargetId: target.id,
+      packHuntEventSequence: 1,
+    })
+  })
+
+  it('keeps every Contract Domain set-generated skill on its exact Lv5 definition', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const createGenerated = (routeDamageRank: number) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.player.attackCooldown = 999
+      snapshot.spawnCooldown = 999
+      snapshot.remainingToSpawn = 1
+      snapshot.mapObstacles = []
+      snapshot.equippedItems = makeBeastDomainEquipment('domain', ['weapon', 'helmet', 'chest', 'shoulders', 'hands'])
+      snapshot.activeSkills = [{ skillId: 'arrow-rain', familyId: 'arrow-rain', level: 1, cooldownRemaining: 99 }]
+      snapshot.enemies = [makeEnemy({ id: 'celestial-target', hp: 10_000, maxHp: 10_000, position: { x: snapshot.player.position.x + 40, y: snapshot.player.position.y } })]
+      snapshot.beastContractDomainState!.domain.celestialRemaining = 2
+      snapshot.beastContractDomainState!.domain.celestialAutoCooldown = 0
+      snapshot.runTalentState.combatTalentV3!.main = { archetype: 'control', routeId: 'control-bombardment' }
+      snapshot.runTalentState.combatTalentV3!.finiteRanks = { AT001: 1, AT101: 1 }
+      snapshot.runTalentState.combatTalentV3!.infiniteRanks = { 'INF-CB-DAMAGE': routeDamageRank }
+      return advanceGame(snapshot, noInput, 0.01).skillFields.find((field) => field.fieldSource === 'set-celestial')!
+    }
+
+    const baseline = createGenerated(0)
+    const generated = createGenerated(1)
+    expect(generated).toMatchObject({
+      skillLevel: 5,
+      isSetGenerated: true,
+      canGenerateFieldEnergy: false,
+      canGenerateSetProgress: false,
+    })
+    expect(generated.damage / baseline.damage).toBeCloseTo(1.08, 6)
+    expect(generated.combatTalentControl).toBeUndefined()
+  })
+
+  it('cleans V2 threshold state immediately after core pieces are unequipped', () => {
+    const beast = createInitialSnapshot('running')
+    beast.equippedItems = makeBeastDomainEquipment('beast', ['weapon', 'helmet', 'chest', 'shoulders', 'hands'])
+    beast.beastContractDomainState!.beast.domainRemaining = 8
+    beast.beastContractDomainState!.beast.huntCount = 3
+    beast.beastContractDomainState!.beast.lastPackHuntTargetId = 'expired-hunt-target'
+    beast.beastContractDomainState!.beast.packHuntEventSequence = 3
+    beast.equippedItems = makeBeastDomainEquipment('beast', ['weapon', 'helmet'])
+    const cleanedBeast = advanceGame(beast, noInput, 0.01)
+    expect(cleanedBeast.beastContractDomainState!.beast).toMatchObject({ domainRemaining: 0, huntCount: 0, packHuntEventSequence: 3 })
+    expect(cleanedBeast.beastContractDomainState!.beast.lastPackHuntTargetId).toBeUndefined()
+
+    const domain = createInitialSnapshot('running')
+    domain.equippedItems = makeBeastDomainEquipment('domain', ['weapon', 'helmet', 'chest', 'shoulders', 'hands'])
+    domain.beastContractDomainState!.domain.energy = 17
+    domain.beastContractDomainState!.domain.resonanceCount = 4
+    domain.beastContractDomainState!.domain.suppressionCount = 1
+    domain.beastContractDomainState!.domain.celestialRemaining = 8
+    domain.equippedItems = makeBeastDomainEquipment('domain', ['weapon'])
+    const cleanedDomain = advanceGame(domain, noInput, 0.01)
+    expect(cleanedDomain.beastContractDomainState!.domain).toMatchObject({
+      energy: 0,
+      resonanceCount: 0,
+      suppressionCount: 0,
+      celestialRemaining: 0,
+    })
+  })
+
+  it('keeps the pack-hunt event sequence monotonic across floors and restores legacy/reset defaults safely', () => {
+    const floor = createInitialSnapshot('running')
+    floor.level = 2
+    floor.levelTimer = 0
+    floor.remainingToSpawn = 0
+    floor.levelKills = floor.levelTargetKills
+    floor.enemies = []
+    floor.enemyProjectiles = []
+    floor.equippedItems = makeBeastDomainEquipment('beast', ['weapon', 'helmet', 'chest'])
+    floor.beastContractDomainState!.beast.lastPackHuntTargetId = 'floor-two-target'
+    floor.beastContractDomainState!.beast.packHuntEventSequence = 7
+
+    const nextFloor = advanceGame(floor, noInput, 0.05)
+    expect(nextFloor.level).toBe(3)
+    expect(nextFloor.beastContractDomainState!.beast.lastPackHuntTargetId).toBeUndefined()
+    expect(nextFloor.beastContractDomainState!.beast.packHuntEventSequence).toBe(7)
+    expect(JSON.parse(JSON.stringify(getBeastContractDomainPresentationSnapshot(nextFloor))).beast).toMatchObject({
+      packHuntEventSequence: 7,
+    })
+
+    const legacy = createInitialSnapshot('running')
+    delete (legacy.beastContractDomainState!.beast as { packHuntEventSequence?: number }).packHuntEventSequence
+    expect(getBeastContractDomainPresentationSnapshot(legacy).beast).toMatchObject({ packHuntEventSequence: 0 })
+
+    const restarted = restartRunSnapshot(nextFloor)
+    expect(restarted.beastContractDomainState!.beast).toMatchObject({ packHuntEventSequence: 0 })
+    expect(restarted.beastContractDomainState!.beast.lastPackHuntTargetId).toBeUndefined()
+  })
+
+  it('counts suppression only when three distinct Contract Domain fields share a real common point', () => {
+    const makeField = (id: string, sourceSkillId: string, x: number, y: number, radius = 10): SkillField => ({
+      id,
+      kind: 'rain',
+      owner: 'player',
+      position: { x, y },
+      ttl: 5,
+      radius,
+      damage: 0,
+      tickInterval: 1,
+      tickCooldown: 999,
+      color: '#84cc16',
+      effect: 'none',
+      effectStrength: 0,
+      projectileCount: 0,
+      spread: 0,
+      projectileSpeed: 0,
+      sourceSkillId,
+      fieldSource: 'player-active',
+      canGenerateFieldEnergy: false,
+      canGenerateSetProgress: true,
+      enteredEnemyIds: [],
+    })
+    const pairKeys = (fields: SkillField[]) => [
+      [fields[0], fields[1]],
+      [fields[0], fields[2]],
+      [fields[1], fields[2]],
+    ].map((pair) => pair.map((field) => field.id).sort().join('|'))
+    const createDomainSnapshot = () => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.player.attackCooldown = 999
+      snapshot.spawnCooldown = 999
+      snapshot.remainingToSpawn = 1
+      snapshot.mapObstacles = []
+      snapshot.equippedItems = makeBeastDomainEquipment('domain', ['weapon', 'helmet', 'chest', 'shoulders', 'boots'])
+      return snapshot
+    }
+
+    let falseCombinations = createDomainSnapshot()
+    falseCombinations.beastContractDomainState!.domain.suppressionCount = 1
+    falseCombinations.skillFields = [
+      makeField('false-open-a', 'arrow-rain', 300, 200),
+      makeField('false-open-b', 'venom-vine', 315, 200),
+      makeField('false-open-c', 'hunter-net', 300, 215),
+    ]
+    falseCombinations.beastContractDomainState!.domain.countedResonanceKeys = pairKeys(falseCombinations.skillFields)
+    falseCombinations = advanceGame(falseCombinations, noInput, 0.01)
+    expect(falseCombinations.beastContractDomainState!.domain).toMatchObject({ suppressionCount: 1, celestialRemaining: 0 })
+    expect(falseCombinations.beastContractDomainState!.domain.countedSuppressionKeys).toEqual([])
+
+    const pairwiseOnlyHeight = 9 * Math.sqrt(3)
+    falseCombinations.skillFields = [
+      makeField('false-pairwise-a', 'arrow-rain', 300, 200),
+      makeField('false-pairwise-b', 'venom-vine', 318, 200),
+      makeField('false-pairwise-c', 'hunter-net', 309, 200 + pairwiseOnlyHeight),
+    ]
+    falseCombinations.beastContractDomainState!.domain.comboCheckCooldown = 0
+    falseCombinations.beastContractDomainState!.domain.countedResonanceKeys = pairKeys(falseCombinations.skillFields)
+    falseCombinations = advanceGame(falseCombinations, noInput, 0.01)
+    expect(falseCombinations.beastContractDomainState!.domain).toMatchObject({ suppressionCount: 1, celestialRemaining: 0 })
+    expect(falseCombinations.beastContractDomainState!.domain.countedSuppressionKeys).toEqual([])
+
+    let commonIntersection = createDomainSnapshot()
+    commonIntersection.skillFields = [
+      makeField('common-a', 'arrow-rain', 300, 200),
+      makeField('common-b', 'venom-vine', 316, 200),
+      makeField('common-c', 'hunter-net', 308, 200 + 8 * Math.sqrt(3)),
+    ]
+    commonIntersection.beastContractDomainState!.domain.countedResonanceKeys = pairKeys(commonIntersection.skillFields)
+    commonIntersection = advanceGame(commonIntersection, noInput, 0.01)
+    expect(commonIntersection.beastContractDomainState!.domain.suppressionCount).toBe(1)
+    expect(commonIntersection.beastContractDomainState!.domain.countedSuppressionKeys).toEqual(['common-a|common-b|common-c'])
+
+    commonIntersection.beastContractDomainState!.domain.comboCheckCooldown = 0
+    commonIntersection = advanceGame(commonIntersection, noInput, 0.01)
+    expect(commonIntersection.beastContractDomainState!.domain.suppressionCount).toBe(1)
+  })
+
+  it('caps active Contract Domain energy at four per cast and spends ten only when a target exists', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.player.attackCooldown = 999
+    snapshot.spawnCooldown = 999
+    snapshot.remainingToSpawn = 1
+    snapshot.mapObstacles = []
+    snapshot.equippedItems = {
+      ...makeBeastDomainEquipment('domain', ['weapon', 'helmet']),
+      ...makeBeastDomainEquipment('domain', ['wrists']),
+    }
+    snapshot.activeSkills = [{ skillId: 'arrow-rain', familyId: 'arrow-rain', level: 1, cooldownRemaining: 0 }]
+    snapshot.aimPoint = { x: snapshot.player.position.x + 80, y: snapshot.player.position.y }
+    snapshot.enemies = Array.from({ length: 5 }, (_, index) => makeEnemy({
+      id: `field-target-${index}`,
+      hp: 1_000,
+      maxHp: 1_000,
+      position: { x: snapshot.aimPoint.x + index * 2, y: snapshot.aimPoint.y },
+    }))
+
+    let next = triggerActiveSkillSnapshot(snapshot, 0)
+    next = advanceGame(next, noInput, 0.01)
+    expect(getBeastContractDomainPresentationSnapshot(next).domain.energy).toBe(4)
+
+    next.beastContractDomainState!.domain.energy = 10
+    next.enemies = []
+    next = advanceGame(next, noInput, 0.01)
+    expect(next.beastContractDomainState!.domain.energy).toBe(10)
+
+    next.enemies = [makeEnemy({ id: 'energy-target', hp: 1_000, maxHp: 1_000, position: { ...next.player.position } })]
+    next = advanceGame(next, noInput, 0.01)
+    const generated = next.skillFields.find((field) => field.fieldSource === 'set-energy')
+    expect(next.beastContractDomainState!.domain.energy).toBe(0)
+    expect(generated).toMatchObject({ skillLevel: 5, isSetGenerated: true, canGenerateFieldEnergy: false, canGenerateSetProgress: false })
   })
 
   it('lets ordinary combat layers move beyond the old room bounds without clamping the player', () => {
@@ -10977,6 +13670,7 @@ describe('game engine', () => {
 
   it('moves beyond old room bounds with real infinite chunks and obstacles enabled', () => {
     const snapshot = startRunSnapshot(selectCampaignSnapshot(createInitialSnapshot('idle'), 5))
+    snapshot.initialSkillDraft = undefined
     snapshot.levelTimer = 0
     snapshot.spawnCooldown = 999
     snapshot.remainingToSpawn = 1
@@ -11045,6 +13739,136 @@ describe('game engine', () => {
     const revisitedChunk = next.battlefield.activeChunks.find((chunk) => chunk.id === originChunkId)!
 
     expect(signature(revisitedChunk)).toEqual(originSignature)
+  })
+
+  it('runs the local-only first-dungeon probe through a real forward and reverse chunk rebuild', () => {
+    const result = runLocalFirstDungeonChunkObservabilityProbe({
+      environment: { PROD: false },
+      hostname: 'localhost',
+      seed: 0x1234_5678,
+    })
+
+    expect(result.available).toBe(true)
+    expect(result.level).toBe(1)
+    expect(result.mode).toBe('infinite')
+    expect(result.fallbackTile?.assetPath).toBe('assets/tiles/dungeon-floor-level1-128-image2.png')
+    expect(result.fallbackTile?.tileSize).toBe(128)
+    expect(result.fallbackTile?.initialWorldCell).toEqual(result.fallbackTile?.returnedWorldCell)
+    expect(result.fallbackTile?.matchesOnReturn).toBe(true)
+    expect(result.refreshSamples).toHaveLength(3)
+    expect(result.refreshSamples?.[0].generatedCount).toBeGreaterThan(0)
+    expect(result.refreshSamples?.[1].recycledCount).toBeGreaterThan(0)
+    expect(result.refreshSamples?.map((sample) => sample.forward)).toEqual([
+      { x: 1, y: 0 },
+      { x: 1, y: 0 },
+      { x: -1, y: 0 },
+    ])
+    expect(result.refreshSamples?.[2].chunks.some((chunk) => (
+      chunk.id === result.initial?.id && chunk.source === 'created'
+    ))).toBe(true)
+    expect(result.initial?.floorVariant).toBe(result.returned?.floorVariant)
+    expect(result.initial?.detailSeed).toBe(result.returned?.detailSeed)
+    expect(result.signatureDiff?.every((difference) => Boolean(difference.path))).toBe(true)
+    expect(result.initialActiveChunks).toHaveLength(INFINITE_ACTIVE_CHUNK_LIMIT)
+    expect(result.returnedActiveChunks).toHaveLength(INFINITE_ACTIVE_CHUNK_LIMIT)
+    expect(result.activeChunkSignatureDiff?.every((difference) => Boolean(difference.path))).toBe(true)
+    expect(result.frameTiming?.count).toBe(3)
+    expect(result.frameTiming?.p95Ms).not.toBeNull()
+    expect(result.verification).toEqual({
+      fallbackTile: { passed: true, failures: [] },
+      originChunkSignature: { passed: true, failures: [] },
+      activeChunkSignatures: { passed: true, failures: [] },
+      performance: { passed: true, failures: [] },
+      passed: true,
+    })
+    expect(result.passed).toBe(result.verification?.passed)
+  })
+
+  it('fails the total local chunk probe gate for every individual verification category', () => {
+    const passInput = {
+      fallbackTileMatchesOnReturn: true,
+      originSignatureDiff: [],
+      activeChunkSignatureDiff: [],
+      performanceFailures: [],
+    }
+
+    const tileFailure = evaluateLocalFirstDungeonChunkObservability({
+      ...passInput,
+      fallbackTileMatchesOnReturn: false,
+    })
+    expect(tileFailure).toMatchObject({
+      fallbackTile: { passed: false, failures: ['fallbackTile.matchesOnReturn'] },
+      originChunkSignature: { passed: true },
+      activeChunkSignatures: { passed: true },
+      performance: { passed: true },
+      passed: false,
+    })
+
+    const originFailure = evaluateLocalFirstDungeonChunkObservability({
+      ...passInput,
+      originSignatureDiff: [{ path: 'obstacles[0].x', initial: 16, returned: 24 }],
+    })
+    expect(originFailure).toMatchObject({
+      fallbackTile: { passed: true },
+      originChunkSignature: { passed: false, failures: ['originChunk.obstacles[0].x'] },
+      activeChunkSignatures: { passed: true },
+      performance: { passed: true },
+      passed: false,
+    })
+
+    const activeChunkFailure = evaluateLocalFirstDungeonChunkObservability({
+      ...passInput,
+      activeChunkSignatureDiff: [{ path: 'chunks[2].decorations[0].assetId', initial: 'a', returned: 'b' }],
+    })
+    expect(activeChunkFailure).toMatchObject({
+      fallbackTile: { passed: true },
+      originChunkSignature: { passed: true },
+      activeChunkSignatures: { passed: false, failures: ['activeChunks.chunks[2].decorations[0].assetId'] },
+      performance: { passed: true },
+      passed: false,
+    })
+
+    const performanceFailure = evaluateLocalFirstDungeonChunkObservability({
+      ...passInput,
+      performanceFailures: [{ path: 'refreshSamples[1].refreshDurationMs', durationMs: 50 }],
+    })
+    expect(performanceFailure).toMatchObject({
+      fallbackTile: { passed: true },
+      originChunkSignature: { passed: true },
+      activeChunkSignatures: { passed: true },
+      performance: { passed: false, failures: ['refreshSamples[1].refreshDurationMs'] },
+      passed: false,
+    })
+  })
+
+  it('keeps chunk observability local-only, in memory, and outside formal persistence', () => {
+    const snapshot = createInitialSnapshot('running')
+    const before = extractPersistedGameState(snapshot)
+
+    expect(runLocalFirstDungeonChunkObservabilityProbe({
+      environment: { PROD: true },
+      hostname: 'localhost',
+    })).toEqual({ available: false, reason: 'local-runtime-only' })
+    expect(runLocalFirstDungeonChunkObservabilityProbe({
+      environment: { PROD: false },
+      hostname: 'preview.example.test',
+    })).toEqual({ available: false, reason: 'local-runtime-only' })
+
+    expect(clearFirstDungeonChunkObservability({ PROD: false }, 'localhost')).toBe(true)
+    recordFirstDungeonChunkFrameTiming(12, { PROD: false }, 'localhost')
+    recordFirstDungeonChunkFrameTiming(24, { PROD: false }, 'localhost')
+    const observation = getFirstDungeonChunkObservabilitySnapshot({ PROD: false }, 'localhost')
+
+    expect(observation.frameSamples.map((sample) => sample.rawDeltaMs)).toEqual([12, 24])
+    expect(observation.frameTiming).toEqual({ count: 2, p50Ms: 12, p95Ms: 24, maxMs: 24 })
+    expect(getFirstDungeonChunkObservabilitySnapshot({ PROD: true }, 'localhost')).toEqual({
+      available: false,
+      frameSamples: [],
+      frameTiming: { count: 0, p50Ms: null, p95Ms: null, maxMs: null },
+      refreshSamples: [],
+    })
+    expect(extractPersistedGameState(snapshot)).toEqual(before)
+    expect(extractPersistedGameState(snapshot)).not.toHaveProperty('battlefield')
   })
 
   it('keeps infinite map obstacles synchronized from active chunks after an empty obstacle frame', () => {
@@ -11222,12 +14046,12 @@ describe('game engine', () => {
     expect(next.enemies.some((enemy) => enemy.id === 'leftover-normal')).toBe(true)
     expect(next.pickups.some((pickup) => pickup.id === 'leftover-crystal')).toBe(true)
     expect(next.phase).toBe('running')
-    expect(next.floorTransition?.nextLevel).toBe(snapshot.level + 1)
+    expect(next.level).toBe(snapshot.level + 1)
+    expect(next.floorTransition).toBeUndefined()
     expect(next.pendingSkillReward).toBeNull()
     expect(next.lastLevelSettlement?.rewardKind).toBe('light')
     expect(next.player.position).toEqual(originalPosition)
 
-    next = advancePastFloorTransition(next)
     expect(next.level).toBe(snapshot.level + 1)
     expect(next.phase).toBe('running')
     expect(next.player.position).toEqual(originalPosition)
@@ -11274,6 +14098,7 @@ describe('game engine', () => {
       const campaign = index + 1
       const selected = selectCampaignSnapshot(createInitialSnapshot('idle'), campaign)
       let running = startRunSnapshot(selected)
+      running.initialSkillDraft = undefined
       running.spawnCooldown = 0
       running.remainingToSpawn = 24
       running.levelTargetKills = 24
@@ -11479,7 +14304,8 @@ describe('game engine', () => {
     }
 
     const riftAdvanced = advanceGame(riftLevel, { up: false, down: false, left: false, right: false }, 0.016)
-    expect(riftAdvanced.floorTransition?.nextLevel).toBe(2)
+    expect(riftAdvanced.level).toBe(2)
+    expect(riftAdvanced.floorTransition).toBeUndefined()
 
     const beforeBoss = createInitialSnapshot('running')
     beforeBoss.level = FLOORS_PER_CAMPAIGN - 1
@@ -11495,9 +14321,10 @@ describe('game engine', () => {
     const clearedPrelude = rewardGate.pendingSkillReward
       ? declineSkillRewardSnapshot(rewardGate)
       : rewardGate
-    expect(clearedPrelude.floorTransition?.nextLevel).toBe(FLOORS_PER_CAMPAIGN)
+    expect(clearedPrelude.level).toBe(FLOORS_PER_CAMPAIGN)
+    expect(clearedPrelude.floorTransition).toBeUndefined()
 
-    const bossStarted = advancePastFloorTransition(clearedPrelude)
+    const bossStarted = clearedPrelude
     expect(bossStarted.level).toBe(FLOORS_PER_CAMPAIGN)
     expect(bossStarted.phase).toBe('running')
     expect(bossStarted.pendingSkillReward).toBeNull()
@@ -11562,10 +14389,10 @@ describe('game engine', () => {
     expect(next.pendingSkillReward).toBeNull()
   })
 
-  it('spawns one dungeon warden through the formal twenty-one to twenty-two transition despite residual capacity, while preserving outside entities', () => {
+  it('preserves the player world position and spawns one dungeon warden around it through the formal twenty-one to twenty-two transition despite residual capacity', () => {
     const input = { up: false, down: false, left: false, right: false }
     const snapshot = createInitialSnapshot('running')
-    const outsidePlayerPosition = { x: WORLD_WIDTH / 2 + 760, y: WORLD_HEIGHT / 2 }
+    const outsidePlayerPosition = { x: WORLD_WIDTH / 2 + 10_000, y: WORLD_HEIGHT / 2 }
     const outsideEnemyPosition = { x: outsidePlayerPosition.x + 46, y: outsidePlayerPosition.y }
     const outsidePickupPosition = { x: outsidePlayerPosition.x + 180, y: outsidePlayerPosition.y }
     const bossCapacity = getMaxEnemiesOnField(FLOORS_PER_CAMPAIGN)
@@ -11604,19 +14431,23 @@ describe('game engine', () => {
     const transitionReady = transitionStarted.pendingSkillReward
       ? declineSkillRewardSnapshot(transitionStarted)
       : transitionStarted
-    expect(transitionReady.floorTransition?.nextLevel).toBe(FLOORS_PER_CAMPAIGN)
+    expect(transitionReady.level).toBe(FLOORS_PER_CAMPAIGN)
+    expect(transitionReady.floorTransition).toBeUndefined()
 
-    let bossStarted = advancePastFloorTransition(transitionReady)
+    let bossStarted = advanceGame(transitionReady, input, 0.05)
     expect(bossStarted.level).toBe(FLOORS_PER_CAMPAIGN)
     expect(bossStarted.battlefield.mode).toBe('boss-arena')
+    expect(bossStarted.player.position).toEqual(outsidePlayerPosition)
     expect(bossStarted.enemies).toHaveLength(bossCapacity + 2)
     expect(bossStarted.enemies.filter((enemy) => enemy.archetypeId === 'dungeon-warden')).toHaveLength(1)
     const warden = bossStarted.enemies.find((enemy) => enemy.archetypeId === 'dungeon-warden')!
-    expect(distance(warden.position, outsidePlayerPosition)).toBeGreaterThanOrEqual(
+    expect(bossStarted.battlefield.bossSpawnState).toBe('spawned')
+    expect(distance(warden.position, bossStarted.player.position)).toBeGreaterThanOrEqual(
       bossStarted.player.size + warden.size * 0.5 + 72,
     )
-    expect(distance(warden.position, outsidePlayerPosition)).toBeLessThanOrEqual(8 * (warden.size + 10))
-    expect(distance(warden.position, { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 })).toBeGreaterThan(200)
+    expect(distance(warden.position, bossStarted.player.position)).toBeLessThan(
+      distance(warden.position, { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }),
+    )
 
     for (let frame = 0; frame < 3; frame += 1) {
       bossStarted = advanceGame(bossStarted, input, 0.05)
@@ -11626,6 +14457,61 @@ describe('game engine', () => {
     expect(bossStarted.player.position).toEqual(outsidePlayerPosition)
     expect(bossStarted.enemies.find((enemy) => enemy.id === 'level-twenty-one-residual-0')?.position).toEqual(outsideEnemyPosition)
     expect(bossStarted.pickups.find((pickup) => pickup.id === 'level-twenty-one-outside-health-pack')?.position).toEqual(outsidePickupPosition)
+  })
+
+  it('keeps an explicit Boss spawn state when every Boss-room candidate is temporarily illegal', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = FLOORS_PER_CAMPAIGN
+    snapshot.levelTimer = 0
+    snapshot.levelTargetKills = getLevelGoal(FLOORS_PER_CAMPAIGN)
+    snapshot.remainingToSpawn = snapshot.levelTargetKills
+    snapshot.player.position = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }
+    snapshot.player.size = 10_000
+    snapshot.battlefield.mode = 'boss-arena'
+    snapshot.battlefield.bossArenaRadius = 320
+    snapshot.mapObstacles = []
+
+    const first = advanceGame(snapshot, noInput, 0.05)
+    const second = advanceGame(first, noInput, 0.05)
+
+    expect(second.enemies.filter((enemy) => enemy.kind === 'boss')).toHaveLength(0)
+    expect(second.battlefield.bossSpawnState).toBe('searching')
+    expect(second.message).toBe('Boss 正在寻找合法入场位置')
+    expect(second.message).not.toContain('剩余目标')
+  })
+
+  it('keeps the player fixed while a Boss advances its legal player-origin ring search', () => {
+    const snapshot = createInitialSnapshot('running')
+    const playerPosition = { x: WORLD_WIDTH / 2 + 1_600, y: WORLD_HEIGHT / 2 }
+    snapshot.level = FLOORS_PER_CAMPAIGN
+    snapshot.levelTimer = 0
+    snapshot.levelTargetKills = getLevelGoal(FLOORS_PER_CAMPAIGN)
+    snapshot.remainingToSpawn = snapshot.levelTargetKills
+    snapshot.player.position = { ...playerPosition }
+    snapshot.player.size = 1_000
+    snapshot.battlefield.mode = 'boss-arena'
+    snapshot.battlefield.bossArenaRadius = 320
+    snapshot.battlefield.bossSpawnState = 'searching'
+    snapshot.battlefield.bossSpawnSearchStep = 0
+    snapshot.mapObstacles = []
+
+    let next = advanceGame(snapshot, noInput, 0.05)
+    expect(next.enemies.filter((enemy) => enemy.kind === 'boss')).toHaveLength(0)
+    expect(next.player.position).toEqual(playerPosition)
+    expect(next.battlefield).toMatchObject({ bossSpawnState: 'searching', bossSpawnSearchStep: 1 })
+    expect(next.message).toBe('Boss 正在寻找合法入场位置')
+
+    for (let frame = 0; frame < 6 && !next.enemies.some((enemy) => enemy.kind === 'boss'); frame += 1) {
+      next = advanceGame(next, noInput, 0.05)
+    }
+
+    const boss = next.enemies.find((enemy) => enemy.kind === 'boss')
+    expect(boss).toBeTruthy()
+    expect(next.player.position).toEqual(playerPosition)
+    expect(next.battlefield).toMatchObject({ bossSpawnState: 'spawned', bossSpawnSearchStep: undefined })
+    expect(distance(boss!.position, playerPosition)).toBeGreaterThanOrEqual(
+      next.player.size + boss!.size * 0.5 + 72,
+    )
   })
 
   it('uses boss presence and final-defeat state instead of capacity, cooldown, or a stale elite flag', () => {
@@ -11893,8 +14779,8 @@ describe('game engine', () => {
     }
     expect(released.pendingEliteSplitChildSpawns).toHaveLength(0)
     expect(released.enemies.filter((enemy) => enemy.id.startsWith('elite-split-'))).toHaveLength(2)
-    expect(released.floorTransition).toBeDefined()
-    expect(advancePastFloorTransition(released).pendingEliteSplitChildSpawns).toEqual([])
+    expect(released.floorTransition).toBeUndefined()
+    expect(released.pendingEliteSplitChildSpawns).toEqual([])
 
     const pendingForReset = {
       ...blocked,
@@ -12724,7 +15610,7 @@ describe('game engine', () => {
     expect(advanceGame(beforeSettlement, noInput, 0.05).phase).toBe('game-over')
   })
   describe('2026-08-14 core-skill form talents', () => {
-  it('offers and accepts an anchored form through the formal blue-crystal reward path after a real Lv4 evolution', () => {
+  it('offers and accepts V3 combat talents through the formal blue-crystal reward path after a real Lv4 evolution', () => {
     let snapshot = createInitialSnapshot('running')
     snapshot.phase = 'level-clear'
     snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 3, cooldownRemaining: 0 }]
@@ -12762,24 +15648,16 @@ describe('game engine', () => {
     const rewardScreen = advanceGame(snapshot, noInput, 0.05)
     expect(rewardScreen.phase).toBe('paused')
     expect(rewardScreen.pendingSkillReward?.poolKind).toBe('crystal-talent')
-    expect(rewardScreen.pendingSkillReward?.choices.length).toBeGreaterThanOrEqual(2)
-    const formChoices = rewardScreen.pendingSkillReward!.choices.filter((choice) => Boolean(choice.formAnchor))
-    expect(formChoices.map((choice) => choice.talentId).sort()).toEqual(['run_death_09', 'run_death_10'])
-    expect(formChoices.every((choice) => choice.formAnchor?.familyId === 'pierce-arrow' && choice.formAnchor.evolutionId === 'wind-cut')).toBe(true)
+    expect(rewardScreen.pendingSkillReward?.choices).toHaveLength(3)
+    expect(rewardScreen.pendingSkillReward?.choices.every((choice) => choice.combatTalentV3)).toBe(true)
+    expect(rewardScreen.pendingSkillReward?.choices.some((choice) => choice.formAnchor)).toBe(false)
 
-    const selected = acceptSkillRewardSnapshot(rewardScreen, formChoices.find((choice) => choice.talentId === 'run_death_09')!.choiceId)
-    expect(selected.runTalentState.selectedTalentIds).toContain('run_death_09')
-    expect(selected.inRunTalentIds).toContain('run_death_09')
-    expect(selected.runTalentState.formAnchors?.run_death_09).toMatchObject({ familyId: 'pierce-arrow', evolutionId: 'wind-cut' })
-    expect(selected.runTalentState.lastOfferedCandidateIds).toEqual([])
-
-    selected.activeSkills[0].cooldownRemaining = 0
-    selected.aimPoint = { x: selected.player.position.x + 260, y: selected.player.position.y }
-    const cast = triggerActiveSkillSnapshot(selected, 0)
-    expect(cast.projectiles.some((projectile) => projectile.formTalentIds?.includes('run_death_09'))).toBe(true)
+    const selected = acceptSkillRewardSnapshot(rewardScreen, rewardScreen.pendingSkillReward!.choices[0].choiceId)
+    expect(selected.pendingSkillReward).toBeNull()
+    expect(Object.values(selected.runTalentState.combatTalentV3?.finiteRanks ?? {}).reduce((sum, rank) => sum + rank, 0)).toBe(1)
   })
 
-  it('reaches an anchored form offer after a formal fixed elite reward, then consumes it on a real cast', () => {
+  it('reaches a V3 combat-talent offer after a formal fixed elite reward', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5)
     let snapshot = createInitialSnapshot('running')
     snapshot.level = 3
@@ -12838,19 +15716,12 @@ describe('game engine', () => {
     }]
     afterDeath = advanceGame(afterDeath, noInput, 0.016)
     expect(afterDeath.pendingSkillReward).toMatchObject({ poolKind: 'crystal-talent', source: 'crystal-talent' })
-    const anchoredChoices = afterDeath.pendingSkillReward!.choices.filter((choice) => Boolean(choice.formAnchor))
-    expect(anchoredChoices.map((choice) => choice.talentId).sort()).toEqual(['run_death_09', 'run_death_10'])
+    expect(afterDeath.pendingSkillReward!.choices).toHaveLength(3)
+    expect(afterDeath.pendingSkillReward!.choices.every((choice) => choice.combatTalentV3)).toBe(true)
 
-    const chosen = acceptSkillRewardSnapshot(afterDeath, anchoredChoices.find((choice) => choice.talentId === 'run_death_09')!.choiceId)
-    expect(chosen.runTalentState.formAnchors?.run_death_09).toMatchObject({
-      familyId: 'pierce-arrow',
-      evolutionId: 'wind-cut',
-    })
-
-    chosen.activeSkills[0].cooldownRemaining = 0
-    chosen.aimPoint = { x: chosen.player.position.x + 260, y: chosen.player.position.y }
-    const cast = triggerActiveSkillSnapshot(chosen, 0)
-    expect(cast.projectiles.some((projectile) => projectile.formTalentIds?.includes('run_death_09'))).toBe(true)
+    const chosen = acceptSkillRewardSnapshot(afterDeath, afterDeath.pendingSkillReward!.choices[0].choiceId)
+    expect(chosen.pendingSkillReward).toBeNull()
+    expect(Object.values(chosen.runTalentState.combatTalentV3?.finiteRanks ?? {}).reduce((sum, rank) => sum + rank, 0)).toBe(1)
   })
 
   it('captures an anchored form on the actual cast and creates its charged form area from a real hit', () => {
@@ -12939,6 +15810,557 @@ describe('game engine', () => {
     expect(consumed.runTalentState.formCycle?.chargedUntil).toBeUndefined()
     expect(restartRunSnapshot(consumed).runTalentState.formCycle).toBeUndefined()
     expect(restartRunSnapshot(consumed).runTalentState.selectedTalentIds).toEqual([])
+  })
+
+  it('does not revive repurposed E6 reward controls through V3 node ids', () => {
+    const village = createInitialSnapshot('idle')
+    village.runTalentState.selectedBuild = 'blood'
+    village.unlockedMetaTalentIds = ['meta_common_03', 'meta_common_12', 'meta_difficulty_03']
+    village.selectedCampaignDifficulty = 'normal'
+    village.selectedDifficulty = 'normal'
+    const run = startRunSnapshot({
+      ...village,
+      unlockedMetaTalentIds: ['meta_common_03', 'meta_common_12', 'meta_difficulty_03'],
+      selectedCampaignDifficulty: 'normal',
+      selectedDifficulty: 'normal',
+    })
+    expect(run.campaignRewardProgress.contractEchoSkillRewardsRemaining).toBe(0)
+    expect(run.runTalentState.selectedBuild).toBe('blood')
+
+    const crystal = {
+      ...run,
+      phase: 'paused' as const,
+      pendingSkillReward: {
+        poolKind: 'crystal-talent' as const,
+        choices: [],
+        source: 'crystal-talent' as const,
+        campaignRewardSemantics: 'talent-choice' as const,
+      },
+    }
+    const crystalRejected = banSkillRewardTypeSnapshot(crystal, 'new-active')
+    expect(crystalRejected.campaignRewardProgress.skillRewardBanUsed).toBe(false)
+    expect(crystalRejected.pendingSkillReward).toMatchObject({ poolKind: 'crystal-talent', source: 'crystal-talent' })
+
+    const elite = {
+      ...run,
+      phase: 'paused' as const,
+      pendingSkillReward: {
+        poolKind: 'fixed-skill' as const,
+        source: 'fixed-skill' as const,
+        campaignRewardNodeId: 'elite-death:3',
+        campaignRewardSemantics: 'five-choice-skill' as const,
+        choices: buildPendingReward(run).choices,
+      },
+    }
+    const sealed = banSkillRewardTypeSnapshot(elite, 'upgrade-active')
+    expect(sealed.campaignRewardProgress).toMatchObject({ skillRewardBanUsed: false, bannedSkillRewardType: undefined })
+    expect(sealed.pendingSkillReward?.choices).toHaveLength(elite.pendingSkillReward.choices.length)
+    expect(banSkillRewardTypeSnapshot(sealed, 'new-active').campaignRewardProgress.bannedSkillRewardType).toBeUndefined()
+
+    const rerolled = rerollNormalEliteSkillRewardSnapshot({
+      ...elite,
+      campaignRewardProgress: { ...elite.campaignRewardProgress, skillRewardBanUsed: false },
+    })
+    expect(rerolled.campaignRewardProgress.normalEliteRerollUsed).toBe(false)
+    expect(rerollNormalEliteSkillRewardSnapshot(rerolled).campaignRewardProgress.normalEliteRerollUsed).toBe(false)
+    expect(getCampaignRewardPresentationSnapshot(rerolled).metaReward.normalEliteReroll).toMatchObject({ enabled: false, used: false })
+
+    const accepted = acceptSkillRewardSnapshot({
+      ...run,
+      phase: 'level-clear',
+      pendingSkillReward: {
+        poolKind: 'skill',
+        source: 'level-clear',
+        choices: [{
+          choiceId: 'echo-passive', mode: 'upgrade-passive', skillId: 'eagle-eye-focus', title: '固定被动', description: '',
+          buildTag: 'general', tacticalTags: [], levelText: '', tacticalText: '',
+        }],
+      },
+    }, 'echo-passive')
+    expect(accepted.campaignRewardProgress.contractEchoSkillRewardsRemaining).toBe(0)
+  })
+
+  it('does not grant the removed V2 hard-Boss epic from repurposed V3 meta_difficulty_04', () => {
+    const makeHardBossRun = (campaign: number, claimed: number[] = []) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.level = (campaign - 1) * FLOORS_PER_CAMPAIGN + FLOORS_PER_CAMPAIGN
+      snapshot.selectedCampaign = campaign
+      snapshot.selectedCampaignDifficulty = 'hard'
+      snapshot.selectedDifficulty = 'hard'
+      snapshot.completedCampaignDifficulties = { ...snapshot.completedCampaignDifficulties, [campaign]: ['normal'] }
+      snapshot.unlockedMetaTalentIds = ['meta_difficulty_04']
+      snapshot.metaDifficultyFirstHardEpicClaimedCampaignIds = claimed
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.levelTargetKills = 1
+      snapshot.mapObstacles = []
+      snapshot.battlefield.mode = 'boss-arena'
+      snapshot.player.attackCooldown = 999
+      snapshot.enemies = [makeEnemy({
+        id: `hard-boss-${campaign}`,
+        kind: 'boss',
+        archetypeId: 'dungeon-warden',
+        hp: 0,
+        maxHp: 1,
+        deathAnimationDuration: 0,
+        position: { x: 400, y: 260 },
+      })]
+      return snapshot
+    }
+
+    const eligible = advanceGame(makeHardBossRun(2), noInput, 0.05)
+    expect(eligible.metaDifficultyFirstHardEpicClaimedCampaignIds).toEqual([])
+
+    const consumed = advanceGame(makeHardBossRun(2, [2]), noInput, 0.05)
+    expect(consumed.metaDifficultyFirstHardEpicClaimedCampaignIds).toEqual([2])
+
+    const wrongCampaign = makeHardBossRun(2)
+    wrongCampaign.completedCampaignDifficulties = { ...wrongCampaign.completedCampaignDifficulties, 2: [], 1: ['normal'] }
+    const rejected = advanceGame(wrongCampaign, noInput, 0.05)
+    expect(rejected.metaDifficultyFirstHardEpicClaimedCampaignIds).toEqual([])
+
+    const forced = createEquipmentDrop(44, 'boss', () => 'forced-epic', { forceDrop: true, forcedRarity: 'epic' })
+    expect(forced?.rarity).toBe('epic')
+    expect(returnToVillageSnapshot(eligible).metaDifficultyFirstHardEpicClaimedCampaignIds).toEqual([])
+  })
+
+  it('auto-locks newly acquired legacy and legendary equipment for owned ENDGAME-02', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const makeBossRun = (difficulty: GameSnapshot['selectedCampaignDifficulty'], owned: boolean) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.level = FLOORS_PER_CAMPAIGN * 2
+      snapshot.selectedCampaign = 2
+      snapshot.selectedCampaignDifficulty = difficulty
+      snapshot.selectedDifficulty = difficulty
+      snapshot.unlockedMetaTalentIds = owned ? ['meta_endgame_02'] : []
+      snapshot.remainingToSpawn = 0
+      snapshot.levelTargetKills = 1
+      snapshot.levelTimer = 0
+      snapshot.mapObstacles = []
+      snapshot.battlefield.mode = 'boss-arena'
+      snapshot.player.attackCooldown = 999
+      snapshot.enemies = [makeEnemy({
+        id: `lock-boss-${difficulty}-${owned}`,
+        kind: 'boss',
+        archetypeId: 'dungeon-warden',
+        hp: 0,
+        maxHp: 1,
+        deathAnimationDuration: 0,
+        position: { x: 400, y: 260 },
+      })]
+      return snapshot
+    }
+
+    const resolveBossDeath = (snapshot: ReturnType<typeof makeBossRun>) => {
+      let next = advanceGame(snapshot, noInput, 0.05)
+      for (let tick = 0; tick < 80 && next.pendingBossLoot.length === 0; tick += 1) {
+        next = advanceGame(next, noInput, 0.05)
+      }
+      return next
+    }
+    const expectLegacyAutoLock = (difficulty: GameSnapshot['selectedCampaignDifficulty'], owned: boolean, expected: boolean) => {
+      const resolved = resolveBossDeath(makeBossRun(difficulty, owned))
+      const legacy = resolved.pendingBossLoot.find((item) => item.rarity === 'legacy')
+      expect(legacy).toBeDefined()
+      expect(legacy?.locked).toBe(expected)
+    }
+    expectLegacyAutoLock('nightmare', true, true)
+    expectLegacyAutoLock('nightmare', false, false)
+    expectLegacyAutoLock('normal', true, true)
+    expectLegacyAutoLock('hard', true, true)
+    expectLegacyAutoLock('hell', true, true)
+
+    const v3Epic = createEquipmentDrop(1, 'normal', () => 'v3-epic', {
+      forceDrop: true,
+      forcedRarity: 'epic',
+      autoLockLegacyLegendary: true,
+    })
+    const v3Legacy = createEquipmentDrop(1, 'boss-legacy', () => 'v3-legacy', {
+      forceDrop: true,
+      autoLockLegacyLegendary: true,
+    })
+    expect(v3Epic).toMatchObject({ rarity: 'epic', locked: false })
+    expect(v3Legacy).toMatchObject({ rarity: 'legacy', locked: true })
+
+    const autoEpic = createEquipmentDrop(1, 'normal', () => 'auto-epic', {
+      forceDrop: true,
+      forcedRarity: 'epic',
+      difficulty: 'nightmare',
+      autoLockHighRarity: true,
+    })
+    const defaultEpic = createEquipmentDrop(1, 'normal', () => 'default-epic', {
+      forceDrop: true,
+      forcedRarity: 'epic',
+      difficulty: 'nightmare',
+    })
+    const autoLegacy = createEquipmentDrop(1, 'boss-legacy', () => 'auto-legacy', {
+      forceDrop: true,
+      difficulty: 'nightmare',
+      autoLockHighRarity: true,
+    })
+    const defaultLegacy = createEquipmentDrop(1, 'boss-legacy', () => 'default-legacy', {
+      forceDrop: true,
+      difficulty: 'nightmare',
+    })
+    const autoLegendary = createEquipmentDrop(1, 'boss', () => 'auto-legendary', {
+      forceDrop: true,
+      difficulty: 'nightmare',
+      autoLockHighRarity: true,
+    })
+    const defaultLegendary = createEquipmentDrop(1, 'boss', () => 'default-legendary', {
+      forceDrop: true,
+      difficulty: 'nightmare',
+    })
+    expect(autoEpic).toMatchObject({ rarity: 'epic', locked: true })
+    expect(defaultEpic).toMatchObject({ rarity: 'epic', locked: false })
+    expect(autoLegacy).toMatchObject({ rarity: 'legacy', locked: true })
+    expect(defaultLegacy).toMatchObject({ rarity: 'legacy', locked: false })
+    expect(autoLegendary).toMatchObject({ rarity: 'legendary', locked: true })
+    expect(defaultLegendary).toMatchObject({ rarity: 'legendary', locked: false })
+
+    vi.spyOn(Math, 'random')
+      .mockReturnValueOnce(1)
+      .mockReturnValueOnce(0)
+    const lowRarity = createEquipmentDrop(1, 'normal', () => 'low-rarity', {
+      forceDrop: true,
+      difficulty: 'nightmare',
+      autoLockHighRarity: true,
+    })
+    expect(lowRarity?.rarity).toBe('broken')
+    expect(lowRarity?.locked).toBe(false)
+    const explicitManualLock = createEquipmentDrop(1, 'normal', () => 'manual-lock', {
+      forceDrop: true,
+      difficulty: 'normal',
+      locked: true,
+    })
+    expect(explicitManualLock?.locked).toBe(true)
+  })
+
+  it('does not revive the removed V2 Boss pity through V3 ENDGAME-02 or difficulty-16 ids', () => {
+    const makeBossRun = (
+      difficulty: GameSnapshot['selectedCampaignDifficulty'],
+      campaign: number,
+      talentIds: string[],
+      layers?: GameSnapshot['bossExtraEquipmentProtectionLayers'],
+    ) => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.level = campaign * FLOORS_PER_CAMPAIGN
+      snapshot.selectedCampaign = campaign
+      snapshot.selectedCampaignDifficulty = difficulty
+      snapshot.selectedDifficulty = difficulty
+      snapshot.unlockedMetaTalentIds = talentIds
+      snapshot.bossExtraEquipmentProtectionLayers = layers ?? snapshot.bossExtraEquipmentProtectionLayers
+      snapshot.remainingToSpawn = 0
+      snapshot.levelTargetKills = 1
+      snapshot.levelTimer = 0
+      snapshot.mapObstacles = []
+      snapshot.battlefield.mode = 'boss-arena'
+      snapshot.player.attackCooldown = 999
+      snapshot.enemies = [makeEnemy({
+        id: `pity-boss-${campaign}-${difficulty}`,
+        kind: 'boss',
+        archetypeId: 'dungeon-warden',
+        hp: 0,
+        maxHp: 1,
+        deathAnimationDuration: 0,
+        position: { x: 400, y: 260 },
+      })]
+      return snapshot
+    }
+    const resolve = (snapshot: ReturnType<typeof makeBossRun>, roll: number) => {
+      vi.spyOn(Math, 'random').mockReturnValue(roll)
+      return advanceGame(snapshot, noInput, 0.05)
+    }
+    const missSeries = (
+      difficulty: GameSnapshot['selectedCampaignDifficulty'],
+      talentIds: string[],
+      expectedLayers: number[],
+      campaign = 2,
+    ) => {
+      let layers = createInitialSnapshot('idle').bossExtraEquipmentProtectionLayers
+      expectedLayers.forEach((expected) => {
+        const resolved = resolve(makeBossRun(difficulty, campaign, talentIds, layers), 0.999)
+        expect(resolved.pendingBossLoot.filter((item) => item.rarity === 'legacy')).toHaveLength(1)
+        layers = resolved.bossExtraEquipmentProtectionLayers
+        expect(getBossExtraEquipmentProtectionPresentation(resolved)).toMatchObject({
+          campaign,
+          difficulty,
+          currentLayers: expected,
+          due: false,
+          owned: false,
+        })
+      })
+      return layers
+    }
+
+    ;(['normal', 'hard', 'hell'] as const).forEach((difficulty) => {
+      const layers = missSeries(difficulty, ['meta_endgame_02'], [0, 0, 0, 0, 0])
+      const protectedResult = resolve(makeBossRun(difficulty, 2, ['meta_endgame_02'], layers), 0.999)
+      expect(protectedResult.pendingBossLoot.filter((item) => item.rarity === 'legacy')).toHaveLength(1)
+      expect(getBossExtraEquipmentProtectionPresentation(protectedResult)).toMatchObject({ currentLayers: 0, due: false, owned: false })
+    })
+
+    const nightmareLayers = missSeries('nightmare', ['meta_endgame_02', 'meta_difficulty_16'], [0, 0, 0])
+    const nightmareProtected = resolve(makeBossRun('nightmare', 2, ['meta_endgame_02', 'meta_difficulty_16'], nightmareLayers), 0.999)
+    expect(nightmareProtected.pendingBossLoot.filter((item) => item.rarity === 'legacy')).toHaveLength(1)
+    expect(getBossExtraEquipmentProtectionPresentation(nightmareProtected)).toMatchObject({
+      currentLayers: 0,
+      threshold: 5,
+      difficulty16Active: false,
+      due: false,
+      owned: false,
+    })
+    missSeries('nightmare', ['meta_endgame_02'], [0, 0, 0, 0, 0])
+
+    const targetLayers = createInitialSnapshot('idle').bossExtraEquipmentProtectionLayers
+    targetLayers[2].nightmare = 6
+    targetLayers[3].normal = 4
+    const hit = resolve(makeBossRun('normal', 3, ['meta_endgame_02'], targetLayers), 0.7)
+    expect(hit.pendingBossLoot.some((item) => item.rarity === 'legacy')).toBe(true)
+    expect(getBossExtraEquipmentProtectionPresentation(hit)).toMatchObject({ campaign: 3, difficulty: 'normal', currentLayers: 4, owned: false })
+    expect(hit.bossExtraEquipmentProtectionLayers[2].nightmare).toBe(6)
+
+    const unowned = resolve(makeBossRun('normal', 4, []), 0.999)
+    expect(unowned.bossExtraEquipmentProtectionLayers[4].normal).toBe(0)
+    expect(getBossExtraEquipmentProtectionPresentation(unowned)).toMatchObject({ owned: false, eligible: false })
+  })
+
+  it('changes Boss extra-equipment protection only after a real formal Boss final death', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.unlockedMetaTalentIds = ['meta_endgame_02']
+    snapshot.bossExtraEquipmentProtectionLayers[1].normal = 4
+    const noBoss = advanceGame({
+      ...snapshot,
+      remainingToSpawn: 0,
+      spawnCooldown: 999,
+      levelTimer: 0,
+      mapObstacles: [],
+    }, noInput, 0.05)
+    expect(noBoss.bossExtraEquipmentProtectionLayers[1].normal).toBe(4)
+    expect(forfeitRunSnapshot(snapshot).bossExtraEquipmentProtectionLayers[1].normal).toBe(4)
+    expect(restartRunSnapshot(snapshot).bossExtraEquipmentProtectionLayers[1].normal).toBe(4)
+
+    const local = startLocalBattleTestSnapshot(snapshot)
+    local.bossExtraEquipmentProtectionLayers[1].normal = 4
+    local.levelTimer = 0
+    local.remainingToSpawn = 0
+    local.spawnCooldown = 999
+    local.mapObstacles = []
+    local.enemies = [makeEnemy({
+      id: 'local-pity-boss', kind: 'boss', archetypeId: 'dungeon-warden', hp: 0, maxHp: 1, deathAnimationDuration: 0,
+      position: { x: 400, y: 260 },
+    })]
+    const localResolved = advanceGame(local, noInput, 0.05)
+    expect(localResolved.bossExtraEquipmentProtectionLayers[1].normal).toBe(4)
+  })
+
+  it('keeps legacy D04 and D11 development scenarios isolated from repurposed V3 effects', () => {
+    const d04Prepared = prepareDevelopmentAcceptanceSnapshot(createInitialSnapshot('idle'), 'd04-first-hard-boss')
+    expect(d04Prepared).toMatchObject({
+      phase: 'running',
+      level: FLOORS_PER_CAMPAIGN,
+      selectedCampaignDifficulty: 'hard',
+      pendingSkillReward: null,
+      pendingBossLoot: [],
+      metaDifficultyFirstHardEpicClaimedCampaignIds: [],
+    })
+    expect(d04Prepared.initialSkillDraft).toBeUndefined()
+    expect(d04Prepared.equipmentInventory.some((item) => item.rarity === 'epic')).toBe(false)
+    const d04Boss = d04Prepared.enemies.find((enemy) => enemy.kind === 'boss')
+    expect(d04Boss).toMatchObject({ hp: 1, bossPhase: 2 })
+    expect(d04Prepared.debugControls).toEqual({ infiniteHealth: true, disableAttacks: false })
+    const d04HitPart = getMonsterHurtboxGeometry(d04Boss!, d04Prepared.elapsedTime).parts[0].bounds
+    const d04HitPoint = { x: (d04HitPart.left + d04HitPart.right) / 2, y: (d04HitPart.top + d04HitPart.bottom) / 2 }
+
+    const bossHit = advanceGame({
+      ...d04Prepared,
+      projectiles: [makeProjectile({
+        id: 'd04-real-player-hit',
+        position: d04HitPoint,
+        previousPosition: d04HitPoint,
+        origin: { ...d04Prepared.player.position },
+        velocity: { x: 1, y: 0 },
+        damage: 100,
+        playerDirectArrow: true,
+      })],
+    }, noInput, 0)
+    expect(bossHit.pendingBossLoot).toHaveLength(0)
+    expect(bossHit.runSettlementSummary).toBeUndefined()
+    expect(bossHit.enemies.find((enemy) => enemy.id === d04Boss!.id)?.hp).toBeLessThanOrEqual(0)
+    const bossDeathDuration = bossHit.enemies.find((enemy) => enemy.id === d04Boss!.id)?.deathAnimationDuration
+    expect(bossDeathDuration).toBeGreaterThan(0)
+    let bossResolved = bossHit
+    for (let frame = 0; frame < Math.ceil(((bossDeathDuration ?? 0) + 0.1) / 0.05); frame += 1) {
+      bossResolved = advanceGame(bossResolved, noInput, 0.05)
+    }
+    expect(bossResolved.enemies).toHaveLength(0)
+    expect(bossResolved.bossDefeatedThisLevel).toBe(true)
+    expect(bossResolved.metaDifficultyFirstHardEpicClaimedCampaignIds).toEqual([])
+    expect(bossResolved.runSettlementSummary?.result).toBe('success')
+
+    const d11Prepared = prepareDevelopmentAcceptanceSnapshot(createInitialSnapshot('idle'), 'd11-hell-fixed-elite')
+    expect(d11Prepared).toMatchObject({
+      phase: 'running',
+      level: 3,
+      selectedCampaignDifficulty: 'hell',
+      pendingSkillReward: null,
+    })
+    expect(d11Prepared.initialSkillDraft).toBeUndefined()
+    expect(d11Prepared.enemies).toHaveLength(1)
+    expect(d11Prepared.enemies[0]).toMatchObject({ kind: 'elite', grantsEliteReward: true, campaignRewardSource: undefined, hp: 1 })
+    expect(d11Prepared.debugControls).toEqual({ infiniteHealth: true, disableAttacks: false })
+    const d11HitPart = getMonsterHurtboxGeometry(d11Prepared.enemies[0], d11Prepared.elapsedTime).parts[0].bounds
+    const d11HitPoint = { x: (d11HitPart.left + d11HitPart.right) / 2, y: (d11HitPart.top + d11HitPart.bottom) / 2 }
+
+    const eliteHit = advanceGame({
+      ...d11Prepared,
+      projectiles: [makeProjectile({
+        id: 'd11-real-player-hit',
+        position: d11HitPoint,
+        previousPosition: d11HitPoint,
+        origin: { ...d11Prepared.player.position },
+        velocity: { x: 1, y: 0 },
+        damage: 100,
+        playerDirectArrow: true,
+      })],
+    }, noInput, 0)
+    const eliteResolved = eliteHit
+    expect(eliteResolved.pendingSkillReward).toMatchObject({
+      poolKind: 'fixed-skill',
+      source: 'fixed-skill',
+    })
+    expect(eliteResolved.pendingSkillReward?.choices).toHaveLength(3)
+    expect(eliteResolved.pendingSkillReward?.poolKind).not.toBe('crystal-talent')
+  })
+
+  it('prepares arbitrary development level targets without bypassing their formal spawn chain', () => {
+    const current = createInitialSnapshot('running')
+    current.player.hp = 1
+    current.player.stamina = 0
+    current.activeSkills = [
+      { skillId: 'fan-burst', familyId: 'fan-burst', level: 4, evolutionId: 'double-star', cooldownRemaining: 7, cooldownDuration: 7 },
+    ]
+    current.inRunTalentIds = ['run_blood_03']
+    current.runTalentState.selectedTalentIds = ['run_blood_03']
+    current.enemies = [makeEnemy({ id: 'old-target-enemy', position: { x: 360, y: 260 } })]
+    current.pickups = [{ id: 'old-target-pickup', kind: 'health-pack', position: { x: 360, y: 260 }, radius: 10, healAmount: 25 }]
+    current.skillEvolutionEffectEvents = [{
+      id: 'old-target-effect',
+      eventId: 'old-target-effect',
+      familyId: 'fan-burst',
+      evolutionId: 'double-star',
+      kind: 'cast',
+      layer: 'body',
+      origin: { x: 360, y: 260 },
+      position: { x: 360, y: 260 },
+      direction: { x: 1, y: 0 },
+      startedAt: 0,
+      duration: 1,
+      ttl: 1,
+    }]
+    current.pendingSkillReward = {
+      source: 'fixed-skill',
+      poolKind: 'fixed-skill',
+      choices: [],
+    }
+
+    const normalPrepared = prepareDevelopmentAcceptanceTargetSnapshot(current, {
+      campaign: 1,
+      difficulty: 'normal',
+      floor: 3,
+    })
+    expect(normalPrepared).toMatchObject({
+      phase: 'running',
+      selectedCampaign: 1,
+      selectedCampaignDifficulty: 'normal',
+      level: 3,
+      pendingSkillReward: null,
+      pendingBossLoot: [],
+      enemies: [],
+      pickups: [],
+      skillEvolutionEffectEvents: [],
+    })
+    expect(normalPrepared.initialSkillDraft).toBeUndefined()
+    expect(normalPrepared.player.hp).toBe(normalPrepared.player.maxHp)
+    expect(normalPrepared.player.stamina).toBe(100)
+    expect(normalPrepared.activeSkills[0]).toMatchObject({ level: 4, evolutionId: 'double-star', cooldownRemaining: 0, cooldownDuration: 0 })
+    expect(normalPrepared.runTalentState.selectedTalentIds).toEqual(['run_blood_03'])
+    const normalSpawned = advanceGame(normalPrepared, noInput, 0.016)
+    expect(normalSpawned.enemies.length).toBeGreaterThan(0)
+    expect(normalSpawned.enemies.some((enemy) => enemy.kind === 'elite')).toBe(true)
+
+    const firstCampaignBoss = prepareDevelopmentAcceptanceTargetSnapshot(current, {
+      campaign: 1,
+      difficulty: 'hard',
+      floor: FLOORS_PER_CAMPAIGN,
+    })
+    firstCampaignBoss.player.position = { x: WORLD_WIDTH / 2 + 1_600, y: WORLD_HEIGHT / 2 }
+    expect(firstCampaignBoss.battlefield.mode).toBe('boss-arena')
+    expect(firstCampaignBoss.enemies).toHaveLength(0)
+    const firstBossSpawned = advanceGame(firstCampaignBoss, noInput, 0.016)
+    expect(firstBossSpawned.enemies.filter((enemy) => enemy.kind === 'boss')).toHaveLength(1)
+    expect(firstBossSpawned.player.position).toEqual(firstCampaignBoss.player.position)
+
+    const highCampaignBoss = prepareDevelopmentAcceptanceTargetSnapshot(current, {
+      campaign: 10,
+      difficulty: 'nightmare',
+      floor: FLOORS_PER_CAMPAIGN,
+    })
+    expect(highCampaignBoss).toMatchObject({ selectedCampaign: 10, selectedCampaignDifficulty: 'nightmare', level: FLOORS_PER_CAMPAIGN * 10 })
+    expect(highCampaignBoss.enemies).toHaveLength(0)
+    const highBossSpawned = advanceGame(highCampaignBoss, noInput, 0.016)
+    expect(highBossSpawned.enemies.filter((enemy) => enemy.kind === 'boss')).toHaveLength(1)
+  })
+
+  it('keeps all V3 skill rewards at three choices across difficulty and source', () => {
+    const makeEliteRewardRun = (difficulty: 'normal' | 'hard' | 'hell' | 'nightmare', source: 'fixed-skill' | 'elite-raid') => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.level = 3
+      snapshot.selectedCampaignDifficulty = difficulty
+      snapshot.selectedDifficulty = difficulty
+      snapshot.unlockedMetaTalentIds = ['meta_difficulty_11']
+      snapshot.activeSkills = [
+        { skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 3, cooldownRemaining: 0 },
+        { skillId: 'fan-burst', familyId: 'fan-burst', level: 3, cooldownRemaining: 0 },
+        { skillId: 'curve-return', familyId: 'curve-return', level: 3, cooldownRemaining: 0 },
+      ]
+      snapshot.fixedPassiveLevel = 5
+      snapshot.levelTimer = 0
+      snapshot.remainingToSpawn = 0
+      snapshot.spawnCooldown = 999
+      snapshot.levelTargetKills = 1
+      snapshot.mapObstacles = []
+      snapshot.player.attackCooldown = 999
+      snapshot.eliteSpawnedThisLevel = true
+      snapshot.campaignRewardProgress.eliteRaidRollResolvedLevels = [snapshot.level]
+      const elite = makeEnemy({
+        id: `hell-${source}`,
+        kind: 'elite',
+        grantsEliteReward: true,
+        campaignRewardSource: source === 'elite-raid' ? 'elite-raid' : undefined,
+        hp: 0,
+        maxHp: 1,
+        deathAnimationDuration: 0,
+        position: { x: 360, y: 240 },
+      })
+      snapshot.enemies = [elite]
+      return snapshot
+    }
+    const hellFixed = advanceGame(makeEliteRewardRun('hell', 'fixed-skill'), noInput, 0.05)
+    expect(hellFixed.pendingSkillReward).toMatchObject({ poolKind: 'fixed-skill', source: 'fixed-skill' })
+    expect(hellFixed.pendingSkillReward?.choices).toHaveLength(3)
+    expect(new Set(hellFixed.pendingSkillReward?.choices.map((choice) => choice.choiceId)).size).toBe(3)
+    expect(hellFixed.campaignRewardProgress.hellEliteExtraCandidateUsed).toBe(false)
+
+    const pendingRaid = makeEliteRewardRun('hell', 'elite-raid')
+    expect(pendingRaid.enemies[0]?.campaignRewardSource).toBe('elite-raid')
+    const hellRaid = advanceGame(pendingRaid, noInput, 0.05)
+    expect(hellRaid.pendingSkillReward).toMatchObject({ poolKind: 'raid-skill', source: 'elite-raid' })
+    expect(hellRaid.pendingSkillReward?.choices).toHaveLength(3)
+    expect(hellRaid.campaignRewardProgress.hellEliteExtraCandidateUsed).toBe(false)
+
+    const normalFixed = advanceGame(makeEliteRewardRun('normal', 'fixed-skill'), noInput, 0.05)
+    expect(normalFixed.pendingSkillReward?.choices).toHaveLength(3)
   })
   })
 })

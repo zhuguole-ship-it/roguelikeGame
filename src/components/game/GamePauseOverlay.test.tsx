@@ -1,19 +1,22 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { createInitialSnapshot } from '../../game/engine'
+import { createInitialSnapshot, getCampaignRewardPresentationSnapshot } from '../../game/engine'
 import { ARCHER_CORE_SKILL_CONTRACT_MAP, ARCHER_SKILL_EVOLUTION_MAP } from '../../game/archerSkillEvolution'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
 import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
 import { RUN_TALENT_NODE_BY_ID, RUN_TALENT_TRAJECTORY_CONFIG } from '../../game/talents'
-import type { EquipmentItem } from '../../game/types'
+import type { EquipmentItem, SkillField } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
 import { GamePauseOverlay } from './GamePauseOverlay'
 
 afterEach(() => {
   useGameStore.setState({ ...createInitialSnapshot() })
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('GamePauseOverlay', () => {
@@ -36,113 +39,35 @@ describe('GamePauseOverlay', () => {
     upgradeLevel: overrides.upgradeLevel ?? 0,
   })
 
-  it('rearranges manual pause information without displaying retired progression details', () => {
+  it('rearranges manual pause information and consumes the V3 combat-talent summary', () => {
     const base = createInitialSnapshot('running')
-
     useGameStore.setState({
       ...base,
       phase: 'paused',
       pauseMenuOpen: true,
-      contractLevel: 2,
-      exp: 50,
-      expToNext: 98,
-      skillPoints: 0,
       equippedItems: { weapon: makeEquipment() },
       runTalentState: {
         ...base.runTalentState,
-        selectedTalentIds: ['run_common_01', 'run_death_02'],
+        combatTalentV3: {
+          ...base.runTalentState.combatTalentV3!,
+          main: { archetype: 'pierce', routeId: 'pierce-armor' },
+          finiteRanks: { BT001: 1 },
+          infiniteRanks: { 'INF-COMMON-DAMAGE': 2 },
+        },
       },
     })
 
     render(<GamePauseOverlay />)
 
-    expect(screen.queryByText('弓箭手暂停菜单')).toBeNull()
-    expect(screen.queryByText('层数')).toBeNull()
-    expect(screen.queryByText('第 1 层')).toBeNull()
-    expect(screen.queryByText('生命')).toBeNull()
-    expect(screen.queryByText('契约等级')).toBeNull()
-    expect(screen.queryByText('Lv.2 (50/98)')).toBeNull()
-    expect(screen.getByText(/鹰眼专注 Lv\.1/)).toBeTruthy()
-    expect(screen.queryByText('局内成长')).toBeNull()
-    expect(screen.queryByText('契约经验')).toBeNull()
-    expect(screen.queryByText('契约构筑')).toBeNull()
-    expect(screen.queryByText('契约强化')).toBeNull()
     expect(screen.getByText('已装备')).toBeTruthy()
     expect(screen.getByText(/武器：死契处刑长弓/)).toBeTruthy()
-    expect(screen.getByText('天赋（局内）预览')).toBeTruthy()
-    const informationRow = screen.getByTestId('pause-information-row')
-    const emptyLogRegion = screen.getByTestId('pause-damage-log-region')
-    expect(informationRow.children).toHaveLength(2)
-    expect(informationRow.children[0]).toBe(emptyLogRegion)
-    expect(informationRow.children[1]).toBe(screen.getByTestId('pause-skill-summary-panel'))
-    expect(emptyLogRegion.className).toContain('min-h-[152px]')
-    expect(screen.queryByTestId('combat-damage-log-pause')).toBeNull()
-    expect(emptyLogRegion.textContent).toBe('')
     const detailColumns = screen.getByTestId('pause-detail-columns')
     expect(detailColumns.className).toContain('grid-cols-1')
     expect(detailColumns.className).toContain('md:grid-cols-2')
-    expect(detailColumns.children[0].textContent).toContain('已装备')
-    expect(detailColumns.children[1].textContent).toContain('天赋（局内）预览')
-    expect(detailColumns.children[1].textContent).toContain('套装效果')
-    const runTalentIcon = screen.getByTestId('pause-run-talent-icon-run_common_01')
-    const runTalentTooltip = screen.getByTestId('pause-run-talent-tooltip-run_common_01')
-    expect(runTalentIcon).toBeTruthy()
-    expect(runTalentIcon.getAttribute('aria-label')).toBe('契约定向')
-    expect(runTalentIcon.getAttribute('aria-describedby')).toBe('pause-run-talent-tooltip-run_common_01')
-    expect(runTalentIcon.getAttribute('title')).toBe('')
-    expect(runTalentIcon.getAttribute('data-icon-id')).toBe('run_common_01')
-    expect(runTalentIcon.getAttribute('data-status')).toBe('selected')
-    expect(screen.getByTestId('pause-run-talent-image-run_common_01').getAttribute('src')).toBe(
-      getRunTalentIconAssetUrl(RUN_TALENT_NODE_BY_ID.get('run_common_01')!),
-    )
-    expect(screen.getByTestId('pause-run-talent-image-run_death_02').getAttribute('src')).toBe(
-      getRunTalentIconAssetUrl(RUN_TALENT_NODE_BY_ID.get('run_death_02')!),
-    )
-    expect(runTalentTooltip.id).toBe('pause-run-talent-tooltip-run_common_01')
-    expect(runTalentTooltip.className).toContain('fixed')
-    expect(runTalentTooltip.className).toContain('break-words')
-    expect(runTalentIcon.querySelector('.absolute.-bottom-1.-right-1')).toBeNull()
-    expect(runTalentTooltip.textContent).toContain('契约定向')
-    expect(runTalentTooltip.textContent).toContain('通用 / 基础')
-    expect(runTalentTooltip.textContent).toContain('本局后续奖励更容易出现当前流派相关技能 / 装备。')
-    expect(runTalentTooltip.textContent).toContain('状态：本局已选')
-    expect(runTalentTooltip.textContent).toContain('未满足前置：无')
-    expect(runTalentTooltip.textContent).toContain('标签：')
-    expect(runTalentTooltip.textContent).toContain('效果：')
-    expect(runTalentTooltip.textContent).not.toMatch(/LV\\.\\d\\+|Lv\\.\\d\\+/)
-    expect(screen.getByTestId('pause-run-talent-tooltip-run_death_02').textContent).toContain('处刑线')
-
-    const originalInnerWidth = window.innerWidth
-    const originalInnerHeight = window.innerHeight
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 360 })
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 640 })
-    Object.defineProperty(runTalentIcon, 'getBoundingClientRect', {
-      configurable: true,
-      value: () => ({
-        x: 330,
-        y: 300,
-        left: 330,
-        top: 300,
-        right: 386,
-        bottom: 356,
-        width: 56,
-        height: 56,
-        toJSON: () => ({}),
-      }),
-    })
-    fireEvent.mouseEnter(runTalentIcon)
-    const tooltipLeft = Number.parseFloat(runTalentTooltip.style.left)
-    const tooltipWidth = Number.parseFloat(runTalentTooltip.style.width)
-    expect(runTalentTooltip.className).toContain('block')
-    expect(tooltipLeft).toBeGreaterThanOrEqual(16)
-    expect(tooltipLeft + tooltipWidth).toBeLessThanOrEqual(344)
-    fireEvent.mouseLeave(runTalentIcon)
-    expect(runTalentTooltip.className).toContain('hidden')
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth })
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
-    expect(screen.queryByText('击杀')).toBeNull()
-    expect(screen.queryByText('自动成长')).toBeNull()
-    expect(screen.queryByText(/生命 0 \/ 攻击 0 \/ 攻速 0 \/ 移速 0/)).toBeNull()
+    expect(screen.getByTestId('combat-talent-v3-pause-summary').textContent).toContain('贯穿破甲')
+    expect(screen.getByTestId('combat-talent-v3-pause-summary').textContent).toContain('有限投入：1')
+    expect(screen.getByTestId('combat-talent-v3-pause-summary').textContent).toContain('无限成长：2')
+    expect(screen.queryByTestId('pause-run-talent-icon-run_common_01')).toBeNull()
     expect(screen.queryByText(/属性点|层间分配/)).toBeNull()
   })
 
@@ -206,45 +131,405 @@ describe('GamePauseOverlay', () => {
     expect(screen.getByText('节点穿刺强化 5')).toBeTruthy()
   })
 
-  it('keeps a blue-crystal reward limited to the selector-provided talent candidates', () => {
+  it('does not expose retired sealing or elite reroll controls on a required reward choice', () => {
     const base = createInitialSnapshot('running')
-    const crystalChoice = {
-      choiceId: 'crystal-talent-choice',
-      mode: 'in-run-talent' as const,
-      skillId: 'run_crystal_01',
-      talentId: 'run_crystal_01',
-      title: '蓝晶充能',
-      description: '只作为蓝晶天赋候选呈现。',
-      buildTag: 'general' as const,
-      tacticalTags: [],
-      levelText: '',
-      tacticalText: '',
-    }
+    const banSkillRewardType = vi.fn()
+    const rerollNormalEliteSkillReward = vi.fn()
+    const choices = Array.from({ length: 5 }, (_, index) => ({
+      choiceId: `elite-upgrade-${index + 1}`,
+      mode: 'upgrade-active' as const,
+      skillId: 'pierce-arrow',
+      familyId: 'pierce-arrow',
+      title: `精英穿刺强化 ${index + 1}`,
+      description: '普通精英的安全技能候选。',
+      buildTag: 'pierce' as const,
+      tacticalTags: ['普通精英'],
+      levelText: `Lv.${index + 2}`,
+      tacticalText: '五选一',
+    }))
     useGameStore.setState({
       ...base,
       phase: 'paused',
       pauseMenuOpen: false,
+      selectedCampaignDifficulty: 'normal',
+      selectedDifficulty: 'normal',
+      unlockedMetaTalentIds: ['meta_common_03', 'meta_common_12', 'meta_difficulty_03'],
+      campaignRewardProgress: { ...base.campaignRewardProgress, contractEchoSkillRewardsRemaining: 2 },
+      pendingSkillReward: {
+        poolKind: 'fixed-skill',
+        source: 'fixed-skill',
+        campaignRewardNodeId: 'elite-death:6',
+        campaignRewardSemantics: 'five-choice-skill',
+        choices,
+      },
+      banSkillRewardType,
+      rerollNormalEliteSkillReward,
+    })
+
+    render(<GamePauseOverlay />)
+
+    expect(screen.queryByTestId('skill-reward-meta-controls')).toBeNull()
+    expect(screen.queryByTestId('skill-reward-ban-options')).toBeNull()
+    expect(screen.queryByTestId('normal-elite-skill-reroll')).toBeNull()
+    expect(screen.queryByRole('button', { name: /重掷/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: '放弃奖励' })).toBeNull()
+    expect(banSkillRewardType).not.toHaveBeenCalled()
+    expect(rerollNormalEliteSkillReward).not.toHaveBeenCalled()
+  })
+
+  it('keeps retired sealing controls absent without changing reward cards', () => {
+    const base = createInitialSnapshot('running')
+    const noMetaChoices = [{
+      choiceId: 'no-meta-choice', mode: 'upgrade-active' as const, skillId: 'pierce-arrow', familyId: 'pierce-arrow',
+      title: '普通技能候选', description: '不应由 UI 侧移除。', buildTag: 'pierce' as const,
+      tacticalTags: [], levelText: 'Lv.2', tacticalText: '五选一',
+    }]
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      pauseMenuOpen: false,
+      selectedCampaignDifficulty: 'normal',
+      selectedDifficulty: 'normal',
+      unlockedMetaTalentIds: ['meta_difficulty_03'],
+      pendingSkillReward: {
+        poolKind: 'fixed-skill', source: 'fixed-skill', campaignRewardNodeId: 'fixed-death:6',
+        campaignRewardSemantics: 'five-choice-skill', choices: noMetaChoices,
+      },
+    })
+
+    const view = render(<GamePauseOverlay />)
+    expect(screen.getAllByTestId('skill-reward-card')).toHaveLength(1)
+    expect(screen.queryByTestId('skill-reward-ban-options')).toBeNull()
+    expect(screen.queryByTestId('skill-reward-ban-status')).toBeNull()
+    expect(screen.queryByTestId('normal-elite-skill-reroll')).toBeNull()
+
+    view.unmount()
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      pauseMenuOpen: false,
+      unlockedMetaTalentIds: ['meta_common_03'],
+      pendingSkillReward: {
+        poolKind: 'fixed-skill', source: 'fixed-skill', campaignRewardNodeId: 'fixed-death:6',
+        campaignRewardSemantics: 'five-choice-skill', choices: [],
+      },
+    })
+    render(<GamePauseOverlay />)
+    expect(screen.queryByTestId('skill-reward-ban-options')).toBeNull()
+    expect(screen.queryByTestId('skill-reward-ban-status')).toBeNull()
+  })
+
+  it('does not surface skill-only controls for blue-crystal talent choices', () => {
+    const base = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      pauseMenuOpen: false,
+      unlockedMetaTalentIds: ['meta_common_03', 'meta_common_12', 'meta_difficulty_03'],
       pendingSkillReward: {
         poolKind: 'crystal-talent',
         source: 'crystal-talent',
         campaignRewardSemantics: 'talent-choice',
-        campaignRewardCategory: 'specialized',
-        choices: [crystalChoice],
+        campaignRewardCategory: 'universal',
+        campaignRewardRerollMode: 'refresh-all',
+        choices: ['run_common_08', 'run_common_09', 'run_common_10'].map((talentId) => ({
+          choiceId: `crystal-${talentId}`,
+          mode: 'in-run-talent' as const,
+          skillId: talentId,
+          talentId,
+          title: RUN_TALENT_NODE_BY_ID.get(talentId)?.name ?? talentId,
+          description: '蓝晶三选一天赋。',
+          buildTag: 'general' as const,
+          tacticalTags: [],
+          levelText: '',
+          tacticalText: '',
+        })),
       },
     })
 
     render(<GamePauseOverlay />)
 
-    expect(screen.getByTestId('campaign-reward-choice-contract').textContent).toContain('蓝晶天赋奖励')
-    expect(screen.getByTestId('campaign-reward-choice-contract').textContent).toContain('蓝晶专属天赋选择')
+    expect(screen.getByTestId('campaign-reward-choice-contract').getAttribute('data-choice-count')).toBe('3')
+    expect(screen.getAllByTestId(/run-talent-reward-card-/)).toHaveLength(3)
+    expect(screen.queryByTestId('skill-reward-meta-controls')).toBeNull()
+    expect(screen.queryByText('封存一种奖励类型')).toBeNull()
+    expect(screen.queryByText('普通精英额外重掷')).toBeNull()
+    expect(screen.queryByTestId('contract-echo-skill-reward-status')).toBeNull()
+    expect(screen.queryByTestId('hell-elite-extra-candidate-status')).toBeNull()
+  })
+
+  it('keeps a required three-card reward keyboard reachable without legacy sixth-candidate UI', async () => {
+    const user = userEvent.setup()
+    const mediaQuery = { matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    vi.stubGlobal('matchMedia', vi.fn(() => mediaQuery))
+    const base = createInitialSnapshot('running')
+    const choices = Array.from({ length: 3 }, (_, index) => ({
+      choiceId: `hell-elite-${index + 1}`,
+      mode: 'upgrade-active' as const,
+      skillId: 'pierce-arrow',
+      familyId: 'pierce-arrow',
+      title: `地狱精英候选 ${index + 1}`,
+      description: '地狱固定精英的合法技能候选。',
+      buildTag: 'pierce' as const,
+      tacticalTags: [],
+      levelText: `Lv.${index + 2}`,
+      tacticalText: '三选一',
+    }))
+    const hellElite = {
+      ...base,
+      phase: 'paused' as const,
+      pauseMenuOpen: false,
+      selectedCampaignDifficulty: 'hell' as const,
+      selectedDifficulty: 'hell' as const,
+      unlockedMetaTalentIds: ['meta_difficulty_11'],
+      campaignRewardProgress: { ...base.campaignRewardProgress, hellEliteExtraCandidateUsed: true },
+      pendingSkillReward: {
+        poolKind: 'fixed-skill' as const,
+        source: 'fixed-skill' as const,
+        campaignRewardNodeId: 'elite-death:6',
+        campaignRewardSemantics: 'five-choice-skill' as const,
+        choices,
+      },
+    }
+    useGameStore.setState(hellElite)
+
+    expect(getCampaignRewardPresentationSnapshot(hellElite).currentReward?.choiceCount).toBe(3)
+    render(<GamePauseOverlay />)
+
+    const cards = screen.getAllByTestId('skill-reward-card')
+    const grid = screen.getByTestId('reward-choice-grid')
+    expect(screen.queryByTestId('hell-elite-extra-candidate-status')).toBeNull()
+    expect(cards).toHaveLength(3)
+    expect(grid.className).toContain('md:grid-cols-2')
+    expect(grid.className).toContain('xl:grid-cols-3')
+    expect(grid.className).not.toContain('2xl:grid-cols-6')
+    expect(grid.getAttribute('aria-label')).toBe('奖励候选：3 项，仅可选择一项')
+    expect(grid.getAttribute('data-skill-choice-grid-contract')).toBe('active-skill-choice-v1')
+    expect(cards[0].getAttribute('data-skill-choice-card-contract')).toBe('active-skill-choice-v1')
+    cards[0].focus()
+    fireEvent.keyDown(grid, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(cards[1])
+    await user.tab()
+    expect(document.activeElement).toBe(cards[2])
+    expect(screen.queryByTestId('normal-elite-skill-reroll')).toBeNull()
+  })
+
+  it('keeps the sixth-candidate status out of unlocked-ineligible and five-choice reward sources', () => {
+    const base = createInitialSnapshot('running')
+    const choices = Array.from({ length: 5 }, (_, index) => ({
+      choiceId: `five-choice-${index + 1}`,
+      mode: 'upgrade-active' as const,
+      skillId: 'pierce-arrow',
+      familyId: 'pierce-arrow',
+      title: `五选一候选 ${index + 1}`,
+      description: '不应被 UI 扩充。',
+      buildTag: 'pierce' as const,
+      tacticalTags: [],
+      levelText: `Lv.${index + 2}`,
+      tacticalText: '五选一',
+    }))
+    const scenarios = [
+      {
+        name: '未解锁地狱固定精英',
+        snapshot: {
+          ...base,
+          phase: 'paused' as const,
+          pauseMenuOpen: false,
+          selectedCampaignDifficulty: 'hell' as const,
+          selectedDifficulty: 'hell' as const,
+          pendingSkillReward: {
+            poolKind: 'fixed-skill' as const,
+            source: 'fixed-skill' as const,
+            campaignRewardNodeId: 'elite-death:6',
+            campaignRewardSemantics: 'five-choice-skill' as const,
+            choices,
+          },
+        },
+      },
+      {
+        name: '地狱精英突袭',
+        snapshot: {
+          ...base,
+          phase: 'paused' as const,
+          pauseMenuOpen: false,
+          selectedCampaignDifficulty: 'hell' as const,
+          selectedDifficulty: 'hell' as const,
+          unlockedMetaTalentIds: ['meta_difficulty_11'],
+          pendingSkillReward: {
+            poolKind: 'raid-skill' as const,
+            source: 'elite-raid' as const,
+            campaignRewardSemantics: 'five-choice-skill' as const,
+            choices,
+          },
+        },
+      },
+      {
+        name: '地狱非精英固定技能奖励',
+        snapshot: {
+          ...base,
+          phase: 'paused' as const,
+          pauseMenuOpen: false,
+          selectedCampaignDifficulty: 'hell' as const,
+          selectedDifficulty: 'hell' as const,
+          unlockedMetaTalentIds: ['meta_difficulty_11'],
+          pendingSkillReward: {
+            poolKind: 'fixed-skill' as const,
+            source: 'fixed-skill' as const,
+            campaignRewardNodeId: 'fixed-death:6',
+            campaignRewardSemantics: 'five-choice-skill' as const,
+            choices,
+          },
+        },
+      },
+      {
+        name: '普通固定精英',
+        snapshot: {
+          ...base,
+          phase: 'paused' as const,
+          pauseMenuOpen: false,
+          selectedCampaignDifficulty: 'normal' as const,
+          selectedDifficulty: 'normal' as const,
+          unlockedMetaTalentIds: ['meta_difficulty_11'],
+          pendingSkillReward: {
+            poolKind: 'fixed-skill' as const,
+            source: 'fixed-skill' as const,
+            campaignRewardNodeId: 'elite-death:6',
+            campaignRewardSemantics: 'five-choice-skill' as const,
+            choices,
+          },
+        },
+      },
+    ]
+
+    scenarios.forEach(({ snapshot }) => {
+      useGameStore.setState(snapshot)
+      expect(getCampaignRewardPresentationSnapshot(snapshot).metaReward.hellEliteExtraCandidate.candidateCount).toBe(5)
+      const view = render(<GamePauseOverlay />)
+      expect(screen.getAllByTestId('skill-reward-card')).toHaveLength(5)
+      expect(screen.queryByTestId('hell-elite-extra-candidate-status')).toBeNull()
+      view.unmount()
+    })
+  })
+
+  it('keeps required reward choices static and free of retired controls under reduced motion', () => {
+    const mediaQuery = { matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }
+    vi.stubGlobal('matchMedia', vi.fn(() => mediaQuery))
+    const base = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      pauseMenuOpen: false,
+      unlockedMetaTalentIds: ['meta_common_03'],
+      pendingSkillReward: {
+        poolKind: 'fixed-skill', source: 'fixed-skill', campaignRewardNodeId: 'fixed-death:6',
+        campaignRewardSemantics: 'five-choice-skill', choices: [{
+          choiceId: 'reduced-motion-choice', mode: 'upgrade-active', skillId: 'pierce-arrow', familyId: 'pierce-arrow',
+          title: '静态技能候选', description: '无动画控件。', buildTag: 'pierce', tacticalTags: [], levelText: 'Lv.2', tacticalText: '五选一',
+        }],
+      },
+    })
+
+    render(<GamePauseOverlay />)
+
+    expect(screen.getByTestId('reward-choice-shell').querySelector('[class*="animate-"]')).toBeNull()
+    expect(screen.queryByTestId('skill-reward-meta-controls')).toBeNull()
+    expect(screen.queryByRole('button', { name: /封存奖励类型/ })).toBeNull()
+  })
+
+  it('renders a blue-crystal reward as an exact three-choice form-pair offer with a third-slot-only reroll', () => {
+    const base = createInitialSnapshot('running')
+    const crystalChoices = [
+      {
+        choiceId: 'form-left', mode: 'in-run-talent' as const, skillId: 'run_death_09', talentId: 'run_death_09', title: '断罪重矢',
+        description: '左侧固定形态。', buildTag: 'pierce' as const, tacticalTags: [], levelText: '', tacticalText: '',
+      },
+      {
+        choiceId: 'form-right', mode: 'in-run-talent' as const, skillId: 'run_death_10', talentId: 'run_death_10', title: '冥火爆矢',
+        description: '右侧固定形态。', buildTag: 'pierce' as const, tacticalTags: [], levelText: '', tacticalText: '',
+      },
+      {
+        choiceId: 'resonance', mode: 'in-run-talent' as const, skillId: 'run_common_09', talentId: 'run_common_09', title: '连携余响',
+        description: '旧版简写。', buildTag: 'general' as const, tacticalTags: [], levelText: '', tacticalText: '',
+      },
+    ]
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      pauseMenuOpen: false,
+      runTalentState: { ...base.runTalentState, rerollsRemaining: 2 },
+      pendingSkillReward: {
+        poolKind: 'crystal-talent',
+        source: 'crystal-talent',
+        campaignRewardSemantics: 'talent-choice',
+        campaignRewardCategory: 'specialized',
+        campaignRewardRerollMode: 'retain-form-pair',
+        campaignRewardFormPairTalentIds: ['run_death_09', 'run_death_10'],
+        choices: crystalChoices,
+      },
+    })
+
+    render(<GamePauseOverlay />)
+
+    const contract = screen.getByTestId('campaign-reward-choice-contract')
+    expect(contract.textContent).toContain('蓝晶天赋奖励 · 三选一')
+    expect(contract.textContent).toContain('流派天赋 · 3 项可立即选择的天赋候选')
+    expect(contract.getAttribute('data-choice-count')).toBe('3')
+    expect(contract.getAttribute('data-reroll-mode')).toBe('retain-form-pair')
+    expect(contract.getAttribute('data-retained-form-pair-talent-ids')).toBe('run_death_09 run_death_10')
+    expect(screen.getByTestId('campaign-reward-crystal-reroll-copy').textContent).toBe('固定三选一，本页不提供重掷。')
     const grid = screen.getByTestId('reward-choice-grid')
     expect(grid.getAttribute('data-campaign-reward-allowed-modes')).toBe('in-run-talent')
-    expect(grid.getAttribute('data-campaign-reward-choice-ids')).toBe('crystal-talent-choice')
-    expect(screen.getByTestId('run-talent-reward-card-crystal-talent-choice')).toBeTruthy()
+    expect(grid.getAttribute('data-campaign-reward-choice-ids')).toBe('form-left form-right resonance')
+    expect(screen.getByTestId('run-talent-reward-card-form-left')).toBeTruthy()
+    expect(screen.getByTestId('run-talent-reward-card-form-right')).toBeTruthy()
+    expect(screen.getByTestId('run-talent-reward-card-resonance')).toBeTruthy()
+    expect(screen.getByTestId('campaign-reward-retained-form-form-left')).toBeTruthy()
+    expect(screen.getByTestId('campaign-reward-retained-form-form-right')).toBeTruthy()
+    expect(screen.queryByTestId('campaign-reward-retained-form-resonance')).toBeNull()
+    expect(screen.getByText('5秒内3个不同主动技能造成实伤后，第三个首次命中处小范围共鸣余波。')).toBeTruthy()
+    expect(screen.queryByTestId('run-upgrade-reroll')).toBeNull()
     expect(screen.queryByTestId('skill-reward-card')).toBeNull()
   })
 
-  it('uses the live form presentation for selected and candidate shape talents without requesting a missing PNG', () => {
+  it('explains a normal blue-crystal reroll as refreshing all three legal candidates', () => {
+    const base = createInitialSnapshot('running')
+    const choices = ['run_common_08', 'run_common_09', 'run_common_10'].map((talentId) => ({
+      choiceId: `choice-${talentId}`,
+      mode: 'in-run-talent' as const,
+      skillId: talentId,
+      talentId,
+      title: RUN_TALENT_NODE_BY_ID.get(talentId)?.name ?? talentId,
+      description: '候选说明。',
+      buildTag: 'general' as const,
+      tacticalTags: [],
+      levelText: '',
+      tacticalText: '',
+    }))
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      pauseMenuOpen: false,
+      runTalentState: { ...base.runTalentState, rerollsRemaining: 1 },
+      pendingSkillReward: {
+        poolKind: 'crystal-talent',
+        source: 'crystal-talent',
+        campaignRewardSemantics: 'talent-choice',
+        campaignRewardCategory: 'universal',
+        campaignRewardRerollMode: 'refresh-all',
+        choices,
+      },
+    })
+
+    render(<GamePauseOverlay />)
+
+    expect(screen.getByTestId('campaign-reward-choice-contract').textContent).toContain('通用天赋 · 3 项可立即选择的天赋候选')
+    expect(screen.getByTestId('campaign-reward-crystal-reroll-copy').textContent).toBe('固定三选一，本页不提供重掷。')
+    expect(screen.queryByTestId('run-upgrade-reroll')).toBeNull()
+    expect(screen.queryByTestId('campaign-reward-retained-form-choice-run_common_09')).toBeNull()
+    expect(screen.getByText('冲刺结束1.5秒内下一主动技能首次实伤命中触发小范围追击爆裂。')).toBeTruthy()
+  })
+
+  it('does not revive the retired form preview when the V3 pause summary is active', () => {
     const base = createInitialSnapshot('running')
     useGameStore.setState({
       ...base,
@@ -274,15 +559,8 @@ describe('GamePauseOverlay', () => {
 
     render(<GamePauseOverlay />)
 
-    const selectedIcon = screen.getByTestId('pause-run-talent-icon-run_death_15')
-    expect(screen.getByTestId('pause-run-talent-placeholder-run_death_15').textContent).toContain('G4')
-    expect(screen.queryByTestId('pause-run-talent-image-run_death_15')).toBeNull()
-    fireEvent.focus(selectedIcon)
-    const selectedTooltip = screen.getByTestId('pause-run-talent-tooltip-run_death_15')
-    expect(selectedTooltip.textContent).toContain('锚定核心技能：穿刺箭 / 已选进化：风切箭')
-    expect(selectedTooltip.textContent).toContain('形态区域强化：2/3 · 剩余 4 秒')
-    expect(selectedTooltip.textContent).toContain('区域冷却：12 秒')
-    expect(selectedTooltip.textContent).toContain('关键数值：半径 180')
+    expect(screen.queryByTestId('pause-run-talent-icon-run_death_15')).toBeNull()
+    expect(screen.getByTestId('combat-talent-v3-pause-summary')).toBeTruthy()
   })
 
   it('renders the choice-pinned form anchor and text placeholder from the reward snapshot', () => {
@@ -383,7 +661,7 @@ describe('GamePauseOverlay', () => {
     expect(screen.queryByText('游戏暂停')).toBeNull()
   })
 
-  it('translates run talent preview tooltip tags and effects into Chinese', () => {
+  it('keeps the retired run-talent tooltip out of the V3 pause view', () => {
     const base = createInitialSnapshot('running')
 
     useGameStore.setState({
@@ -398,12 +676,8 @@ describe('GamePauseOverlay', () => {
 
     render(<GamePauseOverlay />)
 
-    const tooltip = screen.getByTestId('pause-run-talent-tooltip-run_death_06')
-    expect(tooltip.textContent).toContain('标签：穿透 / 死契处刑 / 穿透 / 标记')
-    expect(tooltip.textContent).toContain('效果：伤害 +22% → 穿透标记后的下一段伤害')
-    expect(tooltip.textContent).not.toContain('pierce-after-mark')
-    expect(tooltip.textContent).not.toContain('damage +22%')
-    expect(tooltip.textContent).not.toContain('pierce / death')
+    expect(screen.queryByTestId('pause-run-talent-tooltip-run_death_06')).toBeNull()
+    expect(screen.getByTestId('combat-talent-v3-pause-summary')).toBeTruthy()
   })
 
   it('shows a concise elite reward screen after killing an elite monster', () => {
@@ -470,19 +744,15 @@ describe('GamePauseOverlay', () => {
     })
     expect(screen.getByRole('button', { name: /箭雨坠落/ }).className).toContain('focus-visible:bg-[#2a1d12]')
     expect(screen.getByRole('button', { name: /箭雨坠落/ }).className).not.toContain('rgba(249,115,22')
-    expect(screen.getByRole('button', { name: '重掷 · 1' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '放弃奖励' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /重掷/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: '放弃奖励' })).toBeNull()
     expect(screen.queryByText('弓箭手暂停菜单')).toBeNull()
     expect(screen.queryByText('局内成长')).toBeNull()
     expect(screen.queryByText('契约构筑')).toBeNull()
     expect(screen.queryByText('契约经验')).toBeNull()
     expect(screen.queryByText(/属性点|层间分配/)).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: '重掷 · 1' }))
-    expect(screen.getByRole('button', { name: '重掷 · 0' }).hasAttribute('disabled')).toBe(true)
-    expect(useGameStore.getState().pendingSkillReward?.poolKind).toBe('skill')
-
-    fireEvent.click(screen.getByRole('button', { name: '放弃奖励' }))
+    fireEvent.click(screen.getByRole('button', { name: /箭雨坠落/ }))
     expect(useGameStore.getState().pendingSkillReward).toBeNull()
   })
 
@@ -509,6 +779,225 @@ describe('GamePauseOverlay', () => {
 
     expect(screen.getByTestId('skill-reward-talent-source-with-source').textContent).toBe('来源：契约定向')
     expect(screen.queryByTestId('skill-reward-talent-source-without-source')).toBeNull()
+  })
+
+  it('uses the shared spiral-break flight copy for actual skill reward cards', () => {
+    const base = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      pendingSkillReward: {
+        poolKind: 'skill',
+        choices: [
+          {
+            choiceId: 'spiral-core', mode: 'new-active', skillId: 'spiral-break', title: '螺旋破空',
+            description: '旧版原地环绕文案不应显示。', buildTag: 'pierce', tacticalTags: ['追击'], levelText: '获得新技能', tacticalText: '',
+          },
+          {
+            choiceId: 'cross-cut', mode: 'upgrade-active', skillId: 'cross-cut', title: '交叉切击',
+            description: '旧版 X 型交叉。', buildTag: 'pierce', tacticalTags: ['追击'], levelText: 'Lv.4', tacticalText: '',
+          },
+          {
+            choiceId: 'blood-scent', mode: 'upgrade-active', skillId: 'blood-scent', title: '血嗅追击',
+            description: '低血 30% 必斩。', buildTag: 'pierce', tacticalTags: ['追击'], levelText: 'Lv.4', tacticalText: '',
+          },
+        ],
+      },
+    })
+
+    render(<GamePauseOverlay />)
+
+    expect(screen.getByRole('button', { name: /螺旋破空/ }).textContent).toContain('持续至时间或命中预算耗尽后开始CD')
+    expect(screen.getByRole('button', { name: /交叉切击/ }).textContent).toContain('交叉切击 2x')
+    const bloodScent = screen.getByRole('button', { name: /血嗅追击/ })
+    expect(bloodScent.textContent).toContain('真实伤害斩杀优先、无斩杀立即正常追击')
+    expect(bloodScent.textContent).not.toContain('30%')
+    expect(screen.queryByText('旧版原地环绕文案不应显示。')).toBeNull()
+    expect(screen.getAllByText('穿透直线 · 持续追击')).toHaveLength(3)
+    expect(screen.queryByText('散射压制')).toBeNull()
+    expect(screen.queryByText('血羽游侠')).toBeNull()
+  })
+
+  it('keeps actual pursuit skills in the pause summary as pierce, without restoring retired migration names', () => {
+    const base = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      pauseMenuOpen: true,
+      activeSkills: [{
+        skillId: 'spiral-break',
+        familyId: 'spiral-break',
+        evolutionId: 'cross-cut',
+        level: 4,
+        cooldownRemaining: 0,
+      }],
+    })
+
+    render(<GamePauseOverlay />)
+
+    const summary = screen.getByTestId('pause-skill-summary')
+    expect(summary.textContent).toContain('交叉切射 Lv.4（穿透直线 · 持续追击）')
+    expect(summary.getAttribute('aria-label')).toContain('交叉切射 Lv.4（穿透直线 · 持续追击）')
+    expect(summary.textContent).not.toContain('重矢狙击')
+    expect(summary.textContent).not.toContain('破晓圣矢')
+    expect(summary.textContent).not.toContain('弱点追索')
+  })
+
+  it('keeps deployed arrow-turret state readable in pause without adding controls or inferring combat values', () => {
+    const base = createInitialSnapshot('running')
+    const tower = {
+      id: 'pause-taunt-tower',
+      kind: 'turret',
+      owner: 'player',
+      position: { x: 220, y: 180 },
+      ttl: 5.5,
+      radius: 0,
+      damage: 0,
+      tickInterval: 0,
+      tickCooldown: 0,
+      color: '#fbbf24',
+      effect: 'slow',
+      effectStrength: 0,
+      projectileCount: 0,
+      spread: 0,
+      projectileSpeed: 0,
+      sourceSkillId: 'arrow-turret',
+      sourceSkillFamilyId: 'arrow-turret',
+      sourceEvolutionId: 'bait-bastion',
+      arrowTurret: {
+        groupId: 'pause-taunt-group',
+        groupCreatedAt: 4,
+        variant: 'taunt',
+        hp: 160,
+        maxHp: 300,
+        attackInterval: 0.6,
+        attackCooldown: 0.1,
+        targetId: 'enemy-pause',
+        tauntRadius: 128,
+        tauntRemaining: 1.2,
+        berserkRemaining: 0.5,
+        totalFanAngleDegrees: 75,
+      },
+    } satisfies SkillField
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      pauseMenuOpen: true,
+      skillFields: [tower],
+    })
+
+    render(<GamePauseOverlay />)
+
+    const status = screen.getByTestId('pause-arrow-turret-status')
+    expect(status.getAttribute('aria-label')).toContain('箭幕哨塔暂停状态，共 1 组')
+    expect(screen.getByTestId('pause-arrow-turret-grid').className).toContain('sm:grid-cols-2')
+    const group = screen.getByTestId('pause-arrow-turret-group-pause-taunt-group')
+    expect(group.textContent).toContain('诱敌战垒 · 1 座')
+    const towerStatus = screen.getByTestId('pause-arrow-turret-pause-taunt-tower')
+    expect(towerStatus.textContent).toContain('HP 160/300 · 剩余 5.5秒')
+    expect(towerStatus.textContent).toContain('扇角 75° · 已锁定目标')
+    expect(towerStatus.textContent).toContain('普通怪嘲讽 · 1.2秒')
+    expect(towerStatus.textContent).toContain('狂暴 · 0.5秒')
+    expect(within(status).queryByRole('button')).toBeNull()
+  })
+
+  it('keeps arrow-screen and arrow-turret Lv4 forced pairs isolated while reading each branch’s runtime Lv5 copy', () => {
+    const base = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      phaseBeforePause: 'running',
+      pauseMenuOpen: false,
+      activeSkills: [{
+        skillId: 'arrow-screen',
+        familyId: 'arrow-screen',
+        level: 3,
+        cooldownRemaining: 0,
+      }],
+      pendingSkillReward: {
+        poolKind: 'skill-evolution',
+        mandatoryEvolutionFamilyId: 'arrow-screen',
+        source: 'level-clear',
+        choices: [
+          {
+            choiceId: 'screen-moonshard-choice',
+            mode: 'upgrade-active',
+            skillId: 'arrow-screen',
+            familyId: 'arrow-screen',
+            evolutionId: 'moonshard-volley',
+            title: '旧标题不应成为展示真值',
+            description: '旧描述不应成为展示真值',
+            buildTag: 'spread',
+            tacticalTags: ['箭幕', '平行箭列'],
+            levelText: 'Lv.4 分支进化',
+            tacticalText: '互斥分支',
+          },
+          {
+            choiceId: 'screen-sunflare-choice',
+            mode: 'upgrade-active',
+            skillId: 'arrow-screen',
+            familyId: 'arrow-screen',
+            evolutionId: 'sunflare-sweep',
+            title: '旧标题不应成为展示真值',
+            description: '旧描述不应成为展示真值',
+            buildTag: 'spread',
+            tacticalTags: ['箭幕', '灼烧'],
+            levelText: 'Lv.4 分支进化',
+            tacticalText: '互斥分支',
+          },
+        ],
+      },
+    })
+
+    render(<GamePauseOverlay />)
+
+    expect(screen.getAllByTestId('skill-reward-card')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: /月碎连矢/ }).textContent).toContain('平行碎月箭列。')
+    expect(screen.getByRole('button', { name: /炽阳扫射/ }).textContent).toContain('灼热箭幕。')
+    expect(screen.getByTestId('arrow-screen-reward-level5-screen-moonshard-choice').textContent).toContain('Lv.5：列数和减速提高')
+    expect(screen.getByTestId('arrow-screen-reward-level5-screen-sunflare-choice').textContent).toContain('Lv.5：更多灼热箭与延长灼烧')
+    expect(screen.queryByTestId('arrow-turret-reward-level5-screen-moonshard-choice')).toBeNull()
+    expect(screen.queryByText('百羽共鸣')).toBeNull()
+    expect(screen.queryByText('诱敌战垒')).toBeNull()
+    expect(screen.queryByText('箭幕推进')).toBeNull()
+    expect(screen.queryByText('旧标题不应成为展示真值')).toBeNull()
+  })
+
+  it('renders the independent arrow-turret Lv4 forced pair and its runtime Lv5 copy', () => {
+    const base = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      phaseBeforePause: 'running',
+      pauseMenuOpen: false,
+      activeSkills: [{ skillId: 'arrow-turret', familyId: 'arrow-turret', level: 3, cooldownRemaining: 0 }],
+      pendingSkillReward: {
+        poolKind: 'skill-evolution',
+        mandatoryEvolutionFamilyId: 'arrow-turret',
+        source: 'level-clear',
+        choices: [
+          {
+            choiceId: 'turret-resonance-choice', mode: 'upgrade-active', skillId: 'arrow-turret', familyId: 'arrow-turret', evolutionId: 'feather-resonance',
+            title: '旧标题不应成为展示真值', description: '旧描述不应成为展示真值', buildTag: 'spread', tacticalTags: ['箭塔', '共鸣'], levelText: 'Lv.4 分支进化', tacticalText: '互斥分支',
+          },
+          {
+            choiceId: 'turret-taunt-choice', mode: 'upgrade-active', skillId: 'arrow-turret', familyId: 'arrow-turret', evolutionId: 'bait-bastion',
+            title: '旧标题不应成为展示真值', description: '旧描述不应成为展示真值', buildTag: 'spread', tacticalTags: ['箭塔', '嘲讽'], levelText: 'Lv.4 分支进化', tacticalText: '互斥分支',
+          },
+        ],
+      },
+    })
+
+    render(<GamePauseOverlay />)
+
+    expect(screen.getAllByTestId('skill-reward-card')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: /百羽共鸣/ }).textContent).toContain('每组哨塔继承一种其他散射核心箭效。')
+    expect(screen.getByRole('button', { name: /诱敌战垒/ }).textContent).toContain('双塔嘲讽普通怪并可进入狂暴。')
+    expect(screen.getByTestId('arrow-turret-reward-level5-turret-resonance-choice').textContent).toContain('Lv.5：共鸣效果提高 25%')
+    expect(screen.getByTestId('arrow-turret-reward-level5-turret-taunt-choice').textContent).toContain('Lv.5：生命、范围与狂暴窗口强化')
+    expect(screen.getByTestId('reward-choice-icon-placeholder-turret-resonance-choice').textContent).toContain('百羽共鸣')
+    expect(screen.queryByText('月碎连矢')).toBeNull()
+    expect(screen.queryByText('炽阳扫射')).toBeNull()
   })
 
   it('hides skill reward top tags while keeping bottom tactical tags and selection intact', () => {
@@ -592,9 +1081,9 @@ describe('GamePauseOverlay', () => {
     expect(skillCards).toHaveLength(5)
     expect(screen.getByTestId('reward-choice-layout').className).toContain('items-center')
     expect(screen.getByTestId('reward-choice-grid').className).toContain('md:grid-cols-2')
-    expect(screen.getByTestId('reward-choice-grid').className).toContain('xl:grid-cols-5')
+    expect(screen.getByTestId('reward-choice-grid').className).toContain('xl:grid-cols-3')
     expect(screen.getByTestId('reward-choice-shell').className).toContain('md:max-w-[920px]')
-    expect(screen.getByTestId('reward-choice-shell').className).toContain('xl:max-w-[1560px]')
+    expect(screen.getByTestId('reward-choice-shell').className).toContain('xl:max-w-[1320px]')
     skillCards.forEach((card) => {
       expect(card.className).toContain('min-h-[18rem]')
       expect(card.className).toContain('md:min-h-[22rem]')
@@ -629,7 +1118,7 @@ describe('GamePauseOverlay', () => {
     expect(useGameStore.getState().pendingSkillReward).toBeNull()
   })
 
-  it('widens the four-choice desktop shell while retaining safe two-column intermediate layout', () => {
+  it('caps legacy oversized fixtures to the shared three-column reward layout', () => {
     const base = createInitialSnapshot('running')
     useGameStore.setState({
       ...base,
@@ -656,9 +1145,9 @@ describe('GamePauseOverlay', () => {
     render(<GamePauseOverlay />)
 
     expect(screen.getByTestId('reward-choice-grid').className).toContain('md:grid-cols-2')
-    expect(screen.getByTestId('reward-choice-grid').className).toContain('xl:grid-cols-4')
+    expect(screen.getByTestId('reward-choice-grid').className).toContain('xl:grid-cols-3')
     expect(screen.getByTestId('reward-choice-shell').className).toContain('md:max-w-[920px]')
-    expect(screen.getByTestId('reward-choice-shell').className).toContain('xl:max-w-[1500px]')
+    expect(screen.getByTestId('reward-choice-shell').className).toContain('xl:max-w-[1320px]')
     screen.getAllByTestId('skill-reward-card').forEach((card) => {
       expect(card.className).toContain('flex-col')
       expect(card.className).toContain('justify-start')
@@ -943,10 +1432,8 @@ describe('GamePauseOverlay', () => {
     rewardRender.unmount()
     useGameStore.setState((state) => ({ ...state, phase: 'paused', pauseMenuOpen: true, pendingSkillReward: null }))
     render(<GamePauseOverlay />)
-    fireEvent.focus(screen.getByTestId('pause-run-talent-icon-run_death_01'))
-    const tooltip = screen.getByTestId('pause-run-talent-trajectory-run_death_01')
-    expect(tooltip.textContent).toContain('弹道二选一：不适用')
-    expect(tooltip.textContent).toContain('死契标记只保留命中附加标记，不改变任何技能弹道。')
+    expect(screen.queryByTestId('pause-run-talent-icon-run_death_01')).toBeNull()
+    expect(screen.getByTestId('combat-talent-v3-pause-summary')).toBeTruthy()
   })
 
   it('shows a concise level reward screen after clearing a floor', () => {
@@ -1028,7 +1515,7 @@ describe('GamePauseOverlay', () => {
     expect(rewardOverlay.getAttribute('data-combat-ui-active')).toBe('true')
     expect(rewardOverlay.style.zIndex).toBe('300')
     expect(screen.getByRole('button', { name: /箭雨坠落/ })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '放弃奖励' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '放弃奖励' })).toBeNull()
   })
 
   it('shows an explicit continue action when no skill rewards remain', () => {

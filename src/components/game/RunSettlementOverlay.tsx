@@ -6,7 +6,9 @@ import type { RunSettlementDisplayEntry } from '../../game/runSettlementSummary'
 import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
 import { isRunTalentFormId } from '../../game/runTalentForms'
 import { RUN_TALENT_NODE_BY_ID } from '../../game/talents'
-import type { CampaignRewardPresentationSnapshot, RunSettlementSummary } from '../../game/types'
+import type { RunSettlementSummary } from '../../game/types'
+import type { ArcherCombatTalentV3PresentationSnapshot } from '../../game/archerTalentSystemV3'
+import { ArcherCombatTalentV3CompactSummary } from './ArcherTalentV3Presentation'
 import {
   COMBAT_UI_LAYER,
   getCombatUiLayerAccessibilityProps,
@@ -14,11 +16,10 @@ import {
   useCombatUiLayerInitialFocus,
   useCombatUiLayerState,
 } from './combatUiLayers'
-import { CampaignRewardSnapshotSummary } from './CampaignRewardPresentation'
 
 type RunSettlementOverlayProps = {
   summary?: RunSettlementSummary
-  campaignRewardSnapshot?: CampaignRewardPresentationSnapshot
+  combatTalentPresentation?: ArcherCombatTalentV3PresentationSnapshot
   onReturnToVillage: () => void
 }
 
@@ -116,7 +117,7 @@ const BlackGoldFrame = ({ asset, children, className = '', testId }: {
   </section>
 )
 
-export function RunSettlementOverlay({ summary, campaignRewardSnapshot, onReturnToVillage }: RunSettlementOverlayProps) {
+export function RunSettlementOverlay({ summary, combatTalentPresentation, onReturnToVillage }: RunSettlementOverlayProps) {
   const settlementRef = useRef<HTMLDivElement | null>(null)
   const { highestLayer } = useCombatUiLayerState()
   useCombatUiLayerInitialFocus(settlementRef, COMBAT_UI_LAYER.settlement, highestLayer)
@@ -176,9 +177,9 @@ export function RunSettlementOverlay({ summary, campaignRewardSnapshot, onReturn
           ))}
         </div>
 
-        {campaignRewardSnapshot ? (
-          <div className="mx-auto mt-4 w-full max-w-[1280px]" data-testid="run-settlement-campaign-reward-region">
-            <CampaignRewardSnapshotSummary snapshot={campaignRewardSnapshot} testId="settlement-campaign-reward-summary" compact />
+        {combatTalentPresentation ? (
+          <div className="mx-auto mt-4 w-full max-w-[1080px]">
+            <ArcherCombatTalentV3CompactSummary presentation={combatTalentPresentation} placement="settlement" />
           </div>
         ) : null}
 

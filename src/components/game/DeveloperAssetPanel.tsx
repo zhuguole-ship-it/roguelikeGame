@@ -958,7 +958,6 @@ function ReforgeQAPanel() {
       equippedItems: item.slot === 'weapon' ? { weapon: item } : {},
       pendingBossLoot: [],
       pendingSkillReward: null,
-      unsealedEquipmentSlots: ['weapon', 'chest', 'boots', 'ring1'],
       message: `重铸 QA：${item.id}`,
     }))
     setMessage(`${item.id} · ${item.rarity} · 金币 ${resources.currency}G`)

@@ -1,5 +1,31 @@
 import type { MetaTalentNode } from './talents'
 
+export type MetaTalentProgrammaticIconGroup =
+  | 'common'
+  | 'death'
+  | 'blood'
+  | 'beast'
+  | 'crystal'
+  | 'difficulty'
+  | 'campaign'
+  | 'endgame'
+
+export type MetaTalentProgrammaticIconTier = 'BRANCH' | 'DEEP' | 'KEY'
+
+export type MetaTalentIconPresentation =
+  | {
+      kind: 'asset'
+      assetPath: string
+      assetUrl: string
+    }
+  | {
+      kind: 'programmatic'
+      group: MetaTalentProgrammaticIconGroup
+      groupLabel: string
+      glyph: string
+      tier: MetaTalentProgrammaticIconTier
+    }
+
 const encodeAssetPath = (path: string) => path.split('/').map(encodeURIComponent).join('/')
 
 const publicAsset = (path: string) => `${import.meta.env.BASE_URL}${encodeAssetPath(path)}`
@@ -113,4 +139,57 @@ export const getMetaTalentIconAssetPath = (node: Pick<MetaTalentNode, 'name'>) =
 export const getMetaTalentIconAssetUrl = (node: Pick<MetaTalentNode, 'name'>) => {
   const path = getMetaTalentIconAssetPath(node)
   return path ? publicAsset(path) : undefined
+}
+
+const programmaticIconGroups: Record<MetaTalentProgrammaticIconGroup, {
+  groupLabel: string
+  glyph: string
+}> = {
+  common: { groupLabel: '通用', glyph: '契' },
+  death: { groupLabel: '死契', glyph: '刃' },
+  blood: { groupLabel: '血羽', glyph: '羽' },
+  beast: { groupLabel: '野兽', glyph: '爪' },
+  crystal: { groupLabel: '蓝晶', glyph: '晶' },
+  difficulty: { groupLabel: '难度', glyph: '盾' },
+  campaign: { groupLabel: '关卡', glyph: '图' },
+  endgame: { groupLabel: '终局', glyph: '冠' },
+}
+
+const getProgrammaticIconGroup = (
+  node: Pick<MetaTalentNode, 'category' | 'build'>,
+): MetaTalentProgrammaticIconGroup => {
+  if (node.build) return node.build
+  if (node.category === 'difficulty' || node.category === 'campaign' || node.category === 'endgame') {
+    return node.category
+  }
+  return 'common'
+}
+
+const getProgrammaticIconTier = (
+  node: Pick<MetaTalentNode, 'category'>,
+): MetaTalentProgrammaticIconTier => {
+  if (node.category === 'build-advanced') return 'DEEP'
+  if (node.category === 'endgame') return 'KEY'
+  return 'BRANCH'
+}
+
+export const getMetaTalentIconPresentation = (
+  node: Pick<MetaTalentNode, 'name' | 'category' | 'build'>,
+): MetaTalentIconPresentation => {
+  const assetPath = getMetaTalentIconAssetPath(node)
+  if (assetPath) {
+    return {
+      kind: 'asset',
+      assetPath,
+      assetUrl: publicAsset(assetPath),
+    }
+  }
+
+  const group = getProgrammaticIconGroup(node)
+  return {
+    kind: 'programmatic',
+    group,
+    ...programmaticIconGroups[group],
+    tier: getProgrammaticIconTier(node),
+  }
 }

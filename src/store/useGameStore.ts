@@ -5,12 +5,25 @@ import type { PersistStorage } from 'zustand/middleware'
 import { playGameSound } from '../game/audio'
 import type { GameSoundId } from '../game/audio'
 import {
+  buildCombatLoadingDependencyDescriptor,
+  createIdleCombatLaunchGate,
+  createPendingCombatLaunchGate,
+  markCombatLaunchFadeStarted as markCombatLaunchFadeStartedState,
+  type CombatLaunchCommitResult,
+  type CombatLaunchGatePresentation,
+  type CombatLaunchPrepareResult,
+  type CombatLaunchRuntimeMode,
+  type CombatLaunchTarget,
+} from '../game/combatLoading'
+import {
   acceptSkillRewardSnapshot,
   advanceGame,
   applyLocalBattleTestMonsterConfigSnapshot,
+  banSkillRewardTypeSnapshot,
   batchDismantleEquipmentSnapshot,
   buildPendingReward,
   clearLocalBattleTestMonstersSnapshot,
+  closePendingSkillRewardSnapshot,
   confirmLevelClearSnapshot,
   createInitialSnapshot,
   declineSkillRewardSnapshot,
@@ -18,15 +31,27 @@ import {
   dismantleEquipmentSnapshot,
   equipEquipmentSnapshot,
   exitLocalBattleTestSnapshot,
+  forfeitInitialSkillDraftSnapshot,
   forfeitRunSnapshot,
+  getInitialSkillDraftPresentation,
   getLocalBattleTestSpawnOptions as getEngineLocalBattleTestSpawnOptions,
   getRunTalentCandidateContextForSnapshot,
   migrateLegacyWeaponsToEquipment,
   migrateArcherSkillEvolutionSnapshot,
+  normalizeBossExtraEquipmentProtectionLayers,
   reforgeEquipmentSnapshot,
+  rerollInitialSkillDraftSnapshot,
+  rerollCombatTalentV3RewardSnapshot,
+  rerollCrystalTalentRewardSnapshot,
+  rerollNormalEliteSkillRewardSnapshot,
+  normalizeDevelopmentAcceptanceTarget,
+  prepareDevelopmentAcceptanceSnapshot,
+  prepareDevelopmentAcceptanceTargetSnapshot,
   restartRunSnapshot,
   selectCampaignDifficultySnapshot,
   selectCampaignSnapshot,
+  selectInitialSkillDraftCandidateSnapshot,
+  setSealedSkillFamiliesSnapshot,
   startLocalBattleTestSnapshot,
   triggerActiveSkillSnapshot,
   returnToVillageSnapshot,
@@ -37,7 +62,6 @@ import {
   togglePauseSnapshot,
   togglePrioritySnapshot,
   unequipEquipmentSnapshot,
-  unlockEquipmentSlotSnapshot,
   upgradeEquippedEquipmentSnapshot,
   updateAimPointSnapshot,
 } from '../game/engine'
@@ -56,6 +80,7 @@ import {
   WORLD_WIDTH,
   getCampaignFloor,
   getCampaignIndex,
+  isBossLevel,
 } from '../game/config'
 import {
   BOSS_PHASE_THRESHOLDS,
@@ -68,7 +93,14 @@ import {
   normalizeDiscoveredHighRarityEquipmentIds,
   recordDiscoveredHighRarityEquipmentId,
 } from '../game/equipmentDiscovery'
-import { createEmptyEquipmentMaterials, getEquipmentBonusSummary, getEquipmentDismantlePreview } from '../game/equipment'
+import {
+  createLocalHighRarityEquipmentResetItems,
+  createEmptyEquipmentMaterials,
+  getLocalHighRarityEquipmentResetSummary,
+  getEquipmentBonusSummary,
+  getEquipmentDismantlePreview,
+  migrateBeastContractDomainEquipmentItem,
+} from '../game/equipment'
 import {
   TALENT_SCHEMA_VERSION,
   META_TALENT_NODES,
@@ -94,9 +126,24 @@ import {
   type RunTalentCandidate,
   type RunTalentBuild,
 } from '../game/talents'
-import type { AudioSettings, CampaignDifficulty, DebugControlState, EquipmentDismantleCategory, EquipmentItem, EquipmentReforgeMode, EquipmentSlot, GameSnapshot, InputState, LocalBattleTestApplyResult, LocalBattleTestMonsterConfig, LocalBattleTestSpawnOption, RunTalentTrajectoryBranch, SkillBuildTag, SkillRewardChoice, TalentPointLedgerEntry, Vector2, WeaponId } from '../game/types'
+import type { AudioSettings, CampaignDifficulty, DebugControlState, DevelopmentAcceptancePrepareResult, DevelopmentAcceptancePresentation, DevelopmentAcceptanceScenario, DevelopmentAcceptanceSessionKind, DevelopmentAcceptanceStartBlockReason, DevelopmentAcceptanceTarget, DevelopmentAcceptanceTargetConfigureResult, EquipmentDismantleCategory, EquipmentInventoryViewPreference, EquipmentItem, EquipmentReforgeMode, EquipmentSlot, GameSnapshot, InitialSkillDraftPresentation, InputState, LocalBattleTestApplyResult, LocalBattleTestMonsterConfig, LocalBattleTestSpawnOption, RunTalentTrajectoryBranch, SkillBuildTag, SkillRewardBanType, SkillRewardChoice, TalentPointLedgerEntry, Vector2, WeaponId } from '../game/types'
+
+export type LocalHighRarityEquipmentResetResult = {
+  ok: boolean
+  errors: string[]
+  equipmentTemplateIds: string[]
+  summary: ReturnType<typeof getLocalHighRarityEquipmentResetSummary>
+}
 
 type GameStore = GameSnapshot & {
+  /** Runtime-only loading/fade gate. It is intentionally excluded from persistence. */
+  combatLaunchGate: CombatLaunchGatePresentation
+  prepareFormalCombatLaunch: () => CombatLaunchPrepareResult
+  prepareLocalBattleTestCombatLaunch: () => CombatLaunchPrepareResult
+  prepareDevelopmentAcceptanceCombatLaunch: () => CombatLaunchPrepareResult
+  markCombatLaunchFadeStarted: (launchId: string) => boolean
+  completeCombatLaunchFade: (launchId: string) => CombatLaunchCommitResult
+  getCombatLaunchPresentation: () => CombatLaunchGatePresentation
   startGame: () => void
   selectCampaign: (campaign: number) => void
   selectCampaignDifficulty: (campaign: number, difficulty: GameSnapshot['selectedCampaignDifficulty']) => void
@@ -108,10 +155,24 @@ type GameStore = GameSnapshot & {
   clearLocalBattleTestMonsters: () => LocalBattleTestApplyResult
   exitLocalBattleTest: () => void
   getLocalBattleTestSpawnOptions: () => LocalBattleTestSpawnOption[]
+  /** Development-only formal-combat setup, never persisted. */
+  developmentAcceptance: DevelopmentAcceptancePresentation
+  prepareDevelopmentAcceptance: (scenario: DevelopmentAcceptanceScenario) => DevelopmentAcceptancePrepareResult
+  setDevelopmentAcceptanceTarget: (target: Partial<DevelopmentAcceptanceTarget>) => DevelopmentAcceptanceTargetConfigureResult
+  startDevelopmentAcceptanceTarget: () => DevelopmentAcceptancePrepareResult
+  getDevelopmentAcceptancePresentation: () => DevelopmentAcceptancePresentation
+  /** Destructively replaces only the local development save's equipment inventory and loadout. */
+  resetLocalHighRarityEquipmentInventory: () => LocalHighRarityEquipmentResetResult
+  exitDevelopmentAcceptance: () => void
   tick: (delta: number, input: InputState) => void
   toggleTargetPriority: () => void
   togglePause: () => void
   updateAimPoint: (aimPoint: Vector2) => void
+  /** Engine-owned mandatory opening draft; B2 only renders this read model. */
+  getInitialSkillDraftPresentation: () => InitialSkillDraftPresentation
+  selectInitialSkillDraftCandidate: (choiceId: string) => void
+  rerollInitialSkillDraft: () => void
+  forfeitInitialSkillDraft: () => void
   acceptSkillReward: (choiceId: string, trajectoryBranch?: RunTalentTrajectoryBranch) => void
   declineSkillReward: () => void
   confirmLevelClear: () => void
@@ -124,13 +185,16 @@ type GameStore = GameSnapshot & {
   upgradeEquippedEquipment: (slot: EquipmentSlot) => void
   reforgeEquipment: (itemId: string, mode?: EquipmentReforgeMode, preferredBuildTag?: SkillBuildTag) => void
   toggleEquipmentModifierLock: (itemId: string, modifierIndex: number) => void
-  unlockEquipmentSlot: (slot: EquipmentSlot) => void
+  setEquipmentInventoryViewPreference: (preference: Partial<EquipmentInventoryViewPreference>) => void
   unlockMetaTalent: (nodeId: string) => void
   resetMetaTalentTree: () => void
+  setSealedSkillFamilies: (familyIds: readonly string[]) => void
   setRunTalentBuild: (build: RunTalentBuild) => void
   selectRunTalent: (nodeId: string, trajectoryBranch?: RunTalentTrajectoryBranch) => void
   openRunTalentUpgradeReward: (seed?: string | number) => void
   rerollPendingRunTalentReward: (seed?: string | number) => void
+  banSkillRewardType: (type: SkillRewardBanType) => void
+  rerollNormalEliteSkillReward: () => void
   generateRunTalentCandidates: (seed?: string | number) => RunTalentCandidate[]
   rerollRunTalentCandidates: (previousCandidates: RunTalentCandidate[], seed?: string | number) => { candidates: RunTalentCandidate[]; blockedReason?: string }
   recordHighRarityEquipmentDiscovery: (equipmentId: string) => void
@@ -153,6 +217,8 @@ type PersistedGameState = Pick<
   | 'achievedMilestones'
   | 'completedCampaigns'
   | 'completedCampaignDifficulties'
+  | 'metaDifficultyFirstHardEpicClaimedCampaignIds'
+  | 'bossExtraEquipmentProtectionLayers'
   | 'unlockedCampaignDifficulties'
   | 'selectedCampaignDifficulty'
   | 'talentPoints'
@@ -162,14 +228,19 @@ type PersistedGameState = Pick<
   | 'unlockedTalentIds'
   | 'unlockedMetaTalentIds'
   | 'metaTalentRanks'
+  | 'metaTalentV3Migration'
+  | 'sealedSkillFamilyIds'
   | 'talentUnlockRecords'
   | 'runTalentState'
   | 'equipmentInventory'
   | 'equippedItems'
+  | 'equipmentInventoryViewPreference'
   | 'discoveredHighRarityEquipmentIds'
   | 'discoveredSkillEvolutionIds'
   | 'equipmentMaterials'
-  | 'unsealedEquipmentSlots'
+  | 'metaTalentDismantleMaterialRemainders'
+  | 'metaTalentEliteMaterialRemainders'
+  | 'metaTalentRecordedEliteArchetypeIds'
   | 'audioSettings'
   | 'selectedCampaign'
 > & {
@@ -189,7 +260,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
-export const extractPersistedGameState = (state: GameSnapshot): PersistedGameState => ({
+export const extractPersistedGameState = (state: GameSnapshot): PersistedGameState => {
+  // A development acceptance session is deliberately formal combat in memory,
+  // but persistence must continue to expose the exact pre-session player save.
+  if (developmentAcceptancePersistedBackup) {
+    return clonePersistedValue(developmentAcceptancePersistedBackup)
+  }
+
+  return ({
   currency: state.currency,
   earnedGold: state.earnedGold,
   bestLevel: state.bestLevel,
@@ -197,6 +275,8 @@ export const extractPersistedGameState = (state: GameSnapshot): PersistedGameSta
   achievedMilestones: clonePersistedValue(state.achievedMilestones),
   completedCampaigns: clonePersistedValue(state.completedCampaigns),
   completedCampaignDifficulties: clonePersistedValue(state.completedCampaignDifficulties),
+  metaDifficultyFirstHardEpicClaimedCampaignIds: clonePersistedValue(state.metaDifficultyFirstHardEpicClaimedCampaignIds ?? []),
+  bossExtraEquipmentProtectionLayers: clonePersistedValue(state.bossExtraEquipmentProtectionLayers),
   unlockedCampaignDifficulties: clonePersistedValue(state.unlockedCampaignDifficulties),
   selectedCampaignDifficulty: state.selectedCampaignDifficulty,
   talentPoints: state.talentPoints,
@@ -206,17 +286,28 @@ export const extractPersistedGameState = (state: GameSnapshot): PersistedGameSta
   unlockedTalentIds: clonePersistedValue(state.unlockedTalentIds),
   unlockedMetaTalentIds: clonePersistedValue(state.unlockedMetaTalentIds),
   metaTalentRanks: clonePersistedValue(state.metaTalentRanks ?? {}),
+  metaTalentV3Migration: clonePersistedValue(state.metaTalentV3Migration ?? {
+    schemaVersion: TALENT_SCHEMA_VERSION,
+    migratedFromLegacy: false,
+    freeResetAvailable: false,
+    retainedNodeIds: [],
+  }),
+  sealedSkillFamilyIds: clonePersistedValue(state.sealedSkillFamilyIds ?? []),
   talentUnlockRecords: clonePersistedValue(state.talentUnlockRecords),
   runTalentState: clonePersistedValue(state.runTalentState),
   equipmentInventory: clonePersistedValue(state.equipmentInventory),
   equippedItems: clonePersistedValue(state.equippedItems),
+  equipmentInventoryViewPreference: clonePersistedValue(state.equipmentInventoryViewPreference),
   discoveredHighRarityEquipmentIds: clonePersistedValue(state.discoveredHighRarityEquipmentIds),
   discoveredSkillEvolutionIds: clonePersistedValue(state.discoveredSkillEvolutionIds),
   equipmentMaterials: clonePersistedValue(state.equipmentMaterials),
-  unsealedEquipmentSlots: clonePersistedValue(state.unsealedEquipmentSlots),
+  metaTalentDismantleMaterialRemainders: clonePersistedValue(state.metaTalentDismantleMaterialRemainders ?? {}),
+  metaTalentEliteMaterialRemainders: clonePersistedValue(state.metaTalentEliteMaterialRemainders ?? {}),
+  metaTalentRecordedEliteArchetypeIds: clonePersistedValue(state.metaTalentRecordedEliteArchetypeIds ?? []),
   audioSettings: clonePersistedValue(state.audioSettings),
-  selectedCampaign: state.selectedCampaign,
-})
+    selectedCampaign: state.selectedCampaign,
+  })
+}
 
 const serializeSignatureValue = (value: unknown) => JSON.stringify(value)
 
@@ -232,19 +323,26 @@ const createPersistedGameStateSignature = (state: GameSnapshot) => [
   serializeSignatureValue(state.achievedMilestones),
   serializeSignatureValue(state.completedCampaigns),
   serializeSignatureValue(state.completedCampaignDifficulties),
+  serializeSignatureValue(state.metaDifficultyFirstHardEpicClaimedCampaignIds ?? []),
+  serializeSignatureValue(state.bossExtraEquipmentProtectionLayers),
   serializeSignatureValue(state.unlockedCampaignDifficulties),
   serializeSignatureValue(state.talentPointRecords),
   serializeSignatureValue(state.talentPointLedger),
   serializeSignatureValue(state.unlockedTalentIds),
   serializeSignatureValue(state.unlockedMetaTalentIds),
   serializeSignatureValue(state.metaTalentRanks ?? {}),
+  serializeSignatureValue(state.metaTalentV3Migration ?? {}),
+  serializeSignatureValue(state.sealedSkillFamilyIds ?? []),
   serializeSignatureValue(state.talentUnlockRecords),
   serializeSignatureValue(state.runTalentState),
   serializeSignatureValue(state.equipmentInventory),
   serializeSignatureValue(state.equippedItems),
+  serializeSignatureValue(state.equipmentInventoryViewPreference),
   serializeSignatureValue(state.discoveredHighRarityEquipmentIds),
   serializeSignatureValue(state.equipmentMaterials),
-  serializeSignatureValue(state.unsealedEquipmentSlots),
+  serializeSignatureValue(state.metaTalentDismantleMaterialRemainders ?? {}),
+  serializeSignatureValue(state.metaTalentEliteMaterialRemainders ?? {}),
+  serializeSignatureValue(state.metaTalentRecordedEliteArchetypeIds ?? []),
   serializeSignatureValue(state.audioSettings),
 ].join('|')
 
@@ -313,6 +411,136 @@ export const shouldInstallLocalE2EHarness = (
   hostname?: string,
 ) => isLocalDevelopmentRuntime(env, hostname)
 
+/** Kept separate for a B2-visible contract even though the local guard is shared. */
+export const isDevelopmentAcceptanceRuntimeAllowed = (
+  env: LocalRuntimeEnvironment = import.meta.env,
+  hostname?: string,
+) => isLocalDevelopmentRuntime(env, hostname)
+
+const DEFAULT_DEVELOPMENT_ACCEPTANCE_TARGET: DevelopmentAcceptanceTarget = {
+  campaign: 1,
+  difficulty: 'normal',
+  floor: 1,
+}
+
+type DevelopmentAcceptancePresentationOptions = {
+  active?: boolean
+  scenario?: DevelopmentAcceptanceScenario
+  sessionKind?: DevelopmentAcceptanceSessionKind
+  selectedTarget?: Partial<DevelopmentAcceptanceTarget>
+  activeTarget?: DevelopmentAcceptanceTarget
+  entrySnapshotCaptured?: boolean
+  startBlockedReason?: DevelopmentAcceptanceStartBlockReason
+}
+
+const createDevelopmentAcceptancePresentation = (
+  options: DevelopmentAcceptancePresentationOptions = {},
+): DevelopmentAcceptancePresentation => {
+  const available = isDevelopmentAcceptanceRuntimeAllowed()
+  const active = options.active ?? false
+  const startBlockedReason = options.startBlockedReason
+  return {
+    available,
+    active,
+    scenario: options.scenario,
+    sessionKind: options.sessionKind,
+    selectedTarget: normalizeDevelopmentAcceptanceTarget(options.selectedTarget ?? DEFAULT_DEVELOPMENT_ACCEPTANCE_TARGET),
+    activeTarget: options.activeTarget ? normalizeDevelopmentAcceptanceTarget(options.activeTarget) : undefined,
+    entrySnapshotCaptured: options.entrySnapshotCaptured ?? false,
+    refreshRestoresToVillage: true,
+    canStart: available && !startBlockedReason && (!active || Boolean(options.activeTarget)),
+    startBlockedReason,
+  }
+}
+
+const developmentAcceptanceBlockedResult = (): DevelopmentAcceptancePrepareResult => ({
+  ok: false,
+  errors: ['开发验收准备仅允许在本地运行时使用'],
+})
+
+const developmentAcceptanceStartBlockedResult = (
+  reason: DevelopmentAcceptanceStartBlockReason,
+): DevelopmentAcceptancePrepareResult => ({
+  ok: false,
+  errors: [{
+    'local-runtime-only': '开发验收准备仅允许在本地运行时使用',
+    'session-active': '已有开发验收会话，请先退出',
+    'combat-hud-required': '仅可从运行中的战斗 HUD 启动关卡跳转测试',
+    'local-battle-test-active': '本地战斗测试进行中，不能启动关卡跳转测试',
+    'reward-open': '奖励选择打开时不能启动关卡跳转测试',
+    'pause-open': '暂停菜单打开时不能启动关卡跳转测试',
+    'settlement-open': '结算处理期间不能启动关卡跳转测试',
+  }[reason]],
+})
+
+let developmentAcceptancePersistedBackup: PersistedGameState | null = null
+let developmentAcceptanceEntrySnapshotBackup: GameSnapshot | null = null
+
+const getDevelopmentAcceptanceStartBlockReason = (
+  state: Pick<GameStore, 'phase' | 'pauseMenuOpen' | 'pendingSkillReward' | 'pendingBossLoot' | 'localBattleTest' | 'developmentAcceptance'>,
+  allowActiveTargetRetarget = false,
+): DevelopmentAcceptanceStartBlockReason | undefined => {
+  if (!isDevelopmentAcceptanceRuntimeAllowed()) return 'local-runtime-only'
+  if (state.developmentAcceptance.active && !allowActiveTargetRetarget) return 'session-active'
+  if (state.localBattleTest?.active) return 'local-battle-test-active'
+  if (state.pendingSkillReward) return 'reward-open'
+  if (state.pendingBossLoot.length > 0 || state.phase === 'level-clear' || state.phase === 'game-over') return 'settlement-open'
+  if (state.phase === 'paused' || state.pauseMenuOpen) return 'pause-open'
+  if (state.phase !== 'running') return 'combat-hud-required'
+  return undefined
+}
+
+const getDevelopmentAcceptancePresentation = (state: GameStore): DevelopmentAcceptancePresentation => {
+  const current = state.developmentAcceptance
+  return createDevelopmentAcceptancePresentation({
+    active: current.active,
+    scenario: current.scenario,
+    sessionKind: current.sessionKind,
+    selectedTarget: current.selectedTarget,
+    activeTarget: current.activeTarget,
+    entrySnapshotCaptured: current.entrySnapshotCaptured,
+    startBlockedReason: getDevelopmentAcceptanceStartBlockReason(state, Boolean(current.activeTarget)),
+  })
+}
+
+const cloneDevelopmentAcceptanceEntrySnapshot = (state: GameStore): GameSnapshot => {
+  const entries = Object.entries(state)
+    .filter(([key, value]) => key !== 'developmentAcceptance' && key !== 'combatLaunchGate' && typeof value !== 'function')
+  return clonePersistedValue(Object.fromEntries(entries) as GameSnapshot)
+}
+
+const clearDevelopmentAcceptanceBackups = () => {
+  developmentAcceptancePersistedBackup = null
+  developmentAcceptanceEntrySnapshotBackup = null
+}
+
+const captureDevelopmentAcceptanceBackups = (state: GameStore) => {
+  clearDevelopmentAcceptanceBackups()
+  developmentAcceptancePersistedBackup = extractPersistedGameState(state)
+  developmentAcceptanceEntrySnapshotBackup = cloneDevelopmentAcceptanceEntrySnapshot(state)
+}
+
+const restoreDevelopmentAcceptanceSnapshot = (state: GameStore): GameStore => {
+  if (!state.developmentAcceptance.active) {
+    return state
+  }
+  const restored = developmentAcceptanceEntrySnapshotBackup
+    ? clonePersistedValue(developmentAcceptanceEntrySnapshotBackup)
+    : developmentAcceptancePersistedBackup
+      ? restorePersistedGameState(developmentAcceptancePersistedBackup)
+      : createInitialSnapshot('idle')
+  const selectedTarget = state.developmentAcceptance.selectedTarget
+  clearDevelopmentAcceptanceBackups()
+  return {
+    ...state,
+    ...restored,
+    developmentAcceptance: createDevelopmentAcceptancePresentation({
+      selectedTarget,
+      startBlockedReason: restored.phase === 'running' ? undefined : 'combat-hud-required',
+    }),
+  }
+}
+
 const localBattleTestBlockedResult = (reason = '本地战斗测试仅允许在本地运行时使用'): LocalBattleTestApplyResult => ({
   ok: false,
   spawned: 0,
@@ -359,6 +587,25 @@ const sanitizePersistedState = (value: unknown): Partial<PersistedGameState> => 
   return value as Partial<PersistedGameState>
 }
 
+const normalizeEquipmentInventoryViewPreference = (
+  value: unknown,
+  fallback: EquipmentInventoryViewPreference,
+): EquipmentInventoryViewPreference => {
+  if (!isRecord(value)) {
+    return { ...fallback }
+  }
+  const filterId = typeof value.filterId === 'string'
+    ? value.filterId.trim().slice(0, 64)
+    : fallback.filterId
+  const viewMode = value.viewMode === 'grid' || value.viewMode === 'list'
+    ? value.viewMode
+    : fallback.viewMode
+  return {
+    filterId: filterId || fallback.filterId,
+    viewMode,
+  }
+}
+
 const normalizePersistedMetaTalentIds = (...sources: unknown[]) => {
   const unlocked = new Set<string>()
   sources.forEach((source) => {
@@ -387,6 +634,14 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
     completedCampaigns,
     completedCampaignDifficulties,
   )
+  const metaDifficultyFirstHardEpicClaimedCampaignIds = Array.isArray(persisted.metaDifficultyFirstHardEpicClaimedCampaignIds)
+    ? Array.from(new Set(persisted.metaDifficultyFirstHardEpicClaimedCampaignIds.filter((campaign): campaign is number => (
+      typeof campaign === 'number' && Number.isInteger(campaign) && campaign >= 1 && campaign <= 10
+    ))))
+    : fallback.metaDifficultyFirstHardEpicClaimedCampaignIds
+  const bossExtraEquipmentProtectionLayers = normalizeBossExtraEquipmentProtectionLayers(
+    persisted.bossExtraEquipmentProtectionLayers,
+  )
   const selectedCampaign = typeof persisted.selectedCampaign === 'number'
     ? Math.min(10, Math.max(1, Math.round(persisted.selectedCampaign)))
     : fallback.selectedCampaign
@@ -398,7 +653,37 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
   )
   const metaTalentRanks = normalizeMetaTalentRanks(persisted.metaTalentRanks, legacyUnlockedMetaTalentIds)
   const unlockedMetaTalentIds = getUnlockedMetaTalentIdsFromRanks(metaTalentRanks)
+  const persistedTalentSchemaVersion = typeof persisted.talentSchemaVersion === 'number'
+    ? Math.max(0, Math.trunc(persisted.talentSchemaVersion))
+    : 0
+  const persistedMigration = isRecord(persisted.metaTalentV3Migration)
+    ? persisted.metaTalentV3Migration
+    : null
+  const migratedFromLegacy = persistedMigration?.migratedFromLegacy === true
+    || (persistedTalentSchemaVersion < TALENT_SCHEMA_VERSION && unlockedMetaTalentIds.length > 0)
+  const metaTalentV3Migration: NonNullable<GameSnapshot['metaTalentV3Migration']> = {
+    schemaVersion: TALENT_SCHEMA_VERSION,
+    migratedFromLegacy,
+    freeResetAvailable: persistedMigration?.freeResetAvailable === true
+      || (persistedTalentSchemaVersion < TALENT_SCHEMA_VERSION && unlockedMetaTalentIds.length > 0),
+    retainedNodeIds: Array.from(new Set(
+      Array.isArray(persistedMigration?.retainedNodeIds)
+        ? persistedMigration.retainedNodeIds.filter((id): id is string => typeof id === 'string' && unlockedMetaTalentIds.includes(id))
+        : migratedFromLegacy
+          ? unlockedMetaTalentIds
+          : [],
+    )),
+  }
   const talentPointRecords = Array.isArray(persisted.talentPointRecords) ? clonePersistedValue(persisted.talentPointRecords).slice(0, 10) : fallback.talentPointRecords
+  const migratedEquipmentInventory = Array.isArray(persisted.equipmentInventory)
+    ? clonePersistedValue(persisted.equipmentInventory).map(migrateBeastContractDomainEquipmentItem)
+    : fallback.equipmentInventory
+  const migratedEquippedItems = isRecord(persisted.equippedItems)
+    ? Object.fromEntries(Object.entries(clonePersistedValue(persisted.equippedItems)).map(([slot, item]) => [
+        slot,
+        isRecord(item) ? migrateBeastContractDomainEquipmentItem(item as EquipmentItem) : item,
+      ])) as GameSnapshot['equippedItems']
+    : fallback.equippedItems
   const restored: GameSnapshot = {
     ...fallback,
     currency: typeof persisted.currency === 'number' ? Math.max(0, persisted.currency) : fallback.currency,
@@ -408,6 +693,8 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
     achievedMilestones: Array.isArray(persisted.achievedMilestones) ? clonePersistedValue(persisted.achievedMilestones) : fallback.achievedMilestones,
     completedCampaigns,
     completedCampaignDifficulties,
+    metaDifficultyFirstHardEpicClaimedCampaignIds,
+    bossExtraEquipmentProtectionLayers,
     unlockedCampaignDifficulties,
     selectedCampaignDifficulty: unlockedCampaignDifficulties[selectedCampaign]?.includes(selectedCampaignDifficulty)
       ? selectedCampaignDifficulty
@@ -422,6 +709,11 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
     unlockedTalentIds: unlockedMetaTalentIds,
     unlockedMetaTalentIds,
     metaTalentRanks,
+    metaTalentV3Migration,
+    sealedSkillFamilyIds: Array.isArray(persisted.sealedSkillFamilyIds)
+      ? Array.from(new Set(persisted.sealedSkillFamilyIds.filter((id): id is string => typeof id === 'string' && id.length > 0)))
+      : [],
+    activeSealedSkillFamilyIds: [],
     talentUnlockRecords: Array.isArray(persisted.talentUnlockRecords) ? clonePersistedValue(persisted.talentUnlockRecords).slice(0, 50) : fallback.talentUnlockRecords,
     runTalentState: isRecord(persisted.runTalentState)
       ? {
@@ -452,14 +744,28 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
     discoveredSkillEvolutionIds: Array.isArray(persisted.discoveredSkillEvolutionIds)
       ? Array.from(new Set(persisted.discoveredSkillEvolutionIds.filter((id): id is string => typeof id === 'string')))
       : fallback.discoveredSkillEvolutionIds,
-    equipmentInventory: Array.isArray(persisted.equipmentInventory) ? clonePersistedValue(persisted.equipmentInventory) : fallback.equipmentInventory,
-    equippedItems: isRecord(persisted.equippedItems) ? clonePersistedValue(persisted.equippedItems) : fallback.equippedItems,
+    equipmentInventory: migratedEquipmentInventory,
+    equippedItems: migratedEquippedItems,
+    equipmentInventoryViewPreference: normalizeEquipmentInventoryViewPreference(
+      persisted.equipmentInventoryViewPreference,
+      fallback.equipmentInventoryViewPreference,
+    ),
     equipmentMaterials: isRecord(persisted.equipmentMaterials)
       ? { ...fallback.equipmentMaterials, ...clonePersistedValue(persisted.equipmentMaterials) }
       : fallback.equipmentMaterials,
-    unsealedEquipmentSlots: Array.isArray(persisted.unsealedEquipmentSlots) && persisted.unsealedEquipmentSlots.length > 0
-      ? clonePersistedValue(persisted.unsealedEquipmentSlots)
-      : fallback.unsealedEquipmentSlots,
+    metaTalentDismantleMaterialRemainders: isRecord(persisted.metaTalentDismantleMaterialRemainders)
+      ? Object.fromEntries(Object.entries(persisted.metaTalentDismantleMaterialRemainders).filter(([, value]) => (
+          typeof value === 'number' && Number.isFinite(value) && value >= 0 && value < 1
+        )))
+      : {},
+    metaTalentEliteMaterialRemainders: isRecord(persisted.metaTalentEliteMaterialRemainders)
+      ? Object.fromEntries(Object.entries(persisted.metaTalentEliteMaterialRemainders).filter(([, value]) => (
+          typeof value === 'number' && Number.isFinite(value) && value >= 0 && value < 1
+        )))
+      : {},
+    metaTalentRecordedEliteArchetypeIds: Array.isArray(persisted.metaTalentRecordedEliteArchetypeIds)
+      ? Array.from(new Set(persisted.metaTalentRecordedEliteArchetypeIds.filter((id): id is string => typeof id === 'string' && id.length > 0)))
+      : [],
     audioSettings: isRecord(persisted.audioSettings)
       ? { ...fallback.audioSettings, ...clonePersistedValue(persisted.audioSettings) }
       : fallback.audioSettings,
@@ -470,13 +776,51 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
     message: '村庄篝火旁苏醒，长期成长已恢复',
   }
 
-  return migrateArcherSkillEvolutionSnapshot(migrateLegacyWeaponsToEquipment(restored))
+  const needsLegacyWeaponMigration = Boolean(
+    persisted.equippedWeaponId
+    || (Array.isArray(persisted.unlockedWeapons) && persisted.unlockedWeapons.length > 0),
+  )
+  return migrateArcherSkillEvolutionSnapshot(
+    needsLegacyWeaponMigration ? migrateLegacyWeaponsToEquipment(restored) : restored,
+  )
 }
 
 const initialState: GameSnapshot = {
   ...createInitialSnapshot(),
   metaTalentRanks: {},
+  metaTalentV3Migration: {
+    schemaVersion: TALENT_SCHEMA_VERSION,
+    migratedFromLegacy: false,
+    freeResetAvailable: false,
+    retainedNodeIds: [],
+  },
 }
+
+let combatLaunchSequence = 0
+
+const createCombatLaunchId = () => {
+  combatLaunchSequence += 1
+  return `combat-launch-${Date.now()}-${combatLaunchSequence}`
+}
+
+const getCombatLaunchLevel = (campaign: number, floor = 1) => (
+  (Math.min(10, Math.max(1, Math.round(campaign))) - 1) * FLOORS_PER_CAMPAIGN
+  + Math.min(FLOORS_PER_CAMPAIGN, Math.max(1, Math.round(floor)))
+)
+
+const createCombatLaunchTarget = (
+  runtimeMode: CombatLaunchRuntimeMode,
+  campaign: number,
+  level: number,
+  difficulty: CampaignDifficulty,
+): CombatLaunchTarget => ({
+  runtimeMode,
+  campaign,
+  level,
+  difficulty,
+  battlefieldMode: isBossLevel(level) ? 'boss-arena' : 'infinite',
+  professionId: 'archer',
+})
 
 const playSnapshotSound = (state: GameSnapshot, id: Parameters<typeof playGameSound>[0]) => {
   playGameSound(id, state.audioSettings)
@@ -621,45 +965,20 @@ const createRunTalentUpgradeRewardSnapshot = (state: GameSnapshot, seed: string 
   if (state.pendingSkillReward) {
     return state
   }
-  const result = generateRunTalentCandidates(createRunTalentContext(state, seed))
-  const runChoices = result.candidates.map(createRunTalentRewardChoice)
-  if (runChoices.length === 0) {
+  void seed
+  const next = migrateArcherSkillEvolutionSnapshot(state)
+  const reward = buildPendingReward(next, 'run-talent')
+  if (reward.choices.length === 0) {
     return state
   }
   return {
-    ...state,
+    ...next,
     phaseBeforePause: state.phase === 'paused' ? state.phaseBeforePause : state.phase,
     phase: state.phase === 'level-clear' ? 'level-clear' : 'paused',
     pauseMenuOpen: false,
-    pendingSkillReward: {
-      poolKind: 'run-talent',
-      choices: runChoices,
-      source: state.phase === 'level-clear' ? 'level-clear' : 'elite',
-    },
-    runTalentState: {
-      ...state.runTalentState,
-      guarantee: result.guaranteeState,
-      lastOfferedCandidateIds: result.candidates.map((candidate) => candidate.node.id),
-      offerCount: (state.runTalentState.offerCount ?? 0) + 1,
-    },
-    message: '局内等级提升：选择 1 项构筑奖励',
+    pendingSkillReward: { ...reward, source: state.phase === 'level-clear' ? 'level-clear' : 'elite' },
+    message: '局内等级提升：选择 1 项战斗天赋',
   }
-}
-
-const getStateAfterRunTalentReward = (state: GameSnapshot) => {
-  const source = state.pendingSkillReward?.source
-  const resumesElitePause = source === 'elite' && state.phase === 'paused'
-  const resumesFloorTransition = source === 'level-clear' && Boolean(state.floorTransition)
-
-  return {
-    phase: resumesElitePause || resumesFloorTransition ? 'running' : state.phase,
-    phaseBeforePause: resumesElitePause || resumesFloorTransition ? 'running' : state.phaseBeforePause,
-    pauseMenuOpen: false,
-    levelClearConfirmed: source === 'level-clear' ? true : state.levelClearConfirmed,
-    floorTransition: resumesFloorTransition && state.floorTransition
-      ? { ...state.floorTransition, awaitingReward: false }
-      : state.floorTransition,
-  } satisfies Pick<GameSnapshot, 'phase' | 'phaseBeforePause' | 'pauseMenuOpen' | 'levelClearConfirmed' | 'floorTransition'>
 }
 
 const acceptRunTalentRewardChoiceSnapshot = (
@@ -667,12 +986,10 @@ const acceptRunTalentRewardChoiceSnapshot = (
   choice: SkillRewardChoice,
   trajectoryBranch?: RunTalentTrajectoryBranch,
 ): GameSnapshot => {
-  const resumedState = getStateAfterRunTalentReward(state)
+  const resumedState = closePendingSkillRewardSnapshot(state)
   if (!choice.talentId || state.runTalentState.selectedTalentIds.includes(choice.talentId)) {
     return {
-      ...state,
       ...resumedState,
-      pendingSkillReward: null,
       message: '该局内天赋本局已选择',
     }
   }
@@ -684,9 +1001,7 @@ const acceptRunTalentRewardChoiceSnapshot = (
     trajectoryBranch,
   )
   return {
-    ...state,
     ...resumedState,
-    pendingSkillReward: null,
     inRunTalentIds: selectedTalentIds,
     runTalentState: {
       ...state.runTalentState,
@@ -705,10 +1020,198 @@ export const useGameStore = create<GameStore>()(
   persist(
     (set, get) => ({
       ...initialState,
+      developmentAcceptance: createDevelopmentAcceptancePresentation({ startBlockedReason: 'combat-hud-required' }),
+      combatLaunchGate: createIdleCombatLaunchGate(),
+      prepareFormalCombatLaunch: () => {
+        let result: CombatLaunchPrepareResult = { ok: false, errors: ['战斗加载门控尚未准备'] }
+        set((state) => {
+          const target = createCombatLaunchTarget(
+            'formal-run',
+            state.selectedCampaign,
+            getCombatLaunchLevel(state.selectedCampaign),
+            state.selectedCampaignDifficulty,
+          )
+          const descriptor = buildCombatLoadingDependencyDescriptor(target)
+          if (state.combatLaunchGate.active) {
+            if (state.combatLaunchGate.descriptor?.key === descriptor.key) {
+              result = {
+                ok: true,
+                launchId: state.combatLaunchGate.launchId,
+                descriptor: state.combatLaunchGate.descriptor,
+                errors: [],
+              }
+            } else {
+              result = { ok: false, errors: ['已有战斗加载过场正在进行'] }
+            }
+            return state
+          }
+          const launchId = createCombatLaunchId()
+          result = { ok: true, launchId, descriptor, errors: [] }
+          return { ...state, combatLaunchGate: createPendingCombatLaunchGate(launchId, descriptor) }
+        })
+        return result
+      },
+      prepareLocalBattleTestCombatLaunch: () => {
+        if (!isLocalBattleTestRuntimeAllowed()) {
+          return { ok: false, errors: ['本地战斗测试仅允许在本地运行时使用'] }
+        }
+        let result: CombatLaunchPrepareResult = { ok: false, errors: ['本地战斗加载门控尚未准备'] }
+        set((state) => {
+          const target = createCombatLaunchTarget('local-battle-test', 1, 1, 'normal')
+          const descriptor = buildCombatLoadingDependencyDescriptor(target)
+          if (state.combatLaunchGate.active) {
+            if (state.combatLaunchGate.descriptor?.key === descriptor.key) {
+              result = {
+                ok: true,
+                launchId: state.combatLaunchGate.launchId,
+                descriptor: state.combatLaunchGate.descriptor,
+                errors: [],
+              }
+            } else {
+              result = { ok: false, errors: ['已有战斗加载过场正在进行'] }
+            }
+            return state
+          }
+          const launchId = createCombatLaunchId()
+          result = { ok: true, launchId, descriptor, errors: [] }
+          return { ...state, combatLaunchGate: createPendingCombatLaunchGate(launchId, descriptor) }
+        })
+        return result
+      },
+      prepareDevelopmentAcceptanceCombatLaunch: () => {
+        if (!isDevelopmentAcceptanceRuntimeAllowed()) {
+          return { ok: false, errors: ['开发验收准备仅允许在本地运行时使用'] }
+        }
+        let result: CombatLaunchPrepareResult = { ok: false, errors: ['开发验收加载门控尚未准备'] }
+        set((state) => {
+          const canRetarget = Boolean(state.developmentAcceptance.activeTarget)
+          const reason = getDevelopmentAcceptanceStartBlockReason(state, canRetarget)
+          if (reason) {
+            result = { ok: false, errors: developmentAcceptanceStartBlockedResult(reason).errors }
+            return state
+          }
+          const selectedTarget = normalizeDevelopmentAcceptanceTarget(
+            state.developmentAcceptance.selectedTarget ?? DEFAULT_DEVELOPMENT_ACCEPTANCE_TARGET,
+          )
+          const level = getCombatLaunchLevel(selectedTarget.campaign, selectedTarget.floor)
+          const target = createCombatLaunchTarget(
+            'development-acceptance',
+            selectedTarget.campaign,
+            level,
+            selectedTarget.difficulty,
+          )
+          const descriptor = buildCombatLoadingDependencyDescriptor(target)
+          if (state.combatLaunchGate.active) {
+            if (state.combatLaunchGate.descriptor?.key === descriptor.key) {
+              result = {
+                ok: true,
+                launchId: state.combatLaunchGate.launchId,
+                descriptor: state.combatLaunchGate.descriptor,
+                errors: [],
+              }
+            } else {
+              result = { ok: false, errors: ['已有战斗加载过场正在进行'] }
+            }
+            return state
+          }
+          const launchId = createCombatLaunchId()
+          result = { ok: true, launchId, descriptor, errors: [] }
+          return { ...state, combatLaunchGate: createPendingCombatLaunchGate(launchId, descriptor) }
+        })
+        return result
+      },
+      markCombatLaunchFadeStarted: (launchId) => {
+        let accepted = false
+        set((state) => {
+          const nextGate = markCombatLaunchFadeStartedState(state.combatLaunchGate, launchId)
+          accepted = nextGate.status === 'fading-out' && nextGate.launchId === launchId
+          return nextGate === state.combatLaunchGate ? state : { ...state, combatLaunchGate: nextGate }
+        })
+        return accepted
+      },
+      completeCombatLaunchFade: (launchId) => {
+        const gate = get().combatLaunchGate
+        if (!gate.active || gate.launchId !== launchId || !gate.descriptor) {
+          return {
+            ok: gate.lastCompletedLaunchId === launchId,
+            started: false,
+            launchId,
+            errors: gate.lastCompletedLaunchId === launchId ? [] : ['战斗加载回调已失效'],
+          }
+        }
+        if (gate.status !== 'fading-out') {
+          return { ok: false, started: false, launchId, errors: ['战斗加载过场尚未完成淡出'] }
+        }
+
+        let result: CombatLaunchCommitResult = { ok: false, started: false, launchId, errors: ['战斗启动尚未完成'] }
+        const commit = () => {
+          set((state) => {
+            if (
+              !state.combatLaunchGate.active
+              || state.combatLaunchGate.launchId !== launchId
+              || state.combatLaunchGate.status !== 'fading-out'
+              || !state.combatLaunchGate.descriptor
+            ) {
+              result = { ok: false, started: false, launchId, errors: ['战斗加载回调已失效'] }
+              return state
+            }
+            const descriptor = state.combatLaunchGate.descriptor
+            const mode = descriptor.target.runtimeMode
+            const idleGate = createIdleCombatLaunchGate(launchId)
+            result = { ok: true, started: true, launchId, errors: [] }
+
+            if (mode === 'formal-run') {
+              const base = restoreDevelopmentAcceptanceSnapshot(state)
+              playSnapshotSound(base, 'button')
+              return {
+                ...startRunSnapshot(base),
+                combatLaunchGate: idleGate,
+                developmentAcceptance: createDevelopmentAcceptancePresentation({ selectedTarget: base.developmentAcceptance.selectedTarget }),
+              }
+            }
+
+            if (mode === 'local-battle-test') {
+              const next = startLocalBattleTestSnapshot(restoreDevelopmentAcceptanceSnapshot(state))
+              return { ...next, combatLaunchGate: idleGate }
+            }
+
+            const target = normalizeDevelopmentAcceptanceTarget({
+              campaign: descriptor.target.campaign,
+              difficulty: descriptor.target.difficulty,
+              floor: getCampaignFloor(descriptor.target.level),
+            })
+            const canRetarget = Boolean(state.developmentAcceptance.activeTarget)
+            if (!canRetarget) captureDevelopmentAcceptanceBackups(state)
+            const prepared = prepareDevelopmentAcceptanceTargetSnapshot(state, target)
+            return {
+              ...prepared,
+              combatLaunchGate: idleGate,
+              developmentAcceptance: createDevelopmentAcceptancePresentation({
+                active: true,
+                selectedTarget: target,
+                activeTarget: target,
+                entrySnapshotCaptured: true,
+              }),
+            }
+          })
+        }
+
+        if (gate.descriptor.target.runtimeMode === 'formal-run') {
+          commit()
+        } else {
+          runWithPreservedGameSaveStorage(commit)
+        }
+        return result
+      },
+      getCombatLaunchPresentation: () => get().combatLaunchGate,
       startGame: () => {
         set((state) => {
-          playSnapshotSound(state, 'button')
-          return startRunSnapshot(state)
+          const base = restoreDevelopmentAcceptanceSnapshot(state)
+          playSnapshotSound(base, 'button')
+          return {
+            ...startRunSnapshot(base),
+            developmentAcceptance: createDevelopmentAcceptancePresentation({ selectedTarget: base.developmentAcceptance.selectedTarget }),
+          }
         })
       },
       selectCampaign: (campaign) => {
@@ -718,16 +1221,186 @@ export const useGameStore = create<GameStore>()(
         set((state) => selectCampaignDifficultySnapshot(state, campaign, difficulty))
       },
       restart: () => {
-        set((state) => restartRunSnapshot(state))
+        set((state) => ({
+          ...restartRunSnapshot(restoreDevelopmentAcceptanceSnapshot(state)),
+          developmentAcceptance: createDevelopmentAcceptancePresentation({ selectedTarget: state.developmentAcceptance.selectedTarget }),
+        }))
       },
       forfeitRun: () => {
         set((state) => {
-          playSnapshotSound(state, 'button')
-          return forfeitRunSnapshot(state)
+          const base = restoreDevelopmentAcceptanceSnapshot(state)
+          playSnapshotSound(base, 'button')
+          return {
+            ...forfeitRunSnapshot(base),
+            developmentAcceptance: createDevelopmentAcceptancePresentation({ selectedTarget: base.developmentAcceptance.selectedTarget }),
+          }
         })
       },
       returnToVillage: () => {
-        set((state) => returnToVillageSnapshot(state))
+        set((state) => {
+          const base = restoreDevelopmentAcceptanceSnapshot(state)
+          return {
+            ...returnToVillageSnapshot(base),
+            developmentAcceptance: createDevelopmentAcceptancePresentation({
+              selectedTarget: base.developmentAcceptance.selectedTarget,
+              startBlockedReason: 'combat-hud-required',
+            }),
+          }
+        })
+      },
+      prepareDevelopmentAcceptance: (scenario) => {
+        if (!isDevelopmentAcceptanceRuntimeAllowed()) {
+          return developmentAcceptanceBlockedResult()
+        }
+        let result: DevelopmentAcceptancePrepareResult = { ok: false, errors: ['开发验收准备尚未完成'] }
+        runWithPreservedGameSaveStorage(() => {
+          set((state) => {
+            if (state.developmentAcceptance.active) {
+              result = { ok: false, errors: ['已有开发验收会话，请先退出'] }
+              return state
+            }
+            if (state.phase !== 'idle') {
+              result = { ok: false, errors: ['仅可从村庄初始状态准备开发验收会话'] }
+              return state
+            }
+            captureDevelopmentAcceptanceBackups(state)
+            const prepared = prepareDevelopmentAcceptanceSnapshot(state, scenario)
+            result = { ok: true, scenario, errors: [] }
+            return {
+              ...prepared,
+              developmentAcceptance: createDevelopmentAcceptancePresentation({
+                active: true,
+                scenario,
+                sessionKind: 'combat-scenario',
+                selectedTarget: state.developmentAcceptance.selectedTarget,
+                entrySnapshotCaptured: true,
+                startBlockedReason: 'session-active',
+              }),
+            }
+          })
+        })
+        return result
+      },
+      setDevelopmentAcceptanceTarget: (target) => {
+        if (!isDevelopmentAcceptanceRuntimeAllowed()) {
+          return { ok: false, errors: ['开发验收准备仅允许在本地运行时使用'] }
+        }
+        let result: DevelopmentAcceptanceTargetConfigureResult = { ok: false, errors: ['开发验收目标尚未设置'] }
+        set((state) => {
+          const reason = getDevelopmentAcceptanceStartBlockReason(state, Boolean(state.developmentAcceptance.activeTarget))
+          if (reason) {
+            result = { ok: false, errors: developmentAcceptanceStartBlockedResult(reason).errors }
+            return {
+              ...state,
+              developmentAcceptance: getDevelopmentAcceptancePresentation(state),
+            }
+          }
+          const normalizedTarget = normalizeDevelopmentAcceptanceTarget({
+            ...state.developmentAcceptance.selectedTarget,
+            ...target,
+          })
+          result = { ok: true, target: normalizedTarget, errors: [] }
+          return {
+            ...state,
+            developmentAcceptance: createDevelopmentAcceptancePresentation({
+              active: state.developmentAcceptance.active,
+              scenario: state.developmentAcceptance.scenario,
+              selectedTarget: normalizedTarget,
+              activeTarget: state.developmentAcceptance.activeTarget,
+              entrySnapshotCaptured: state.developmentAcceptance.entrySnapshotCaptured,
+              startBlockedReason: state.developmentAcceptance.scenario ? 'session-active' : undefined,
+            }),
+          }
+        })
+        return result
+      },
+      startDevelopmentAcceptanceTarget: () => {
+        if (!isDevelopmentAcceptanceRuntimeAllowed()) {
+          return developmentAcceptanceBlockedResult()
+        }
+        let result: DevelopmentAcceptancePrepareResult = { ok: false, errors: ['开发验收关卡跳转尚未启动'] }
+        runWithPreservedGameSaveStorage(() => {
+          set((state) => {
+            const canRetarget = Boolean(state.developmentAcceptance.activeTarget)
+            const reason = getDevelopmentAcceptanceStartBlockReason(state, canRetarget)
+            if (reason) {
+              result = developmentAcceptanceStartBlockedResult(reason)
+              return {
+                ...state,
+                developmentAcceptance: getDevelopmentAcceptancePresentation(state),
+              }
+            }
+            const target = normalizeDevelopmentAcceptanceTarget(
+              state.developmentAcceptance.selectedTarget ?? DEFAULT_DEVELOPMENT_ACCEPTANCE_TARGET,
+            )
+            if (!canRetarget) {
+              captureDevelopmentAcceptanceBackups(state)
+            }
+            const prepared = prepareDevelopmentAcceptanceTargetSnapshot(state, target)
+            result = { ok: true, target, errors: [] }
+            return {
+              ...prepared,
+              developmentAcceptance: createDevelopmentAcceptancePresentation({
+                active: true,
+                selectedTarget: target,
+                activeTarget: target,
+                entrySnapshotCaptured: true,
+              }),
+            }
+          })
+        })
+        return result
+      },
+      getDevelopmentAcceptancePresentation: () => getDevelopmentAcceptancePresentation(get()),
+      resetLocalHighRarityEquipmentInventory: () => {
+        if (!isDevelopmentAcceptanceRuntimeAllowed()) {
+          return {
+            ok: false,
+            errors: ['本地测试装备重置仅允许在本地开发运行时使用'],
+            equipmentTemplateIds: [],
+            summary: getLocalHighRarityEquipmentResetSummary(),
+          }
+        }
+        let result: LocalHighRarityEquipmentResetResult = {
+          ok: false,
+          errors: ['本地测试装备重置尚未完成'],
+          equipmentTemplateIds: [],
+          summary: getLocalHighRarityEquipmentResetSummary(),
+        }
+        set((state) => {
+          if (state.phase !== 'idle' || state.localBattleTest?.active || state.developmentAcceptance.active) {
+            result = {
+              ok: false,
+              errors: ['仅可从无奖励、无战斗的村庄状态重置本地测试装备'],
+              equipmentTemplateIds: [],
+              summary: getLocalHighRarityEquipmentResetSummary(),
+            }
+            return state
+          }
+          const items = createLocalHighRarityEquipmentResetItems(state.level, () => crypto.randomUUID())
+          const equipmentTemplateIds = items.map((item) => item.equipmentId ?? item.id)
+          const summary = getLocalHighRarityEquipmentResetSummary()
+          result = { ok: true, errors: [], equipmentTemplateIds, summary }
+          return {
+            ...state,
+            // Legacy weapon fields represent prior equipment instances too;
+            // clear them so a later migration cannot resurrect old loadout.
+            unlockedWeapons: [],
+            equippedWeaponId: null,
+            equipmentInventory: items,
+            equippedItems: {},
+            message: '已清空本地装备并写入史诗、传承、传奇全装备。',
+          }
+        })
+        return result
+      },
+      exitDevelopmentAcceptance: () => {
+        if (!isDevelopmentAcceptanceRuntimeAllowed()) {
+          return
+        }
+        runWithPreservedGameSaveStorage(() => {
+          set((state) => restoreDevelopmentAcceptanceSnapshot(state))
+        })
       },
       startLocalBattleTest: () => {
         if (!isLocalBattleTestRuntimeAllowed()) {
@@ -736,7 +1409,7 @@ export const useGameStore = create<GameStore>()(
         let result: LocalBattleTestApplyResult = { ok: true, spawned: 0, errors: [] }
         runWithPreservedGameSaveStorage(() => {
           set((state) => {
-            const next = startLocalBattleTestSnapshot(state)
+            const next = startLocalBattleTestSnapshot(restoreDevelopmentAcceptanceSnapshot(state))
             result = next.localBattleTest?.lastApplyResult ?? result
             return next
           })
@@ -783,6 +1456,9 @@ export const useGameStore = create<GameStore>()(
         isLocalBattleTestRuntimeAllowed() ? getEngineLocalBattleTestSpawnOptions() : []
       ),
       tick: (delta, input) => {
+        if (get().combatLaunchGate.active) {
+          return
+        }
         const executeTick = () => {
           set((state) => {
             const next = advanceGame(state, input, delta)
@@ -790,7 +1466,7 @@ export const useGameStore = create<GameStore>()(
             return next
           })
         }
-        if (get().localBattleTest?.active) {
+        if (get().localBattleTest?.active || get().developmentAcceptance.active) {
           runWithPreservedGameSaveStorage(executeTick)
           return
         }
@@ -802,17 +1478,46 @@ export const useGameStore = create<GameStore>()(
       },
       togglePause: () => {
         set((state) => {
+          if (state.combatLaunchGate.active) return state
           playSnapshotSound(state, 'button')
           return togglePauseSnapshot(state)
         })
       },
       updateAimPoint: (aimPoint) => {
-        set((state) => updateAimPointSnapshot(state, aimPoint))
+        set((state) => state.combatLaunchGate.active ? state : updateAimPointSnapshot(state, aimPoint))
+      },
+      getInitialSkillDraftPresentation: () => getInitialSkillDraftPresentation(get()),
+      selectInitialSkillDraftCandidate: (choiceId) => {
+        set((state) => {
+          const next = selectInitialSkillDraftCandidateSnapshot(state, choiceId)
+          if (next !== state && next.activeSkills.length > state.activeSkills.length) {
+            playSnapshotSound(state, 'reward-confirm')
+          }
+          return next
+        })
+      },
+      rerollInitialSkillDraft: () => {
+        set((state) => rerollInitialSkillDraftSnapshot(state))
+      },
+      forfeitInitialSkillDraft: () => {
+        set((state) => {
+          const next = forfeitInitialSkillDraftSnapshot(state)
+          if (next.phase === 'idle' && state.phase !== 'idle') {
+            playSnapshotSound(state, 'button')
+          }
+          return {
+            ...next,
+            developmentAcceptance: createDevelopmentAcceptancePresentation({
+              selectedTarget: state.developmentAcceptance.selectedTarget,
+              startBlockedReason: 'combat-hud-required',
+            }),
+          }
+        })
       },
       acceptSkillReward: (choiceId, trajectoryBranch) => {
         set((state) => {
           const choice = state.pendingSkillReward?.choices.find((item) => item.choiceId === choiceId)
-          if (choice?.mode === 'in-run-talent') {
+          if (choice?.mode === 'in-run-talent' && !choice.combatTalentV3) {
             playSnapshotSound(state, 'reward-confirm')
             return acceptRunTalentRewardChoiceSnapshot(state, choice, trajectoryBranch)
           }
@@ -898,10 +1603,20 @@ export const useGameStore = create<GameStore>()(
           return toggleEquipmentModifierLockSnapshot(state, itemId, modifierIndex)
         })
       },
-      unlockEquipmentSlot: (slot) => {
+      setEquipmentInventoryViewPreference: (preference) => {
         set((state) => {
-          playSnapshotSound(state, 'button')
-          return unlockEquipmentSlotSnapshot(state, slot)
+          // Test/development sessions are backed by an untouched persisted save.
+          // They may not mutate a real player's warehouse presentation choice.
+          if (state.localBattleTest?.active || state.developmentAcceptance.active) {
+            return state
+          }
+          return {
+            ...state,
+            equipmentInventoryViewPreference: normalizeEquipmentInventoryViewPreference(
+              preference,
+              state.equipmentInventoryViewPreference,
+            ),
+          }
         })
       },
       unlockMetaTalent: (nodeId) => {
@@ -920,7 +1635,7 @@ export const useGameStore = create<GameStore>()(
           const record = {
             id: `meta-talent-${Date.now()}-${result.node.id}`,
             talentId: result.node.id,
-            cost: result.node.cost,
+            cost: result.costPaid,
             rank: result.nextRank,
             unlockedAt: Date.now(),
           }
@@ -937,38 +1652,52 @@ export const useGameStore = create<GameStore>()(
       },
       resetMetaTalentTree: () => {
         set((state) => {
+          const base = restoreDevelopmentAcceptanceSnapshot(state)
           const result = resetMetaTalentTree({
-            currency: state.currency,
-            equipmentMaterials: state.equipmentMaterials,
-            talentPoints: state.talentPoints,
-            unlockedMetaTalentIds: state.unlockedMetaTalentIds,
-            metaTalentRanks: state.metaTalentRanks,
+            currency: base.currency,
+            equipmentMaterials: base.equipmentMaterials,
+            talentPoints: base.talentPoints,
+            unlockedMetaTalentIds: base.unlockedMetaTalentIds,
+            metaTalentRanks: base.metaTalentRanks,
+            migrationFreeResetAvailable: base.metaTalentV3Migration?.freeResetAvailable,
           })
           if (!result.ok) {
-            return { ...state, message: result.reason }
+            return { ...base, developmentAcceptance: createDevelopmentAcceptancePresentation(), message: result.reason }
           }
           const resetEntry: TalentPointLedgerEntry = {
             id: `meta-talent-reset-${Date.now()}`,
             source: 'reset',
             points: result.refundedPoints,
             refundedPoints: result.refundedPoints,
-            spentGold: TALENT_RESET_GOLD_COST,
-            spentMaterials: { buildShard: TALENT_RESET_BUILD_SHARD_COST },
+            spentGold: result.usedMigrationFreeReset ? 0 : TALENT_RESET_GOLD_COST,
+            spentMaterials: result.usedMigrationFreeReset ? {} : { buildShard: TALENT_RESET_BUILD_SHARD_COST },
             resetAt: Date.now(),
           }
-          playSnapshotSound(state, 'reward-confirm')
+          playSnapshotSound(base, 'reward-confirm')
           return {
-            ...state,
+            ...base,
             currency: result.nextCurrency,
             equipmentMaterials: result.nextEquipmentMaterials,
             talentPoints: result.nextTalentPoints,
             unlockedTalentIds: result.nextUnlockedMetaTalentIds,
             unlockedMetaTalentIds: result.nextUnlockedMetaTalentIds,
             metaTalentRanks: result.nextMetaTalentRanks,
-            talentPointLedger: [resetEntry, ...state.talentPointLedger].slice(0, 20),
+            metaTalentV3Migration: {
+              schemaVersion: TALENT_SCHEMA_VERSION,
+              migratedFromLegacy: base.metaTalentV3Migration?.migratedFromLegacy === true,
+              freeResetAvailable: false,
+              retainedNodeIds: [],
+            },
+            sealedSkillFamilyIds: [],
+            activeSealedSkillFamilyIds: [],
+            talentPointLedger: [resetEntry, ...base.talentPointLedger].slice(0, 20),
+            developmentAcceptance: createDevelopmentAcceptancePresentation(),
             message: `已重置局外天赋，返还 ${result.refundedPoints} 点`,
           }
         })
+      },
+      setSealedSkillFamilies: (familyIds) => {
+        set((state) => setSealedSkillFamiliesSnapshot(state, familyIds))
       },
       setRunTalentBuild: (build) => {
         set((state) => ({
@@ -1015,6 +1744,15 @@ export const useGameStore = create<GameStore>()(
           if (!state.pendingSkillReward) {
             return { ...state, message: '当前没有可重掷的局内天赋奖励' }
           }
+          if (
+            (state.pendingSkillReward.poolKind === 'crystal-talent' || state.pendingSkillReward.poolKind === 'run-talent')
+            && state.pendingSkillReward.choices.every((choice) => Boolean(choice.combatTalentV3))
+          ) {
+            return rerollCombatTalentV3RewardSnapshot(state, seed)
+          }
+          if (state.pendingSkillReward.poolKind === 'crystal-talent') {
+            return rerollCrystalTalentRewardSnapshot(state, seed)
+          }
           if (state.pendingSkillReward.poolKind !== 'run-talent') {
             return rerollSkillRewardSnapshot(state)
           }
@@ -1047,6 +1785,12 @@ export const useGameStore = create<GameStore>()(
             message: '已重掷当前局内奖励',
           }
         })
+      },
+      banSkillRewardType: (type) => {
+        set((state) => banSkillRewardTypeSnapshot(state, type))
+      },
+      rerollNormalEliteSkillReward: () => {
+        set((state) => rerollNormalEliteSkillRewardSnapshot(state))
       },
       generateRunTalentCandidates: (seed = Date.now()) => {
         const state = get()
@@ -1115,6 +1859,7 @@ export const useGameStore = create<GameStore>()(
       },
       triggerActiveSkill: (slotIndex) => {
         set((state) => {
+          if (state.combatLaunchGate.active) return state
           const next = triggerActiveSkillSnapshot(state, slotIndex)
           if (next.activeSkills[slotIndex]?.cooldownRemaining !== state.activeSkills[slotIndex]?.cooldownRemaining) {
             playSnapshotSound(state, 'skill-cast')
@@ -1123,14 +1868,18 @@ export const useGameStore = create<GameStore>()(
         })
       },
       triggerDash: () => {
-        set((state) => triggerDashSnapshot(state))
+        set((state) => state.combatLaunchGate.active ? state : triggerDashSnapshot(state))
       },
     }),
     {
       name: GAME_SAVE_STORAGE_KEY,
       version: GAME_SAVE_VERSION,
       storage: createCachedPersistStorage(),
-      partialize: (state) => memoizedExtractPersistedGameState(state),
+      partialize: (state) => (
+        state.developmentAcceptance?.active && developmentAcceptancePersistedBackup
+          ? developmentAcceptancePersistedBackup
+          : memoizedExtractPersistedGameState(state)
+      ),
       migrate: (persistedState) => sanitizePersistedState(persistedState),
       merge: (persistedState, currentState) => ({
         ...currentState,
@@ -1664,6 +2413,12 @@ const sanitizeTalentE2EArtifacts = (state: GameSnapshot): GameSnapshot => {
     unlockedTalentIds: [],
     unlockedMetaTalentIds: [],
     metaTalentRanks: {},
+    metaTalentV3Migration: {
+      schemaVersion: TALENT_SCHEMA_VERSION,
+      migratedFromLegacy: false,
+      freeResetAvailable: false,
+      retainedNodeIds: [],
+    },
     talentUnlockRecords: [],
     runTalentState: initial.runTalentState,
     inRunTalentIds: [],
@@ -1773,6 +2528,12 @@ const createTalentFixtureSnapshot = () => {
   snapshot.unlockedTalentIds = []
   snapshot.unlockedMetaTalentIds = []
   snapshot.metaTalentRanks = {}
+  snapshot.metaTalentV3Migration = {
+    schemaVersion: TALENT_SCHEMA_VERSION,
+    migratedFromLegacy: false,
+    freeResetAvailable: false,
+    retainedNodeIds: [],
+  }
   snapshot.talentUnlockRecords = []
   snapshot.contractLevel = 5
   snapshot.selectedCampaign = 7

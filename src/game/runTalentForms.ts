@@ -60,7 +60,7 @@ export const RUN_TALENT_FORM_DEFINITIONS: readonly RunTalentFormDefinition[] = [
   form('run_death_14', '归魂追裁', 'death', 14, 'line-projectile', 'projectile-impact', { delay: 0.25, targetCount: 3, damageMultiplier: 0.5, maxHits: 2, rangeMultiplier: 0.65 }, '主箭消失后追裁最近敌人。'),
   form('run_death_15', '终审地带', 'death', 15, 'line-projectile', 'projectile-area', { radius: 180, ttl: 2.5, tickInterval: 0.5, damageMultiplier: 0.42, maxHits: 4, cooldown: 16 }, '区域强化后在终点展开终审地带。'),
   form('run_death_16', '坠魂禁区', 'death', 16, 'line-projectile', 'projectile-area', { radius: 105, count: 3, interval: 0.3, damageMultiplier: 0.72, maxHits: 2, cooldown: 16 }, '区域强化后落下三段魂爆。'),
-  form('run_blood_09', '暴雨展翼', 'blood', 9, 'spread-projectile', 'projectile-modifier', { projectileBonus: 3, spreadMultiplier: 1.4, damageMultiplier: 0.85 }, '散射增加箭数与扇面。'),
+  form('run_blood_09', '暴雨展翼', 'blood', 9, 'spread-projectile', 'projectile-modifier', { projectileBonus: 3, totalFanAngleBonusDegrees: 15, damageMultiplier: 0.85 }, '散射增加箭数与扇面。'),
   form('run_blood_10', '贯心血矛', 'blood', 10, 'spread-projectile', 'projectile-modifier', { centerWidth: 34, centerDamageMultiplier: 1.9, sideDamageMultiplier: 0.6, sideCount: 2 }, '散射改为中央血矛与两侧箭。'),
   form('run_blood_11', '血羽爆裂', 'blood', 11, 'spread-projectile', 'projectile-impact', { radius: 95, damageMultiplier: 0.7, bleedStacks: 1 }, '首次命中触发血爆。'),
   form('run_blood_12', '猩红落场', 'blood', 12, 'spread-projectile', 'projectile-area', { radius: 115, ttl: 2, tickInterval: 0.5, damageMultiplier: 0.34, maxHits: 3 }, '最后一箭留下血羽区域。'),

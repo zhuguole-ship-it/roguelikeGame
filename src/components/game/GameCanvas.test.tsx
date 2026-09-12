@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSnapshot } from '../../game/engine'
+import * as gameRender from '../../game/render'
 import {
   RUNTIME_ASSET_DRAFT_STORAGE_KEY,
   exportRuntimeAssetDraftConfig,
@@ -63,10 +64,124 @@ afterEach(() => {
   }
   useGameStore.setState({ ...createInitialSnapshot() })
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
   vi.unstubAllGlobals()
 })
 
 describe('GameCanvas', () => {
+  it.each([
+    [1440, 900, 'infinite', 1, 2048, 1280],
+    [1920, 1080, 'boss-arena', 22, 2276, 1280],
+  ] as const)('fills the complete %dx%d first-dungeon viewport without side gutters', (width, height, mode, level, backingWidth, backingHeight) => {
+    vi.spyOn(gameRender, 'renderGame').mockImplementation(() => {})
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: height,
+      height,
+      left: 0,
+      right: width,
+      top: 0,
+      width,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = level
+    snapshot.battlefield.mode = mode
+    useGameStore.setState(snapshot)
+
+    const view = render(<GameCanvas />)
+
+    const combat = screen.getByLabelText('游戏画布') as HTMLCanvasElement
+    expect(combat.className).toContain('absolute inset-0')
+    expect(combat.className).toContain('h-full w-full')
+    expect(combat.className).not.toContain('max-w-[calc(100vh*1.5)]')
+    expect(combat.width).toBe(backingWidth)
+    expect(combat.height).toBe(backingHeight)
+    expect(gameRender.renderGame).toHaveBeenCalled()
+    view.unmount()
+  })
+
+  it('uses only the original 2D battle canvas without a first-dungeon WebGL sibling', () => {
+    vi.spyOn(gameRender, 'renderGame').mockImplementation(() => {})
+    const contextRequests: Array<{ canvas: HTMLCanvasElement; contextId: string }> = []
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((function (
+      this: HTMLCanvasElement,
+      contextId: string,
+    ) {
+      contextRequests.push({ canvas: this, contextId })
+      return createCanvasContext() as unknown as RenderingContext
+    }) as unknown as typeof HTMLCanvasElement.prototype.getContext)
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = 1
+    snapshot.battlefield.mode = 'infinite'
+    useGameStore.setState(snapshot)
+
+    render(<GameCanvas />)
+
+    const combat = screen.getByLabelText('游戏画布') as HTMLCanvasElement
+    expect(screen.queryByTestId('first-dungeon-webgl-floor')).toBeNull()
+    expect(combat).toBeInstanceOf(HTMLCanvasElement)
+    expect(combat.parentElement?.querySelectorAll('canvas')).toHaveLength(1)
+    expect(contextRequests.filter(({ contextId }) => contextId === 'webgl2')).toEqual([])
+    expect(new Set(contextRequests.filter(({ contextId }) => contextId === '2d').map(({ canvas }) => canvas))).toEqual(new Set([combat]))
+  })
+
+  it('keeps non-first battles on the same single 2D canvas path', () => {
+    vi.spyOn(gameRender, 'renderGame').mockImplementation(() => {})
+    const contextRequests: string[] = []
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((function (
+      this: HTMLCanvasElement,
+      contextId: string,
+    ) {
+      contextRequests.push(contextId)
+      return createCanvasContext() as unknown as RenderingContext
+    }) as unknown as typeof HTMLCanvasElement.prototype.getContext)
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = 23
+    useGameStore.setState(snapshot)
+
+    render(<GameCanvas />)
+
+    const combat = screen.getByLabelText('游戏画布') as HTMLCanvasElement
+    expect(combat.parentElement?.querySelectorAll('canvas')).toHaveLength(1)
+    expect(screen.queryByTestId('first-dungeon-webgl-floor')).toBeNull()
+    expect(contextRequests).not.toContain('webgl2')
+    expect(combat.className).toContain('max-w-[calc(100vh*1.5)]')
+    expect(combat.width).toBe(1920)
+    expect(combat.height).toBe(1280)
+  })
+
+  it('mounts the direct-collection radius ring inside the real canvas combat layer', () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 660,
+      height: 640,
+      left: 10,
+      right: 970,
+      top: 20,
+      width: 960,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    })
+    const snapshot = createInitialSnapshot('running')
+    snapshot.player.position = { x: 400, y: 300 }
+    snapshot.pickups = [{
+      id: 'canvas-direct-collection-crystal',
+      kind: 'soul-crystal',
+      position: { x: 450, y: 300 },
+      radius: 8,
+      ttl: 30,
+      expValue: 12,
+    }]
+    useGameStore.setState(snapshot)
+
+    render(<GameCanvas />)
+
+    expect(screen.getByTestId('soul-crystal-direct-collection-feedback').getAttribute('data-trigger')).toBe('combat-entry')
+    expect(screen.getByTestId('soul-crystal-direct-collection-ring').getAttribute('data-effective-radius')).toBe('17.8000')
+  })
+
   it('keeps Tab as a no-op target legacy key while Q still casts active skills', () => {
     const base = createInitialSnapshot('running')
     const toggleTargetPriority = vi.fn()
@@ -86,6 +201,39 @@ describe('GameCanvas', () => {
 
     expect(toggleTargetPriority).not.toHaveBeenCalled()
     expect(triggerActiveSkill).toHaveBeenCalledWith(0)
+  })
+
+  it('opens only the initial-draft pause path on Escape, restores the same round, and can forfeit back to village without settlement', () => {
+    useGameStore.setState({ ...createInitialSnapshot('idle'), mapObstacles: [] })
+    useGameStore.getState().startGame()
+
+    render(<GameCanvas />)
+
+    const canvasShell = screen.getByLabelText('游戏画布').parentElement!
+    expect(screen.getByTestId('initial-skill-draft-overlay').getAttribute('data-current-round')).toBe('1')
+    expect(screen.getAllByTestId('initial-skill-draft-choice')).toHaveLength(3)
+    expect(screen.queryByTestId('reward-screen-overlay')).toBeNull()
+
+    fireEvent.keyDown(canvasShell, { key: 'Escape' })
+
+    expect(useGameStore.getState().getInitialSkillDraftPresentation()).toMatchObject({
+      active: true,
+      status: 'paused',
+      currentRound: 1,
+    })
+    expect(screen.queryByTestId('initial-skill-draft-overlay')).toBeNull()
+    expect(screen.getByTestId('initial-skill-draft-pause-notice').textContent).toContain('第 1 / 3 段')
+    expect(screen.getByTestId('initial-skill-draft-forfeit-button').textContent).toBe('放弃本局并返回村庄')
+
+    fireEvent.click(screen.getByRole('button', { name: '继续游戏' }))
+    expect(screen.getByTestId('initial-skill-draft-overlay').getAttribute('data-current-round')).toBe('1')
+
+    fireEvent.keyDown(canvasShell, { key: 'Escape' })
+    fireEvent.click(screen.getByTestId('initial-skill-draft-forfeit-button'))
+    expect(useGameStore.getState().phase).toBe('idle')
+    expect(useGameStore.getState().activeSkills).toEqual([])
+    expect(screen.queryByTestId('game-over-settlement')).toBeNull()
+    expect(screen.queryByTestId('initial-skill-draft-overlay')).toBeNull()
   })
 
   it('keeps modal Top1 input exclusive and restores canvas input only after the pause layer closes', () => {
@@ -200,6 +348,74 @@ describe('GameCanvas', () => {
     expect(useGameStore.getState().debugControls.disableAttacks).toBe(true)
   })
 
+  it('opens the renderer-native first-dungeon observation panel only from local development controls', () => {
+    useGameStore.setState({
+      ...createInitialSnapshot('running'),
+      mapObstacles: [],
+    })
+
+    render(<GameCanvas />)
+
+    const entry = screen.getByTestId('first-dungeon-chunk-observability-entry')
+    expect(entry.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(entry)
+
+    expect(screen.getByTestId('first-dungeon-chunk-observability-panel')).toBeTruthy()
+    expect(entry.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByLabelText('游戏画布').parentElement?.getAttribute('tabindex')).toBe('-1')
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭第一关地形观测' }))
+    expect(screen.queryByTestId('first-dungeon-chunk-observability-panel')).toBeNull()
+    expect(screen.getByLabelText('游戏画布').parentElement?.getAttribute('tabindex')).toBe('0')
+  })
+
+  it('exposes the level-jump test bench only through the local combat HUD development controls', () => {
+    const base = createInitialSnapshot('running')
+    const triggerActiveSkill = vi.fn()
+    useGameStore.setState({
+      ...base,
+      mapObstacles: [],
+      triggerActiveSkill,
+      developmentAcceptance: { available: true, active: false },
+    })
+
+    render(<GameCanvas />)
+
+    const entry = screen.getByTestId('development-acceptance-entry')
+    expect(entry.getAttribute('aria-expanded')).toBe('false')
+    expect(entry.textContent).toContain('关卡测试')
+    fireEvent.click(entry)
+    expect(screen.getByTestId('development-acceptance-panel')).toBeTruthy()
+    expect(screen.getByTestId('development-acceptance-campaign-10')).toBeTruthy()
+    expect(screen.getByTestId('development-acceptance-difficulty-nightmare')).toBeTruthy()
+    expect(screen.getByTestId('development-acceptance-floor-22')).toBeTruthy()
+    expect(screen.queryByTestId('reward-screen-overlay')).toBeNull()
+    expect(screen.getByLabelText('游戏画布').parentElement?.getAttribute('tabindex')).toBe('-1')
+    fireEvent.keyDown(screen.getByTestId('development-acceptance-panel'), { key: 'q' })
+    expect(triggerActiveSkill).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '取消并关闭关卡跳转测试台' }))
+    expect(screen.queryByTestId('development-acceptance-panel')).toBeNull()
+    expect(screen.getByLabelText('游戏画布').parentElement?.getAttribute('tabindex')).toBe('0')
+    fireEvent.keyDown(screen.getByLabelText('游戏画布').parentElement!, { key: 'q' })
+    expect(triggerActiveSkill).toHaveBeenCalledWith(0)
+  })
+
+  it('keeps an active level-jump session visible as temporary from the local development entry', () => {
+    const base = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...base,
+      mapObstacles: [],
+      developmentAcceptance: { available: true, active: true, scenario: 'd04-first-hard-boss' },
+    })
+
+    render(<GameCanvas />)
+
+    const entry = screen.getByTestId('development-acceptance-entry')
+    expect(entry.textContent).toContain('临时未保存')
+    expect(entry.getAttribute('aria-label')).toContain('临时未保存会话')
+  })
+
   it('unmounts development controls while Top1 through Top3 own the combat screen', () => {
     const highLayerSnapshots = [
       { ...createInitialSnapshot('paused'), pauseMenuOpen: true },
@@ -239,12 +455,12 @@ describe('GameCanvas', () => {
     expect(screen.queryByTestId('local-battle-entry')).toBeNull()
   })
 
-  it('hides test and local battle entries for a remote development host', () => {
+  it('hides test and local battle entries on a GitHub Pages host', () => {
     const browserWindow = window
     vi.stubGlobal('window', new Proxy(browserWindow, {
       get(target, property, receiver) {
         if (property === 'location') {
-          return { ...target.location, hostname: 'dev.example.com' }
+          return { ...target.location, hostname: 'zackota.github.io' }
         }
         const value = Reflect.get(target, property, receiver)
         return typeof value === 'function' ? value.bind(target) : value
@@ -259,6 +475,24 @@ describe('GameCanvas', () => {
 
     expect(screen.queryByRole('button', { name: '测试' })).toBeNull()
     expect(screen.queryByRole('button', { name: '战斗' })).toBeNull()
+    expect(screen.queryByTestId('development-acceptance-entry')).toBeNull()
+    expect(screen.queryByTestId('first-dungeon-chunk-observability-entry')).toBeNull()
+  })
+
+  it('hides the level-jump entry in production even if a test fixture marks the contract available', () => {
+    vi.stubEnv('PROD', true)
+    useGameStore.setState({
+      ...createInitialSnapshot('running'),
+      mapObstacles: [],
+      developmentAcceptance: { available: true, active: false, canStart: true },
+    })
+
+    render(<GameCanvas />)
+
+    expect(screen.queryByTestId('local-test-controls')).toBeNull()
+    expect(screen.queryByTestId('development-acceptance-entry')).toBeNull()
+    expect(screen.queryByTestId('first-dungeon-chunk-observability-entry')).toBeNull()
+    expect(screen.queryByRole('button', { name: '打开关卡跳转测试台' })).toBeNull()
   })
 
   it('mounts the combat damage log above combat HUD when the engine has actual damage events', () => {

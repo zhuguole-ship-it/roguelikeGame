@@ -1,9 +1,21 @@
-import { getCampaignIndex } from './config'
+import { getCampaignIndex, getCampaignFloor, isBossLevel, isEliteLevel, MAX_CAMPAIGN_LEVEL } from './config'
+import { CAMPAIGN_MONSTER_THEMES } from './campaignMonsters'
 import { normalizeCampaignDifficulty } from './difficulty'
-import type { EquipmentDropTier } from './monsterDataCards'
+import { getMonsterDropProfile, type EquipmentDropTier } from './monsterDataCards'
 import type {
   CampaignDifficulty,
+  BeastContractDomainCollection,
+  BeastContractDomainCollectionLoadout,
+  BeastContractDomainEquipmentDefinition,
+  BeastContractDomainEquipmentPresentation,
+  BeastContractDomainLoadoutSnapshot,
   EquipmentBonus,
+  EquipmentCandidateTag,
+  EquipmentCandidateWeightRule,
+  DeathBloodCollection,
+  DeathBloodCollectionLoadout,
+  DeathBloodEquipmentDefinition,
+  DeathBloodLoadoutSnapshot,
   EquipmentDismantleCategory,
   EquipmentItem,
   EquipmentMaterialId,
@@ -86,18 +98,274 @@ export const EQUIPMENT_MATERIAL_IDS = Object.keys(EQUIPMENT_MATERIAL_LABELS) as 
 export const EQUIPMENT_SET_LABELS: Record<EquipmentSetId, string> = {
   'death-contract-executioner': '死契处刑者',
   'bloodfeather-ranger': '血羽游侠',
-  'beast-king-pardon': '兽王赦令',
-  'blue-crystal-contract': '蓝晶契约',
+  'beast-king-pardon': '兽王契约',
+  'blue-crystal-contract': '契约领域',
 }
 
 export const getEquipmentSetCounts = (equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>) => {
-  return Object.values(equippedItems).reduce<Partial<Record<EquipmentSetId, number>>>((counts, item) => {
-    if (item?.setId) {
+  const counts = Object.values(equippedItems).reduce<Partial<Record<EquipmentSetId, number>>>((counts, item) => {
+    if (item?.setId && item.setId !== 'beast-king-pardon' && item.setId !== 'blue-crystal-contract') {
       counts[item.setId] = (counts[item.setId] ?? 0) + 1
     }
     return counts
   }, {})
+  const v2 = getBeastContractDomainLoadoutSnapshot(equippedItems)
+  if (v2.beast.coreCount > 0) counts['beast-king-pardon'] = v2.beast.coreCount
+  if (v2.domain.coreCount > 0) counts['blue-crystal-contract'] = v2.domain.coreCount
+  return counts
 }
+
+export const DEATH_BLOOD_CORE_SLOTS: readonly EquipmentSlot[] = Object.freeze([
+  'weapon', 'helmet', 'chest', 'shoulders', 'ring1', 'necklace',
+])
+export const DEATH_BLOOD_RELIC_SLOTS: readonly EquipmentSlot[] = Object.freeze([
+  'wrists', 'hands', 'legs', 'boots', 'ring2', 'cloak',
+])
+
+const createDeathBloodDefinition = (
+  collection: DeathBloodCollection,
+  slot: EquipmentSlot,
+  identity: DeathBloodEquipmentDefinition['identity'],
+  templateId: string,
+): DeathBloodEquipmentDefinition => ({
+  definitionId: `${collection}-${identity}-${slot}-${templateId}`,
+  templateId,
+  collection,
+  identity,
+  slot,
+  name: collection === 'death' ? '死契处刑者' : '血羽游侠',
+  descriptionKey: `death-blood.${collection}.${identity}.${slot}`,
+})
+
+const createDeathBloodStandardTemplateId = (slot: EquipmentSlot, buildTag: SkillBuildTag, affix: string) => (
+  `equipment-template-legacy-${slot}-${buildTag}-${affix}`
+)
+
+/**
+ * The only membership table for the 2026-08-27 collections.  Runtime callers
+ * resolve an item's stable equipment/template id; they never infer membership
+ * from display text, broad setId, affix, or build tag.
+ */
+export const DEATH_BLOOD_EQUIPMENT_DEFINITIONS: readonly DeathBloodEquipmentDefinition[] = Object.freeze([
+  ...DEATH_BLOOD_CORE_SLOTS.map((slot) => createDeathBloodDefinition('death', slot, 'core', createDeathBloodStandardTemplateId(slot, 'pierce', '死契处刑线'))),
+  ...DEATH_BLOOD_RELIC_SLOTS.map((slot) => createDeathBloodDefinition('death', slot, 'relic', createDeathBloodStandardTemplateId(slot, 'pierce', '死契处刑线'))),
+  ...DEATH_BLOOD_CORE_SLOTS.map((slot) => createDeathBloodDefinition('blood', slot, 'core', createDeathBloodStandardTemplateId(slot, 'spread', '血羽封场'))),
+  ...DEATH_BLOOD_RELIC_SLOTS.map((slot) => createDeathBloodDefinition('blood', slot, 'relic', createDeathBloodStandardTemplateId(slot, 'spread', '血羽封场'))),
+  createDeathBloodDefinition('death', 'weapon', 'boss-core-replacement', 'boss-legacy-weapon-1'),
+  createDeathBloodDefinition('death', 'weapon', 'boss-core-replacement', 'boss-legacy-weapon-9'),
+  createDeathBloodDefinition('blood', 'weapon', 'boss-core-replacement', 'boss-legacy-weapon-2'),
+  createDeathBloodDefinition('blood', 'weapon', 'boss-core-replacement', 'boss-legacy-weapon-5'),
+  createDeathBloodDefinition('blood', 'weapon', 'boss-core-replacement', 'boss-legacy-weapon-7'),
+  createDeathBloodDefinition('death', 'weapon', 'excluded', 'boss-legacy-weapon-6'),
+])
+
+/** Shared by loadout activation and codex presentation; no UI infers these gates. */
+export const DEATH_BLOOD_COLLECTION_THRESHOLDS = Object.freeze({
+  twoPiece: 2,
+  fourPiece: 4,
+})
+
+const DEATH_BLOOD_EQUIPMENT_BY_TEMPLATE_ID = new Map(
+  DEATH_BLOOD_EQUIPMENT_DEFINITIONS.map((definition) => [definition.templateId, definition]),
+)
+
+export const getDeathBloodEquipmentDefinition = (item?: EquipmentItem) => (
+  item?.equipmentId ? DEATH_BLOOD_EQUIPMENT_BY_TEMPLATE_ID.get(item.equipmentId) : undefined
+)
+
+/** Immutable runtime/presentation snapshot resolved from the fixed directory. */
+export const getDeathBloodLoadoutSnapshot = (
+  equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>,
+): DeathBloodLoadoutSnapshot => {
+  const collections: Record<DeathBloodCollection, { core: string[]; relic: string[]; replacement?: string }> = {
+    death: { core: [], relic: [] },
+    blood: { core: [], relic: [] },
+  }
+  Object.values(equippedItems).forEach((item) => {
+    const definition = getDeathBloodEquipmentDefinition(item)
+    if (!definition || definition.identity === 'excluded') return
+    const target = collections[definition.collection]
+    if (definition.identity === 'relic') {
+      target.relic.push(definition.definitionId)
+      return
+    }
+    // A real equipped-items snapshot has one item per slot.  Still dedupe by
+    // slot here so malformed hydrated data cannot double count replacement bows.
+    if (definition.identity === 'boss-core-replacement') {
+      target.replacement = definition.definitionId
+    }
+    target.core.push(definition.definitionId)
+  })
+  const resolve = (collection: DeathBloodCollection): DeathBloodCollectionLoadout => {
+    const value = collections[collection]
+    const uniqueCore = Array.from(new Set(value.core)).slice(0, DEATH_BLOOD_CORE_SLOTS.length)
+    const uniqueRelic = Array.from(new Set(value.relic))
+    return Object.freeze({
+      collection,
+      coreCount: uniqueCore.length,
+      equippedCoreDefinitionIds: Object.freeze(uniqueCore),
+      equippedRelicDefinitionIds: Object.freeze(uniqueRelic),
+      replacementWeaponDefinitionId: value.replacement,
+      twoPieceActive: uniqueCore.length >= DEATH_BLOOD_COLLECTION_THRESHOLDS.twoPiece,
+      fourPieceActive: uniqueCore.length >= DEATH_BLOOD_COLLECTION_THRESHOLDS.fourPiece,
+    })
+  }
+  return Object.freeze({ death: resolve('death'), blood: resolve('blood') })
+}
+
+export const BEAST_CONTRACT_DOMAIN_CORE_SLOTS: readonly EquipmentSlot[] = Object.freeze([
+  'weapon', 'helmet', 'chest', 'shoulders', 'hands', 'boots',
+])
+export const BEAST_CONTRACT_DOMAIN_RELIC_SLOTS: readonly EquipmentSlot[] = Object.freeze([
+  'wrists', 'legs', 'ring1', 'ring2', 'cloak', 'necklace',
+])
+
+const BEAST_CONTRACT_NAMES: Record<EquipmentSlot, string> = {
+  weapon: '万兽契弓', helmet: '猎王霜角', chest: '群兽守誓甲', shoulders: '荒野王肩',
+  hands: '百兽驭使手甲', boots: '逐猎荒原长靴', wrists: '猎群号令腕甲', legs: '兽潮践行腿甲',
+  ring1: '群猎印戒', ring2: '兽王余怒之戒', cloak: '六兽巡猎披风', necklace: '荒野王冠坠饰',
+}
+const CONTRACT_DOMAIN_NAMES: Record<EquipmentSlot, string> = {
+  weapon: '天穹契约长弓', helmet: '穹顶观测者', chest: '领域守望战甲', shoulders: '界域扩张肩甲',
+  hands: '织域者手套', boots: '巡界之靴', wrists: '界纹蓄能腕环', legs: '重界压制腿甲',
+  ring1: '双域回响之戒', ring2: '天坠引导之戒', cloak: '裂界巡行披风', necklace: '苍穹支配者之坠',
+}
+
+const createBeastContractDomainDefinition = (
+  collection: BeastContractDomainCollection,
+  slot: EquipmentSlot,
+  identity: BeastContractDomainEquipmentDefinition['identity'],
+  templateId: string,
+  name: string,
+  replacesTemplateId?: string,
+): BeastContractDomainEquipmentDefinition => Object.freeze({
+  definitionId: `${collection}-${identity}-${slot}-${templateId}`,
+  templateId,
+  collection,
+  identity,
+  slot,
+  name,
+  descriptionKey: `beast-contract-domain.${collection}.${identity}.${slot}`,
+  coreContribution: identity === 'relic' ? 0 : 1,
+  replacesTemplateId,
+})
+
+const createBeastContractDomainTemplateId = (collection: BeastContractDomainCollection, slot: EquipmentSlot) => (
+  createDeathBloodStandardTemplateId(slot, collection === 'beast' ? 'beast' : 'control', collection === 'beast' ? '兽王契约' : '契约领域')
+)
+
+export const BEAST_CONTRACT_DOMAIN_EQUIPMENT_DEFINITIONS: readonly BeastContractDomainEquipmentDefinition[] = Object.freeze([
+  ...BEAST_CONTRACT_DOMAIN_CORE_SLOTS.map((slot) => createBeastContractDomainDefinition('beast', slot, 'core', createBeastContractDomainTemplateId('beast', slot), BEAST_CONTRACT_NAMES[slot])),
+  ...BEAST_CONTRACT_DOMAIN_RELIC_SLOTS.map((slot) => createBeastContractDomainDefinition('beast', slot, 'relic', createBeastContractDomainTemplateId('beast', slot), BEAST_CONTRACT_NAMES[slot])),
+  ...BEAST_CONTRACT_DOMAIN_CORE_SLOTS.map((slot) => createBeastContractDomainDefinition('domain', slot, 'core', createBeastContractDomainTemplateId('domain', slot), CONTRACT_DOMAIN_NAMES[slot])),
+  ...BEAST_CONTRACT_DOMAIN_RELIC_SLOTS.map((slot) => createBeastContractDomainDefinition('domain', slot, 'relic', createBeastContractDomainTemplateId('domain', slot), CONTRACT_DOMAIN_NAMES[slot])),
+  createBeastContractDomainDefinition('beast', 'weapon', 'boss-core-replacement', 'boss-legacy-weapon-3', '黑月兽骨弓', createBeastContractDomainTemplateId('beast', 'weapon')),
+  createBeastContractDomainDefinition('domain', 'weapon', 'boss-core-replacement', 'boss-legacy-weapon-4', '三相咒弦弓', createBeastContractDomainTemplateId('domain', 'weapon')),
+])
+
+export const BEAST_CONTRACT_DOMAIN_THRESHOLDS = Object.freeze([2, 3, 5] as const)
+const BEAST_CONTRACT_DOMAIN_BY_TEMPLATE_ID = new Map(BEAST_CONTRACT_DOMAIN_EQUIPMENT_DEFINITIONS.map((definition) => [definition.templateId, definition]))
+
+export const getBeastContractDomainEquipmentDefinition = (item?: EquipmentItem) => (
+  item?.equipmentId ? BEAST_CONTRACT_DOMAIN_BY_TEMPLATE_ID.get(item.equipmentId) : undefined
+)
+
+const freezeBeastContractDomainLoadout = (
+  collection: BeastContractDomainCollection,
+  coreIds: string[],
+  relicIds: string[],
+  replacementWeaponDefinitionId?: string,
+): BeastContractDomainCollectionLoadout => Object.freeze({
+  collection,
+  coreCount: coreIds.length,
+  equippedCoreDefinitionIds: Object.freeze([...coreIds]),
+  equippedRelicDefinitionIds: Object.freeze([...relicIds]),
+  replacementWeaponDefinitionId,
+  twoPieceActive: coreIds.length >= 2,
+  threePieceActive: coreIds.length >= 3,
+  fivePieceActive: coreIds.length >= 5,
+})
+
+/** The only count/activation source for both runtime and B2. */
+export const getBeastContractDomainLoadoutSnapshot = (
+  equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>,
+): BeastContractDomainLoadoutSnapshot => {
+  const entries: Record<BeastContractDomainCollection, { core: string[]; relic: string[]; replacement?: string }> = {
+    beast: { core: [], relic: [] }, domain: { core: [], relic: [] },
+  }
+  Object.values(equippedItems).forEach((item) => {
+    const definition = getBeastContractDomainEquipmentDefinition(item)
+    if (!definition || definition.slot !== item?.slot) return
+    const target = entries[definition.collection]
+    if (definition.identity === 'relic') target.relic.push(definition.definitionId)
+    else {
+      target.core.push(definition.definitionId)
+      if (definition.identity === 'boss-core-replacement') target.replacement = definition.definitionId
+    }
+  })
+  return Object.freeze({
+    beast: freezeBeastContractDomainLoadout('beast', entries.beast.core, entries.beast.relic, entries.beast.replacement),
+    domain: freezeBeastContractDomainLoadout('domain', entries.domain.core, entries.domain.relic, entries.domain.replacement),
+  })
+}
+
+export const getBeastContractDomainEquipmentPresentation = (templateId?: string): BeastContractDomainEquipmentPresentation | null => {
+  const definition = templateId ? BEAST_CONTRACT_DOMAIN_BY_TEMPLATE_ID.get(templateId) : undefined
+  if (!definition) return null
+  const replacementIds = definition.slot === 'weapon'
+    ? BEAST_CONTRACT_DOMAIN_EQUIPMENT_DEFINITIONS.filter((candidate) => candidate.collection === definition.collection && candidate.slot === 'weapon' && candidate.templateId !== definition.templateId).map((candidate) => candidate.templateId)
+    : []
+  return Object.freeze({
+    ...definition,
+    mutuallyExclusiveTemplateIds: Object.freeze(replacementIds),
+    thresholds: definition.coreContribution > 0
+      ? Object.freeze(BEAST_CONTRACT_DOMAIN_THRESHOLDS.map((threshold) => Object.freeze({ threshold, descriptionKey: `beast-contract-domain.${definition.collection}.set.${threshold}` })))
+      : Object.freeze([]),
+  })
+}
+
+/** Slotwise legacy-save migration; all rolls and instance-owned fields are retained. */
+export const migrateBeastContractDomainEquipmentItem = (item: EquipmentItem): EquipmentItem => {
+  const existing = getBeastContractDomainEquipmentDefinition(item)
+  if (existing) {
+    return {
+      ...item,
+      name: existing.name,
+      setId: existing.coreContribution ? (existing.collection === 'beast' ? 'beast-king-pardon' : 'blue-crystal-contract') : undefined,
+      modifiers: item.modifiers.filter((modifier) => existing.collection === 'beast'
+        ? !modifier.type.startsWith('beast-')
+        : modifier.type !== 'field-duration' && modifier.type !== 'field-end-burst'),
+    }
+  }
+  // Only the explicitly catalogued campaign 3/4 Boss bows are V2 core
+  // replacements. Other stable Boss weapons must never be inferred from their
+  // legacy setId or affix, even when those labels overlap an old broad set.
+  if (item.equipmentId?.startsWith('boss-legacy-weapon-')) return item
+  if (item.rarity !== 'legacy') return item
+  const collection = item.setId === 'beast-king-pardon' || item.affix === '兽王契约' || item.affix === '兽王赦令'
+    ? 'beast'
+    : item.setId === 'blue-crystal-contract' || item.affix === '契约领域' || item.affix === '蓝晶契约'
+      ? 'domain'
+      : undefined
+  if (!collection) return item
+  const templateId = createBeastContractDomainTemplateId(collection, item.slot)
+  const definition = BEAST_CONTRACT_DOMAIN_BY_TEMPLATE_ID.get(templateId)
+  if (!definition) return item
+  return {
+    ...item,
+    equipmentId: templateId,
+    name: definition.name,
+    affix: collection === 'beast' ? '兽王契约' : '契约领域',
+    buildTag: collection === 'beast' ? 'beast' : 'control',
+    setId: definition.coreContribution ? (collection === 'beast' ? 'beast-king-pardon' : 'blue-crystal-contract') : undefined,
+    modifiers: item.modifiers.filter((modifier) => collection === 'beast'
+      ? !modifier.type.startsWith('beast-')
+      : modifier.type !== 'field-duration' && modifier.type !== 'field-end-burst'),
+  }
+}
+
+/** Backward-compatible loadout selector name; template presentation is below. */
+export const getDeathBloodLoadoutPresentation = getDeathBloodLoadoutSnapshot
 
 export const createEmptyEquipmentMaterials = (): EquipmentMaterialInventory => ({
   ironScraps: 0,
@@ -253,6 +521,108 @@ const BUILD_AFFIXES: Record<SkillBuildTag | 'general', Partial<Record<EquipmentR
   },
 }
 
+const BUILD_CANDIDATE_TAGS: Record<SkillBuildTag | 'general', readonly EquipmentCandidateTag[]> = {
+  pierce: ['pierce', 'death', 'heavy'],
+  spread: ['blood', 'bleed', 'scatter', 'knockback'],
+  control: ['area'],
+  beast: ['beast'],
+  general: ['defense'],
+}
+
+/** Exact asset-data classification. Do not replace this with label substring checks. */
+const AFFIX_CANDIDATE_TAGS: Record<string, readonly EquipmentCandidateTag[]> = {
+  '锐锋': ['critical', 'precision'],
+  '裂骨箭头': ['armor-break'],
+  '贯通残响': ['pierce', 'heavy', 'armor-break'],
+  '死契箭线': ['death', 'pierce'],
+  '死契处刑线': ['death', 'pierce', 'inheritance'],
+  '审判之弦': ['critical', 'precision', 'holy', 'inheritance'],
+  '密集羽簇': ['scatter', 'knockback'],
+  '扇面扩张': ['scatter'],
+  '多重尾羽': ['scatter', 'knockback'],
+  '战场封锁': ['armor-break', 'knockback', 'trap', 'explosion'],
+  '血羽封场': ['blood', 'bleed', 'life-steal-resistance', 'inheritance'],
+  '千羽王令': ['blood', 'bleed', 'scatter', 'inheritance'],
+  '滞留法纹': ['area', 'ice', 'stun'],
+  '蓝晶触媒': ['blue-crystal', 'water', 'lightning'],
+  '扩张法阵': ['area'],
+  '滞留回响': ['area', 'poison'],
+  '契约领域': ['area', 'inheritance'],
+  '禁域审判': ['fire', 'lightning', 'holy', 'endgame-fire', 'inheritance'],
+  '兽群呼应': ['beast'],
+  '猎兽齿印': ['beast'],
+  '野性共鸣': ['beast'],
+  '守护印记': ['beast', 'defense'],
+  '兽王契约': ['beast', 'inheritance'],
+  '万兽赦令': ['beast', 'inheritance'],
+  '蓝晶契约': ['blue-crystal', 'water', 'lightning'],
+  '处刑准备': ['death', 'pierce'],
+  '死契回响': ['death', 'pierce'],
+  '赦免印记': ['defense', 'inheritance'],
+  '终局赦令': ['endgame-fire', 'cross-build-legacy', 'inheritance'],
+}
+
+const SET_CANDIDATE_TAGS: Record<EquipmentSetId, readonly EquipmentCandidateTag[]> = {
+  'death-contract-executioner': ['death', 'pierce', 'heavy', 'armor-break', 'set-piece'],
+  'bloodfeather-ranger': ['blood', 'bleed', 'scatter', 'knockback', 'life-steal-resistance', 'set-piece'],
+  'beast-king-pardon': ['beast', 'set-piece'],
+  'blue-crystal-contract': ['blue-crystal', 'water', 'lightning', 'area', 'set-piece'],
+}
+
+export type EquipmentCandidateDescriptor = {
+  rarity: EquipmentRarity
+  buildTag: SkillBuildTag | 'general'
+  affix: string
+  setId?: EquipmentSetId
+  campaign?: number
+}
+
+export const getEquipmentCandidateTags = (candidate: EquipmentCandidateDescriptor): readonly EquipmentCandidateTag[] => {
+  const tags = new Set<EquipmentCandidateTag>([
+    ...BUILD_CANDIDATE_TAGS[candidate.buildTag],
+    ...(AFFIX_CANDIDATE_TAGS[candidate.affix] ?? []),
+    ...(candidate.setId ? SET_CANDIDATE_TAGS[candidate.setId] : []),
+  ])
+  if (candidate.rarity === 'legacy') {
+    tags.add('inheritance')
+    tags.add('core-affix')
+    tags.add('cross-build-legacy')
+  }
+  if (candidate.rarity === 'legendary') {
+    tags.add('legendary')
+    tags.add('cross-build-legacy')
+  }
+  if (candidate.campaign === 10 && candidate.affix === '禁域审判') {
+    tags.add('endgame-fire')
+  }
+  return [...tags]
+}
+
+type TaggedEquipmentCandidate = {
+  buildTag: SkillBuildTag | 'general'
+  tags: readonly EquipmentCandidateTag[]
+  campaign: number
+  weight: number
+}
+
+const getEquipmentCandidateWeightMultiplier = (
+  candidate: TaggedEquipmentCandidate,
+  rules: readonly EquipmentCandidateWeightRule[] = [],
+  preferredBuildTag?: SkillBuildTag,
+) => {
+  const bonus = rules.reduce((total, rule) => {
+    const tagMatches = rule.appliesToAllLegalCandidates || rule.tags.some((tag) => candidate.tags.includes(tag))
+    if (!tagMatches || (rule.campaign !== undefined && rule.campaign !== candidate.campaign) || (rule.buildTag && candidate.buildTag !== rule.buildTag)) {
+      return total
+    }
+    if (rule.requiresOffBuild && (!preferredBuildTag || candidate.buildTag === preferredBuildTag || candidate.buildTag === 'general')) {
+      return total
+    }
+    return total + Math.max(0, rule.percent)
+  }, 0)
+  return 1 + bonus / 100
+}
+
 const SLOT_BASE_NAMES: Record<EquipmentSlot, string[]> = {
   weapon: ['契约弓', '处刑长弓', '蓝晶猎弓'],
   helmet: ['猎手兜帽', '死契面罩', '蓝晶头盔'],
@@ -267,6 +637,199 @@ const SLOT_BASE_NAMES: Record<EquipmentSlot, string[]> = {
   cloak: ['影羽披风', '死契斗篷', '巡林披风'],
   necklace: ['蓝晶项链', '赦免吊坠', '猎魂坠饰'],
 }
+
+/**
+ * `baseName` remains part of the historical candidate/equipment-id shape, but
+ * it is no longer a player-facing name input. The display identity is fixed
+ * at rarity + slot + build + core affix, so rolls and candidate selection can
+ * vary without producing a different item name for the same template.
+ */
+export type EquipmentTemplateIdentity = Pick<EquipmentCandidateDescriptor, 'rarity' | 'buildTag' | 'affix'> & {
+  slot: EquipmentSlot
+}
+
+export type EquipmentTemplateDropSource = 'normal' | 'elite' | 'boss' | 'boss-legacy'
+
+export type EquipmentTemplatePresentation = EquipmentTemplateIdentity & {
+  templateId: string
+  name: string
+  description: string
+  dropSources: readonly EquipmentTemplateDropSource[]
+  /** References the existing source/tier/difficulty rarity tables; it is not a second probability calculation. */
+  dropProbabilityRule: 'existing-source-tier-difficulty-rarity-tables'
+}
+
+export type EquipmentTemplateAttributeRange = {
+  statId: keyof EquipmentBonus
+  label: string
+  unit: 'flat' | 'percent' | 'seconds' | 'count'
+  min: number
+  max: number
+  display: string
+}
+
+export type EquipmentTemplateCoreAffixEffect = {
+  effectId: string
+  description: string
+}
+
+export type EquipmentSetEffectPresentation = {
+  statId: keyof EquipmentBonus
+  label: string
+  unit: EquipmentTemplateAttributeRange['unit']
+  value: number
+  display: string
+}
+
+export type EquipmentSetThresholdPresentation = {
+  threshold: number
+  effects: readonly EquipmentSetEffectPresentation[]
+  description: string
+  /** Stable copy key for collections whose effects are runtime-driven. */
+  descriptionKey?: string
+}
+
+export type EquipmentSetPresentation = {
+  setId: EquipmentSetId
+  name: string
+  thresholds: readonly EquipmentSetThresholdPresentation[]
+}
+
+/** Read-only identity contract for the fixed Death Contract / Bloodfeather directory. */
+export type DeathBloodEquipmentPresentation = {
+  definitionId: string
+  templateId: string
+  collection: DeathBloodCollection
+  identity: DeathBloodEquipmentDefinition['identity']
+  coreContribution: 0 | 1
+  coreSlot?: EquipmentSlot
+  /** Same-collection weapon IDs cannot be equipped together in the real slot model. */
+  mutuallyExclusiveTemplateIds: readonly string[]
+  setPresentation: EquipmentSetPresentation | null
+}
+
+/**
+ * Warehouse-only display contract. It resolves exclusively through stable
+ * template IDs and the same contribution rules used by the runtime loadout.
+ */
+export type WarehouseEquipmentSetPresentation = {
+  templateId?: string
+  coreContribution: 0 | 1
+  setPresentation: EquipmentSetPresentation | null
+}
+
+export type EquipmentTemplateMonsterSource = {
+  category: 'normal' | 'elite' | 'boss'
+  /** One to three concrete names, or the documented category label when the actual pool is larger. */
+  names: readonly string[]
+  actualMonsterCount: number
+  presentation: 'names' | 'category'
+}
+
+/**
+ * Read-only codex contract. All values are derived from the same formulas and
+ * source branches used by real equipment creation; it never participates in
+ * candidate weighting, rolling, or inventory mutation.
+ */
+export type EquipmentTemplateCodexPresentation = EquipmentTemplatePresentation & {
+  levelRange: {
+    min: number
+    max: number
+  }
+  attributeRanges: readonly EquipmentTemplateAttributeRange[]
+  coreAffixEffects: readonly EquipmentTemplateCoreAffixEffect[]
+  monsterSources: readonly EquipmentTemplateMonsterSource[]
+  /** Null means this template has no real set bonus in the current summary rule. */
+  setPresentation: EquipmentSetPresentation | null
+  /** Present only for a stable directory member; no setId/name inference. */
+  deathBloodPresentation?: DeathBloodEquipmentPresentation
+}
+
+const EQUIPMENT_TEMPLATE_SLOT_NAMES: Record<EquipmentSlot, string> = {
+  weapon: '猎行弓',
+  helmet: '巡猎盔',
+  chest: '守约胸甲',
+  shoulders: '望风护肩',
+  wrists: '弦卫护腕',
+  hands: '逐猎手套',
+  legs: '远行腿甲',
+  boots: '踏迹战靴',
+  ring1: '誓约戒指',
+  ring2: '回响指环',
+  cloak: '夜行披风',
+  necklace: '星痕坠饰',
+}
+
+const EQUIPMENT_TEMPLATE_RARITY_PREFIX: Record<EquipmentRarity, string> = {
+  broken: '残损',
+  common: '制式',
+  fine: '精工',
+  rare: '秘纹',
+  epic: '史诗',
+  legacy: '传承',
+  legendary: '传奇',
+}
+
+const EQUIPMENT_TEMPLATE_DROP_SOURCES: Record<EquipmentRarity, readonly EquipmentTemplateDropSource[]> = {
+  broken: ['normal', 'elite'],
+  common: ['normal', 'elite'],
+  fine: ['normal', 'elite'],
+  rare: ['normal', 'elite', 'boss'],
+  epic: ['normal', 'elite', 'boss'],
+  legacy: ['elite', 'boss', 'boss-legacy'],
+  legendary: ['normal', 'elite', 'boss'],
+}
+
+const getEquipmentTemplateKey = ({ rarity, slot, buildTag, affix }: EquipmentTemplateIdentity) => (
+  `${rarity}:${slot}:${buildTag}:${affix}`
+)
+
+const getTemplateBuildTags = (rarity: EquipmentRarity): Array<SkillBuildTag | 'general'> => (
+  rarity === 'broken' || rarity === 'common' || rarity === 'fine'
+    ? ['general']
+    : ['pierce', 'spread', 'control', 'beast', 'general']
+)
+
+const createStandardEquipmentTemplatePresentation = (
+  identity: EquipmentTemplateIdentity,
+): EquipmentTemplatePresentation => {
+  const { rarity, slot, buildTag, affix } = identity
+  const templateId = `equipment-template-${rarity}-${slot}-${buildTag}-${affix}`
+  const fixedDefinition = BEAST_CONTRACT_DOMAIN_BY_TEMPLATE_ID.get(templateId)
+  const rarityPrefix = EQUIPMENT_TEMPLATE_RARITY_PREFIX[rarity]
+  // Display-only de-duplication. The stable affix and template identity stay unchanged.
+  const displayAffix = affix === rarityPrefix ? '常规' : affix
+  const name = fixedDefinition?.name ?? `${rarityPrefix}·${displayAffix}${EQUIPMENT_TEMPLATE_SLOT_NAMES[slot]}`
+  return {
+    ...identity,
+    templateId,
+    name,
+    description: `${EQUIPMENT_RARITY_LABELS[rarity]}${EQUIPMENT_SLOT_LABELS[slot]}固定模板「${name}」。核心词缀「${affix}」；属性、评分与强化前 roll 按既有掉落规则浮动。`,
+    dropSources: EQUIPMENT_TEMPLATE_DROP_SOURCES[rarity],
+    dropProbabilityRule: 'existing-source-tier-difficulty-rarity-tables',
+  }
+}
+
+const STANDARD_EQUIPMENT_TEMPLATE_CATALOG = Object.freeze(
+  EQUIPMENT_SLOTS.flatMap((slot) => (
+    (Object.keys(EQUIPMENT_RARITY_LABELS) as EquipmentRarity[]).flatMap((rarity) => (
+      getTemplateBuildTags(rarity).flatMap((buildTag) => (
+        (BUILD_AFFIXES[buildTag][rarity] ?? []).map((affix) => (
+          createStandardEquipmentTemplatePresentation({ rarity, slot, buildTag, affix })
+        ))
+      ))
+    ))
+  )),
+)
+
+const STANDARD_EQUIPMENT_TEMPLATE_BY_KEY = new Map(
+  STANDARD_EQUIPMENT_TEMPLATE_CATALOG.map((template) => [getEquipmentTemplateKey(template), template]),
+)
+
+/** Resolves the immutable display data without considering random base-name or roll outcomes. */
+export const getEquipmentTemplatePresentation = (identity: EquipmentTemplateIdentity) => (
+  STANDARD_EQUIPMENT_TEMPLATE_BY_KEY.get(getEquipmentTemplateKey(identity))
+)
 
 const LEGACY_WEAPON_EQUIPMENT_META: Record<WeaponId, {
   rarity: EquipmentRarity
@@ -362,10 +925,6 @@ export const getUnlockedEquipmentSlots = (level: number) => {
     .flatMap((entry) => entry.slots)
 }
 
-export const getEffectiveUnlockedEquipmentSlots = (level: number, extraSlots: EquipmentSlot[] = []) => {
-  return Array.from(new Set([...getUnlockedEquipmentSlots(level), ...extraSlots]))
-}
-
 export const getEquipmentBonusSummary = (equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>) => {
   const summary = Object.values(equippedItems).reduce<Required<EquipmentBonus>>((summary, item) => {
     if (!item) {
@@ -406,40 +965,13 @@ export const getEquipmentBonusSummary = (equippedItems: Partial<Record<Equipment
     pierceProjectileBonus: 0,
   })
 
-  const setCounts = getEquipmentSetCounts(equippedItems)
-  const deathContract = setCounts['death-contract-executioner'] ?? 0
-  if (deathContract >= 2) {
-    summary.skillDamageMultiplier += 0.08
-  }
-  if (deathContract >= 4) {
-    summary.pierceProjectileBonus += 1
-  }
+  // Death/Blood 2/4 effects are no longer generic stat bonuses.  Their
+  // combat consumers read the fixed directory snapshot below, which prevents
+  // broad legacy setId items from accidentally activating the new collections.
 
-  const bloodfeather = setCounts['bloodfeather-ranger'] ?? 0
-  if (bloodfeather >= 2) {
-    summary.spreadProjectileBonus += 1
-  }
-  if (bloodfeather >= 4) {
-    summary.skillDamageMultiplier += 0.06
-  }
-
-  const beastKing = setCounts['beast-king-pardon'] ?? 0
-  if (beastKing >= 2) {
-    summary.beastDamageMultiplier += 0.12
-    summary.skillCooldownMultiplier += 0.03
-  }
-  if (beastKing >= 4) {
-    summary.maxHp += 18
-  }
-
-  const blueCrystal = setCounts['blue-crystal-contract'] ?? 0
-  if (blueCrystal >= 2) {
-    summary.pickupRange += 22
-    summary.crystalXpMultiplier += 0.12
-  }
-  if (blueCrystal >= 4) {
-    summary.dropRateMultiplier += 0.08
-  }
+  // Beast Contract / Contract Domain are dynamic 2/3/5 combat systems.
+  // Their fixed-directory engine consumers must not stack with the retired
+  // generic 2/4 stat summary.
 
   return summary
 }
@@ -596,6 +1128,22 @@ export const getEquipmentUpgradeCost = (item: EquipmentItem): EquipmentMaterialI
   }
 
   return cost
+}
+
+/**
+ * Material costs are integral and non-negative everywhere else in this module.
+ * Keep zero-cost material keys at zero while rounding scaled paid keys with the
+ * same nearest-integer policy used by addMaterial.
+ */
+export const scaleEquipmentMaterialCost = (
+  cost: EquipmentMaterialInventory,
+  multiplier: number,
+): EquipmentMaterialInventory => {
+  const scaled = createEmptyEquipmentMaterials()
+  EQUIPMENT_MATERIAL_IDS.forEach((id) => {
+    addMaterial(scaled, id, (cost[id] ?? 0) * Math.max(0, multiplier))
+  })
+  return scaled
 }
 
 export const getEquipmentUpgradeGoldCost = (item: EquipmentItem) => {
@@ -799,10 +1347,16 @@ export const applyDiscoveredEquipmentCandidateWeights = <T extends { equipmentId
 
 type HighRarityEquipmentCandidate = {
   equipmentId: string
+  templateId: string
+  rarity: Extract<EquipmentRarity, 'legacy' | 'legendary'>
   slot: EquipmentSlot
   buildTag: SkillBuildTag | 'general'
   affix: string
   baseName: string
+  name: string
+  description: string
+  dropSources: readonly EquipmentTemplateDropSource[]
+  tags: readonly EquipmentCandidateTag[]
   weight: number
 }
 
@@ -814,20 +1368,34 @@ export const createHighRarityEquipmentCandidatePool = (
   preferredBuildTag?: SkillBuildTag,
   discoveredEquipmentIds: readonly string[] = [],
   talentBuildWeightBonuses: Partial<Record<SkillBuildTag, number>> = {},
+  candidateWeightRules: readonly EquipmentCandidateWeightRule[] = [],
+  campaign = 1,
 ): HighRarityEquipmentCandidate[] => {
   const candidates = slots.flatMap((slot) => HIGH_RARITY_BUILD_TAGS.flatMap((buildTag) => {
     const affixes = BUILD_AFFIXES[buildTag][rarity] ?? BUILD_AFFIXES.general[rarity] ?? ['契约']
     const baseNames = SLOT_BASE_NAMES[slot]
     const buildWeight = preferredBuildTag && buildTag === preferredBuildTag ? 1.62 : buildTag === 'general' ? 0.65 : 1
     const talentWeightMultiplier = buildTag === 'general' ? 1 : 1 + Math.max(0, talentBuildWeightBonuses[buildTag] ?? 0) / 100
-    return affixes.flatMap((affix) => baseNames.map((baseName) => ({
-      equipmentId: `equipment-${rarity}-${slot}-${buildTag}-${affix}-${baseName}`,
-      slot,
-      buildTag,
-      affix,
-      baseName,
-      weight: buildWeight * talentWeightMultiplier,
-    })))
+    return affixes.flatMap((affix) => {
+      const presentation = getEquipmentTemplatePresentation({ rarity, slot, buildTag, affix })
+      if (!presentation) return []
+      const setId = getEquipmentSetId(rarity, buildTag, affix)
+      const tags = getEquipmentCandidateTags({ rarity, buildTag, affix, setId, campaign })
+      return baseNames.map((baseName) => ({
+        equipmentId: `equipment-${rarity}-${slot}-${buildTag}-${affix}-${baseName}`,
+        templateId: presentation.templateId,
+        rarity,
+        slot,
+        buildTag,
+        affix,
+        baseName,
+        name: presentation.name,
+        description: presentation.description,
+        dropSources: presentation.dropSources,
+        tags,
+        weight: buildWeight * talentWeightMultiplier * getEquipmentCandidateWeightMultiplier({ buildTag, tags, campaign, weight: 1 }, candidateWeightRules, preferredBuildTag),
+      }))
+    })
   }))
 
   return applyDiscoveredEquipmentCandidateWeights(candidates, discoveredEquipmentIds)
@@ -849,6 +1417,84 @@ const getBuildTag = (rarity: EquipmentRarity, preferredBuildTag?: SkillBuildTag)
     ['control', 2],
     ['general', 1],
   ])
+}
+
+const BUILD_SELECTION_WEIGHTS: Record<SkillBuildTag | 'general', number> = {
+  pierce: 3,
+  spread: 3,
+  beast: 3,
+  control: 2,
+  general: 1,
+}
+
+type StandardEquipmentCandidate = {
+  equipmentId: string
+  templateId: string
+  rarity: EquipmentRarity
+  slot: EquipmentSlot
+  buildTag: SkillBuildTag | 'general'
+  affix: string
+  baseName: string
+  name: string
+  description: string
+  dropSources: readonly EquipmentTemplateDropSource[]
+  tags: readonly EquipmentCandidateTag[]
+  weight: number
+}
+
+const getStandardEquipmentBuildWeight = (
+  rarity: EquipmentRarity,
+  buildTag: SkillBuildTag | 'general',
+  preferredBuildTag?: SkillBuildTag,
+) => {
+  if (rarity === 'broken' || rarity === 'common' || rarity === 'fine') {
+    return buildTag === 'general' ? 1 : 0
+  }
+  const base = BUILD_SELECTION_WEIGHTS[buildTag] / 12
+  return preferredBuildTag
+    ? (buildTag === preferredBuildTag ? 0.62 : 0) + base * 0.38
+    : base
+}
+
+/** Pure candidate pool used by runtime selection and focused core verification. */
+export const createStandardEquipmentCandidatePool = (
+  rarity: EquipmentRarity,
+  slots: EquipmentSlot[],
+  preferredBuildTag: SkillBuildTag | undefined,
+  rules: readonly EquipmentCandidateWeightRule[],
+  campaign: number,
+  talentBuildWeightBonuses: Partial<Record<SkillBuildTag, number>> = {},
+) => {
+  const buildTags = rarity === 'broken' || rarity === 'common' || rarity === 'fine'
+    ? ['general'] as const
+    : HIGH_RARITY_BUILD_TAGS
+  return slots.flatMap((slot) => buildTags.flatMap((buildTag) => {
+    const affixes = BUILD_AFFIXES[buildTag][rarity] ?? BUILD_AFFIXES.general[rarity] ?? ['契约']
+    const baseNames = SLOT_BASE_NAMES[slot]
+    const buildWeight = getStandardEquipmentBuildWeight(rarity, buildTag, preferredBuildTag)
+    return affixes.flatMap((affix) => {
+      const presentation = getEquipmentTemplatePresentation({ rarity, slot, buildTag, affix })
+      if (!presentation) return []
+      const setId = getEquipmentSetId(rarity, buildTag, affix)
+      const tags = getEquipmentCandidateTags({ rarity, buildTag, affix, setId, campaign })
+      const weight = buildWeight / Math.max(1, slots.length) / Math.max(1, affixes.length) / Math.max(1, baseNames.length)
+      const talentWeightMultiplier = buildTag === 'general' ? 1 : 1 + Math.max(0, talentBuildWeightBonuses[buildTag] ?? 0) / 100
+      return baseNames.map((baseName) => ({
+        equipmentId: `equipment-${rarity}-${slot}-${buildTag}-${affix}-${baseName}`,
+        templateId: presentation.templateId,
+        rarity,
+        slot,
+        buildTag,
+        affix,
+        baseName,
+        name: presentation.name,
+        description: presentation.description,
+        dropSources: presentation.dropSources,
+        tags,
+        weight: weight * talentWeightMultiplier * getEquipmentCandidateWeightMultiplier({ buildTag, tags, campaign, weight }, rules, preferredBuildTag),
+      }))
+    })
+  }))
 }
 
 const createBonus = (slot: EquipmentSlot, rarity: EquipmentRarity, buildTag: SkillBuildTag | 'general', level: number): EquipmentBonus => {
@@ -910,18 +1556,18 @@ const createBonus = (slot: EquipmentSlot, rarity: EquipmentRarity, buildTag: Ski
 export const SKILL_EQUIPMENT_LINKS: Record<SkillBuildTag, EquipmentSkillModifier[]> = {
   pierce: [
     { type: 'projectile-count', familyIds: ['pierce-arrow'], amount: 1 },
-    { type: 'pierce-echo', familyIds: ['heavy-snipe', 'pierce-arrow'], everyHits: 2, damageMultiplier: 0.5, radius: 48 },
+    { type: 'pierce-echo', familyIds: ['spiral-break', 'pierce-arrow'], everyHits: 2, damageMultiplier: 0.5, radius: 48 },
     { type: 'ricochet-bounces', familyIds: ['ricochet-feather'], amount: 2 },
-    { type: 'double-line', familyIds: ['curve-return', 'heavy-snipe'], cooldownMultiplier: 1.04 },
+    { type: 'double-line', familyIds: ['curve-return', 'spiral-break'], cooldownMultiplier: 1.04 },
     { type: 'projectile-count', familyIds: ['hunter-mark', 'curve-return'], evolutionIds: ['fire-feather', 'sky-judgement'], amount: 1 },
     { type: 'spread-slow', familyIds: ['hunter-mark', 'ricochet-feather', 'curve-return'], slowFactor: 0.18, duration: 0.85 },
+    { type: 'spread-slow', familyIds: ['spiral-break'], slowFactor: 0.2, duration: 1 },
   ],
   spread: [
     { type: 'spread-speed', familyIds: ['quick-triple'], multiplier: 1.18 },
     { type: 'spread-angle', familyIds: ['fan-burst'], multiplier: 1.16 },
     { type: 'projectile-count', familyIds: ['arrow-screen', 'afterimage-salvo'], amount: 1 },
-    { type: 'spread-slow', familyIds: ['spiral-break', 'arrow-screen'], slowFactor: 0.2, duration: 1 },
-    { type: 'spread-double-next', familyIds: ['spiral-break'], everyCasts: 3 },
+    { type: 'spread-slow', familyIds: ['arrow-screen'], slowFactor: 0.2, duration: 1 },
   ],
   control: [
     { type: 'field-duration', familyIds: ['arrow-rain', 'pit-spikes', 'rift-storm'], multiplier: 1.18 },
@@ -955,7 +1601,8 @@ const appendSkillSpecificModifier = (
   ]
 }
 
-const createSkillModifiers = (
+/** Deterministic modifiers guaranteed by a template's rarity, build, and core affix. */
+const createCoreAffixSkillModifiers = (
   rarity: EquipmentRarity,
   buildTag: SkillBuildTag | 'general',
   affix: string,
@@ -970,18 +1617,18 @@ const createSkillModifiers = (
     ]
 
     if (affix.includes('贯通') || rarity === 'epic') {
-      modifiers.push({ type: 'pierce-echo', familyIds: ['pierce-arrow', 'heavy-snipe'], everyHits: 3, damageMultiplier: 0.45, radius: 42 })
+      modifiers.push({ type: 'pierce-echo', familyIds: ['pierce-arrow', 'spiral-break'], everyHits: 3, damageMultiplier: 0.45, radius: 42 })
     }
 
     if (affix.includes('处刑') || rarity === 'legacy') {
-      modifiers.push({ type: 'elite-parallel-line', familyIds: ['pierce-arrow', 'heavy-snipe'], damageMultiplier: 0.55 })
+      modifiers.push({ type: 'elite-parallel-line', familyIds: ['pierce-arrow', 'spiral-break'], damageMultiplier: 0.55 })
     }
 
     if (affix.includes('审判') || rarity === 'legendary') {
-      modifiers.push({ type: 'double-line', familyIds: ['pierce-arrow', 'heavy-snipe', 'curve-return'], cooldownMultiplier: 1.08 })
+      modifiers.push({ type: 'double-line', familyIds: ['pierce-arrow', 'spiral-break', 'curve-return'], cooldownMultiplier: 1.08 })
     }
 
-    return appendSkillSpecificModifier(modifiers, rarity, 'pierce')
+    return modifiers
   }
 
   if (buildTag === 'spread') {
@@ -1008,7 +1655,7 @@ const createSkillModifiers = (
       modifiers.push({ type: 'spread-double-next', buildTag: 'spread', everyCasts: 3 })
     }
 
-    return appendSkillSpecificModifier(modifiers, rarity, 'spread')
+    return modifiers
   }
 
   if (buildTag === 'control') {
@@ -1024,7 +1671,7 @@ const createSkillModifiers = (
       modifiers.push({ type: 'field-end-burst', buildTag: 'control', damageMultiplier: rarity === 'legendary' ? 1.25 : 0.85, radiusMultiplier: rarity === 'legendary' ? 1.18 : 1 })
     }
 
-    return appendSkillSpecificModifier(modifiers, rarity, 'control')
+    return modifiers
   }
 
   if (buildTag === 'beast') {
@@ -1055,13 +1702,23 @@ const createSkillModifiers = (
       modifiers.push({ type: 'beast-extra-summon', triggerSlot: 2, duration: 6 })
     }
 
-    return appendSkillSpecificModifier(modifiers, rarity, 'beast')
+    return modifiers
   }
 
   return RARITY_SCORE[rarity] >= RARITY_SCORE.legacy
     ? [{ type: 'projectile-count', amount: 1 }]
     : []
 }
+
+const createSkillModifiers = (
+  rarity: EquipmentRarity,
+  buildTag: SkillBuildTag | 'general',
+  affix: string,
+) => (
+  buildTag === 'general'
+    ? createCoreAffixSkillModifiers(rarity, buildTag, affix)
+    : appendSkillSpecificModifier(createCoreAffixSkillModifiers(rarity, buildTag, affix), rarity, buildTag)
+)
 
 const getEquipmentSetId = (rarity: EquipmentRarity, buildTag: SkillBuildTag | 'general', affix: string): EquipmentSetId | undefined => {
   if (RARITY_SCORE[rarity] < RARITY_SCORE.epic) {
@@ -1074,13 +1731,6 @@ const getEquipmentSetId = (rarity: EquipmentRarity, buildTag: SkillBuildTag | 'g
   if (buildTag === 'spread' || affix.includes('血羽') || affix.includes('千羽')) {
     return 'bloodfeather-ranger'
   }
-  if (buildTag === 'beast' || affix.includes('兽王') || affix.includes('万兽')) {
-    return 'beast-king-pardon'
-  }
-  if (affix.includes('蓝晶') || buildTag === 'control') {
-    return 'blue-crystal-contract'
-  }
-
   return undefined
 }
 
@@ -1151,6 +1801,26 @@ export const BOSS_LEGACY_WEAPON_POOL: Array<{
   { campaign: 10, name: '龙审焚天弓', affix: '禁域审判', buildTag: 'control', setId: 'blue-crystal-contract', bonus: { attackDamage: 28, attackRange: 36, attackPierce: 1, fieldRadiusMultiplier: 0.18, skillDamageMultiplier: 0.14 } },
 ]
 
+/**
+ * Exportable player-facing directory. Standard entries are keyed by the stable
+ * template identity above; Boss entries deliberately retain their approved
+ * inheritance weapon names instead of being renamed through the generic path.
+ */
+export const EQUIPMENT_TEMPLATE_CATALOG: readonly EquipmentTemplatePresentation[] = Object.freeze([
+  ...STANDARD_EQUIPMENT_TEMPLATE_CATALOG,
+  ...BOSS_LEGACY_WEAPON_POOL.map((weapon) => ({
+    templateId: `boss-legacy-weapon-${weapon.campaign}`,
+    slot: 'weapon' as const,
+    rarity: 'legacy' as const,
+    buildTag: weapon.buildTag,
+    affix: weapon.affix,
+    name: weapon.name,
+    description: `第 ${weapon.campaign} 关 Boss 专属传承武器「${weapon.name}」。核心词缀「${weapon.affix}」，保留既有传承掉落与重铸语义。`,
+    dropSources: ['boss-legacy'] as const,
+    dropProbabilityRule: 'existing-source-tier-difficulty-rarity-tables' as const,
+  })),
+])
+
 export const getBossLegacyWeaponForCampaign = (campaign: number) => {
   return BOSS_LEGACY_WEAPON_POOL.find((weapon) => weapon.campaign === campaign) ?? BOSS_LEGACY_WEAPON_POOL[0]
 }
@@ -1160,6 +1830,7 @@ const createBossLegacyWeaponDrop = (
   createId: () => string,
   preferredBuildTag?: SkillBuildTag,
   rarityOverride?: EquipmentRarity,
+  options: { locked?: boolean; autoLockHighRarity?: boolean; autoLockLegacyLegendary?: boolean } = {},
 ) => {
   const campaign = getCampaignIndex(level)
   const weapon = getBossLegacyWeaponForCampaign(campaign)
@@ -1170,7 +1841,7 @@ const createBossLegacyWeaponDrop = (
   const baseBonus = createBonus('weapon', rarity, buildTag, level)
   const bonus: EquipmentBonus = applyEquipmentRolls({ ...baseBonus, ...weapon.bonus }, 'weapon', rolls)
 
-  return {
+  return migrateBeastContractDomainEquipmentItem({
     id: `equipment-boss-weapon-${campaign}-${createId()}`,
     equipmentId: `boss-legacy-weapon-${campaign}`,
     slot: 'weapon',
@@ -1183,14 +1854,17 @@ const createBossLegacyWeaponDrop = (
     score,
     bonus,
     modifiers: createSkillModifiers(rarity, buildTag, weapon.affix),
-    locked: true,
+    locked: options.locked ?? Boolean(
+      (options.autoLockHighRarity && RARITY_SCORE[rarity] >= RARITY_SCORE.epic)
+      || (options.autoLockLegacyLegendary && (rarity === 'legacy' || rarity === 'legendary')),
+    ),
     lockedModifierIndexes: [],
     acquiredLevel: level,
     isNew: true,
     upgradeLevel: 0,
     source: 'dungeon',
     rolls,
-  } satisfies EquipmentItem
+  } satisfies EquipmentItem)
 }
 
 type EquipmentRollMultipliers = {
@@ -1272,6 +1946,512 @@ const applyEquipmentRolls = (
   return rolled
 }
 
+const EQUIPMENT_TEMPLATE_ATTRIBUTE_META: Record<keyof EquipmentBonus, {
+  label: string
+  unit: EquipmentTemplateAttributeRange['unit']
+}> = {
+  maxHp: { label: '最大生命', unit: 'flat' },
+  attackDamage: { label: '攻击', unit: 'flat' },
+  attackIntervalOffset: { label: '攻击间隔', unit: 'seconds' },
+  attackRange: { label: '攻击距离', unit: 'flat' },
+  attackPierce: { label: '穿透次数', unit: 'count' },
+  speed: { label: '移动速度', unit: 'flat' },
+  skillDamageMultiplier: { label: '技能伤害', unit: 'percent' },
+  skillCooldownMultiplier: { label: '技能冷却缩短', unit: 'percent' },
+  crystalXpMultiplier: { label: '蓝晶经验', unit: 'percent' },
+  pickupRange: { label: '拾取范围', unit: 'flat' },
+  dropRateMultiplier: { label: '额外装备掉落触发率', unit: 'percent' },
+  beastDamageMultiplier: { label: '野兽伤害', unit: 'percent' },
+  fieldRadiusMultiplier: { label: '场域范围', unit: 'percent' },
+  spreadProjectileBonus: { label: '散射箭矢数量', unit: 'count' },
+  pierceProjectileBonus: { label: '穿透箭矢数量', unit: 'count' },
+}
+
+const formatTemplateNumber = (value: number) => {
+  const rounded = Number(value.toFixed(3))
+  return Number.isInteger(rounded) ? `${rounded}` : `${rounded}`
+}
+
+const formatTemplateAttributeValue = (
+  value: number,
+  unit: EquipmentTemplateAttributeRange['unit'],
+) => {
+  if (unit === 'percent') {
+    return `${value >= 0 ? '+' : ''}${formatTemplateNumber(value * 100)}%`
+  }
+  if (unit === 'seconds') {
+    return `${value >= 0 ? '+' : ''}${formatTemplateNumber(value)} 秒`
+  }
+  return `${value >= 0 ? '+' : ''}${formatTemplateNumber(value)}`
+}
+
+const formatTemplateAttributeRange = (
+  min: number,
+  max: number,
+  unit: EquipmentTemplateAttributeRange['unit'],
+) => (
+  Math.abs(max - min) < 0.000001
+    ? formatTemplateAttributeValue(min, unit)
+    : `${formatTemplateAttributeValue(min, unit)} ～ ${formatTemplateAttributeValue(max, unit)}`
+)
+
+const getTemplateRollEndpoints = (rarity: EquipmentRarity): EquipmentRollMultipliers[] => {
+  const ranges = RARITY_ROLL_RANGES[rarity]
+  return [
+    { main: ranges.main[0], secondary: ranges.secondary[0], skillOrBuild: ranges.skillOrBuild[0] },
+    { main: ranges.main[1], secondary: ranges.secondary[1], skillOrBuild: ranges.skillOrBuild[1] },
+  ]
+}
+
+const getBossLegacyWeaponForTemplate = (template: EquipmentTemplatePresentation) => (
+  template.templateId.startsWith('boss-legacy-weapon-')
+    ? BOSS_LEGACY_WEAPON_POOL.find((weapon) => `boss-legacy-weapon-${weapon.campaign}` === template.templateId)
+    : undefined
+)
+
+const isEquipmentSourceReachableAtLevel = (
+  source: EquipmentTemplateDropSource,
+  level: number,
+) => {
+  if (source === 'normal') {
+    return !isBossLevel(level)
+  }
+  if (source === 'elite') {
+    const campaign = getCampaignIndex(level)
+    const floor = getCampaignFloor(level)
+    return isEliteLevel(level) || (campaign === 1 && floor >= 2 && floor <= 21)
+  }
+  return isBossLevel(level)
+}
+
+const getTemplateLevelRange = (template: EquipmentTemplatePresentation) => {
+  const bossLegacyWeapon = getBossLegacyWeaponForTemplate(template)
+  if (bossLegacyWeapon) {
+    const level = bossLegacyWeapon.campaign * 22
+    return { min: level, max: level }
+  }
+
+  const legalLevels = Array.from({ length: MAX_CAMPAIGN_LEVEL }, (_, index) => index + 1).filter((level) => (
+    getUnlockedEquipmentSlots(level).includes(template.slot)
+    && template.dropSources.some((source) => isEquipmentSourceReachableAtLevel(source, level))
+  ))
+  return {
+    min: legalLevels[0] ?? 1,
+    max: legalLevels.at(-1) ?? MAX_CAMPAIGN_LEVEL,
+  }
+}
+
+const getTemplateBaseBonus = (
+  template: EquipmentTemplatePresentation,
+  level: number,
+) => {
+  const baseBonus = createBonus(template.slot, template.rarity, template.buildTag, level)
+  const bossLegacyWeapon = getBossLegacyWeaponForTemplate(template)
+  return bossLegacyWeapon
+    ? { ...baseBonus, ...bossLegacyWeapon.bonus }
+    : baseBonus
+}
+
+const getTemplateAttributeRanges = (
+  template: EquipmentTemplatePresentation,
+  levelRange: { min: number; max: number },
+): readonly EquipmentTemplateAttributeRange[] => {
+  const outcomes = [levelRange.min, levelRange.max].flatMap((level) => (
+    getTemplateRollEndpoints(template.rarity).map((rolls) => (
+      applyEquipmentRolls(getTemplateBaseBonus(template, level), template.slot, rolls)
+    ))
+  ))
+  const valuesByKey = new Map<keyof EquipmentBonus, number[]>()
+  outcomes.forEach((bonus) => {
+    ;(Object.keys(bonus) as Array<keyof EquipmentBonus>).forEach((statId) => {
+      const value = bonus[statId]
+      if (typeof value !== 'number') return
+      valuesByKey.set(statId, [...(valuesByKey.get(statId) ?? []), value])
+    })
+  })
+  return Array.from(valuesByKey.entries())
+    .filter(([, values]) => values.some((value) => value !== 0))
+    .map(([statId, values]) => {
+      const min = Math.min(...values)
+      const max = Math.max(...values)
+      const meta = EQUIPMENT_TEMPLATE_ATTRIBUTE_META[statId]
+      return {
+        statId,
+        label: meta.label,
+        unit: meta.unit,
+        min,
+        max,
+        display: `${meta.label} ${formatTemplateAttributeRange(min, max, meta.unit)}`,
+      }
+    })
+}
+
+const createEquipmentSetPresentationProbe = (
+  setId: EquipmentSetId,
+  slot: EquipmentSlot,
+  index: number,
+): EquipmentItem => ({
+  id: `equipment-set-presentation-probe-${setId}-${slot}-${index}`,
+  slot,
+  rarity: 'common',
+  name: '展示探针',
+  affix: '展示探针',
+  buildTag: 'general',
+  setId,
+  level: 1,
+  score: 0,
+  bonus: {},
+  modifiers: [],
+  lockedModifierIndexes: [],
+  acquiredLevel: 1,
+  isNew: false,
+  upgradeLevel: 0,
+  source: 'system',
+})
+
+const getEquipmentSetProbeSummary = (setId: EquipmentSetId, count: number) => (
+  getEquipmentBonusSummary(Object.fromEntries(
+    EQUIPMENT_SLOTS.slice(0, count).map((slot, index) => [
+      slot,
+      createEquipmentSetPresentationProbe(setId, slot, index),
+    ]),
+  ) as Partial<Record<EquipmentSlot, EquipmentItem>>)
+)
+
+const getEquipmentSetSummaryEffects = (
+  previous: Required<EquipmentBonus>,
+  next: Required<EquipmentBonus>,
+): readonly EquipmentSetEffectPresentation[] => (
+  (Object.keys(EQUIPMENT_TEMPLATE_ATTRIBUTE_META) as Array<keyof EquipmentBonus>)
+    .flatMap((statId) => {
+      const value = next[statId] - previous[statId]
+      if (Math.abs(value) < 0.000001) return []
+      const meta = EQUIPMENT_TEMPLATE_ATTRIBUTE_META[statId]
+      return [{
+        statId,
+        label: meta.label,
+        unit: meta.unit,
+        value,
+        display: `${meta.label} ${formatTemplateAttributeValue(value, meta.unit)}`,
+      }]
+    })
+)
+
+const createEquipmentSetPresentation = (setId: EquipmentSetId): EquipmentSetPresentation => {
+  const beastDomainCollection = setId === 'beast-king-pardon'
+    ? 'beast'
+    : setId === 'blue-crystal-contract'
+      ? 'domain'
+      : undefined
+  if (beastDomainCollection) {
+    const key = `beast-contract-domain.${beastDomainCollection}.set`
+    return Object.freeze({
+      setId,
+      name: EQUIPMENT_SET_LABELS[setId],
+      thresholds: Object.freeze(BEAST_CONTRACT_DOMAIN_THRESHOLDS.map((threshold) => Object.freeze({
+        threshold,
+        effects: Object.freeze([]),
+        description: '',
+        descriptionKey: `${key}.${threshold}`,
+      }))),
+    })
+  }
+  const deathBloodCollection = setId === 'death-contract-executioner'
+    ? 'death'
+    : setId === 'bloodfeather-ranger'
+      ? 'blood'
+      : undefined
+  if (deathBloodCollection) {
+    const key = `death-blood.${deathBloodCollection}.set`
+    return Object.freeze({
+      setId,
+      name: EQUIPMENT_SET_LABELS[setId],
+      thresholds: Object.freeze([
+        Object.freeze({
+          threshold: DEATH_BLOOD_COLLECTION_THRESHOLDS.twoPiece,
+          effects: Object.freeze([]),
+          description: '',
+          descriptionKey: `${key}.two-piece`,
+        }),
+        Object.freeze({
+          threshold: DEATH_BLOOD_COLLECTION_THRESHOLDS.fourPiece,
+          effects: Object.freeze([]),
+          description: '',
+          descriptionKey: `${key}.four-piece`,
+        }),
+      ]),
+    })
+  }
+  let previous = getEquipmentSetProbeSummary(setId, 0)
+  const thresholds = EQUIPMENT_SLOTS.flatMap((_, index) => {
+    const threshold = index + 1
+    const next = getEquipmentSetProbeSummary(setId, threshold)
+    const effects = getEquipmentSetSummaryEffects(previous, next)
+    previous = next
+    return effects.length
+      ? [{
+          threshold,
+          effects: Object.freeze(effects.map((effect) => Object.freeze(effect))),
+          description: effects.map((effect) => effect.display).join('；'),
+        }]
+      : []
+  })
+  return Object.freeze({
+    setId,
+    name: EQUIPMENT_SET_LABELS[setId],
+    thresholds: Object.freeze(thresholds.map((threshold) => Object.freeze(threshold))),
+  })
+}
+
+export const EQUIPMENT_SET_PRESENTATION_CATALOG: readonly EquipmentSetPresentation[] = Object.freeze(
+  (Object.keys(EQUIPMENT_SET_LABELS) as EquipmentSetId[]).map(createEquipmentSetPresentation),
+)
+
+const EQUIPMENT_SET_PRESENTATION_BY_ID = new Map(
+  EQUIPMENT_SET_PRESENTATION_CATALOG.map((set) => [set.setId, set]),
+)
+
+/** Read-only set contract derived by differential calls to getEquipmentBonusSummary. */
+export const getEquipmentSetPresentation = (setId?: EquipmentSetId) => (
+  setId ? EQUIPMENT_SET_PRESENTATION_BY_ID.get(setId) ?? null : null
+)
+
+const deriveEquipmentTemplateSetPresentation = (template: EquipmentTemplatePresentation) => {
+  const beastDomainDefinition = BEAST_CONTRACT_DOMAIN_BY_TEMPLATE_ID.get(template.templateId)
+  if (beastDomainDefinition) {
+    return beastDomainDefinition.coreContribution > 0
+      ? getEquipmentSetPresentation(beastDomainDefinition.collection === 'beast' ? 'beast-king-pardon' : 'blue-crystal-contract')
+      : null
+  }
+  const deathBloodDefinition = DEATH_BLOOD_EQUIPMENT_BY_TEMPLATE_ID.get(template.templateId)
+  if (deathBloodDefinition) {
+    return deathBloodDefinition.identity === 'core' || deathBloodDefinition.identity === 'boss-core-replacement'
+      ? getEquipmentSetPresentation(deathBloodDefinition.collection === 'death' ? 'death-contract-executioner' : 'bloodfeather-ranger')
+      : null
+  }
+  const bossLegacyWeapon = getBossLegacyWeaponForTemplate(template)
+  const setId = bossLegacyWeapon?.setId ?? getEquipmentSetId(template.rarity, template.buildTag, template.affix)
+  return getEquipmentSetPresentation(setId)
+}
+
+const getDeathBloodMutuallyExclusiveTemplateIds = (definition: DeathBloodEquipmentDefinition) => (
+  definition.slot !== 'weapon' || definition.identity === 'excluded'
+    ? Object.freeze([] as string[])
+    : Object.freeze(DEATH_BLOOD_EQUIPMENT_DEFINITIONS
+      .filter((candidate) => candidate.collection === definition.collection && candidate.slot === 'weapon' && candidate.templateId !== definition.templateId && candidate.identity !== 'excluded')
+      .map((candidate) => candidate.templateId))
+)
+
+/** Stable directory lookup for codex/UI. It never derives identity from labels or set IDs. */
+export const getDeathBloodEquipmentPresentation = (templateId?: string): DeathBloodEquipmentPresentation | null => {
+  if (!templateId) return null
+  const definition = DEATH_BLOOD_EQUIPMENT_BY_TEMPLATE_ID.get(templateId)
+  if (!definition) return null
+  const activeSet = definition.identity === 'core' || definition.identity === 'boss-core-replacement'
+    ? getEquipmentSetPresentation(definition.collection === 'death' ? 'death-contract-executioner' : 'bloodfeather-ranger')
+    : null
+  return Object.freeze({
+    definitionId: definition.definitionId,
+    templateId: definition.templateId,
+    collection: definition.collection,
+    identity: definition.identity,
+    coreContribution: definition.identity === 'core' || definition.identity === 'boss-core-replacement' ? 1 : 0,
+    coreSlot: definition.identity === 'core' || definition.identity === 'boss-core-replacement' ? definition.slot : undefined,
+    mutuallyExclusiveTemplateIds: getDeathBloodMutuallyExclusiveTemplateIds(definition),
+    setPresentation: activeSet,
+  })
+}
+
+const EMPTY_WAREHOUSE_EQUIPMENT_SET_PRESENTATION: WarehouseEquipmentSetPresentation = Object.freeze({
+  coreContribution: 0,
+  setPresentation: null,
+})
+
+/**
+ * Warehouse set display is gated by actual count contribution. Death/Blood
+ * relics and excluded entries remain hidden despite having single-item effects.
+ */
+export const getWarehouseEquipmentSetPresentation = (
+  item?: Pick<EquipmentItem, 'equipmentId'>,
+): WarehouseEquipmentSetPresentation => {
+  const templateId = item?.equipmentId
+  if (!templateId) {
+    return EMPTY_WAREHOUSE_EQUIPMENT_SET_PRESENTATION
+  }
+
+  const deathBlood = getDeathBloodEquipmentPresentation(templateId)
+  if (deathBlood) {
+    return Object.freeze({
+      templateId,
+      coreContribution: deathBlood.coreContribution,
+      setPresentation: deathBlood.coreContribution > 0 ? deathBlood.setPresentation : null,
+    })
+  }
+
+  const beastDomain = getBeastContractDomainEquipmentPresentation(templateId)
+  if (beastDomain) {
+    return Object.freeze({
+      templateId,
+      coreContribution: beastDomain.coreContribution,
+      setPresentation: beastDomain.coreContribution > 0
+        ? getEquipmentSetPresentation(beastDomain.collection === 'beast' ? 'beast-king-pardon' : 'blue-crystal-contract')
+        : null,
+    })
+  }
+
+  const setPresentation = getEquipmentTemplateSetPresentation(templateId)
+  return Object.freeze({
+    templateId,
+    coreContribution: setPresentation ? 1 : 0,
+    setPresentation,
+  })
+}
+
+/** Read-only codex copy formatter. It never participates in modifier consumption. */
+const formatRelativeMultiplierChange = (effect: string, multiplier: number) => {
+  const change = multiplier - 1
+  if (Math.abs(change) < 0.000001) {
+    return `${effect}不变`
+  }
+  return `${effect}${change > 0 ? '增加' : '减少'} ${formatTemplateNumber(Math.abs(change) * 100)}%`
+}
+
+export const getEquipmentModifierCodexDescription = (modifier: EquipmentSkillModifier) => {
+  switch (modifier.type) {
+    case 'projectile-count':
+      return `额外主箭 +${modifier.amount}`
+    case 'ricochet-bounces':
+      return `跳弹次数 +${modifier.amount}`
+    case 'pierce-echo':
+      return `每 ${modifier.everyHits} 次命中触发 ${formatTemplateNumber(modifier.damageMultiplier * 100)}% 穿透回响，半径 ${modifier.radius}`
+    case 'elite-parallel-line':
+      return `命中精英或 Boss 时，向左右各射出 1 支额外箭矢，每支造成原箭 ${formatTemplateNumber(modifier.damageMultiplier * 100)}% 伤害。`
+    case 'double-line':
+      return `双线射击，${formatRelativeMultiplierChange('冷却时间', modifier.cooldownMultiplier)}`
+    case 'spread-slow':
+      return `命中减速 ${formatTemplateNumber(modifier.slowFactor * 100)}%，持续 ${formatTemplateNumber(modifier.duration)} 秒`
+    case 'spread-speed':
+      return formatRelativeMultiplierChange('箭速', modifier.multiplier)
+    case 'spread-angle':
+      return formatRelativeMultiplierChange('扇形攻击角度', modifier.multiplier)
+    case 'spread-double-next':
+      return `每 ${modifier.everyCasts} 次施放触发一次双发`
+    case 'field-duration':
+      return formatRelativeMultiplierChange('场域持续时间', modifier.multiplier)
+    case 'field-end-burst':
+      return `${formatRelativeMultiplierChange('场域结束爆发伤害', modifier.damageMultiplier)}，${formatRelativeMultiplierChange('爆发半径', modifier.radiusMultiplier)}`
+    case 'beast-shield':
+      return `野兽护盾 ${modifier.shieldAmount}，持续 ${formatTemplateNumber(modifier.duration)} 秒`
+    case 'beast-taunt':
+      return `野兽嘲讽半径 ${modifier.radius}，持续 ${formatTemplateNumber(modifier.duration)} 秒`
+    case 'beast-extra-summon':
+      return `额外召唤，第 ${modifier.triggerSlot} 槽持续 ${formatTemplateNumber(modifier.duration)} 秒`
+    case 'beast-duration':
+      return formatRelativeMultiplierChange('野兽持续时间', modifier.multiplier)
+    case 'beast-on-hit-haste':
+      return `野兽命中后${formatRelativeMultiplierChange('攻击间隔', modifier.attackIntervalMultiplier)}，持续 ${formatTemplateNumber(modifier.duration)} 秒`
+    case 'beast-dual-bond':
+      return `双兽协同：${formatRelativeMultiplierChange('伤害', modifier.damageMultiplier)}，${formatRelativeMultiplierChange('持续时间', modifier.durationMultiplier)}`
+    case 'beast-death-trigger':
+      return `野兽死亡触发护盾 ${modifier.shieldAmount} 与 ${modifier.burstDamage} 爆发，半径 ${modifier.burstRadius}`
+  }
+}
+
+const getTemplateCoreAffixEffects = (
+  template: EquipmentTemplatePresentation,
+  attributeRanges: readonly EquipmentTemplateAttributeRange[],
+): readonly EquipmentTemplateCoreAffixEffect[] => {
+  const bonusEffects = attributeRanges.map((attribute) => ({
+    effectId: `bonus:${attribute.statId}`,
+    description: attribute.display,
+  }))
+  const modifierEffects = createCoreAffixSkillModifiers(template.rarity, template.buildTag, template.affix).map((modifier, index) => ({
+    effectId: `modifier:${modifier.type}:${index}`,
+    description: getEquipmentModifierCodexDescription(modifier),
+  }))
+  return [...bonusEffects, ...modifierEffects]
+}
+
+const getCollapsedMonsterSource = (
+  category: EquipmentTemplateMonsterSource['category'],
+  archetypes: readonly { id: string; name: string }[],
+): EquipmentTemplateMonsterSource => {
+  const names = Array.from(new Map(archetypes.map((archetype) => [archetype.id, archetype.name])).values())
+  const categoryLabel = category === 'normal' ? '普通怪物' : category === 'elite' ? '精英怪物' : 'Boss 怪物'
+  return {
+    category,
+    names: names.length <= 3 ? names : [categoryLabel],
+    actualMonsterCount: names.length,
+    presentation: names.length <= 3 ? 'names' : 'category',
+  }
+}
+
+const getTemplateMonsterSources = (
+  template: EquipmentTemplatePresentation,
+): readonly EquipmentTemplateMonsterSource[] => {
+  const bossLegacyWeapon = getBossLegacyWeaponForTemplate(template)
+  if (bossLegacyWeapon) {
+    const theme = CAMPAIGN_MONSTER_THEMES.find((entry) => entry.campaign === bossLegacyWeapon.campaign)
+    return theme ? [getCollapsedMonsterSource('boss', [theme.boss])] : []
+  }
+
+  const sources: EquipmentTemplateMonsterSource[] = []
+  if (template.dropSources.includes('normal')) {
+    const archetypes = CAMPAIGN_MONSTER_THEMES.flatMap((theme) => theme.normalPool)
+      .filter((archetype) => getMonsterDropProfile(archetype.id).equipmentTier !== 'none')
+    sources.push(getCollapsedMonsterSource('normal', archetypes))
+  }
+  if (template.dropSources.includes('elite')) {
+    sources.push(getCollapsedMonsterSource('elite', CAMPAIGN_MONSTER_THEMES.flatMap((theme) => theme.elitePool)))
+  }
+  if (template.dropSources.includes('boss') || template.dropSources.includes('boss-legacy')) {
+    sources.push(getCollapsedMonsterSource('boss', CAMPAIGN_MONSTER_THEMES.map((theme) => theme.boss)))
+  }
+  return sources
+}
+
+const createEquipmentTemplateCodexPresentation = (
+  template: EquipmentTemplatePresentation,
+): EquipmentTemplateCodexPresentation => {
+  const levelRange = getTemplateLevelRange(template)
+  const attributeRanges = getTemplateAttributeRanges(template, levelRange)
+  const coreAffixEffects = getTemplateCoreAffixEffects(template, attributeRanges)
+  const setPresentation = deriveEquipmentTemplateSetPresentation(template)
+  return Object.freeze({
+    ...template,
+    description: coreAffixEffects.length
+      ? coreAffixEffects.map((effect) => effect.description).join('；')
+      : `核心词缀「${template.affix}」当前没有非零属性或专属技能效果`,
+    levelRange: Object.freeze(levelRange),
+    attributeRanges: Object.freeze(attributeRanges.map((attribute) => Object.freeze(attribute))),
+    coreAffixEffects: Object.freeze(coreAffixEffects.map((effect) => Object.freeze(effect))),
+    monsterSources: Object.freeze(getTemplateMonsterSources(template).map((source) => Object.freeze({
+      ...source,
+      names: Object.freeze([...source.names]),
+    }))),
+    setPresentation,
+    deathBloodPresentation: getDeathBloodEquipmentPresentation(template.templateId) ?? undefined,
+  })
+}
+
+export const EQUIPMENT_TEMPLATE_CODEX_CATALOG: readonly EquipmentTemplateCodexPresentation[] = Object.freeze(
+  EQUIPMENT_TEMPLATE_CATALOG.map(createEquipmentTemplateCodexPresentation),
+)
+
+const EQUIPMENT_TEMPLATE_CODEX_BY_ID = new Map(
+  EQUIPMENT_TEMPLATE_CODEX_CATALOG.map((template) => [template.templateId, template]),
+)
+
+/** Stable read-only resolver for the codex; no randomness, source mutation, or gameplay writes. */
+export const getEquipmentTemplateCodexPresentation = (templateId: string) => (
+  EQUIPMENT_TEMPLATE_CODEX_BY_ID.get(templateId)
+)
+
+/** Returns the set contract for a codex template, or null when it has no active set bonus. */
+export const getEquipmentTemplateSetPresentation = (templateId: string) => (
+  getEquipmentTemplateCodexPresentation(templateId)?.setPresentation ?? null
+)
+
 const getRollScoreMultiplier = (rolls: EquipmentRollMultipliers) => (
   rolls.main * 0.5 + rolls.secondary * 0.25 + rolls.skillOrBuild * 0.25
 )
@@ -1334,34 +2514,55 @@ export const createEquipmentDrop = (
     unlockedSlots?: EquipmentSlot[]
     highValueDropMultiplier?: number
     forceDrop?: boolean
+    /** Narrow boss-reward override for an already-existing reward entrance. */
+    forcedRarity?: Extract<EquipmentRarity, 'epic' | 'legacy' | 'legendary'>
+    /** Explicit caller-owned lock state; preserved independently of meta automation. */
+    locked?: boolean
+    /** Meta-gated creation-time protection; only applies to epic-or-higher results. */
+    autoLockHighRarity?: boolean
+    /** V3 ENDGAME-02: lock only newly created legacy or legendary equipment. */
+    autoLockLegacyLegendary?: boolean
     difficulty?: CampaignDifficulty
     dropTier?: EquipmentDropTier
     discoveredHighRarityEquipmentIds?: readonly string[]
     talentBuildWeightBonuses?: Partial<Record<SkillBuildTag, number>>
     talentLegacyWeaponWeightBonuses?: Partial<Record<SkillBuildTag, number>>
+    candidateWeightRules?: readonly EquipmentCandidateWeightRule[]
   } = {},
 ): EquipmentItem | null => {
-  const rarity = options.forceDrop
+  const rarity = options.forcedRarity ?? (options.forceDrop
     ? rollDroppedEquipmentRarity(source, level, {
       difficulty: options.difficulty,
       dropTier: options.dropTier,
       highValueDropMultiplier: options.highValueDropMultiplier,
     })
-    : rollEquipmentRarity(source, level, Math.random(), options.highValueDropMultiplier)
+    : rollEquipmentRarity(source, level, Math.random(), options.highValueDropMultiplier))
   if (!rarity) {
     return null
   }
 
   if (source === 'boss-legacy') {
     const campaign = getCampaignIndex(level)
-    const legacyWeaponBuildTag = getBossLegacyWeaponForCampaign(campaign).buildTag
+    const legacyWeapon = getBossLegacyWeaponForCampaign(campaign)
+    const legacyWeaponBuildTag = legacyWeapon.buildTag
     const legacyWeaponTalentWeight = legacyWeaponBuildTag === 'general'
       ? 0
       : Math.max(0, options.talentLegacyWeaponWeightBonuses?.[legacyWeaponBuildTag] ?? 0)
     const weaponCandidate = {
       kind: 'weapon' as const,
       equipmentId: `boss-legacy-weapon-${campaign}`,
-      weight: 38 * (1 + legacyWeaponTalentWeight / 100),
+      weight: 38 * (1 + legacyWeaponTalentWeight / 100) * getEquipmentCandidateWeightMultiplier({
+        buildTag: legacyWeaponBuildTag,
+        tags: getEquipmentCandidateTags({
+          rarity,
+          buildTag: legacyWeaponBuildTag,
+          affix: legacyWeapon.affix,
+          setId: legacyWeapon.setId,
+          campaign,
+        }),
+        campaign,
+        weight: 1,
+      }, options.candidateWeightRules, options.preferredBuildTag),
     }
     const genericCandidate = {
       kind: 'generic' as const,
@@ -1373,7 +2574,7 @@ export const createEquipmentDrop = (
         .map((entry) => [entry, entry.weight] as [typeof entry, number]),
     )
     if (candidate.kind === 'weapon') {
-      return createBossLegacyWeaponDrop(level, createId, options.preferredBuildTag, rarity)
+      return createBossLegacyWeaponDrop(level, createId, options.preferredBuildTag, rarity, options)
     }
   }
 
@@ -1386,25 +2587,42 @@ export const createEquipmentDrop = (
         options.preferredBuildTag,
         options.discoveredHighRarityEquipmentIds,
         options.talentBuildWeightBonuses,
+        options.candidateWeightRules,
+        getCampaignIndex(level),
       ).map((candidate) => [candidate, candidate.weight] as [HighRarityEquipmentCandidate, number]),
     )
     : null
-  const slot = highRarityCandidate?.slot ?? unlockedSlots[Math.floor(Math.random() * unlockedSlots.length)] ?? 'weapon'
-  const buildTag = highRarityCandidate?.buildTag ?? getBuildTag(rarity, options.preferredBuildTag)
+  const standardCandidate = !highRarityCandidate && options.candidateWeightRules?.length
+    ? weightedPick(
+      createStandardEquipmentCandidatePool(
+        rarity,
+        unlockedSlots.length ? unlockedSlots : ['weapon'],
+        options.preferredBuildTag,
+        options.candidateWeightRules,
+        getCampaignIndex(level),
+        options.talentBuildWeightBonuses,
+      ).map((candidate) => [candidate, candidate.weight] as [StandardEquipmentCandidate, number]),
+    )
+    : null
+  const slot = highRarityCandidate?.slot ?? standardCandidate?.slot ?? unlockedSlots[Math.floor(Math.random() * unlockedSlots.length)] ?? 'weapon'
+  const buildTag = highRarityCandidate?.buildTag ?? standardCandidate?.buildTag ?? getBuildTag(rarity, options.preferredBuildTag)
   const affixes = BUILD_AFFIXES[buildTag][rarity] ?? BUILD_AFFIXES.general[rarity] ?? ['契约']
-  const affix = highRarityCandidate?.affix ?? affixes[Math.floor(Math.random() * affixes.length)] ?? '契约'
+  const affix = highRarityCandidate?.affix ?? standardCandidate?.affix ?? affixes[Math.floor(Math.random() * affixes.length)] ?? '契约'
   const baseNames = SLOT_BASE_NAMES[slot]
-  const baseName = highRarityCandidate?.baseName ?? baseNames[Math.floor(Math.random() * baseNames.length)] ?? EQUIPMENT_SLOT_LABELS[slot]
+  const baseName = highRarityCandidate?.baseName ?? standardCandidate?.baseName ?? baseNames[Math.floor(Math.random() * baseNames.length)] ?? EQUIPMENT_SLOT_LABELS[slot]
+  const templatePresentation = highRarityCandidate
+    ?? standardCandidate
+    ?? getEquipmentTemplatePresentation({ rarity, slot, buildTag, affix })
   const rolls = createEquipmentRollMultipliers(rarity)
   const baseBonus = createBonus(slot, rarity, buildTag, level)
   const score = Math.round((level * 2.4 + RARITY_SCORE[rarity] * 18) * getRollScoreMultiplier(rolls))
 
-  return {
+  return migrateBeastContractDomainEquipmentItem({
     id: `equipment-${createId()}`,
-    equipmentId: highRarityCandidate?.equipmentId ?? `equipment-${rarity}-${slot}-${buildTag}-${affix}-${baseName}`,
+    equipmentId: highRarityCandidate?.equipmentId ?? standardCandidate?.equipmentId ?? `equipment-${rarity}-${slot}-${buildTag}-${affix}-${baseName}`,
     slot,
     rarity,
-    name: `${affix}${baseName}`,
+    name: templatePresentation?.name ?? `${affix}${baseName}`,
     affix,
     buildTag,
     setId: getEquipmentSetId(rarity, buildTag, affix),
@@ -1412,15 +2630,81 @@ export const createEquipmentDrop = (
     score,
     bonus: applyEquipmentRolls(baseBonus, slot, rolls),
     modifiers: createSkillModifiers(rarity, buildTag, affix),
-    locked: RARITY_SCORE[rarity] >= RARITY_SCORE.epic,
+    locked: options.locked ?? Boolean(
+      (options.autoLockHighRarity && RARITY_SCORE[rarity] >= RARITY_SCORE.epic)
+      || (options.autoLockLegacyLegendary && (rarity === 'legacy' || rarity === 'legendary')),
+    ),
     lockedModifierIndexes: [],
     acquiredLevel: level,
     isNew: true,
     upgradeLevel: 0,
     source: 'dungeon',
     rolls,
-  }
+  })
 }
+
+export type LocalHighRarityEquipmentResetSummary = {
+  total: number
+  epic: number
+  legacy: number
+  legendary: number
+  bossWeaponCount: number
+}
+
+const isLocalHighRarityEquipmentResetRarity = (rarity: EquipmentRarity) => (
+  rarity === 'epic' || rarity === 'legacy' || rarity === 'legendary'
+)
+
+/**
+ * Uses the same catalog that exposes every real equipment template. This is
+ * deliberately derived at call time so a catalog addition joins the local
+ * development reset without another fixed list to maintain.
+ */
+export const getLocalHighRarityEquipmentResetTemplates = () => (
+  EQUIPMENT_TEMPLATE_CATALOG.filter((template) => isLocalHighRarityEquipmentResetRarity(template.rarity))
+)
+
+export const getLocalHighRarityEquipmentResetSummary = (): LocalHighRarityEquipmentResetSummary => {
+  const templates = getLocalHighRarityEquipmentResetTemplates()
+  return templates.reduce<LocalHighRarityEquipmentResetSummary>((summary, template) => ({
+    ...summary,
+    total: summary.total + 1,
+    epic: summary.epic + (template.rarity === 'epic' ? 1 : 0),
+    legacy: summary.legacy + (template.rarity === 'legacy' ? 1 : 0),
+    legendary: summary.legendary + (template.rarity === 'legendary' ? 1 : 0),
+    bossWeaponCount: summary.bossWeaponCount + (template.templateId.startsWith('boss-legacy-weapon-') ? 1 : 0),
+  }), { total: 0, epic: 0, legacy: 0, legendary: 0, bossWeaponCount: 0 })
+}
+
+/**
+ * Local-development reset only. These are complete ordinary persisted item
+ * instances built from the full current catalog. The Store owns the local-only
+ * guard; equip/unequip continues through normal runtime paths.
+ */
+export const createLocalHighRarityEquipmentResetItems = (
+  level: number,
+  createId: () => string,
+): EquipmentItem[] => getLocalHighRarityEquipmentResetTemplates().map((template) => migrateBeastContractDomainEquipmentItem({
+  id: `local-high-rarity-reset-${createId()}`,
+  equipmentId: template.templateId,
+  slot: template.slot,
+  rarity: template.rarity,
+  name: template.name,
+  affix: template.affix,
+  buildTag: template.buildTag,
+  setId: getBossLegacyWeaponForTemplate(template)?.setId
+    ?? getEquipmentSetId(template.rarity, template.buildTag, template.affix),
+  level,
+  score: Math.max(1, Math.round(level * 2.4 + RARITY_SCORE[template.rarity] * 18)),
+  bonus: getTemplateBaseBonus(template, level),
+  modifiers: createSkillModifiers(template.rarity, template.buildTag, template.affix),
+  locked: false,
+  lockedModifierIndexes: [],
+  acquiredLevel: level,
+  isNew: false,
+  upgradeLevel: 0,
+  source: 'system',
+}))
 
 export const getEquipmentReforgeCost = (item: EquipmentItem, mode: EquipmentReforgeMode = 'secondary') => {
   const cost = createEmptyEquipmentMaterials()
@@ -1522,9 +2806,64 @@ export const toggleEquipmentModifierLock = (item: EquipmentItem, modifierIndex: 
   }
 }
 
+const cloneEquipmentSkillModifier = (modifier: EquipmentSkillModifier): EquipmentSkillModifier => ({
+  ...modifier,
+  familyIds: modifier.familyIds ? [...modifier.familyIds] : undefined,
+  evolutionIds: modifier.evolutionIds ? [...modifier.evolutionIds] : undefined,
+  skillIds: modifier.skillIds ? [...modifier.skillIds] : undefined,
+}) as EquipmentSkillModifier
+
+const getReforgeModifierPool = (item: EquipmentItem): EquipmentSkillModifier[] => {
+  if (item.buildTag === 'general') {
+    return []
+  }
+  return SKILL_EQUIPMENT_LINKS[item.buildTag].map(cloneEquipmentSkillModifier)
+}
+
+const serializeModifier = (modifier: EquipmentSkillModifier) => JSON.stringify(modifier)
+
+/**
+ * The existing lock indexes identify modifier entries, so only one valid index
+ * may be retained by the endgame reforge path. A pool miss deliberately keeps
+ * the old unlocked entry instead of deleting gameplay behavior.
+ */
+const rerollUnlockedEquipmentModifiers = (
+  item: EquipmentItem,
+  lockedModifierIndex?: number,
+): EquipmentSkillModifier[] => {
+  if (lockedModifierIndex === undefined) {
+    return item.modifiers.map(cloneEquipmentSkillModifier)
+  }
+  const pool = getReforgeModifierPool(item)
+  if (pool.length === 0) {
+    return item.modifiers.map(cloneEquipmentSkillModifier)
+  }
+  const lockedModifier = item.modifiers[lockedModifierIndex]
+  const retained = lockedModifier ? serializeModifier(lockedModifier) : undefined
+  const used = new Set(retained ? [retained] : [])
+
+  return item.modifiers.map((modifier, index) => {
+    if (index === lockedModifierIndex) {
+      return cloneEquipmentSkillModifier(modifier)
+    }
+    const alternatives = pool.filter((candidate) => {
+      const serialized = serializeModifier(candidate)
+      return serialized !== serializeModifier(modifier) && !used.has(serialized)
+    })
+    const next = alternatives[Math.floor(Math.random() * alternatives.length)]
+    if (!next) {
+      return cloneEquipmentSkillModifier(modifier)
+    }
+    const serialized = serializeModifier(next)
+    used.add(serialized)
+    return cloneEquipmentSkillModifier(next)
+  })
+}
+
 export const reforgeEquipmentItem = (
   item: EquipmentItem,
   mode: EquipmentReforgeMode = 'secondary',
+  lockedModifierIndex?: number,
 ): EquipmentItem => {
   if (!canReforgeEquipmentItem(item, mode)) {
     return item
@@ -1548,16 +2887,8 @@ export const reforgeEquipmentItem = (
     score: reforgeScore(item.score, previousRolls, nextRolls),
     bonus: rerollEquipmentBonus(item.bonus, item.slot, previousRolls, nextRolls),
     rolls: nextRolls,
+    modifiers: rerollUnlockedEquipmentModifiers(item, lockedModifierIndex),
     isNew: false,
     bossLegacyReforged: mode === 'boss-legacy' ? true : item.bossLegacyReforged,
   }
-}
-
-export const getEquipmentSlotUnlockCost = (slot: EquipmentSlot) => {
-  const cost = createEmptyEquipmentMaterials()
-  const slotIndex = EQUIPMENT_SLOTS.indexOf(slot)
-  addMaterial(cost, 'campaignSigil', Math.max(1, Math.ceil((slotIndex + 1) / 3)))
-  addMaterial(cost, 'contractAsh', 12 + slotIndex * 2)
-  addMaterial(cost, 'crystalDust', 6 + slotIndex)
-  return cost
 }

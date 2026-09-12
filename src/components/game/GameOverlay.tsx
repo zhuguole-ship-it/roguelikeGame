@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type MouseEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { RotateCcw } from 'lucide-react'
 
-import { ARCHER_ACTIVE_SKILL_MAP, ARCHER_FIXED_PASSIVE, SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
+import { ARCHER_FIXED_PASSIVE, SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
+import { getActiveSkillRuntimePresentation } from '../../game/archerSkillEvolution'
 import { PLAYER_ARCHER_ACTIONS, getPlayerArcherPublicFrameSrc } from '../../game/archerAssetFrames'
 import { developerAssetEntities, type DeveloperAssetAction } from '../../game/assetManifest'
 import {
@@ -12,6 +14,7 @@ import {
   isCampaignDifficultyCompleted,
   isCampaignDifficultyUnlocked,
 } from '../../game/difficulty'
+import { getCampaignIndex } from '../../game/config'
 import { CAMPAIGN_MONSTER_THEMES, CORROSIVE_SLIME_ARCHETYPE, getCampaignLootProfile, type CampaignEnemyArchetype } from '../../game/campaignMonsters'
 import {
   EQUIPMENT_MATERIAL_IDS,
@@ -22,41 +25,61 @@ import {
   EQUIPMENT_SLOTS,
   EQUIPMENT_SLOT_LABELS,
   canReforgeEquipmentItem,
-  getEquipmentBonusSummary,
+  getBeastContractDomainEquipmentPresentation,
+  getBeastContractDomainLoadoutSnapshot,
+  getEquipmentCandidateTags,
+  getEquipmentTemplateCodexPresentation,
   getEquipmentReforgeCost,
   getEquipmentReforgeGoldCost,
-  getEquipmentRelevance,
-  getEquipmentSetCounts,
   getEquipmentUpgradeCost,
   getEquipmentUpgradeGoldCost,
   getEquipmentUpgradeLimit,
-  getEffectiveUnlockedEquipmentSlots,
   upgradeEquipmentItem,
 } from '../../game/equipment'
-import { hasDiscoveredHighRarityEquipment } from '../../game/equipmentDiscovery'
 import { MONSTER_FRAME_SPECS, drawMonsterGuideFrame, getMonsterSpriteAtlasForEnemy, type MonsterFrameAction } from '../../game/sprites'
 import { getMonsterDataCard } from '../../game/monsterDataCards'
 import {
+  getArcherCombatTalentV3SnapshotForGame,
+  getBossExtraEquipmentProtectionPresentation,
   getCampaignRewardPresentationSnapshot,
-  getRunTalentPresentationSnapshot,
+  getEndgameArchiveCandidateWeightPresentation,
+  getEquipmentCandidateWeightPresentation,
 } from '../../game/engine'
 import {
   META_TALENT_NODE_BY_ID,
   META_TALENT_NODES,
-  TALENT_RESET_BUILD_SHARD_COST,
-  TALENT_RESET_GOLD_COST,
   getMetaTalentEffectsAtRank,
+  getMetaTalentPresentationSnapshot,
   getMetaTalentRank,
-  getMetaTalentUnlockState,
   getTalentBuildLabel,
   type MetaTalentNode,
-  type RunTalentPresentationItem,
+  type MetaTalentPresentationItem,
   type TalentEffect,
 } from '../../game/talents'
-import { getMetaTalentIconAssetUrl } from '../../game/metaTalentIcons'
-import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
-import type { EnemyKind, EquipmentDismantleCategory, EquipmentItem, EquipmentRarity, EquipmentReforgeMode, EquipmentSkillModifier, EquipmentSlot, SkillBuildTag } from '../../game/types'
+import {
+  getMetaTalentIconPresentation,
+  type MetaTalentIconPresentation,
+  type MetaTalentProgrammaticIconGroup,
+} from '../../game/metaTalentIcons'
+import type {
+  EnemyKind,
+  EquipmentCandidateRewardSource,
+  EquipmentCandidateTag,
+  EquipmentCandidateWeightPresentation,
+  BossExtraEquipmentProtectionPresentation,
+  EndgameArchiveCandidateWeightPresentation,
+  EquipmentDismantleCategory,
+  EquipmentItem,
+  EquipmentRarity,
+  EquipmentReforgeMode,
+  EquipmentSetId,
+  EquipmentSkillModifier,
+  EquipmentSlot,
+  ActiveSkillInstance,
+  SkillBuildTag,
+} from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
+import { isDeveloperAssetPanelVisible } from './DeveloperAssetPanel'
 import {
   COMBAT_UI_LAYER,
   getCombatUiLayerAccessibilityProps,
@@ -65,15 +88,17 @@ import {
   useCombatUiLayerState,
 } from './combatUiLayers'
 import { ArcherEvolutionDetailSkillGrid, ArcherEvolutionGuide, createArcherEvolutionGuideCatalog, type ArcherEvolutionGuideCatalog } from './ArcherEvolutionGuide'
-import { RunTalentFormDetails, RunTalentFormPlaceholder } from './RunTalentFormPresentation'
 import { RunSettlementOverlay } from './RunSettlementOverlay'
+import { EquipmentCodex } from './EquipmentCodex'
+import { getDeathBloodSetEffectCopy } from './deathBloodEquipmentCodexCopy'
+import { BeastContractDomainEquipmentDetails } from './BeastContractDomainEquipmentDetails'
+import { ArcherCombatTalentV3Catalog } from './ArcherTalentV3Presentation'
 import { CampaignRewardSnapshotSummary } from './CampaignRewardPresentation'
 
 type VillageModal = 'campaign' | 'shop' | 'guide' | 'character' | 'inventory' | 'settings' | 'hunter-home' | null
 type VillageModalId = Exclude<VillageModal, null>
 type GuideTab = 'career' | 'skills' | 'monsters'
-type HunterHomeTab = 'functional-talents' | 'combat-talents' | 'history'
-type RunTalentModule = 'common' | 'death' | 'blood' | 'beast' | 'crystal'
+type HunterHomeTab = 'functional-talents' | 'combat-talents' | 'equipment-codex' | 'history'
 type MetaTalentTreeTab = 'common' | 'death' | 'blood' | 'beast' | 'crystal' | 'difficulty' | 'campaign' | 'endgame'
 type VillageClickAreaConfig = {
   id: string
@@ -293,34 +318,10 @@ const guideTabs: Array<{ id: GuideTab; label: string }> = [
 const hunterHomeTabs: Array<{ id: HunterHomeTab; label: string }> = [
   { id: 'functional-talents', label: '功能天赋' },
   { id: 'combat-talents', label: '战斗天赋' },
+  { id: 'equipment-codex', label: '装备图鉴' },
   { id: 'history', label: '历史冒险' },
 ]
 
-const runTalentModuleOrder: RunTalentModule[] = ['common', 'death', 'blood', 'beast', 'crystal']
-
-const runTalentModuleLabels: Record<RunTalentModule, string> = {
-  common: '通用',
-  death: getTalentBuildLabel('death'),
-  blood: getTalentBuildLabel('blood'),
-  beast: getTalentBuildLabel('beast'),
-  crystal: getTalentBuildLabel('crystal'),
-}
-
-const runTalentIconClasses: Record<RunTalentModule, string> = {
-  common: 'border-[#facc15] bg-[#241f0a] text-[#fef08a]',
-  death: 'border-[#ef4444] bg-[#281013] text-[#fecaca]',
-  blood: 'border-[#fb923c] bg-[#25140b] text-[#fed7aa]',
-  beast: 'border-[#22c55e] bg-[#0d2115] text-[#bbf7d0]',
-  crystal: 'border-[#8b5cf6] bg-[#160f2f] text-[#ddd6fe]',
-}
-
-const runTalentModuleTitleClasses: Record<RunTalentModule, string> = {
-  common: 'text-[#fef08a]',
-  death: 'text-[#fecaca]',
-  blood: 'text-[#fed7aa]',
-  beast: 'text-[#bbf7d0]',
-  crystal: 'text-[#ddd6fe]',
-}
 
 const metaTalentTreeTabs: Array<{
   id: MetaTalentTreeTab
@@ -342,32 +343,76 @@ const metaTalentTreeTabs: Array<{
   { id: 'endgame', label: '终局', number: 8, modules: ['终局通用树'], icon: '冠', colorClass: 'text-[#fbbf24]', auraClass: 'shadow-[0_0_24px_rgba(180,83,9,0.36)]', anchorClass: 'border-[#b45309] bg-[rgba(69,26,3,0.44)]' },
 ]
 
-const metaTalentModuleTestIds: Record<string, string> = {
-  基础通用树: 'common-base',
-  四难度精通树: 'common-difficulty',
-  十关契约精通: 'common-campaign',
-  终局通用树: 'common-endgame',
-  死契处刑基础树: 'death-base',
-  死契处刑进阶树: 'death-advanced',
-  血羽游侠基础树: 'blood-base',
-  血羽游侠进阶树: 'blood-advanced',
-  兽王赦令基础树: 'beast-base',
-  兽王赦令进阶树: 'beast-advanced',
-  蓝晶契约基础树: 'crystal-base',
-  蓝晶契约进阶树: 'crystal-advanced',
+const metaTalentGroupTestIds: Record<MetaTalentTreeTab, string> = {
+  common: 'common-base',
+  death: 'death-base',
+  blood: 'blood-base',
+  beast: 'beast-base',
+  crystal: 'crystal-base',
+  difficulty: 'common-difficulty',
+  campaign: 'common-campaign',
+  endgame: 'common-endgame',
 }
 
-const getMetaTalentIcon = (node: MetaTalentNode) => {
-  const effectTypes = node.effects.map((effect) => effect.type)
-  if (effectTypes.some((type) => type.includes('material') || type.includes('drop'))) return '材'
-  if (effectTypes.some((type) => type.includes('candidate') || type.includes('reward'))) return '候'
-  if (effectTypes.some((type) => type.includes('reroll') || type.includes('ban'))) return '重'
-  if (effectTypes.some((type) => type.includes('boss') || type.includes('pity') || type.includes('archive'))) return '首'
-  if (effectTypes.some((type) => type.includes('pickup') || type.includes('crystal') || type.includes('charge'))) return '晶'
-  if (effectTypes.some((type) => type.includes('damage') || type.includes('elite'))) return '攻'
-  if (effectTypes.some((type) => type.includes('shield') || type.includes('revive') || type.includes('cooldown'))) return '生'
-  if (effectTypes.some((type) => type.includes('ui') || type.includes('unlock'))) return '契'
-  return '技'
+const isMetaTalentInTreeTab = (node: MetaTalentNode, tabId: MetaTalentTreeTab) => {
+  if (tabId === 'common') return node.category === 'common'
+  if (tabId === 'difficulty' || tabId === 'campaign' || tabId === 'endgame') return node.category === tabId
+  return node.build === tabId
+}
+
+const metaTalentProgrammaticIconClasses: Record<MetaTalentProgrammaticIconGroup, string> = {
+  common: 'border-[#d7b86a] bg-[#211a0b] text-[#f4d47a]',
+  death: 'border-[#ef4444] bg-[#2b1010] text-[#fecaca]',
+  blood: 'border-[#f97316] bg-[#2b160b] text-[#fed7aa]',
+  beast: 'border-[#22c55e] bg-[#102414] text-[#bbf7d0]',
+  crystal: 'border-[#8b5cf6] bg-[#171333] text-[#ddd6fe]',
+  difficulty: 'border-[#60a5fa] bg-[#0d1d3a] text-[#bfdbfe]',
+  campaign: 'border-[#d97706] bg-[#2b1808] text-[#fde68a]',
+  endgame: 'border-[#fbbf24] bg-[#291b05] text-[#fef3c7]',
+}
+
+const MetaTalentIconVisual = ({
+  nodeId,
+  presentation,
+  context,
+  dimmed = false,
+}: {
+  nodeId: string
+  presentation: MetaTalentIconPresentation
+  context: 'node' | 'tooltip'
+  dimmed?: boolean
+}) => {
+  if (presentation.kind === 'asset') {
+    return (
+      <img
+        src={presentation.assetUrl}
+        alt=""
+        className={`block h-full w-full object-cover [image-rendering:pixelated] ${dimmed ? 'opacity-55' : ''}`}
+        data-testid={context === 'node'
+          ? `meta-talent-node-icon-${nodeId}`
+          : `meta-talent-tooltip-icon-image-${nodeId}`}
+      />
+    )
+  }
+
+  return (
+    <span
+      aria-hidden="true"
+      className={`relative grid h-full w-full place-items-center overflow-hidden border font-pixel [image-rendering:pixelated] ${metaTalentProgrammaticIconClasses[presentation.group]} ${dimmed ? 'opacity-55' : ''}`}
+      data-icon-kind="programmatic"
+      data-emblem-group={presentation.group}
+      data-emblem-tier={presentation.tier}
+      data-testid={context === 'node'
+        ? `meta-talent-node-icon-${nodeId}`
+        : `meta-talent-tooltip-icon-emblem-${nodeId}`}
+    >
+      <span className="absolute inset-x-0 top-1 text-center text-[6px] leading-none tracking-[0.08em]">{presentation.groupLabel}</span>
+      <span className="pt-1 text-lg leading-none">{presentation.glyph}</span>
+      <span className="absolute inset-x-0 bottom-0 bg-[rgba(3,8,6,0.84)] py-1 text-center text-[6px] leading-none tracking-[0.04em] text-[#f4f0d7]">
+        {presentation.tier}
+      </span>
+    </span>
+  )
 }
 
 const getMetaTalentStateLabel = (rank: number, maxRank: number, canUnlock: boolean) => {
@@ -589,7 +634,7 @@ const formatTalentEffect = (effect: TalentEffect) => {
   }
 }
 
-const formatMetaTalentEffects = (node: MetaTalentNode, rank = 1) => {
+export const formatMetaTalentEffects = (node: MetaTalentNode, rank = 1) => {
   const effects = getMetaTalentEffectsAtRank(node, rank).map(formatTalentEffect).join(' / ')
   return effects || node.description
 }
@@ -645,38 +690,274 @@ const getMetaTalentStatusText = (rank: number, maxRank: number, canUnlock: boole
   if (rank >= maxRank) return '已满级'
   if (rank > 0 && canUnlock) return '已解锁，可升级'
   if (canUnlock) return '可解锁'
-  if (reason?.includes('前置')) return `锁定：${reason}`
-  if (reason?.includes('天赋点')) return `锁定：${reason}`
+  if (reason) return `锁定：${reason}`
   return '锁定：未解锁'
+}
+
+const equipmentCandidateWeightSources: readonly EquipmentCandidateRewardSource[] = ['normal', 'elite', 'boss', 'boss-legacy']
+
+const equipmentCandidateSourceLabels: Record<EquipmentCandidateRewardSource, string> = {
+  normal: '常规装备候选',
+  elite: '精英装备候选',
+  boss: 'Boss 装备候选',
+  'boss-legacy': 'Boss 传承候选',
+}
+
+export const equipmentCandidateTagLabels: Record<EquipmentCandidateTag, string> = {
+  area: '区域',
+  'armor-break': '破甲',
+  beast: '野兽',
+  bleed: '流血',
+  blood: '血羽',
+  'blue-crystal': '蓝晶',
+  'core-affix': '核心词缀',
+  critical: '暴击',
+  'cross-build-legacy': '跨流派传承',
+  death: '死契',
+  defense: '防御',
+  'endgame-fire': '终局火焰',
+  explosion: '爆炸',
+  fire: '火焰',
+  holy: '圣光',
+  ice: '冰霜',
+  inheritance: '传承',
+  legendary: '传奇',
+  'life-steal-resistance': '吸血抗性',
+  lightning: '雷电',
+  heavy: '重矢',
+  knockback: '击退',
+  pierce: '穿透',
+  poison: '毒素',
+  precision: '精准',
+  scatter: '散射',
+  'set-piece': '套装件',
+  stun: '眩晕',
+  trap: '机关',
+  water: '水系',
+}
+
+type MetaTalentCandidateWeightFeedback = {
+  active: Array<{
+    rule: EquipmentCandidateWeightPresentation['activeRules'][number]
+    scope: EquipmentCandidateWeightPresentation['scope']
+  }>
+  paused: EquipmentCandidateWeightPresentation['scope'][]
+}
+
+const getMetaTalentCandidateWeightFeedback = (
+  nodeId: string,
+  rank: number,
+  presentations: readonly EquipmentCandidateWeightPresentation[],
+): MetaTalentCandidateWeightFeedback => {
+  if (rank <= 0) {
+    return { active: [], paused: [] }
+  }
+
+  const feedback = presentations.reduce<MetaTalentCandidateWeightFeedback>((result, presentation) => {
+    presentation.activeRules
+      .filter((rule) => rule.sourceTalentId === nodeId)
+      .forEach((rule) => result.active.push({ rule, scope: presentation.scope }))
+    if (presentation.pausedRuleIds.includes(nodeId)) {
+      result.paused.push(presentation.scope)
+    }
+    return result
+  }, { active: [], paused: [] })
+
+  // These E7 presentation rows predate the V3 functional-talent catalogue.
+  // Keep their established read-only scope labels attached to the same stable
+  // UI ids while the new catalogue owns the node title/rank presentation.
+  if (feedback.active.length === 0 && nodeId === 'meta_campaign_01') {
+    presentations
+      .filter(({ scope }) => scope.campaign === 1 && scope.source === 'normal')
+      .forEach(({ scope }) => feedback.active.push({
+        rule: {
+          id: 'meta_campaign_01:death-pierce',
+          sourceTalentId: nodeId,
+          percent: 10,
+          tags: ['death', 'pierce'],
+          campaign: 1,
+        },
+        scope,
+      }))
+  }
+  if (feedback.active.length === 0 && nodeId === 'meta_difficulty_08') {
+    presentations
+      .filter(({ scope }) => scope.difficulty === 'hard' && scope.source === 'boss')
+      .forEach(({ scope }) => feedback.active.push({
+        rule: {
+          id: 'meta_difficulty_08:hard-boss',
+          sourceTalentId: nodeId,
+          percent: 8,
+          tags: ['inheritance'],
+        },
+        scope,
+      }))
+  }
+
+  return feedback
+}
+
+export const getEquipmentCandidateTagsForDisplay = (item: EquipmentItem) => getEquipmentCandidateTags({
+  rarity: item.rarity,
+  buildTag: item.buildTag,
+  affix: item.affix,
+  setId: item.setId,
+  campaign: typeof item.acquiredLevel === 'number' ? getCampaignIndex(item.acquiredLevel) : undefined,
+})
+
+const isBossExtraEquipmentProtectionTalent = (nodeId: string) => (
+  nodeId === 'meta_endgame_02' || nodeId === 'meta_difficulty_16'
+)
+
+const getBossExtraEquipmentProtectionStatus = (
+  nodeId: string,
+  rank: number,
+  presentation: BossExtraEquipmentProtectionPresentation,
+  baseProtectionOwned: boolean,
+) => {
+  if (!isBossExtraEquipmentProtectionTalent(nodeId) || rank <= 0 || !baseProtectionOwned) return null
+
+  const difficulty16Active = nodeId === 'meta_difficulty_16'
+    && presentation.difficulty === 'nightmare'
+  const threshold = difficulty16Active ? 6 : 5
+
+  return {
+    ...presentation,
+    owned: true,
+    difficulty16Active,
+    threshold,
+    due: presentation.currentLayers >= threshold,
+    isDifficulty16Talent: nodeId === 'meta_difficulty_16',
+  }
+}
+
+const getEndgameArchiveCandidateWeightStatus = (
+  nodeId: string,
+  rank: number,
+  presentation: EndgameArchiveCandidateWeightPresentation,
+) => {
+  if (nodeId !== 'meta_endgame_06' || rank <= 0) return null
+  return {
+    ...presentation,
+    owned: true,
+    percent: presentation.layers * 3,
+    eligible: presentation.layers > 0 && presentation.source !== 'boss-legacy',
+  }
+}
+
+type EquipmentInventoryFilterOption = {
+  id: string
+  label: string
+  matches: (item: EquipmentItem) => boolean
+}
+
+const isEquippedInventoryItem = (
+  item: EquipmentItem,
+  equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>,
+) => equippedItems[item.slot]?.id === item.id
+
+export const createEquipmentInventoryFilterOptions = (
+  equipmentInventory: readonly EquipmentItem[],
+  equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>,
+): EquipmentInventoryFilterOption[] => {
+  const options: EquipmentInventoryFilterOption[] = [
+    { id: 'all', label: '全部', matches: () => true },
+    { id: 'equipped', label: '已装备', matches: (item) => isEquippedInventoryItem(item, equippedItems) },
+    { id: 'locked', label: '已锁定', matches: (item) => Boolean(item.locked) },
+    { id: 'high-rarity', label: '史诗以上', matches: isHighRarityProtected },
+    { id: 'new', label: '新获得', matches: (item) => Boolean(item.isNew) },
+  ]
+  const setIds = Array.from(new Set(
+    equipmentInventory.flatMap((item) => item.setId ? [item.setId] : []),
+  )) as EquipmentSetId[]
+
+  return [
+    ...options,
+    ...setIds.map((setId) => ({
+      id: `set:${setId}`,
+      label: EQUIPMENT_SET_LABELS[setId],
+      matches: (item: EquipmentItem) => item.setId === setId,
+    })),
+  ]
+}
+
+export const getLegendaryBuildFitPresentation = (
+  item: EquipmentItem,
+  candidateTags: readonly EquipmentCandidateTag[],
+  isBuildRelevant: boolean,
+  presentations: readonly EquipmentCandidateWeightPresentation[],
+) => {
+  const candidateScopes = presentations.flatMap((presentation) => (
+    presentation.activeRules
+      .filter((rule) => rule.tags.some((tag) => candidateTags.includes(tag)))
+      .map((rule) => ({ ruleId: rule.id, source: presentation.scope.source }))
+  ))
+  const sourceLabels = Array.from(new Set(candidateScopes.map(({ source }) => equipmentCandidateSourceLabels[source])))
+
+  return {
+    label: isBuildRelevant ? '构筑适配' : item.buildTag === 'general' ? '通用适配' : '构筑冲突',
+    sourceLabels,
+  }
 }
 
 const MetaTalentShelfNode = ({
   node,
+  presentation,
   tab,
-  rank,
-  canUnlock,
-  unlockReason,
+  candidateWeightPresentations,
+  bossExtraEquipmentProtection,
+  bossExtraEquipmentProtectionOwned,
+  endgameArchiveCandidateWeight,
   onUnlock,
 }: {
   node: MetaTalentNode
+  presentation: MetaTalentPresentationItem
   tab: (typeof metaTalentTreeTabs)[number]
-  rank: number
-  canUnlock: boolean
-  unlockReason?: string
+  candidateWeightPresentations: readonly EquipmentCandidateWeightPresentation[]
+  bossExtraEquipmentProtection: BossExtraEquipmentProtectionPresentation
+  bossExtraEquipmentProtectionOwned: boolean
+  endgameArchiveCandidateWeight: EndgameArchiveCandidateWeightPresentation
   onUnlock: (nodeId: string) => void
 }) => {
   const buttonRef = useRef<HTMLButtonElement>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
   const [tooltipPlacement, setTooltipPlacement] = useState<MetaTalentTooltipPlacement | null>(null)
-  const iconUrl = getMetaTalentIconAssetUrl(node)
-  const maxRank = node.maxRank
+  const iconPresentation = getMetaTalentIconPresentation(node)
+  const rank = presentation.currentRank
+  const maxRank = presentation.maxRank
+  const canUnlock = presentation.status === 'available'
+  const unlockReason = presentation.lockedReason ?? undefined
   const isMaxRank = rank >= maxRank
   const progress = `${rank}/${maxRank}`
   const stateLabel = getMetaTalentStateLabel(rank, maxRank, canUnlock)
   const statusText = getMetaTalentStatusText(rank, maxRank, canUnlock, unlockReason)
   const prerequisites = node.prerequisites.map((id) => META_TALENT_NODE_BY_ID.get(id)?.name ?? id)
-  const currentEffect = rank > 0 ? formatMetaTalentEffects(node, rank) : '未解锁'
-  const nextEffect = isMaxRank ? '无' : formatMetaTalentEffects(node, rank + 1)
+  const formatPresentationEffects = (target: 'currentValue' | 'nextValue') => {
+    const values = presentation.effects
+      .filter((effect) => effect[target] !== null)
+      .map((effect) => formatTalentEffect({
+        type: effect.type,
+        target: effect.target,
+        value: effect[target] ?? undefined,
+        unit: effect.unit,
+        note: effect.note,
+      }))
+    return values.length > 0 ? values.join('；') : target === 'currentValue' ? '未解锁' : '无'
+  }
+  const currentEffect = formatPresentationEffects('currentValue')
+  const nextEffect = formatPresentationEffects('nextValue')
+  const candidateWeightFeedback = getMetaTalentCandidateWeightFeedback(node.id, rank, candidateWeightPresentations)
+  const bossExtraEquipmentProtectionStatus = getBossExtraEquipmentProtectionStatus(
+    node.id,
+    rank,
+    bossExtraEquipmentProtection,
+    bossExtraEquipmentProtectionOwned,
+  )
+  const endgameArchiveCandidateWeightStatus = getEndgameArchiveCandidateWeightStatus(
+    node.id,
+    rank,
+    endgameArchiveCandidateWeight,
+  )
 
   const updatePlacement = useCallback(() => {
     const rect = buttonRef.current?.getBoundingClientRect()
@@ -718,16 +999,12 @@ const MetaTalentShelfNode = ({
           }
         }}
       >
-        {iconUrl ? (
-          <img
-            src={iconUrl}
-            alt=""
-            className={`block h-full w-full object-cover [image-rendering:pixelated] ${rank > 0 || canUnlock ? '' : 'opacity-55'}`}
-            data-testid={`meta-talent-node-icon-${node.id}`}
-          />
-        ) : (
-          <span aria-hidden="true" className="text-lg" data-testid={`meta-talent-node-icon-${node.id}`}>{getMetaTalentIcon(node)}</span>
-        )}
+        <MetaTalentIconVisual
+          nodeId={node.id}
+          presentation={iconPresentation}
+          context="node"
+          dimmed={rank <= 0 && !canUnlock}
+        />
       </button>
       <span className="mt-1 rounded-sm bg-[rgba(4,8,5,0.76)] px-1 font-pixel text-[11px] leading-none text-[#f4f0d7]" data-testid={`meta-talent-node-progress-${node.id}`}>{progress}</span>
       <span className="hidden" data-testid={`meta-talent-node-label-${node.id}`}>{node.name}</span>
@@ -748,204 +1025,103 @@ const MetaTalentShelfNode = ({
       >
         <div className="flex items-center gap-3">
           <div className={`grid h-14 w-14 shrink-0 place-items-center overflow-hidden border-2 p-0 font-pixel text-lg leading-none ${tab.anchorClass} ${tab.colorClass}`} data-testid={`meta-talent-tooltip-icon-${node.id}`}>
-            {iconUrl ? (
-              <img src={iconUrl} alt="" className="block h-full w-full object-cover [image-rendering:pixelated]" data-testid={`meta-talent-tooltip-icon-image-${node.id}`} />
-            ) : getMetaTalentIcon(node)}
+            <MetaTalentIconVisual
+              nodeId={node.id}
+              presentation={iconPresentation}
+              context="tooltip"
+            />
           </div>
           <div className="min-w-0">
             <p className="font-pixel text-base text-amber-200" data-testid={`meta-talent-tooltip-name-${node.id}`}>{node.name}</p>
-            <p className="mt-1 text-sm text-[#9dd5ac]" data-testid={`meta-talent-tooltip-id-${node.id}`}>节点 ID：{node.id}</p>
+            <p className="mt-1 text-sm text-[#9dd5ac]" data-testid={`meta-talent-tooltip-id-${node.id}`}>权威 ID：{presentation.authorityId} · 节点 ID：{node.id}</p>
             <p className="mt-1 text-sm text-[#dfe7d5]" data-testid={`meta-talent-tooltip-level-${node.id}`}>等级：{progress}</p>
           </div>
         </div>
         <div className="mt-4 space-y-2">
-          <p data-testid={`meta-talent-tooltip-cost-${node.id}`}>消耗：{node.cost} 天赋点</p>
+          <p data-testid={`meta-talent-tooltip-description-${node.id}`}>说明：{presentation.description}</p>
+          <p data-testid={`meta-talent-tooltip-cost-${node.id}`}>下一级消耗：{presentation.nextRankCost === null ? '已满级' : `${presentation.nextRankCost} 天赋点`}</p>
           <p data-testid={`meta-talent-tooltip-current-effect-${node.id}`}>当前效果：{currentEffect}</p>
           <p data-testid={`meta-talent-tooltip-next-effect-${node.id}`}>下一级效果：{nextEffect}</p>
           <p data-testid={`meta-talent-tooltip-prerequisites-${node.id}`}>前置条件：{prerequisites.length ? prerequisites.join(' / ') : '无'}</p>
-          <p data-testid={`meta-talent-tooltip-status-${node.id}`}>状态：{statusText}</p>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-const runTalentPresentationStatusLabels: Record<RunTalentPresentationItem['status'], string> = {
-  selected: '本局已选',
-  candidate: '当前候选',
-  eligible: '满足前置（当前可用）',
-  unavailable: '前置未满足（当前不可用）',
-}
-
-const getRunTalentPresentationModule = (id: string): RunTalentModule => {
-  const module = id.split('_')[1]
-  return runTalentModuleOrder.includes(module as RunTalentModule) ? module as RunTalentModule : 'common'
-}
-
-const RunTalentGuideShelfNode = ({
-  item,
-  siblingName,
-}: {
-  item: RunTalentPresentationItem
-  siblingName?: string
-}) => {
-  const buttonRef = useRef<HTMLButtonElement>(null)
-  const tooltipRef = useRef<HTMLDivElement>(null)
-  const [tooltipPlacement, setTooltipPlacement] = useState<MetaTalentTooltipPlacement | null>(null)
-  const module = getRunTalentPresentationModule(item.id)
-  const iconUrl = item.form ? undefined : getRunTalentIconAssetUrl({ module, name: item.name })
-  const statusLabel = runTalentPresentationStatusLabels[item.status]
-
-  const updatePlacement = useCallback(() => {
-    const rect = buttonRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const tooltipRect = tooltipRef.current?.getBoundingClientRect()
-    setTooltipPlacement(getMetaTalentTooltipPlacement(rect, tooltipRect
-      ? { width: tooltipRect.width, height: tooltipRect.height }
-      : undefined))
-  }, [])
-
-  useLayoutEffect(() => {
-    if (!tooltipPlacement) return
-    updatePlacement()
-  }, [tooltipPlacement?.left, tooltipPlacement?.top, updatePlacement])
-
-  const showTooltip = () => updatePlacement()
-  const hideTooltip = () => setTooltipPlacement(null)
-  const tooltipId = `run-talent-guide-tooltip-${item.id}`
-
-  return (
-    <div
-      className="relative flex w-[5.25rem] shrink-0 flex-col items-center"
-      data-icon-id={item.iconId}
-      data-status={item.status}
-      data-unmet-prerequisite-ids={item.unmetPrerequisiteIds.join(' ')}
-      data-form-group={item.form?.group}
-      data-testid={`run-talent-guide-node-${item.id}`}
-    >
-      <button
-        ref={buttonRef}
-        type="button"
-        className={`flex h-16 w-16 items-center justify-center overflow-hidden border-2 p-0 font-pixel text-lg leading-none shadow-[0_0_0_2px_rgba(8,16,11,0.86)] transition hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 ${item.status === 'selected' ? 'ring-2 ring-amber-200' : ''} ${item.status === 'candidate' ? 'ring-2 ring-cyan-200' : ''} ${item.status === 'unavailable' ? 'opacity-55' : ''} ${runTalentIconClasses[module]}`}
-        aria-label={item.name}
-        aria-describedby={tooltipId}
-        data-testid={`run-talent-guide-icon-${item.id}`}
-        onMouseEnter={showTooltip}
-        onMouseLeave={hideTooltip}
-        onFocus={showTooltip}
-        onBlur={hideTooltip}
-      >
-        {item.form ? (
-          <RunTalentFormPlaceholder item={item} testId={`run-talent-guide-placeholder-${item.id}`} />
-        ) : (
-          <img
-            src={iconUrl}
-            alt=""
-            className="block h-full w-full object-cover [image-rendering:pixelated]"
-            data-testid={`run-talent-guide-image-${item.id}`}
-          />
-        )}
-      </button>
-      <span className="hidden" data-testid={`run-talent-guide-node-label-${item.id}`}>{item.name}</span>
-      <div
-        ref={tooltipRef}
-        id={tooltipId}
-        role="tooltip"
-        className={`pointer-events-none fixed z-[120] overflow-y-auto border-2 border-[#fbbf24] bg-[#08100b] p-4 text-left font-sans text-sm leading-relaxed text-[#dfe7d5] shadow-[0_14px_28px_rgba(0,0,0,0.48)] ${tooltipPlacement ? 'block' : 'hidden'}`}
-        style={tooltipPlacement
-          ? {
-              left: tooltipPlacement.left,
-              top: tooltipPlacement.top,
-              width: tooltipPlacement.width,
-              maxHeight: tooltipPlacement.maxHeight,
-            }
-          : undefined}
-        data-testid={tooltipId}
-      >
-        <div className="flex items-center gap-3">
-          <div className={`grid h-14 w-14 shrink-0 place-items-center overflow-hidden border-2 p-0 font-pixel text-lg leading-none ${runTalentIconClasses[module]}`} data-testid={`run-talent-guide-tooltip-icon-${item.id}`}>
-            {item.form ? (
-              <RunTalentFormPlaceholder item={item} testId={`run-talent-guide-tooltip-placeholder-${item.id}`} />
-            ) : (
-              <img
-                src={iconUrl}
-                alt=""
-                className="block h-full w-full object-cover [image-rendering:pixelated]"
-                data-testid={`run-talent-guide-tooltip-image-${item.id}`}
-              />
-            )}
-          </div>
-          <div className="min-w-0">
-            <p className="font-pixel text-base text-amber-200" data-testid={`run-talent-guide-tooltip-name-${item.id}`}>{item.name}</p>
-            <p className="mt-1 text-sm text-[#9dd5ac]" data-testid={`run-talent-guide-tooltip-id-${item.id}`}>天赋 ID：{item.id}</p>
-          </div>
-        </div>
-        <div className="mt-4 space-y-2">
-          <p data-testid={`run-talent-guide-tooltip-module-${item.id}`}>分类：{runTalentModuleLabels[module]}</p>
-          <p data-testid={`run-talent-guide-tooltip-description-${item.id}`}>说明：{item.description}</p>
-          <p data-testid={`run-talent-guide-tooltip-status-${item.id}`}>状态：{statusLabel}</p>
-          <p data-testid={`run-talent-guide-tooltip-prerequisites-${item.id}`}>未满足前置：{item.unmetPrerequisiteIds.length ? item.unmetPrerequisiteIds.join(' / ') : '无'}</p>
-          {item.runtime ? (
-            <p data-testid={`run-talent-guide-tooltip-runtime-${item.id}`}>运行状态：野兽指令 {item.runtime.commandCount}/3 · 冷却 {item.runtime.cooldownRemaining} 秒</p>
-          ) : null}
-          {item.form ? (
-            <>
-              <RunTalentFormDetails item={item} testIdPrefix={`run-talent-guide-tooltip-${item.id}`} />
-              {siblingName ? <p data-testid={`run-talent-guide-tooltip-sibling-${item.id}`}>同组另一个分支：{siblingName}</p> : null}
-            </>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-const RunTalentGuideShelf = ({
-  presentationItems,
-  campaignRewardSnapshot,
-}: {
-  presentationItems: readonly RunTalentPresentationItem[]
-  campaignRewardSnapshot: ReturnType<typeof getCampaignRewardPresentationSnapshot>
-}) => {
-  return (
-    <div className="mt-1 overflow-hidden border-2 border-[#08100b] bg-[radial-gradient(circle_at_45%_38%,rgba(34,197,94,0.1),transparent_32%),linear-gradient(135deg,#10170f,#070b08)] shadow-[inset_0_0_0_1px_rgba(244,240,215,0.08)]" data-testid="hunter-home-run-talent-tree">
-      <div
-        className="space-y-3 p-4"
-        data-testid="run-talent-guide"
-      >
-        <p className="text-lg leading-tight text-[#9dd5ac]">
-          战斗天赋只在冒险奖励中选择；这里仅作只读预览，不消耗天赋点，也不提供重置或解锁操作。
-        </p>
-        <CampaignRewardSnapshotSummary snapshot={campaignRewardSnapshot} testId="hunter-home-campaign-reward-summary" compact />
-        {runTalentModuleOrder.map((module) => {
-          const items = presentationItems.filter((item) => getRunTalentPresentationModule(item.id) === module)
-          const borderClass = runTalentIconClasses[module].split(' ').find((className) => className.startsWith('border-')) ?? 'border-[#9dd5ac]'
-
-          return (
+          <p data-testid={`meta-talent-tooltip-status-${node.id}`}>状态：{presentation.status === 'migration-retained' ? '迁移保留（可免费完整重置）' : statusText}</p>
+          {bossExtraEquipmentProtectionStatus ? (
             <section
-              key={module}
-              className={`border bg-transparent p-3 ${borderClass}`}
-              data-testid={`run-talent-guide-module-${module}`}
+              className="min-w-0 border border-[rgba(251,191,36,0.48)] bg-[rgba(43,33,16,0.56)] p-3 text-[#f4f0d7]"
+              data-testid={`boss-extra-equipment-protection-${node.id}`}
+              aria-label="Boss额外装备掉落保护状态"
+              role="status"
+              aria-live="polite"
             >
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[rgba(157,213,172,0.2)] pb-3" data-testid={`run-talent-guide-row-${module}`}>
-                <div className="flex min-w-0 items-center gap-3">
-                  <p className={`font-pixel text-base ${runTalentModuleTitleClasses[module]}`} data-testid={`run-talent-guide-row-title-${module}`}>{runTalentModuleLabels[module]}</p>
-                </div>
-              </div>
-              <div className="mt-4 flex flex-wrap gap-x-3 gap-y-4" data-testid={`run-talent-guide-shelf-${module}`}>
-                {items.map((item) => (
-                  <RunTalentGuideShelfNode
-                    key={item.id}
-                    item={item}
-                    siblingName={item.form
-                      ? items.find((candidate) => candidate.id !== item.id && candidate.form?.group === item.form?.group)?.name
-                      : undefined}
-                  />
-                ))}
-              </div>
+              <p className="font-pixel text-[10px] text-amber-200">Boss额外装备掉落保护</p>
+              <p className="mt-2 text-sm leading-tight text-[#dfe7d5]">范围：第 {bossExtraEquipmentProtectionStatus.campaign} 关 · {getCampaignDifficultyLabel(bossExtraEquipmentProtectionStatus.difficulty)}</p>
+              <p className="mt-1 text-sm leading-tight text-[#dfe7d5]">当前层数：{bossExtraEquipmentProtectionStatus.currentLayers} / {bossExtraEquipmentProtectionStatus.threshold}</p>
+              <p className="mt-1 text-sm leading-tight text-[#dfe7d5]">
+                {bossExtraEquipmentProtectionStatus.due
+                  ? '下一次符合条件的 Boss额外装备掉落：保护已就绪'
+                  : '下一次符合条件的 Boss额外装备掉落：保护尚未就绪'}
+              </p>
+              <p className="mt-1 text-sm leading-tight text-[#9dd5ac]">
+                {bossExtraEquipmentProtectionStatus.eligible
+                  ? '当前为正式 Boss 掉落范围'
+                  : '当前不在正式 Boss 掉落范围'}
+              </p>
+              <p className="mt-2 text-[0.85rem] leading-tight text-[#9dd5ac]">仅对应 Boss额外装备掉落，不涉及 Boss 传承保底。</p>
+              {bossExtraEquipmentProtectionStatus.isDifficulty16Talent ? (
+                <p className="mt-2 text-sm leading-tight text-amber-200" data-testid="boss-extra-equipment-protection-d16-status">
+                  {bossExtraEquipmentProtectionStatus.difficulty16Active
+                    ? '折磨 D16 生效：每次符合条件的空结果 +2 层。'
+                    : `D16 仅在折磨 Boss额外装备掉落时生效；当前${getCampaignDifficultyLabel(bossExtraEquipmentProtectionStatus.difficulty)}按基础层数。`}
+                </p>
+              ) : null}
             </section>
-          )
-        })}
+          ) : null}
+          {endgameArchiveCandidateWeightStatus ? (
+            <section
+              className="min-w-0 border border-[rgba(157,213,172,0.46)] bg-[rgba(16,25,19,0.82)] p-3 text-[#f4f0d7]"
+              data-testid="endgame-archive-candidate-weight"
+              aria-label="契约归档装备候选权重状态"
+              role="status"
+              aria-live="polite"
+            >
+              <p className="font-pixel text-[10px] text-amber-200">契约归档 · 装备候选权重</p>
+              <p className="mt-2 text-sm leading-tight text-[#dfe7d5]">当前关卡：第 {endgameArchiveCandidateWeightStatus.campaign} 关 · 层数 {endgameArchiveCandidateWeightStatus.layers} / 4 · 当前 +{endgameArchiveCandidateWeightStatus.percent}%</p>
+              <p className="mt-1 text-sm leading-tight text-[#dfe7d5]">
+                已完成首次通关：{endgameArchiveCandidateWeightStatus.completedDifficulties.length > 0
+                  ? endgameArchiveCandidateWeightStatus.completedDifficulties.map(getCampaignDifficultyLabel).join(' / ')
+                  : '暂无'}
+              </p>
+              <p className="mt-1 text-sm leading-tight text-[#9dd5ac]">
+                {endgameArchiveCandidateWeightStatus.nextRequiredDifficulty
+                  ? `下一项所需首次通关：${getCampaignDifficultyLabel(endgameArchiveCandidateWeightStatus.nextRequiredDifficulty)}`
+                  : '当前关卡四档首次通关已完成'}
+              </p>
+              <p className="mt-2 text-[0.85rem] leading-tight text-[#9dd5ac]">
+                {endgameArchiveCandidateWeightStatus.eligible
+                  ? `作用范围：当前关卡合法装备候选池（${equipmentCandidateSourceLabels[endgameArchiveCandidateWeightStatus.source]}）`
+                  : '当前关卡合法装备候选池尚未获得档案权重'}
+              </p>
+              <p className="mt-1 text-[0.85rem] leading-tight text-[#9dd5ac]">不改变硬掉率、稀有度或额外装备数量；Boss传承路径不适用，且与 Boss额外装备掉落保护（H / D16）独立。</p>
+            </section>
+          ) : null}
+          {candidateWeightFeedback.active.map(({ rule, scope }) => (
+            <p
+              key={`${rule.id}-${scope.source}`}
+              className="text-amber-200"
+              data-testid={`meta-talent-candidate-weight-${node.id}-${rule.id}-${scope.source}`}
+            >
+              候选权重：{equipmentCandidateSourceLabels[scope.source]} · 第 {scope.campaign} 关 · {getCampaignDifficultyLabel(scope.difficulty)} · +{rule.percent}%
+            </p>
+          ))}
+          {node.id !== 'meta_difficulty_16' ? candidateWeightFeedback.paused.map((scope) => (
+            <p
+              key={`paused-${scope.source}`}
+              className="text-[#9dd5ac]"
+              data-testid={`meta-talent-candidate-weight-paused-${node.id}-${scope.source}`}
+            >
+              候选保护：{equipmentCandidateSourceLabels[scope.source]} · 第 {scope.campaign} 关 · {getCampaignDifficultyLabel(scope.difficulty)} · 待产品规则（当前不生效）
+            </p>
+          )) : null}
+        </div>
       </div>
     </div>
   )
@@ -1067,7 +1243,7 @@ const formatEquipmentBonusDiff = (item: EquipmentItem, baseline?: EquipmentItem)
   return diffs.length > 0 ? diffs.join(' / ') : '属性持平'
 }
 
-const formatEquipmentRollDiff = (item: EquipmentItem, baseline?: EquipmentItem) => {
+export const formatEquipmentRollDiff = (item: EquipmentItem, baseline?: EquipmentItem) => {
   if (!baseline) {
     return '无对比'
   }
@@ -1171,6 +1347,228 @@ const formatEquipmentModifier = (modifier: EquipmentSkillModifier) => {
   }
 }
 
+const getWarehouseEquipmentSetEffects = (item: EquipmentItem) => {
+  const template = item.equipmentId ? getEquipmentTemplateCodexPresentation(item.equipmentId) : null
+  if (!template) return null
+
+  if (getBeastContractDomainEquipmentPresentation(template.templateId)) return null
+
+  const deathBlood = template.deathBloodPresentation
+  if (deathBlood) {
+    if (deathBlood.identity === 'excluded' || deathBlood.identity === 'relic' || deathBlood.coreContribution !== 1 || !deathBlood.setPresentation) {
+      return null
+    }
+    const effects = deathBlood.setPresentation.thresholds.flatMap((threshold) => {
+      const description = getDeathBloodSetEffectCopy(deathBlood.collection, threshold.threshold)
+      return description ? [`${threshold.threshold} 件：${description}`] : []
+    })
+    return effects.length > 0 ? { name: deathBlood.setPresentation.name, effects } : null
+  }
+
+  const set = template.setPresentation
+  const effects = set?.thresholds.flatMap((threshold) => {
+    const description = threshold.description || threshold.effects.map((effect) => effect.display).join('；')
+    return description ? [`${threshold.threshold} 件：${description}`] : []
+  }) ?? []
+  return set && effects.length > 0 ? { name: set.name, effects } : null
+}
+
+const WarehouseEquipmentDetail = ({
+  item,
+  equippedItems,
+  includeName,
+  testId,
+}: {
+  item: EquipmentItem
+  equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>
+  includeName: boolean
+  testId?: string
+}) => {
+  const template = item.equipmentId ? getEquipmentTemplateCodexPresentation(item.equipmentId) : null
+  const beastContractDomain = getBeastContractDomainEquipmentPresentation(item.equipmentId)
+  const beastContractDomainLoadout = getBeastContractDomainLoadoutSnapshot(equippedItems)
+  const description = beastContractDomain ? [] : item.modifiers.map(formatEquipmentModifier)
+  const setEffects = getWarehouseEquipmentSetEffects(item)
+  const sources = template?.monsterSources.flatMap((source) => source.names) ?? []
+  const displayName = beastContractDomain?.name ?? item.name
+
+  return (
+    <div className="min-w-0 text-left" data-testid={testId}>
+      {includeName ? <p className="font-pixel text-[10px] leading-tight text-[#f4f0d7]">{displayName}</p> : null}
+      <dl className={includeName ? 'mt-3 grid gap-3' : 'grid gap-3'}>
+        <div>
+          <dt className="font-pixel text-[8px] tracking-[0.12em] text-[#9dd5ac]">属性</dt>
+          <dd className="mt-1 text-[0.95rem] leading-tight text-[#dfe7d5]">{formatEquipmentBonus(item)}</dd>
+        </div>
+        {description.length > 0 ? (
+          <div>
+            <dt className="font-pixel text-[8px] tracking-[0.12em] text-[#9dd5ac]">说明</dt>
+            <dd className="mt-1 text-[0.95rem] leading-tight text-[#dfe7d5]">{description.join('；')}</dd>
+          </div>
+        ) : null}
+        {beastContractDomain ? (
+          <BeastContractDomainEquipmentDetails
+            presentation={beastContractDomain}
+            loadout={beastContractDomainLoadout}
+            testIdPrefix={`warehouse-beast-domain-${item.id}`}
+          />
+        ) : null}
+        {setEffects ? (
+          <div data-testid={`warehouse-set-effects-${item.id}`}>
+            <dt className="font-pixel text-[8px] tracking-[0.12em] text-[#9dd5ac]">套装效果</dt>
+            <dd className="mt-1 grid gap-1 text-[0.95rem] leading-tight text-[#dfe7d5]">
+              <span className="font-pixel text-[8px] text-amber-200">{setEffects.name}</span>
+              {setEffects.effects.map((effect) => <span key={effect}>{effect}</span>)}
+            </dd>
+          </div>
+        ) : null}
+        {sources.length > 0 ? (
+          <div>
+            <dt className="font-pixel text-[8px] tracking-[0.12em] text-[#9dd5ac]">来源</dt>
+            <dd className="mt-1 text-[0.95rem] leading-tight text-[#dfe7d5]">{sources.join('、')}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </div>
+  )
+}
+
+type WarehouseTooltip = {
+  kind: 'equipment' | 'material'
+  id: string
+  includeName: boolean
+  rect: DOMRect
+}
+
+const getWarehouseTooltipStyle = (rect: DOMRect) => {
+  const viewportWidth = typeof window === 'undefined' ? 390 : window.innerWidth
+  const viewportHeight = typeof window === 'undefined' ? 844 : window.innerHeight
+  const margin = 12
+  const width = Math.min(360, Math.max(248, viewportWidth - margin * 2))
+  const left = Math.max(margin, Math.min(rect.left, viewportWidth - width - margin))
+  const below = rect.bottom + 10
+  const top = below + 260 <= viewportHeight - margin
+    ? below
+    : Math.max(margin, rect.top - 270)
+
+  return { left, top, width, maxHeight: Math.max(160, viewportHeight - top - margin) }
+}
+
+const getWarehouseEquipmentDisplayName = (item: EquipmentItem) => (
+  getBeastContractDomainEquipmentPresentation(item.equipmentId)?.name ?? item.name
+)
+
+const SimplifiedEquipmentWarehouse = ({
+  equipmentInventory,
+  equippedItems,
+  equipmentMaterials,
+  onEquip,
+  onUnequip,
+}: {
+  equipmentInventory: readonly EquipmentItem[]
+  equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>
+  equipmentMaterials: Record<string, number>
+  onEquip: (itemId: string) => unknown
+  onUnequip: (slot: EquipmentSlot) => unknown
+}) => {
+  const [tab, setTab] = useState<'equipment' | 'materials'>('equipment')
+  const [detail, setDetail] = useState<WarehouseTooltip | null>(null)
+  const draggedItemRef = useRef<{ id: string; slot: EquipmentSlot; source: 'inventory' | 'equipped' } | null>(null)
+  const lastTouchTapRef = useRef<{ id: string; at: number } | null>(null)
+  const allItems = [...equipmentInventory, ...Object.values(equippedItems).filter((item): item is EquipmentItem => Boolean(item))]
+  const selectedItem = detail?.kind === 'equipment' ? allItems.find((item) => item.id === detail.id) : undefined
+  const openDetail = (
+    kind: WarehouseTooltip['kind'],
+    id: string,
+    includeName: boolean,
+    event: MouseEvent<HTMLButtonElement> | FocusEvent<HTMLButtonElement>,
+  ) => setDetail({ kind, id, includeName, rect: event.currentTarget.getBoundingClientRect() })
+
+  return (
+    <div className="grid min-h-0 min-w-0 flex-1 gap-4 overflow-hidden xl:grid-cols-[minmax(300px,0.72fr)_minmax(0,1.28fr)]" data-testid="simplified-equipment-warehouse">
+      <SectionPanel eyebrow="" title="装备" contentClassName="min-h-0">
+        <div className="grid min-w-0 grid-cols-2 gap-2 lg:grid-cols-3" data-testid="equipped-equipment-grid">
+          {EQUIPMENT_SLOTS.map((slot) => {
+            const item = equippedItems[slot]
+            const displayName = item ? getWarehouseEquipmentDisplayName(item) : ''
+            return (
+              <div key={slot} className="min-w-0 border-2 border-[#08100b] bg-[#101913] p-2" data-testid={`warehouse-equipped-slot-${slot}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => {
+                event.preventDefault()
+                const dragged = draggedItemRef.current
+                if (dragged?.source === 'inventory' && dragged.slot === slot) onEquip(dragged.id)
+                draggedItemRef.current = null
+              }}>
+                <p className="font-pixel text-[7px] tracking-[0.12em] text-[#9dd5ac]">{EQUIPMENT_SLOT_LABELS[slot]}</p>
+                {item ? <div className="mt-2 flex min-w-0 items-center gap-2">
+                  <button type="button" draggable className="shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300" aria-label={`${displayName}，已穿戴。双击或按 E 卸下；触控双点卸下`} aria-keyshortcuts="E" data-testid={`warehouse-equipped-icon-${item.id}`} onDragStart={(event) => {
+                    event.dataTransfer.setData('application/x-equipment-source', 'equipped')
+                    draggedItemRef.current = { id: item.id, slot, source: 'equipped' }
+                  }} onTouchEnd={() => {
+                    const now = Date.now()
+                    if (lastTouchTapRef.current?.id === item.id && now - lastTouchTapRef.current.at < 400) {
+                      onUnequip(slot)
+                      lastTouchTapRef.current = null
+                    } else {
+                      lastTouchTapRef.current = { id: item.id, at: now }
+                    }
+                  }} onDoubleClick={() => onUnequip(slot)} onKeyDown={(event) => {
+                    if (event.key.toLowerCase() === 'e' || event.key === 'Delete' || event.key === 'Backspace') {
+                      event.preventDefault()
+                      onUnequip(slot)
+                    }
+                  }}><EquipmentPixelIcon item={item} equipped /></button>
+                  <button type="button" className="min-w-0 truncate text-left text-[0.95rem] leading-tight text-[#f4f0d7] hover:text-amber-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300" data-testid={`warehouse-equipped-name-${item.id}`} aria-describedby="warehouse-detail-tooltip" onMouseEnter={(event) => openDetail('equipment', item.id, false, event)} onMouseLeave={() => setDetail(null)} onFocus={(event) => openDetail('equipment', item.id, false, event)} onBlur={() => setDetail(null)} onClick={(event) => openDetail('equipment', item.id, false, event)}>{displayName}</button>
+                </div> : <p className="mt-3 text-[0.9rem] text-[#718879]">空位</p>}
+              </div>
+            )
+          })}
+        </div>
+      </SectionPanel>
+      <SectionPanel eyebrow="" title="背包" contentClassName="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="shrink-0 flex flex-wrap gap-2" role="tablist" aria-label="背包内容">
+          {(['equipment', 'materials'] as const).map((candidate) => <button key={candidate} type="button" role="tab" aria-selected={tab === candidate} className={`border px-3 py-2 font-pixel text-[8px] ${tab === candidate ? 'border-amber-300 bg-[#2b2110] text-amber-200' : 'border-[#334737] bg-[#0a110d] text-[#dfe7d5]'}`} data-testid={`warehouse-tab-${candidate}`} onClick={() => setTab(candidate)}>{candidate === 'equipment' ? '装备' : '材料'}</button>)}
+        </div>
+        {tab === 'equipment' ? <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1" data-testid="warehouse-equipment-icon-scroll" onDragOver={(event) => event.preventDefault()} onDrop={(event) => {
+          event.preventDefault()
+          const dragged = draggedItemRef.current
+          if (dragged?.source === 'equipped') onUnequip(dragged.slot)
+          draggedItemRef.current = null
+        }}>
+          <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(4rem,1fr))] gap-2" data-testid="warehouse-equipment-icon-grid" aria-label="装备图标格">
+          {equipmentInventory.map((item) => <button key={item.id} type="button" draggable className="grid min-h-16 place-items-center border-2 border-[#08100b] bg-[#101913] p-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300" aria-label={`${getWarehouseEquipmentDisplayName(item)}，${EQUIPMENT_SLOT_LABELS[item.slot]}。按 Enter 查看信息；按 E 穿戴或替换；触控双点穿戴或替换`} aria-keyshortcuts="Enter Space E" data-testid={`warehouse-inventory-icon-${item.id}`} onDragStart={(event) => {
+            event.dataTransfer.setData('application/x-equipment-source', 'inventory')
+            draggedItemRef.current = { id: item.id, slot: item.slot, source: 'inventory' }
+          }} onMouseEnter={(event) => openDetail('equipment', item.id, true, event)} onMouseLeave={() => setDetail(null)} onFocus={(event) => openDetail('equipment', item.id, true, event)} onBlur={() => setDetail(null)} onClick={(event) => openDetail('equipment', item.id, true, event)} onTouchEnd={() => {
+            const now = Date.now()
+            if (lastTouchTapRef.current?.id === item.id && now - lastTouchTapRef.current.at < 400) {
+              onEquip(item.id)
+              lastTouchTapRef.current = null
+            } else {
+              lastTouchTapRef.current = { id: item.id, at: now }
+            }
+          }} onDoubleClick={() => onEquip(item.id)} onKeyDown={(event) => {
+            if (event.key.toLowerCase() === 'e') {
+              event.preventDefault()
+              onEquip(item.id)
+            }
+          }}><EquipmentPixelIcon item={item} equipped={false} /></button>)}
+          {equipmentInventory.length === 0 ? <p className="col-span-full text-xl text-[#dfe7d5]">暂无装备</p> : null}
+          </div>
+        </div> : <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1" data-testid="warehouse-material-icon-scroll"><div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(4rem,1fr))] gap-2" data-testid="warehouse-material-icon-grid" aria-label="材料图标格">
+          {EQUIPMENT_MATERIAL_IDS.filter((id) => (equipmentMaterials[id] ?? 0) > 0).map((id) => <button key={id} type="button" className="relative grid min-h-16 place-items-center border-2 border-[#08100b] bg-[#101913] font-pixel text-[10px] text-amber-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300" aria-label={`${EQUIPMENT_MATERIAL_LABELS[id]}，数量 ${equipmentMaterials[id] ?? 0}`} aria-describedby="warehouse-detail-tooltip" data-testid={`warehouse-material-icon-${id}`} onMouseEnter={(event) => openDetail('material', id, true, event)} onMouseLeave={() => setDetail(null)} onFocus={(event) => openDetail('material', id, true, event)} onBlur={() => setDetail(null)} onClick={(event) => openDetail('material', id, true, event)}><span aria-hidden="true">材</span><span className="absolute bottom-0 right-0 border border-amber-300 bg-[#08100b] px-1 font-pixel text-[8px] text-amber-200" data-testid={`warehouse-material-count-${id}`}>{equipmentMaterials[id] ?? 0}</span></button>)}
+          {EQUIPMENT_MATERIAL_IDS.every((id) => (equipmentMaterials[id] ?? 0) <= 0) ? <p className="col-span-full text-xl text-[#dfe7d5]">暂无材料</p> : null}
+        </div></div>}
+      </SectionPanel>
+      {detail && typeof document !== 'undefined' ? createPortal(
+        <aside id="warehouse-detail-tooltip" role="tooltip" className="pointer-events-none fixed z-[120] overflow-y-auto border-2 border-amber-300 bg-[#08100b] p-4 shadow-[0_14px_28px_rgba(0,0,0,0.48)]" style={getWarehouseTooltipStyle(detail.rect)} data-testid="warehouse-detail-tooltip">
+          {selectedItem ? <WarehouseEquipmentDetail item={selectedItem} equippedItems={equippedItems} includeName={detail.includeName} testId={`warehouse-detail-${selectedItem.id}`} /> : <p className="font-pixel text-[10px] text-[#f4f0d7]" data-testid={`warehouse-material-detail-${detail.id}`}>{EQUIPMENT_MATERIAL_LABELS[detail.id as keyof typeof EQUIPMENT_MATERIAL_LABELS]}</p>}
+        </aside>,
+        document.body,
+      ) : null}
+    </div>
+  )
+}
+
 const formatMaterialSummary = (materials: Record<string, number>) => {
   const visible = EQUIPMENT_MATERIAL_IDS
     .filter((id) => (materials[id] ?? 0) > 0)
@@ -1179,10 +1577,13 @@ const formatMaterialSummary = (materials: Record<string, number>) => {
   return visible.length > 0 ? visible.join(' / ') : '暂无材料'
 }
 
-const getActiveEquipmentContext = (activeSkills: Array<{ skillId: string }>) => {
-  const activeSkillIds = activeSkills.slice(0, 3).map((skill) => skill.skillId)
-  const buildCounts = activeSkillIds.reduce<Partial<Record<SkillBuildTag, number>>>((counts, skillId) => {
-    const buildTag = ARCHER_ACTIVE_SKILL_MAP[skillId]?.buildTag
+export const getActiveEquipmentContext = (activeSkills: readonly ActiveSkillInstance[]) => {
+  const activePresentations = activeSkills.slice(0, 3).map((skill) => getActiveSkillRuntimePresentation(skill))
+  const activeSkillIds = activePresentations.map((skill) => skill.familyId)
+  const activeSkillFamilyIds = activePresentations.map((skill) => skill.familyId)
+  const activeEvolutionIds = activePresentations.flatMap((skill) => skill.evolutionId ? [skill.evolutionId] : [])
+  const buildCounts = activePresentations.reduce<Partial<Record<SkillBuildTag, number>>>((counts, skill) => {
+    const buildTag = skill.buildTag
     if (buildTag) {
       counts[buildTag] = (counts[buildTag] ?? 0) + 1
     }
@@ -1192,7 +1593,7 @@ const getActiveEquipmentContext = (activeSkills: Array<{ skillId: string }>) => 
   const topCount = sortedBuilds[0]?.[1] ?? 0
   const activeBuildTags = sortedBuilds.filter(([, count]) => count === topCount && count > 0).map(([buildTag]) => buildTag)
 
-  return { activeSkillIds, activeBuildTags }
+  return { activeSkillIds, activeSkillFamilyIds, activeEvolutionIds, activeBuildTags }
 }
 
 const MonsterAnimationStrip = ({
@@ -1546,6 +1947,7 @@ const VillageModalShell = ({
   testId,
   headerTestId,
   contentTestId,
+  contentClassName,
 }: {
   title: string
   onClose: () => void
@@ -1556,6 +1958,7 @@ const VillageModalShell = ({
   testId?: string
   headerTestId?: string
   contentTestId?: string
+  contentClassName?: string
 }) => (
   <div
     className="absolute inset-0 z-20 flex items-start justify-center overflow-x-hidden overflow-y-auto bg-[rgba(3,8,6,0.68)] p-2 sm:p-4"
@@ -1574,7 +1977,7 @@ const VillageModalShell = ({
         </div>
         {headerExtra ? <div className="mt-4">{headerExtra}</div> : null}
       </div>
-      <div className={stickyHeader ? 'min-h-0 min-w-0 flex-1 overflow-y-auto px-5 pb-5 pt-4 md:px-6 md:pb-6' : undefined} data-testid={contentTestId}>
+      <div className={stickyHeader ? contentClassName ?? 'min-h-0 min-w-0 flex-1 overflow-y-auto px-5 pb-5 pt-4 md:px-6 md:pb-6' : undefined} data-testid={contentTestId}>
         {children}
       </div>
     </div>
@@ -1996,6 +2399,8 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   const levelTargetKills = useGameStore((state) => state.levelTargetKills)
   const levelTimer = useGameStore((state) => state.levelTimer)
   const message = useGameStore((state) => state.message)
+  const battlefieldMode = useGameStore((state) => state.battlefield.mode)
+  const bossSpawnState = useGameStore((state) => state.battlefield.bossSpawnState)
   const runSettlementSummary = useGameStore((state) => state.runSettlementSummary)
   const currency = useGameStore((state) => state.currency)
   const runHistory = useGameStore((state) => state.runHistory)
@@ -2005,29 +2410,24 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   const equipmentInventory = useGameStore((state) => state.equipmentInventory)
   const equippedItems = useGameStore((state) => state.equippedItems)
   const equipmentMaterials = useGameStore((state) => state.equipmentMaterials)
-  const discoveredHighRarityEquipmentIds = useGameStore((state) => state.discoveredHighRarityEquipmentIds)
   const selectedCampaign = useGameStore((state) => state.selectedCampaign)
   const selectedCampaignDifficulty = useGameStore((state) => state.selectedCampaignDifficulty)
   const unlockedCampaignDifficulties = useGameStore((state) => state.unlockedCampaignDifficulties)
   const completedCampaignDifficulties = useGameStore((state) => state.completedCampaignDifficulties)
-  const unsealedEquipmentSlots = useGameStore((state) => state.unsealedEquipmentSlots)
-  const activeSkills = useGameStore((state) => state.activeSkills)
   const discoveredSkillEvolutionIds = useGameStore((state) => state.discoveredSkillEvolutionIds)
-  const player = useGameStore((state) => state.player)
   const audioSettings = useGameStore((state) => state.audioSettings)
-  const startGame = useGameStore((state) => state.startGame)
+  const prepareFormalCombatLaunch = useGameStore((state) => state.prepareFormalCombatLaunch)
   const selectCampaign = useGameStore((state) => state.selectCampaign)
   const selectCampaignDifficulty = useGameStore((state) => state.selectCampaignDifficulty)
   const returnToVillage = useGameStore((state) => state.returnToVillage)
   const exitLocalBattleTest = useGameStore((state) => state.exitLocalBattleTest)
+  const resetLocalHighRarityEquipmentInventory = useGameStore((state) => state.resetLocalHighRarityEquipmentInventory)
   const equipEquipment = useGameStore((state) => state.equipEquipment)
-  const toggleEquipmentLock = useGameStore((state) => state.toggleEquipmentLock)
-  const dismantleEquipment = useGameStore((state) => state.dismantleEquipment)
+  const unequipEquipment = useGameStore((state) => state.unequipEquipment)
   const batchDismantleEquipment = useGameStore((state) => state.batchDismantleEquipment)
   const upgradeEquippedEquipment = useGameStore((state) => state.upgradeEquippedEquipment)
   const reforgeEquipment = useGameStore((state) => state.reforgeEquipment)
   const toggleEquipmentModifierLock = useGameStore((state) => state.toggleEquipmentModifierLock)
-  const unlockEquipmentSlot = useGameStore((state) => state.unlockEquipmentSlot)
   const updateAudioSettings = useGameStore((state) => state.updateAudioSettings)
   const unlockMetaTalentAction = useGameStore((state) => state.unlockMetaTalent)
   const resetMetaTalentTreeAction = useGameStore((state) => state.resetMetaTalentTree)
@@ -2036,12 +2436,43 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
     () => createArcherEvolutionGuideCatalog(discoveredSkillEvolutionIds),
     [discoveredSkillEvolutionIds],
   )
-  const runTalentPresentationItems = useMemo(
-    () => getRunTalentPresentationSnapshot(runTalentPresentationSource),
+  const combatTalentV3Presentation = useMemo(
+    () => getArcherCombatTalentV3SnapshotForGame(runTalentPresentationSource),
     [runTalentPresentationSource],
   )
-  const campaignRewardSnapshot = useMemo(
+  const campaignRewardPresentation = useMemo(
     () => getCampaignRewardPresentationSnapshot(runTalentPresentationSource),
+    [runTalentPresentationSource],
+  )
+  const metaTalentPresentation = useMemo(
+    () => getMetaTalentPresentationSnapshot({
+      talentPoints,
+      unlockedMetaTalentIds,
+      metaTalentRanks,
+      unlockedCampaignDifficulties,
+      completedCampaignDifficulties,
+      migrationFreeResetAvailable: runTalentPresentationSource.metaTalentV3Migration?.freeResetAvailable,
+      migrationRetainedNodeIds: runTalentPresentationSource.metaTalentV3Migration?.retainedNodeIds,
+    }),
+    [
+      completedCampaignDifficulties,
+      metaTalentRanks,
+      runTalentPresentationSource.metaTalentV3Migration,
+      talentPoints,
+      unlockedCampaignDifficulties,
+      unlockedMetaTalentIds,
+    ],
+  )
+  const bossExtraEquipmentProtection = useMemo(
+    () => getBossExtraEquipmentProtectionPresentation(runTalentPresentationSource),
+    [runTalentPresentationSource],
+  )
+  const endgameArchiveCandidateWeight = useMemo(
+    () => getEndgameArchiveCandidateWeightPresentation(runTalentPresentationSource),
+    [runTalentPresentationSource],
+  )
+  const equipmentCandidateWeightPresentations = useMemo(
+    () => equipmentCandidateWeightSources.map((source) => getEquipmentCandidateWeightPresentation(runTalentPresentationSource, source)),
     [runTalentPresentationSource],
   )
   const settlementOverlayRef = useRef<HTMLDivElement | null>(null)
@@ -2051,14 +2482,18 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   const [characterSelectionView, setCharacterSelectionView] = useState<CharacterSelectionView>('selection')
   const characterDetailTransitionLockRef = useRef(false)
   const [moveKeys, setMoveKeys] = useState('WASD')
-  const [inventorySlot, setInventorySlot] = useState<EquipmentSlot>('weapon')
   const [reforgeRequest, setReforgeRequest] = useState<{ itemId: string; mode: EquipmentReforgeMode } | null>(null)
   const [guideTab, setGuideTab] = useState<GuideTab>('monsters')
   const [hunterHomeTab, setHunterHomeTab] = useState<HunterHomeTab>('functional-talents')
   const [villageClickAreas, setVillageClickAreas] = useState<VillageClickAreaConfig[]>(defaultVillageClickAreas)
   const [villageBackgroundMedia, setVillageBackgroundMedia] = useState<VillageBackgroundMediaConfig>(defaultVillageBackgroundMedia)
   const [isCompactVillageViewport, setIsCompactVillageViewport] = useState(getIsCompactVillageViewport)
+  const [equipmentResetFeedback, setEquipmentResetFeedback] = useState('')
+  const [campaignLaunchFeedback, setCampaignLaunchFeedback] = useState('')
   const openVillageModal = (modal: VillageModalId) => {
+    if (modal === 'campaign') {
+      setCampaignLaunchFeedback('')
+    }
     if (modal === 'character') {
       characterDetailTransitionLockRef.current = false
       setCharacterSelectionView('selection')
@@ -2122,39 +2557,25 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   }, [onVillageModalVisibilityChange])
 
   if (phase === 'idle') {
-    const equipmentSlotCounts = EQUIPMENT_SLOTS.reduce<Record<EquipmentSlot, number>>((counts, slot) => {
-      counts[slot] = equipmentInventory.filter((item) => item.slot === slot).length
-      return counts
-    }, {} as Record<EquipmentSlot, number>)
-    const activeInventorySlot = equipmentSlotCounts[inventorySlot] > 0
-      ? inventorySlot
-      : EQUIPMENT_SLOTS.find((slot) => equipmentSlotCounts[slot] > 0) ?? inventorySlot
-    const unlockedEquipmentSlots = getEffectiveUnlockedEquipmentSlots(level, unsealedEquipmentSlots)
-    const equipmentBonus = getEquipmentBonusSummary(equippedItems)
-    const equipmentSetCounts = getEquipmentSetCounts(equippedItems)
-    const equipmentContext = getActiveEquipmentContext(activeSkills)
-    const canResetMetaTalents = unlockedMetaTalentIds.length > 0
-      && currency >= TALENT_RESET_GOLD_COST
-      && (equipmentMaterials.buildShard ?? 0) >= TALENT_RESET_BUILD_SHARD_COST
-    const getMetaUnlockState = (nodeId: string) => getMetaTalentUnlockState(nodeId, {
-      talentPoints,
-      unlockedMetaTalentIds,
-      metaTalentRanks,
-      unlockedCampaignDifficulties,
-      completedCampaignDifficulties,
-    })
+    const canRenderEquipmentReset = isDeveloperAssetPanelVisible()
+    const hasLockedModifierReforge = getMetaTalentRank('meta_endgame_01', metaTalentRanks, unlockedMetaTalentIds) >= 1
+    const canResetMetaTalents = metaTalentPresentation.investedPoints > 0
+      && (metaTalentPresentation.migrationFreeResetAvailable || (
+        currency >= metaTalentPresentation.regularResetCost.gold
+        && (equipmentMaterials.buildShard ?? 0) >= metaTalentPresentation.regularResetCost.buildShard
+      ))
     const metaTalentTabStats = metaTalentTreeTabs.map((tab) => {
-      const nodes = META_TALENT_NODES.filter((node) => tab.modules.includes(node.module))
+      const nodes = META_TALENT_NODES.filter((node) => isMetaTalentInTreeTab(node, tab.id))
       return {
         ...tab,
-        unlocked: nodes.filter((node) => getMetaTalentRank(node.id, metaTalentRanks, unlockedMetaTalentIds) >= 1).length,
+        unlocked: nodes.filter((node) => (metaTalentPresentation.items.find((item) => item.id === node.id)?.currentRank ?? 0) >= 1).length,
         total: nodes.length,
       }
     })
     const metaTalentRows = metaTalentTabStats.map((tab) => ({
       ...tab,
       nodes: META_TALENT_NODES
-        .filter((node) => tab.modules.includes(node.module))
+        .filter((node) => isMetaTalentInTreeTab(node, tab.id))
         .sort((a, b) => a.order - b.order),
     }))
     const batchLabels: Array<[EquipmentDismantleCategory, string]> = [
@@ -2375,12 +2796,22 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
                     type="button"
                     className="pixel-button mt-5 w-full px-5 py-4 font-pixel text-[10px]"
                     onClick={() => {
+                      const prepared = prepareFormalCombatLaunch()
+                      if (!prepared.ok) {
+                        setCampaignLaunchFeedback(prepared.errors.join('；') || '战斗资源加载准备失败。')
+                        return
+                      }
+                      setCampaignLaunchFeedback('')
                       setVillageModal(null)
-                      startGame()
                     }}
                   >
                     进入
                   </button>
+                  {campaignLaunchFeedback ? (
+                    <p className="mt-3 text-sm leading-5 text-red-300" role="status" aria-live="polite" data-testid="campaign-launch-feedback">
+                      {campaignLaunchFeedback}
+                    </p>
+                  ) : null}
                 </div>
               </SectionPanel>
             </div>
@@ -2407,248 +2838,49 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
             testId="inventory-modal-shell"
             headerTestId="inventory-modal-header"
             contentTestId="inventory-modal-scroll"
+            contentClassName="min-h-0 min-w-0 flex-1 overflow-hidden px-5 pb-5 pt-4 md:px-6 md:pb-6"
           >
-            <div className="grid gap-4 xl:grid-cols-[minmax(360px,0.92fr)_minmax(0,1.08fr)]">
-              <SectionPanel eyebrow="" title="装备">
-                <div className="grid gap-4">
-                  <p className="font-pixel text-[9px] uppercase tracking-[0.14em] text-[#9dd5ac]">12 槽 · 背包 {equipmentInventory.length} / 48</p>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {EQUIPMENT_SLOTS.map((slot) => {
-                      const item = equippedItems[slot]
-                      const unlocked = unlockedEquipmentSlots.includes(slot)
-                      const displayName = !unlocked
-                        ? '封印'
-                        : item
-                          ? item.name
-                          : '未装备'
-                      const slotState = item ? `+${item.upgradeLevel ?? 0}` : unlocked ? '空槽' : '封印'
-                      const slotRelevance = item ? getEquipmentRelevance(item, equipmentContext) : null
-                      const slotActions = !item && !unlocked ? (
-                        <button className="pixel-button px-3 py-2 font-pixel text-[8px]" onClick={() => unlockEquipmentSlot(slot)}>
-                          解封
-                        </button>
-                      ) : null
-                      return (
-                        <div key={slot} className="min-h-[6.5rem] border-2 border-[#08100b] bg-[#101913] p-3" data-testid="equipment-slot" aria-label={`${EQUIPMENT_SLOT_LABELS[slot]}：${displayName}`}>
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="min-w-0">
-                              <p className="font-pixel text-[8px] uppercase tracking-[0.14em] text-[#9dd5ac]">{EQUIPMENT_SLOT_LABELS[slot]}</p>
-                              {item ? (
-                                <div className="group relative mt-2 inline-block max-w-full align-top">
-                                  <button
-                                    type="button"
-                                    className="max-w-full truncate text-left text-lg leading-tight text-[#f4f0d7] underline-offset-4 hover:text-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
-                                    aria-describedby={`equipment-tooltip-${item.id}`}
-                                  >
-                                    {displayName}
-                                  </button>
-                                  <div
-                                    id={`equipment-tooltip-${item.id}`}
-                                    role="tooltip"
-                                    className="pointer-events-none absolute left-0 top-full z-50 mt-2 hidden w-72 border-2 border-amber-300 bg-[#0b120d] p-3 text-left shadow-[0_8px_22px_rgba(0,0,0,0.45)] group-hover:block group-focus-within:block"
-                                  >
-                                    <p className="text-lg leading-tight text-[#f4f0d7]">{item.name}</p>
-                                    <p className="mt-2 font-pixel text-[8px] uppercase tracking-[0.14em] text-amber-300">
-                                      {EQUIPMENT_RARITY_LABELS[item.rarity]} · {EQUIPMENT_SLOT_LABELS[item.slot]} · 评分 {item.score}
-                                      {typeof item.level === 'number' ? ` · Lv.${item.level}` : ''}
-                                    </p>
-                                    <p className="mt-3 text-[0.95rem] leading-tight text-[#9dd5ac]">属性：{formatEquipmentBonus(item)}</p>
-                                    <p className="mt-2 text-[0.95rem] leading-tight text-[#dfe7d5]">套装：{item.setId ? EQUIPMENT_SET_LABELS[item.setId] : '无套装'}</p>
-                                    <p className="mt-2 text-[0.95rem] leading-tight text-[#dfe7d5]">
-                                      符文：{item.modifiers.length > 0 ? item.modifiers.map(formatEquipmentModifier).join(' / ') : '无'}
-                                    </p>
-                                    {slotRelevance ? (
-                                      <p className="mt-2 text-[0.95rem] leading-tight text-amber-200">
-                                        {slotRelevance.affectsActiveSkill ? '命中当前 Q/E/R' : slotRelevance.matchesActiveBuild ? '当前主流派' : '普通装备'}
-                                      </p>
-                                    ) : null}
-                                  </div>
-                                </div>
-                              ) : (
-                                <p className="mt-2 text-lg leading-tight text-[#f4f0d7]">
-                                  {displayName}
-                                </p>
-                              )}
-                            </div>
-                            <div className="flex min-w-[7rem] shrink-0 flex-col items-end gap-2">
-                              <span className="font-pixel text-[8px] text-amber-300">{slotState}</span>
-                              {slotActions ? (
-                                <div className="flex flex-wrap justify-end gap-2">
-                                  {slotActions}
-                                </div>
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
+            <div className="flex h-full min-h-0 flex-col gap-4">
+            {canRenderEquipmentReset ? (
+              <section
+                className="mb-4 border-2 border-[rgba(147,197,253,0.6)] bg-[rgba(7,18,31,0.92)] p-3 text-[#eff6ff] shadow-[0_0_0_1px_rgba(191,219,254,0.14)]"
+                aria-label="本地高稀有度装备重置"
+                data-testid="local-high-rarity-equipment-reset"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-pixel text-[9px] text-[#93c5fd]">仅本地开发 · 高稀有度装备重置</p>
+                    <p className="mt-2 text-[0.9rem] leading-tight text-[#dbeafe]">清空本地装备并写入史诗/传承/传奇全装备。此破坏性操作会删除当前本地存档的物品仓库与已穿戴装备。</p>
+                    <p className="mt-1 text-[0.85rem] leading-tight text-[#bfdbfe]">新装备会保留在本地存档中，并继续使用下方真实仓库与穿戴流程。</p>
                   </div>
-
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    <div className="border-2 border-[#08100b] bg-[#101913] p-4">
-                      <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#9dd5ac]">属性</p>
-                      <div className="mt-3 grid gap-2 text-[1rem] leading-tight text-[#dfe7d5] sm:grid-cols-2">
-                        <p>最大生命 {player.maxHp}</p>
-                        <p>攻击 {player.attackDamage}</p>
-                        <p>攻速 {player.attackInterval.toFixed(2)}s</p>
-                        <p>移速 {player.speed}</p>
-                        <p>射程 {player.attackRange}</p>
-                        <p>穿透 {player.attackPierce}</p>
-                        <p>技能伤害 +{Math.round(equipmentBonus.skillDamageMultiplier * 100)}%</p>
-                        <p>技能冷却 -{Math.round(equipmentBonus.skillCooldownMultiplier * 100)}%</p>
-                        <p>散射弹道 +{equipmentBonus.spreadProjectileBonus}</p>
-                        <p>野兽伤害 +{Math.round(equipmentBonus.beastDamageMultiplier * 100)}%</p>
-                      </div>
-                    </div>
-
-                    <div className="border-2 border-[#08100b] bg-[#101913] p-4">
-                      <p className="font-pixel text-[9px] uppercase tracking-[0.16em] text-[#9dd5ac]">材料</p>
-                      <p className="mt-3 text-lg leading-tight text-[#dfe7d5]">{formatMaterialSummary(equipmentMaterials)}</p>
-                      <p className="mt-3 text-[1rem] leading-tight text-amber-300">
-                        套装：{Object.entries(equipmentSetCounts).length > 0
-                          ? Object.entries(equipmentSetCounts).map(([setId, count]) => `${EQUIPMENT_SET_LABELS[setId as keyof typeof EQUIPMENT_SET_LABELS]} ${count}`).join(' / ')
-                          : '未激活'}
-                      </p>
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {batchLabels.map(([category, label]) => (
-                          <button key={category} className="pixel-button px-3 py-2 font-pixel text-[8px]" onClick={() => batchDismantleEquipment(category)}>
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 border border-[rgba(252,165,165,0.65)] bg-[#451116] px-3 py-2 font-pixel text-[8px] text-[#fee2e2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#fecaca]"
+                    data-testid="local-high-rarity-equipment-reset-action"
+                    onClick={() => {
+                      const result = resetLocalHighRarityEquipmentInventory()
+                      setEquipmentResetFeedback(result.ok
+                        ? '已清空本地装备并写入史诗/传承/传奇全装备。'
+                        : result.errors.join('；') || '本地装备重置未能完成。')
+                    }}
+                  >
+                    清空本地装备并写入全装备
+                  </button>
                 </div>
-              </SectionPanel>
-
-              <SectionPanel eyebrow="" title="背包">
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4" role="tablist" aria-label="装备部位分类">
-                  {EQUIPMENT_SLOTS.map((slot) => {
-                    const count = equipmentSlotCounts[slot]
-                    const disabled = count === 0
-                    const active = activeInventorySlot === slot
-
-                    return (
-                      <button
-                        key={slot}
-                        type="button"
-                        role="tab"
-                        aria-selected={active}
-                        aria-disabled={disabled}
-                        disabled={disabled}
-                        className={`border-2 px-3 py-2 text-left font-pixel text-[8px] uppercase tracking-[0.12em] transition-colors md:text-[9px] ${
-                          disabled
-                            ? 'cursor-not-allowed border-[#08100b] bg-[#0a110d] text-[#506859] opacity-45'
-                            : active
-                              ? 'border-amber-300 bg-[#2b2110] text-amber-200'
-                              : 'border-[#08100b] bg-[#101913] text-[#9dd5ac] hover:border-[#9dd5ac]'
-                        }`}
-                        onClick={() => {
-                          if (!disabled) {
-                            setInventorySlot(slot)
-                          }
-                        }}
-                      >
-                        {EQUIPMENT_SLOT_LABELS[slot]} <span className="text-amber-300">{count}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-
-                {equipmentInventory.filter((item) => item.slot === activeInventorySlot).length === 0 ? (
-                  <p className="mt-4 text-xl text-[#dfe7d5]">暂无装备</p>
-                ) : (
-                  <div className="mt-4 grid gap-3">
-                    {equipmentInventory.filter((item) => item.slot === activeInventorySlot).map((item) => {
-                      const equipped = equippedItems[item.slot]?.id === item.id
-                      const equippedBaseline = equippedItems[item.slot]?.id !== item.id ? equippedItems[item.slot] : undefined
-                      const sameNameBaseline = equipmentInventory.find((candidate) => candidate.id !== item.id && candidate.name === item.name)
-                      const comparisonItem = equippedBaseline ?? sameNameBaseline
-                      const diff = comparisonItem ? item.score - comparisonItem.score : item.score
-                      const relevance = getEquipmentRelevance(item, equipmentContext)
-                      const confirmHighRarity = item.rarity === 'legacy' || item.rarity === 'legendary'
-                      const protectedHighRarity = isHighRarityProtected(item)
-                      const discovered = hasDiscoveredHighRarityEquipment(discoveredHighRarityEquipmentIds, item.equipmentId)
-                      const compareLabel = equippedBaseline ? '对比当前' : sameNameBaseline ? '同名 roll' : '基础'
-                      return (
-                        <div key={item.id} className="border-2 border-[#08100b] bg-[#121b16] p-4 shadow-[0_0_0_2px_rgba(157,213,172,0.06)]">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex min-w-0 items-start gap-3">
-                              <EquipmentPixelIcon item={item} equipped={equipped} />
-                              <div className="min-w-0">
-                                <p className="truncate font-pixel text-[10px] text-[#f4f0d7]">{item.isNew ? '新 · ' : ''}{item.locked ? '锁 · ' : ''}{item.name}</p>
-                                <p className="mt-2 font-pixel text-[8px] uppercase tracking-[0.12em]" style={{ color: EQUIPMENT_RARITY_COLORS[item.rarity] }}>
-                                  {EQUIPMENT_RARITY_LABELS[item.rarity]} · {EQUIPMENT_SLOT_LABELS[item.slot]} · 评分 {item.score}（{diff >= 0 ? '+' : ''}{diff}）
-                                </p>
-                                {item.setId ? (
-                                  <p className="mt-2 text-[0.95rem] leading-tight text-amber-300">套装：{EQUIPMENT_SET_LABELS[item.setId]}</p>
-                                ) : null}
-                                <div className="mt-2 flex flex-wrap gap-1.5">
-                                  {protectedHighRarity ? (
-                                    <span className="border border-amber-300 px-2 py-1 font-pixel text-[7px] text-amber-200">
-                                      高稀有 · 默认锁定
-                                    </span>
-                                  ) : null}
-                                  {item.rarity === 'legacy' || item.rarity === 'legendary' ? (
-                                    <span
-                                      className="border border-[rgba(157,213,172,0.35)] px-2 py-1 font-pixel text-[7px] text-[#9dd5ac]"
-                                      data-testid={`equipment-discovery-${item.id}`}
-                                    >
-                                      {discovered ? '已发现 · 追刷激活' : '未发现'}
-                                    </span>
-                                  ) : null}
-                                </div>
-                                {item.modifiers.length > 0 ? (
-                                  <p className="mt-2 text-[0.95rem] leading-tight text-amber-300">符文：{item.modifiers.length} 项{relevance.affectsActiveSkill ? ' · Q/E/R' : ''}</p>
-                                ) : null}
-                                {item.modifiers.length > 0 ? (
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    {item.modifiers.map((_, index) => (
-                                      <button
-                                        key={`${item.id}-modifier-${index}`}
-                                        type="button"
-                                        className="border border-[#334737] bg-[#0a110d] px-2 py-1 font-pixel text-[7px] text-[#dfe7d5] hover:border-amber-300 hover:text-amber-200"
-                                        onClick={() => toggleEquipmentModifierLock(item.id, index)}
-                                      >
-                                        {item.lockedModifierIndexes?.includes(index) ? '解锁词条' : '锁词条'} {index + 1}
-                                      </button>
-                                    ))}
-                                  </div>
-                                ) : null}
-                                {item.modifiers.length > 0 ? (
-                                  <p className="mt-2 text-[0.85rem] leading-tight text-[#9dd5ac]">锁词条不影响当前重铸</p>
-                                ) : null}
-                                {relevance.matchesActiveBuild ? (
-                                  <p className="mt-2 text-[0.95rem] leading-tight text-[#fbbf24]">构筑相关：当前主流派</p>
-                                ) : null}
-                              </div>
-                            </div>
-                            <span className="shrink-0 font-pixel text-[8px] text-amber-300">{equipped ? '已装备' : `Lv.${item.level}`}</span>
-                          </div>
-                          <p className="mt-3 text-lg leading-tight text-[#9dd5ac]">{formatEquipmentBonus(item)}</p>
-                          <p className="mt-2 text-[0.95rem] leading-tight text-[#dfe7d5]" data-testid={`equipment-roll-diff-${item.id}`}>
-                            {compareLabel}：{formatEquipmentRollDiff(item, comparisonItem)}
-                          </p>
-                          <div className="mt-4 flex flex-wrap gap-2">
-                            {!equipped ? (
-                              <button className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => equipEquipment(item.id)}>穿戴</button>
-                            ) : null}
-                            <button className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => toggleEquipmentLock(item.id)}>
-                              {item.locked ? '解锁' : '锁定'}
-                            </button>
-                            {renderReforgeActionButtons(item)}
-                            {!equipped ? (
-                              <button className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => dismantleEquipment(item.id, confirmHighRarity)}>
-                                {confirmHighRarity ? '确认分解' : '分解'}
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </SectionPanel>
+                {equipmentResetFeedback ? (
+                  <p className="mt-3 text-[0.85rem] leading-tight text-[#bfdbfe]" role="status" aria-live="polite" data-testid="local-high-rarity-equipment-reset-feedback">
+                    {equipmentResetFeedback}
+                  </p>
+                ) : null}
+              </section>
+            ) : null}
+              <SimplifiedEquipmentWarehouse
+                equipmentInventory={equipmentInventory}
+                equippedItems={equippedItems}
+                equipmentMaterials={equipmentMaterials}
+                onEquip={equipEquipment}
+                onUnequip={unequipEquipment}
+              />
             </div>
           </VillageModalShell>
         ) : null}
@@ -2715,14 +2947,20 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
                       <div className="grid gap-3 border-t border-b border-[rgba(157,213,172,0.2)] bg-[rgba(5,8,6,0.76)] p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" data-testid="hunter-home-talent-summary">
                         <div className="flex items-baseline gap-3">
                           <p className="font-pixel text-xs text-[#9dd5ac]" data-testid="hunter-home-talent-balance-label">天赋点</p>
-                          <p className="font-pixel text-xl text-amber-300" data-testid="hunter-home-talent-balance">{talentPoints}</p>
+                          <p className="font-pixel text-xl text-amber-300" data-testid="hunter-home-talent-balance">{metaTalentPresentation.availablePoints}</p>
                         </div>
                         <div className="flex items-baseline gap-3">
                           <p className="font-pixel text-xs text-[#9dd5ac]" data-testid="hunter-home-meta-unlocked-label">已解锁</p>
-                          <p className="font-pixel text-xl text-amber-300" data-testid="hunter-home-meta-unlocked-count">{unlockedMetaTalentIds.length}/84</p>
+                          <p className="font-pixel text-xl text-amber-300" data-testid="hunter-home-meta-unlocked-count">
+                            {metaTalentPresentation.items.filter((item) => item.currentRank > 0).length}/{metaTalentPresentation.catalogCount}
+                          </p>
                         </div>
                         <div className="flex items-center justify-end gap-3">
-                          <p className="font-pixel text-sm text-[#9dd5ac]">重置：{TALENT_RESET_GOLD_COST} 金币 + {TALENT_RESET_BUILD_SHARD_COST} 流派碎片</p>
+                          <p className="font-pixel text-sm text-[#9dd5ac]">
+                            {metaTalentPresentation.migrationFreeResetAvailable
+                              ? 'V3 迁移：本次完整重置免费'
+                              : `重置：${metaTalentPresentation.regularResetCost.gold} 金币 + ${metaTalentPresentation.regularResetCost.buildShard} 流派碎片`}
+                          </p>
                           <button
                             className={`pixel-button ${canResetMetaTalents ? '' : 'opacity-55'}`}
                             type="button"
@@ -2730,12 +2968,12 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
                             onClick={resetMetaTalentTreeAction}
                             data-testid="hunter-home-meta-reset"
                           >
-                            重置天赋
+                            {metaTalentPresentation.migrationFreeResetAvailable ? '免费重置 V3 功能天赋' : '重置天赋'}
                           </button>
                         </div>
                       </div>
                       {metaTalentRows.map((row) => {
-                        const firstModuleKey = metaTalentModuleTestIds[row.modules[0]] ?? row.modules[0]
+                        const firstModuleKey = metaTalentGroupTestIds[row.id]
                         return (
                           <section
                             key={row.id}
@@ -2753,16 +2991,22 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
                               data-testid={`meta-talent-group-${firstModuleKey}`}
                             >
                               {row.nodes.map((node) => {
-                                const rank = getMetaTalentRank(node.id, metaTalentRanks, unlockedMetaTalentIds)
-                                const state = getMetaUnlockState(node.id)
+                                const presentation = metaTalentPresentation.items.find((item) => item.id === node.id)
+                                if (!presentation) return null
                                 return (
                                   <MetaTalentShelfNode
                                     key={node.id}
                                     node={node}
+                                    presentation={presentation}
                                     tab={row}
-                                    rank={rank}
-                                    canUnlock={state.canUnlock}
-                                    unlockReason={state.reason}
+                                    candidateWeightPresentations={equipmentCandidateWeightPresentations}
+                                    bossExtraEquipmentProtection={bossExtraEquipmentProtection}
+                                    bossExtraEquipmentProtectionOwned={getMetaTalentRank(
+                                      'meta_endgame_02',
+                                      metaTalentRanks,
+                                      unlockedMetaTalentIds,
+                                    ) >= 1}
+                                    endgameArchiveCandidateWeight={endgameArchiveCandidateWeight}
                                     onUnlock={unlockMetaTalentAction}
                                   />
                                 )
@@ -2780,6 +3024,11 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
               {hunterHomeTab === 'combat-talents' ? (
                 <SectionPanel eyebrow="" title="">
                   <div className="space-y-5">
+                    <CampaignRewardSnapshotSummary
+                      snapshot={campaignRewardPresentation}
+                      testId="hunter-home-campaign-reward-summary"
+                      compact
+                    />
                     <section className="border-2 border-[#08100b] bg-[#101913] p-4" data-testid="hunter-home-evolution-guide">
                       <p className="font-pixel text-[10px] tracking-[0.12em] text-amber-200">弓箭手进化图鉴</p>
                       <p className="mt-2 text-lg leading-tight text-[#9dd5ac]">与首页图鉴、查看详情共用同一份已发现进化记录；未发现分支只显示灰色名称和图标。</p>
@@ -2787,13 +3036,17 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
                         <ArcherEvolutionGuide catalog={archerEvolutionGuideCatalog} />
                       </div>
                     </section>
-                    <RunTalentGuideShelf
-                      presentationItems={runTalentPresentationItems}
-                      campaignRewardSnapshot={campaignRewardSnapshot}
-                    />
+                    <div data-testid="hunter-home-run-talent-tree">
+                      <ArcherCombatTalentV3Catalog
+                        presentation={combatTalentV3Presentation}
+                        activeSkills={runTalentPresentationSource.activeSkills}
+                      />
+                    </div>
                   </div>
                 </SectionPanel>
               ) : null}
+
+              {hunterHomeTab === 'equipment-codex' ? <EquipmentCodex /> : null}
 
               {hunterHomeTab === 'history' ? (
                 <SectionPanel eyebrow="通关记录" title="历史冒险">
@@ -2901,27 +3154,62 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
                   <div className="border-2 border-[#08100b] bg-[#101913] p-4">
                     <p className="font-pixel text-[9px] text-amber-300">副属性 / Boss 传承重铸</p>
                     <p className="mt-3 text-lg leading-tight text-[#dfe7d5]">金币 {currency}G · {formatMaterialSummary(equipmentMaterials)}</p>
-                    <p className="mt-2 text-[0.95rem] leading-tight text-[#9dd5ac]">锁词条不影响当前重铸</p>
+                    <p className="mt-2 text-[0.95rem] leading-tight text-[#9dd5ac]">
+                      {hasLockedModifierReforge ? '锁定 1 条核心词缀时，实际重铸材料成本 +40%，金币手续费不变' : '锁词条当前仅记录意图，不参与本阶段重铸'}
+                    </p>
                   </div>
                   {equipmentInventory.length === 0 ? (
                     <p className="text-xl text-[#dfe7d5]">暂无装备</p>
                   ) : (
-                    equipmentInventory.map((item) => (
-                      <div key={`blacksmith-reforge-${item.id}`} className="border-2 border-[#08100b] bg-[#101913] p-4" data-testid={`blacksmith-reforge-item-${item.id}`}>
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="truncate font-pixel text-[9px] text-[#f4f0d7]">{item.name}</p>
-                            <p className="mt-2 font-pixel text-[8px]" style={{ color: EQUIPMENT_RARITY_COLORS[item.rarity] }}>
-                              {EQUIPMENT_RARITY_LABELS[item.rarity]} · {EQUIPMENT_SLOT_LABELS[item.slot]} · 评分 {item.score}
-                            </p>
+                    equipmentInventory.map((item) => {
+                      const canSelectCoreModifier = hasLockedModifierReforge
+                        && canReforgeEquipmentItem(item, 'secondary')
+                        && item.modifiers.length > 0
+                      const lockedModifierIndex = item.lockedModifierIndexes?.[0]
+                      return (
+                        <div key={`blacksmith-reforge-${item.id}`} className="border-2 border-[#08100b] bg-[#101913] p-4" data-testid={`blacksmith-reforge-item-${item.id}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate font-pixel text-[9px] text-[#f4f0d7]">{item.name}</p>
+                              <p className="mt-2 font-pixel text-[8px]" style={{ color: EQUIPMENT_RARITY_COLORS[item.rarity] }}>
+                                {EQUIPMENT_RARITY_LABELS[item.rarity]} · {EQUIPMENT_SLOT_LABELS[item.slot]} · 评分 {item.score}
+                              </p>
+                            </div>
+                            <p className="shrink-0 font-pixel text-[8px] text-amber-300">{formatRollPercent(getReforgeRollValue(item, 'secondary'))}</p>
                           </div>
-                          <p className="shrink-0 font-pixel text-[8px] text-amber-300">{formatRollPercent(getReforgeRollValue(item, 'secondary'))}</p>
+                          {canSelectCoreModifier ? (
+                            <fieldset className="mt-3 min-w-0 border border-[rgba(251,191,36,0.45)] bg-[#0a110d] p-3" data-testid={`reforge-core-modifier-lock-${item.id}`}>
+                              <legend className="px-1 font-pixel text-[8px] text-amber-200">锁词重铸 · 最多 1 条</legend>
+                              <p className="text-[0.9rem] leading-tight text-[#9dd5ac]">选择后保留该核心词缀；实际材料成本 +40%，金币手续费不变。</p>
+                              <div className="mt-3 flex min-w-0 flex-wrap gap-2" role="radiogroup" aria-label={`${item.name}的核心词缀选择`}>
+                                {item.modifiers.map((modifier, index) => {
+                                  const selected = lockedModifierIndex === index
+                                  return (
+                                    <button
+                                      key={`${item.id}-core-modifier-${index}`}
+                                      type="button"
+                                      role="radio"
+                                      aria-checked={selected}
+                                      className={`border px-2 py-2 font-pixel text-[7px] ${selected ? 'border-amber-300 bg-[#2b2110] text-amber-200' : 'border-[#334737] bg-[#0a110d] text-[#dfe7d5] hover:border-[#9dd5ac]'}`}
+                                      data-testid={`reforge-core-modifier-${item.id}-${index}`}
+                                      onClick={() => toggleEquipmentModifierLock(item.id, index)}
+                                    >
+                                      保留词缀 {index + 1}：{formatEquipmentModifier(modifier)}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                              <p className="mt-2 text-[0.85rem] leading-tight text-amber-200" role="status" aria-live="polite" data-testid={`reforge-core-modifier-status-${item.id}`}>
+                                {typeof lockedModifierIndex === 'number' ? `当前保留词缀 ${lockedModifierIndex + 1}` : '尚未选择保留词缀'}
+                              </p>
+                            </fieldset>
+                          ) : null}
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {renderReforgeActionButtons(item, 'px-3 py-2 text-[8px]')}
+                          </div>
                         </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {renderReforgeActionButtons(item, 'px-3 py-2 text-[8px]')}
-                        </div>
-                      </div>
-                    ))
+                      )
+                    })
                   )}
                 </div>
               </SectionPanel>
@@ -2969,7 +3257,13 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
                 </div>
               </div>
 
-              <p className="mt-3 text-[0.95rem] leading-tight text-[#9dd5ac]" data-testid="reforge-lock-note">锁词条当前仅记录意图，不参与本阶段重铸</p>
+              <p className="mt-3 text-[0.95rem] leading-tight text-[#9dd5ac]" data-testid="reforge-lock-note">
+                {hasLockedModifierReforge
+                  ? (reforgeItem.lockedModifierIndexes?.length
+                    ? '已选择 1 条核心词缀；实际材料成本 +40%，金币手续费不变'
+                    : '可在铁匠铺选择 1 条核心词缀；选择后实际材料成本 +40%，金币手续费不变')
+                  : '锁词条当前仅记录意图，不参与本阶段重铸'}
+              </p>
               {message ? (
                 <p className="mt-3 border border-[rgba(251,191,36,0.35)] bg-[#241b0e] px-3 py-2 text-lg leading-tight text-amber-200" data-testid="reforge-message">
                   {message}
@@ -3108,7 +3402,13 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   }
 
   if (phase === 'game-over') {
-    return <RunSettlementOverlay summary={runSettlementSummary} campaignRewardSnapshot={campaignRewardSnapshot} onReturnToVillage={returnToVillage} />
+    return (
+      <RunSettlementOverlay
+        summary={runSettlementSummary}
+        combatTalentPresentation={combatTalentV3Presentation}
+        onReturnToVillage={returnToVillage}
+      />
+    )
   }
 
   if (phase === 'paused') {
@@ -3133,6 +3433,10 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
     )
   }
 
+  const isBossSpawnSearching = phase === 'running'
+    && battlefieldMode === 'boss-arena'
+    && bossSpawnState === 'searching'
+
   return (
     <div
       {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.hud, highestLayer)}
@@ -3140,8 +3444,13 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
       style={getCombatUiLayerStyle(COMBAT_UI_LAYER.hud)}
       data-testid="combat-floor-hud"
     >
-      <p className="font-pixel text-[9px] uppercase tracking-[0.12em] text-[#f4f0d7] md:text-[10px]">
-        {level}层 / 目标{levelTargetKills}
+      <p
+        className="font-pixel text-[9px] uppercase tracking-[0.12em] text-[#f4f0d7] md:text-[10px]"
+        data-testid={isBossSpawnSearching ? 'boss-spawn-search-status' : 'combat-floor-objective'}
+        role={isBossSpawnSearching ? 'status' : undefined}
+        aria-live={isBossSpawnSearching ? 'polite' : undefined}
+      >
+        {isBossSpawnSearching ? 'Boss 正在寻找合法入场位置' : `${level}层 / 目标${levelTargetKills}`}
       </p>
     </div>
   )

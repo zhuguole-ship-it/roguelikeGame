@@ -1,10 +1,11 @@
 import { act, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createInitialSnapshot } from '../../game/engine'
 import { ARCHER_SKILL_EVOLUTION_MAP } from '../../game/archerSkillEvolution'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
 import { getCombatHudV2AssetUrl } from '../../game/combatHudAssets'
+import type { EquipmentItem, SkillField } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
 import {
   GameStatusBar,
@@ -15,6 +16,7 @@ import {
 } from './GameStatusBar'
 
 afterEach(() => {
+  vi.useRealTimers()
   useGameStore.setState({ ...createInitialSnapshot() })
 })
 
@@ -123,6 +125,209 @@ describe('GameStatusBar', () => {
     expect(wolfKingSlot.getAttribute('data-runtime-display-id')).toBe('frost-wolf-king')
     expect(screen.getByTestId('combat-skill-icon-placeholder-1').textContent).toBe(wolfKing.name)
     expect(screen.queryByTestId('combat-skill-icon-1')).toBeNull()
+  })
+
+  it('consumes the independent arrow-turret presentation for deployed groups, health, remaining time, taunt, berserk, and resonance without creating a combat control', () => {
+    const base = createInitialSnapshot('running')
+    const resonanceTower = {
+      id: 'tower-resonance-a',
+      kind: 'turret',
+      owner: 'player',
+      position: { x: 240, y: 170 },
+      ttl: 6.4,
+      radius: 0,
+      damage: 0,
+      tickInterval: 0,
+      tickCooldown: 0,
+      color: '#67e8f9',
+      effect: 'slow',
+      effectStrength: 0,
+      projectileCount: 0,
+      spread: 0,
+      projectileSpeed: 0,
+      sourceSkillId: 'arrow-turret',
+      sourceSkillFamilyId: 'arrow-turret',
+      sourceEvolutionId: 'feather-resonance',
+      arrowTurret: {
+        groupId: 'resonance-group',
+        groupCreatedAt: 10,
+        variant: 'resonance',
+        hp: 120,
+        maxHp: 150,
+        attackInterval: 0.48,
+        attackCooldown: 0.2,
+        targetId: 'enemy-1',
+        totalFanAngleDegrees: 60,
+        inheritedEffect: {
+          familyId: 'fan-burst',
+          evolutionId: 'double-crescent',
+          name: '双月弧矢',
+          skillLevel: 4,
+          damageMultiplier: 1,
+          projectileBonus: 0,
+          pierceBonus: 0,
+          effect: 'slow',
+          effectStrength: 0,
+          explosionRadius: 0,
+        },
+      },
+    } satisfies SkillField
+    const tauntTower = {
+      ...resonanceTower,
+      id: 'tower-taunt-a',
+      ttl: 4.2,
+      sourceEvolutionId: 'bait-bastion',
+      arrowTurret: {
+        groupId: 'taunt-group',
+        groupCreatedAt: 12,
+        variant: 'taunt' as const,
+        hp: 210,
+        maxHp: 300,
+        attackInterval: 0.6,
+        attackCooldown: 0.1,
+        targetId: 'enemy-2',
+        tauntRadius: 128,
+        tauntRemaining: 1.3,
+        berserkRemaining: 0.7,
+        totalFanAngleDegrees: 75,
+      },
+    } satisfies SkillField
+
+    useGameStore.setState({
+      ...base,
+      skillFields: [resonanceTower, tauntTower],
+    })
+
+    render(<GameStatusBar />)
+
+    const towerHud = screen.getByTestId('arrow-turret-hud')
+    expect(towerHud.getAttribute('aria-label')).toContain('箭幕哨塔部署状态，共 2 组')
+    expect(towerHud.className).toContain('max-w-[14.5rem]')
+    expect(towerHud.className).toContain('overflow-y-auto')
+
+    const resonanceGroup = screen.getByTestId('arrow-turret-group-resonance-group')
+    expect(resonanceGroup.dataset.variant).toBe('resonance')
+    expect(resonanceGroup.textContent).toContain('百羽共鸣 · 1 座')
+    const resonance = screen.getByTestId('arrow-turret-tower-resonance-a')
+    expect(resonance.textContent).toContain('HP 120/150 · 6.4秒')
+    expect(resonance.textContent).toContain('扇角 60°')
+    expect(resonance.textContent).toContain('共鸣继承：双月弧矢 Lv.4')
+    expect(resonance.dataset.targetId).toBe('enemy-1')
+    expect(resonance.dataset.totalFanAngle).toBe('60')
+
+    const taunt = screen.getByTestId('arrow-turret-tower-taunt-a')
+    expect(screen.getByTestId('arrow-turret-group-taunt-group').textContent).toContain('诱敌战垒 · 1 座')
+    expect(taunt.textContent).toContain('普通怪嘲讽 · 1.3秒')
+    expect(taunt.textContent).toContain('狂暴 · 0.7秒')
+    expect(taunt.textContent).toContain('扇角 75°')
+    expect(taunt.getAttribute('aria-label')).toContain('生命 210 / 300')
+
+    act(() => {
+      useGameStore.setState({ ...useGameStore.getState(), skillFields: [] })
+    })
+    expect(screen.queryByTestId('arrow-turret-hud')).toBeNull()
+  })
+
+  it('keeps legacy arrow-screen branches as skill HUD entries without mounting an arrow-turret deployment panel', () => {
+    const base = createInitialSnapshot('running')
+    const moonshard = ARCHER_SKILL_EVOLUTION_MAP['moonshard-volley']
+    useGameStore.setState({
+      ...base,
+      activeSkills: [{
+        skillId: 'arrow-screen',
+        familyId: 'arrow-screen',
+        evolutionId: moonshard.id,
+        level: 4,
+        cooldownRemaining: 0,
+      }],
+    })
+
+    render(<GameStatusBar />)
+
+    expect(screen.getByTestId('combat-skill-slot-0').getAttribute('aria-label')).toBe(moonshard.name)
+    expect(screen.getByTestId('combat-skill-slot-0').dataset.runtimeFamilyId).toBe('arrow-screen')
+    expect(screen.getByTestId('combat-skill-slot-0').dataset.runtimeEvolutionId).toBe('moonshard-volley')
+    expect(screen.queryByTestId('arrow-turret-hud')).toBeNull()
+  })
+
+  it('reads Beast Contract and Contract Domain timers, counters, and two-segment energy from the shared runtime presentation', () => {
+    vi.useFakeTimers()
+    const base = createInitialSnapshot('running')
+    const beastCore = {
+      id: 'hud-beast-core',
+      equipmentId: 'equipment-template-legacy-helmet-beast-兽王契约',
+      slot: 'helmet', rarity: 'legacy', name: '旧存档名称', affix: '兽王契约', buildTag: 'beast',
+      level: 10, score: 100, bonus: {}, modifiers: [],
+    } satisfies EquipmentItem
+    const domainCore = {
+      id: 'hud-domain-core',
+      equipmentId: 'equipment-template-legacy-chest-control-契约领域',
+      slot: 'chest', rarity: 'legacy', name: '旧存档名称', affix: '契约领域', buildTag: 'control',
+      level: 10, score: 100, bonus: {}, modifiers: [],
+    } satisfies EquipmentItem
+    useGameStore.setState({
+      ...base,
+      equippedItems: { helmet: beastCore, chest: domainCore },
+      beastContractDomainState: {
+        beast: {
+          ...base.beastContractDomainState!.beast,
+          targets: { marked: { marks: 5, lastMarkedAt: 1, huntCooldownRemaining: 0 } },
+          huntCount: 3,
+          domainRemaining: 4.26,
+          rageRemaining: 1.34,
+        },
+        domain: {
+          ...base.beastContractDomainState!.domain,
+          energy: 13,
+          resonanceCount: 2,
+          suppressionCount: 1,
+          celestialRemaining: 5.15,
+        },
+      },
+    })
+
+    render(<GameStatusBar />)
+
+    const hud = screen.getByTestId('beast-contract-domain-hud')
+    expect(hud.className).toContain('pointer-events-none')
+    expect(hud.className).toContain('w-[min(13.5rem,calc(100vw-1rem))]')
+    expect(screen.getByTestId('beast-contract-hud-status').textContent).toContain('兽王领域 4.3秒')
+    expect(screen.getByTestId('beast-contract-hud-status').textContent).toContain('余怒 1.3秒')
+    expect(screen.getByText('狩猎印记目标 1 个，最高 5 层')).toBeTruthy()
+    expect(screen.getByTestId('contract-domain-hud-status').textContent).toContain('苍穹领域 5.2秒')
+    const energy = screen.getByTestId('contract-domain-energy')
+    expect(energy.getAttribute('aria-label')).toContain('领域能量 13/20，第一段 10/10，第二段 3/10')
+    expect(screen.getByTestId('contract-domain-energy-segment-1').style.width).toBe('100%')
+    expect(screen.getByTestId('contract-domain-energy-segment-2').style.width).toBe('30%')
+    expect(screen.getByTestId('contract-domain-energy-segment-1').className).toContain('motion-reduce:transition-none')
+
+    act(() => {
+      const current = useGameStore.getState()
+      useGameStore.setState({
+        beastContractDomainState: {
+          beast: current.beastContractDomainState!.beast,
+          domain: { ...current.beastContractDomainState!.domain, suppressionCount: 2 },
+        },
+      })
+    })
+    expect(screen.getByTestId('beast-contract-domain-feedback').textContent).toBe('压制成型')
+    act(() => { vi.advanceTimersByTime(900) })
+    expect(screen.getByTestId('beast-contract-domain-feedback').textContent).toBe('')
+
+    act(() => {
+      const current = useGameStore.getState()
+      useGameStore.setState({
+        beastContractDomainState: {
+          beast: {
+            ...current.beastContractDomainState!.beast,
+            lastPackHuntTargetId: 'marked',
+            packHuntEventSequence: 1,
+          },
+          domain: current.beastContractDomainState!.domain,
+        },
+      })
+    })
+    expect(screen.getByTestId('beast-contract-domain-feedback').textContent).toBe('群兽围猎命中')
   })
 
   it('keeps the real cooldown mask and ceiling label in the same state update', () => {

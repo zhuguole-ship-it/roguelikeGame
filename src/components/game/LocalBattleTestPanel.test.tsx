@@ -55,7 +55,7 @@ describe('LocalBattleTestPanel', () => {
     fireEvent.click(screen.getByTestId('local-battle-enter'))
 
     expect(controller.start).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId('local-battle-message').textContent).toContain('已进入第一关本地战斗测试')
+    expect(screen.getByTestId('local-battle-message').textContent).toContain('已准备第一关本地战斗资源')
   })
 
   it('validates an empty monster configuration without calling A apply', () => {

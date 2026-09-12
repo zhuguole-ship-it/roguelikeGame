@@ -1,0 +1,273 @@
+{
+	"appliesTo": [
+		"infinite",
+		"boss-arena"
+	],
+	"campaign": 1,
+	"collision": {
+		"exported": false,
+		"forbidden": true,
+		"semantic": "visual-only"
+	},
+	"composition": {
+		"forbidden": [
+			"baked-stone-texture",
+			"resized-stone-pattern",
+			"precomposited-moss-texture",
+			"visible-repeated-stone-art"
+		],
+		"mossEncoding": {
+			"alpha": 0,
+			"meaning": "show continuous moss source texture"
+		},
+		"mossSideEdge": {
+			"alpha": 255,
+			"antiAlias": false,
+			"hardEdge": true,
+			"owner": "the stone-cell mask at a stone-to-moss boundary; a moss cell never emits a duplicate edge",
+			"rgb": "#293A2E",
+			"sourcePixels": 2
+		},
+		"order": [
+			"world-coordinate-continuous-moss-texture",
+			"world-coordinate-continuous-stone-texture-times-coverage-mask",
+			"moss-side-edge-overlay"
+		],
+		"stoneCoverageEncoding": {
+			"alpha": 255,
+			"meaning": "sample continuous stone source texture",
+			"rgb": "#FFFFFF"
+		}
+	},
+	"coverageTopology": {
+		"bitOrder": [
+			"north",
+			"east",
+			"south",
+			"west"
+		],
+		"bitValues": {
+			"east": 2,
+			"north": 1,
+			"south": 4,
+			"west": 8
+		},
+		"cellSizeWorldPixels": 16,
+		"maskEntries": [
+			{
+				"atlas": {
+					"x": 0,
+					"y": 0
+				},
+				"mask": 0,
+				"neighbors": {
+					"east": false,
+					"north": false,
+					"south": false,
+					"west": false
+				}
+			},
+			{
+				"atlas": {
+					"x": 1,
+					"y": 0
+				},
+				"mask": 1,
+				"neighbors": {
+					"east": false,
+					"north": true,
+					"south": false,
+					"west": false
+				}
+			},
+			{
+				"atlas": {
+					"x": 2,
+					"y": 0
+				},
+				"mask": 2,
+				"neighbors": {
+					"east": true,
+					"north": false,
+					"south": false,
+					"west": false
+				}
+			},
+			{
+				"atlas": {
+					"x": 3,
+					"y": 0
+				},
+				"mask": 3,
+				"neighbors": {
+					"east": true,
+					"north": true,
+					"south": false,
+					"west": false
+				}
+			},
+			{
+				"atlas": {
+					"x": 0,
+					"y": 1
+				},
+				"mask": 4,
+				"neighbors": {
+					"east": false,
+					"north": false,
+					"south": true,
+					"west": false
+				}
+			},
+			{
+				"atlas": {
+					"x": 1,
+					"y": 1
+				},
+				"mask": 5,
+				"neighbors": {
+					"east": false,
+					"north": true,
+					"south": true,
+					"west": false
+				}
+			},
+			{
+				"atlas": {
+					"x": 2,
+					"y": 1
+				},
+				"mask": 6,
+				"neighbors": {
+					"east": true,
+					"north": false,
+					"south": true,
+					"west": false
+				}
+			},
+			{
+				"atlas": {
+					"x": 3,
+					"y": 1
+				},
+				"mask": 7,
+				"neighbors": {
+					"east": true,
+					"north": true,
+					"south": true,
+					"west": false
+				}
+			},
+			{
+				"atlas": {
+					"x": 0,
+					"y": 2
+				},
+				"mask": 8,
+				"neighbors": {
+					"east": false,
+					"north": false,
+					"south": false,
+					"west": true
+				}
+			},
+			{
+				"atlas": {
+					"x": 1,
+					"y": 2
+				},
+				"mask": 9,
+				"neighbors": {
+					"east": false,
+					"north": true,
+					"south": false,
+					"west": true
+				}
+			},
+			{
+				"atlas": {
+					"x": 2,
+					"y": 2
+				},
+				"mask": 10,
+				"neighbors": {
+					"east": true,
+					"north": false,
+					"south": false,
+					"west": true
+				}
+			},
+			{
+				"atlas": {
+					"x": 3,
+					"y": 2
+				},
+				"mask": 11,
+				"neighbors": {
+					"east": true,
+					"north": true,
+					"south": false,
+					"west": true
+				}
+			},
+			{
+				"atlas": {
+					"x": 0,
+					"y": 3
+				},
+				"mask": 12,
+				"neighbors": {
+					"east": false,
+					"north": false,
+					"south": true,
+					"west": true
+				}
+			},
+			{
+				"atlas": {
+					"x": 1,
+					"y": 3
+				},
+				"mask": 13,
+				"neighbors": {
+					"east": false,
+					"north": true,
+					"south": true,
+					"west": true
+				}
+			},
+			{
+				"atlas": {
+					"x": 2,
+					"y": 3
+				},
+				"mask": 14,
+				"neighbors": {
+					"east": true,
+					"north": false,
+					"south": true,
+					"west": true
+				}
+			},
+			{
+				"atlas": {
+					"x": 3,
+					"y": 3
+				},
+				"mask": 15,
+				"neighbors": {
+					"east": true,
+					"north": true,
+					"south": true,
+					"west": true
+				}
+			}
+		]
+	},
+	"internalStoneSeams": {
+		"extraOutline": "forbidden",
+		"preservedBy": "continuous source stone texture"
+	},
+	"ruleVersion": 1,
+	"schemaVersion": "first-dungeon-stone-coverage-rules-v2"
+}

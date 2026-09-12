@@ -69,12 +69,14 @@ const targetGlobKeyFor = (assetPath: string) => `/public/${assetPath}`
 
 describe('run talent icon assets', () => {
   it('maps all run talents to project-local PNG icons copied from the confirmed source directory', () => {
-    expect(RUN_TALENT_NODES).toHaveLength(40)
+    expect(RUN_TALENT_NODES).toHaveLength(42)
     expect(sourceRoot).toBe('/Users/zackota/Desktop/roguelikeGameUI/未实装/战斗天赋图标')
     expect(confirmedSourceRelativeFiles).toHaveLength(40)
     expect(Object.keys(targetIconModules)).toHaveLength(40)
 
-    for (const node of RUN_TALENT_NODES) {
+    // The two new core-owned common talents expose stable icon IDs for B2;
+    // their bitmap delivery is outside this test's restored 40-file bundle.
+    for (const node of RUN_TALENT_NODES.filter((node) => !['run_common_09', 'run_common_10'].includes(node.id))) {
       const moduleDir = RUN_TALENT_ICON_MODULE_DIRS[node.module]
       const sourceRelativePath = `${moduleDir}/${sourceFileNameFor(node)}`
       const expectedAssetPath = `assets/run-talents/icons/${moduleDir}/${targetFileNameFor(node)}`

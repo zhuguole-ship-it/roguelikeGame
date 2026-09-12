@@ -17,7 +17,7 @@ export type ArcherSkillEvolutionEffectContract = {
   description: string
   /** B2 compatibility only; engine never resolves gameplay through this field. */
   behaviorSkillId: string
-  visualKind: 'projectile' | 'field' | 'beast'
+  visualKind: 'projectile' | 'field' | 'beast' | 'tower'
   beastVisualScale?: number
   level4Mechanics: readonly string[]
   level5Mechanics: readonly string[]
@@ -27,7 +27,11 @@ export type ArcherSkillEvolutionEffectContract = {
     warning: string
     body: string
     hit: string
-    shape: 'line' | 'fan' | 'burst' | 'field' | 'beast'
+    /**
+     * `orbit` is an explicit non-fan projectile path. It prevents renderers
+     * from applying fan fallbacks to rotational casts without fan geometry.
+     */
+    shape: 'line' | 'fan' | 'orbit' | 'burst' | 'field' | 'beast' | 'tower'
   }
   /** Gameplay-only branch rules consumed by engine.ts. No UI derives behavior. */
   runtime: {
@@ -95,9 +99,6 @@ export const ARCHER_CORE_SKILLS: readonly ArcherCoreSkillContract[] = [
   core('pierce-arrow', '穿刺箭', '直线穿透主箭。', 'projectile', 'pierce', ['穿透', '直线'], ['wind-cut', 'sun-piercer'], [
     level(1, ['穿透 2 名目标'], { damage: 5, cooldown: 2.2, pierce: 2, range: 420 }), level(2, ['伤害与射程提升'], { damage: 6.3, cooldown: 2.08, pierce: 3, range: 450 }), level(3, ['最后穿透目标获得增伤'], { damage: 7.6, cooldown: 1.96, pierce: 4, range: 480 }), level(4, ['选择风切或贯日'], { damage: 8.9, cooldown: 1.84, pierce: 5, range: 510 }), level(5, ['仅强化已选进化'], { damage: 10.2, cooldown: 1.72, pierce: 6, range: 540 }),
   ]),
-  core('heavy-snipe', '重矢狙击', '远距单线重箭。', 'beam', 'pierce', ['远距', '重击'], ['dawn-bolt', 'weakness-trace'], [
-    level(1, ['重箭穿透 1'], { damage: 7, cooldown: 4.8, pierce: 1, range: 520, speed: 340 }), level(2, ['单目标伤害提高'], { damage: 8.6, cooldown: 4.62, pierce: 1, range: 555, speed: 340 }), level(3, ['远距与低血伤害提高'], { damage: 10.2, cooldown: 4.44, pierce: 2, range: 590, speed: 340 }), level(4, ['选择破晓或弱点'], { damage: 11.8, cooldown: 4.26, pierce: 2, range: 625, speed: 340 }), level(5, ['仅强化已选进化'], { damage: 13.4, cooldown: 4.08, pierce: 3, range: 660, speed: 340 }),
-  ]),
   core('curve-return', '反曲回箭', '出程与返程各结算一次。', 'projectile', 'pierce', ['返程', '穿透'], ['double-star', 'sky-judgement'], [
     level(1, ['双主箭回返'], { damage: 4.5, cooldown: 3.4, pierce: 1, range: 360, projectileCount: 2, spread: 0 }), level(2, ['返程微追踪'], { damage: 5.5, cooldown: 3.3, pierce: 1, range: 390, projectileCount: 2, spread: 0 }), level(3, ['返程伤害提高'], { damage: 6.5, cooldown: 3.2, pierce: 2, range: 420, projectileCount: 3, spread: 0 }), level(4, ['选择双星或审判'], { damage: 7.5, cooldown: 3.1, pierce: 2, range: 450, projectileCount: 3, spread: 0 }), level(5, ['仅强化已选进化'], { damage: 8.5, cooldown: 3, pierce: 2, range: 480, projectileCount: 4, spread: 0 }),
   ]),
@@ -116,11 +117,14 @@ export const ARCHER_CORE_SKILLS: readonly ArcherCoreSkillContract[] = [
   core('arrow-screen', '箭幕推进', '平行推进的箭幕。', 'spread', 'spread', ['箭幕', '减速'], ['moonshard-volley', 'sunflare-sweep'], [
     level(1, ['8 支推进箭'], { damage: 3.2, cooldown: 4.1, projectileCount: 8, spread: 0.72, range: 320 }), level(2, ['密度提高'], { damage: 4, cooldown: 3.98, projectileCount: 9, spread: 0.76, range: 330 }), level(3, ['命中减速'], { damage: 4.8, cooldown: 3.86, projectileCount: 10, spread: 0.8, range: 340, effect: 'slow', effectStrength: 0.15 }), level(4, ['选择月碎或炽阳'], { damage: 5.6, cooldown: 3.74, projectileCount: 11, spread: 0.84, range: 350, effect: 'slow', effectStrength: 0.15 }), level(5, ['仅强化已选进化'], { damage: 6.4, cooldown: 3.62, projectileCount: 12, spread: 0.88, range: 360, effect: 'slow', effectStrength: 0.18 }),
   ]),
+  core('arrow-turret', '箭幕哨塔', '部署锁定最近敌人的扇形箭塔。', 'turret', 'spread', ['箭塔', '哨塔'], ['feather-resonance', 'bait-bastion'], [
+    level(1, ['部署 1 座哨塔，持续 8 秒'], { cooldown: 9 }), level(2, ['攻击间隔缩短 20%'], { cooldown: 9 }), level(3, ['哨塔生命提高至同级精英 150%'], { cooldown: 9 }), level(4, ['选择百羽共鸣或诱敌战垒'], { cooldown: 9 }), level(5, ['仅强化已选进化'], { cooldown: 9 }),
+  ]),
   core('afterimage-salvo', '残影齐射', '延迟复制的箭列。', 'spread', 'spread', ['残影', '齐射'], ['light-split', 'chain-reflect'], [
     level(1, ['同向残影箭列'], { damage: 3.5, cooldown: 4.2, projectileCount: 7, spread: 0.26, range: 340 }), level(2, ['残影数量提高'], { damage: 4.3, cooldown: 4.08, projectileCount: 8, spread: 0.3, range: 340 }), level(3, ['残影伤害提高'], { damage: 5.1, cooldown: 3.96, projectileCount: 9, spread: 0.34, range: 340 }), level(4, ['选择光裂或连锁'], { damage: 5.9, cooldown: 3.84, projectileCount: 10, spread: 0.38, range: 340 }), level(5, ['仅强化已选进化'], { damage: 6.7, cooldown: 3.72, projectileCount: 11, spread: 0.42, range: 340 }),
   ]),
-  core('spiral-break', '螺旋破空', '旋转箭束。', 'orbit', 'spread', ['螺旋', '范围'], ['cross-cut', 'blood-scent'], [
-    level(1, ['螺旋箭束'], { damage: 3.5, cooldown: 4.6, projectileCount: 10, spread: 6.28, range: 260, color: '#a78bfa' }), level(2, ['螺旋半径提高'], { damage: 4.2, cooldown: 4.5, projectileCount: 12, spread: 6.28, range: 275, color: '#a78bfa' }), level(3, ['旋束伤害提高'], { damage: 4.9, cooldown: 4.4, projectileCount: 14, spread: 6.28, range: 290, color: '#a78bfa' }), level(4, ['选择交叉或血嗅'], { damage: 5.6, cooldown: 4.3, projectileCount: 16, spread: 6.28, range: 305, color: '#a78bfa' }), level(5, ['仅强化已选进化'], { damage: 6.3, cooldown: 4.2, projectileCount: 18, spread: 6.28, range: 320, color: '#a78bfa' }),
+  core('spiral-break', '螺旋破空', '前进中的螺旋追击箭。', 'orbit', 'pierce', ['螺旋', '追击'], ['cross-cut', 'blood-scent'], [
+    level(1, ['螺旋箭束'], { damage: 3.5, cooldown: 4.6, projectileCount: 10, spread: 0, range: 260, color: '#a78bfa' }), level(2, ['螺旋半径提高'], { damage: 4.2, cooldown: 4.5, projectileCount: 12, spread: 0, range: 275, color: '#a78bfa' }), level(3, ['旋束伤害提高'], { damage: 4.9, cooldown: 4.4, projectileCount: 14, spread: 0, range: 290, color: '#a78bfa' }), level(4, ['选择交叉或血嗅'], { damage: 5.6, cooldown: 4.3, projectileCount: 16, spread: 0, range: 305, color: '#a78bfa' }), level(5, ['仅强化已选进化'], { damage: 6.3, cooldown: 4.2, projectileCount: 18, spread: 0, range: 320, color: '#a78bfa' }),
   ]),
   core('arrow-rain', '箭雨坠落', '指定落点的箭雨领域。', 'rain', 'control', ['领域', '箭雨'], ['meteor-cluster', 'thousand-feathers'], [
     level(1, ['箭雨领域'], { damage: 3, cooldown: 4.5, range: 260, fieldRadius: 70, fieldTtl: 2.8, tickDamage: 3, tickInterval: 0.45, color: '#facc15' }), level(2, ['范围提高'], { damage: 3.7, cooldown: 4.38, range: 260, fieldRadius: 80, fieldTtl: 3.05, tickDamage: 3.6, tickInterval: 0.45, color: '#facc15' }), level(3, ['中心重箭'], { damage: 4.4, cooldown: 4.26, range: 260, fieldRadius: 90, fieldTtl: 3.3, tickDamage: 4.2, tickInterval: 0.45, color: '#facc15' }), level(4, ['选择流星或千羽'], { damage: 5.1, cooldown: 4.14, range: 260, fieldRadius: 100, fieldTtl: 3.55, tickDamage: 4.8, tickInterval: 0.45, color: '#facc15' }), level(5, ['仅强化已选进化'], { damage: 5.8, cooldown: 4.02, range: 260, fieldRadius: 110, fieldTtl: 3.8, tickDamage: 5.4, tickInterval: 0.45, color: '#facc15' }),
@@ -180,24 +184,24 @@ const LEGACY_PRESENTATION_SKILL_IDS: Record<string, string> = {
 export const ARCHER_SKILL_EVOLUTIONS: readonly ArcherSkillEvolutionEffectContract[] = [
   evolution('wind-cut','pierce-arrow','风切箭','流血与首命中短暂禁锢。','projectile','line',['2 秒流血，首个目标 0.5 秒禁锢'],['禁锢 1 秒，4 秒流血并追加风刃'],{ speed:360,pierce:2,color:'#a7f3d0'},{ damage:1.2,pierce:3,effect:'slow',effectStrength:.35 },{ bleedOnHit:true,slowOnHit:{factor:1,duration:1} }),
   evolution('sun-piercer','pierce-arrow','贯日长虹','远距贯穿并将目标拉回箭线。','projectile','line',['目标拉向箭轨，精英效果减半'],['精英/Boss伤害 +30%，末段 +35%'],{ range:560,pierce:3,speed:380,color:'#fde047'},{ damage:1.3,range:620,pierce:4 },{ eliteBossDamageMultiplier:1.3,linePull:{maxDistanceByLevel:[40,52,64,78,96],eliteMultiplier:.5} }),
-  evolution('dawn-bolt','heavy-snipe','破晓圣矢','距离越远越强。','projectile','line',['最远距离 +55% 伤害'],['最远 +80%，精英/Boss 冷却返还 15%'],{ range:560,pierce:1,color:'#fde68a'},{ damage:1.15,range:620,pierce:2 },{ distanceDamageBonusByLevel:[.2,.3,.4,.55,.8] }),
-  evolution('weakness-trace','heavy-snipe','弱点追索','追击低血目标。','projectile','line',['低于 30% 生命的目标优先'],['阈值 20%，伤害 +50% 并追加 55% 追射'],{ range:560,pierce:1,color:'#ddd6fe'},{ damage:1.2,pierce:2 },{ targetMode:'lowest-hp',lowHp:{threshold:.2,damageMultiplier:1.5} }),
   evolution('double-star','curve-return','双星追击','双星自动追击。','projectile','line',['双星分别追踪'],['同目标第二星 +50%，穿透提高'],{ projectileCount:2,pierce:1,color:'#fef3c7'},{ damage:1.15,projectileCount:3,pierce:2 },{ targetMode:'nearest',extraPierce:1,secondArrowDamageMultiplier:1.5,homing:{rangeBonus:120,strengthByLevel:[.16,.2,.24,.28,.32]} }),
   evolution('sky-judgement','curve-return','苍穹审判','平行审判箭线。','projectile','line',['3 条同向审判箭线'],['5 条箭线与星火领域'],{ projectileCount:3,range:560,pierce:3,color:'#fde68a'},{ damage:1.2,projectileCount:5,range:620,pierce:4,explosionRadius:36 },{ impactField:{ttl:2,radiusMultiplier:.75,damageMultiplier:.18,effect:'burn',effectStrengthMinimum:2} }),
   evolution('thunder-chain','ricochet-feather','雷链鸣矢','雷击跳弹。','projectile','burst',['5 次跳弹与震击'],['6 次跳弹，眩晕 1 秒'],{ speed:380,explosionRadius:34,color:'#67e8f9'},{ damage:1.15,projectileCount:4,explosionRadius:50 },{ stunOnHit:1,stunNearbyOnHit:{radius:80,duration:1} }),
   evolution('frost-bite','ricochet-feather','霜咬箭','冰冷减速跳弹。','projectile','burst',['15% 减速，最多 3 层'],['满层冻结 1.2 秒并扩散 2 层'],{ effect:'slow',effectStrength:.15,color:'#93c5fd'},{ damage:1.1,effectStrength:.3,projectileCount:4 },{ infectOnDeath:'slow' }),
   evolution('armor-pin','hunter-mark','裂甲钉矢','脆弱标记。','projectile','burst',['标记目标易伤'],['死亡向 90px 传染'],{ effect:'mark',effectStrength:2,explosionRadius:42},{ damage:1.15,effectStrength:3,explosionRadius:52 },{ infectOnDeath:'mark' }),
   evolution('fire-feather','hunter-mark','火羽爆箭','灼烧爆裂。','projectile','burst',['命中爆裂并灼烧'],['死亡向 90px 传染'],{ effect:'burn',effectStrength:2.5,explosionRadius:42,color:'#fb923c'},{ damage:1.15,effectStrength:4,explosionRadius:56 },{ effectOverride:'burn',effectStrengthMinimum:2,infectOnDeath:'burn' }),
-  evolution('gale-barrage','quick-triple','疾风连矢','高速直线箭束。','projectile','line',['7 支高速箭'],['9 支并附侧风箭与流血'],{ projectileCount:7,speed:340,spread:0,color:'#bbf7d0'},{ damage:1.15,projectileCount:9,speed:390,effect:'slow',effectStrength:.2 },{ extraProjectilesAtLevel5:2,speedMultiplierAtLevel5:1.15,preserveConfiguredProjectileCount:true }),
-  evolution('final-hunt','quick-triple','终幕追射','低血终结箭列。','projectile','line',['5 支追射，末箭暴击'],['低血目标 +45% 伤害'],{ projectileCount:5,spread:0,range:380},{ damage:1.2,projectileCount:5,pierce:1 }),
-  evolution('double-crescent','fan-burst','双月弧矢','双月交汇扇形。','projectile','fan',['双月交汇减速'],['更密弧线与交点强化'],{ projectileCount:6,spread:.44,effect:'slow',effectStrength:.16},{ damage:1.15,projectileCount:8,spread:.5,effectStrength:.24 },{ extraProjectilesAtLevel5:2,slowOnHit:{factor:.18,duration:.75} }),
+  evolution('gale-barrage','quick-triple','疾风连矢','高速集中扇形箭束。','projectile','fan',['7 支高速集中箭'],['9 支并附侧风箭与流血'],{ projectileCount:7,speed:340,spread:0,color:'#bbf7d0'},{ damage:1.15,projectileCount:9,speed:390,effect:'slow',effectStrength:.2 },{ extraProjectilesAtLevel5:2,speedMultiplierAtLevel5:1.15,preserveConfiguredProjectileCount:true }),
+  evolution('final-hunt','quick-triple','终幕追射','集中扇形的低血终结箭列。','projectile','fan',['5 支集中追射，末箭暴击'],['低血目标 +45% 伤害'],{ projectileCount:5,spread:0,range:380},{ damage:1.2,projectileCount:5,pierce:1 }),
+  evolution('double-crescent','fan-burst','双月弧矢','双月交汇扇形。','projectile','fan',['双月交汇减速'],['更密弧线与交点强化'],{ projectileCount:6,spread:.44,effect:'slow',effectStrength:.16},{ damage:1.25,projectileCount:8,spread:.5,effectStrength:.25 },{ extraProjectilesAtLevel5:2,slowOnHit:{factor:.25,duration:1.84} }),
   evolution('hawk-wing','fan-burst','鹰翼掠射','两翼夹击箭列。','projectile','fan',['左右翼夹击并施加破绽'],['翼箭更密，破绽延长'],{ projectileCount:6,spread:.62,effect:'mark',effectStrength:1.2},{ damage:1.15,projectileCount:8,spread:.68,effectStrength:2 },{ extraProjectilesAtLevel5:2,slowOnHit:{factor:.18,duration:.75} }),
   evolution('moonshard-volley','arrow-screen','月碎连矢','平行碎月箭列。','projectile','fan',['两段平行箭列与缓速'],['列数和减速提高'],{ projectileCount:7,spread:.4,effect:'slow',effectStrength:.16,color:'#e9d5ff'},{ damage:1.15,projectileCount:10,spread:.46,effectStrength:.25 },{ extraProjectilesAtLevel5:2,slowOnHit:{factor:.18,duration:.75} }),
   evolution('sunflare-sweep','arrow-screen','炽阳扫射','灼热箭幕。','projectile','fan',['灼烧箭列'],['更多灼热箭与延长灼烧'],{ projectileCount:8,spread:.5,effect:'burn',effectStrength:2.2,color:'#fb923c'},{ damage:1.15,projectileCount:11,effectStrength:3.4 },{ extraProjectilesAtLevel5:2 }),
+  evolution('feather-resonance','arrow-turret','百羽共鸣','每组哨塔继承一种其他散射核心箭效。','tower','tower',['双塔共享一次性共鸣箭效'],['共鸣效果提高 25%'],{ cooldown:9 },{ cooldown:9 }),
+  evolution('bait-bastion','arrow-turret','诱敌战垒','双塔嘲讽普通怪并可进入狂暴。','tower','tower',['双塔嘲讽普通怪'],['生命、范围与狂暴窗口强化'],{ cooldown:9 },{ cooldown:9 }),
   evolution('light-split','afterimage-salvo','光羽裂变','命中裂分。','projectile','fan',['裂分光羽'],['更多光羽和圣光爆点'],{ projectileCount:6,spread:.46,color:'#fef9c3'},{ damage:1.15,projectileCount:9,explosionRadius:32 },{ extraProjectilesAtLevel5:3 }),
   evolution('chain-reflect','afterimage-salvo','连锁折射','折射追击。','projectile','fan',['提高折射次数'],['折射密度提高并牵引下一目标'],{ projectileCount:7,pierce:2,spread:.32,color:'#67e8f9'},{ damage:1.15,projectileCount:10,pierce:3 },{ extraProjectilesAtLevel5:2,slowOnHit:{factor:.18,duration:.75} }),
-  evolution('cross-cut','spiral-break','交叉切射','X 型交叉。','projectile','fan',['交点爆裂'],['交点流血与范围提高'],{ projectileCount:6,spread:.68},{ damage:1.15,projectileCount:8,effect:'slow',effectStrength:.2 },{ bleedOnHit:true }),
-  evolution('blood-scent','spiral-break','血嗅追猎','追击低血目标。','projectile','fan',['低血优先'],['低血伤害提高'],{ projectileCount:4,spread:.22,range:360,color:'#fda4af'},{ damage:1.2,projectileCount:6 }),
+  evolution('cross-cut','spiral-break','交叉切射','X 型交叉。','projectile','orbit',['交点爆裂'],['交点流血与范围提高'],{ projectileCount:6,spread:0},{ damage:1.15,projectileCount:8,effect:'slow',effectStrength:.2 },{ bleedOnHit:true }),
+  evolution('blood-scent','spiral-break','血嗅追猎','追击低血目标。','projectile','orbit',['低血优先'],['低血伤害提高'],{ projectileCount:4,spread:0,range:360,color:'#fda4af'},{ damage:1.2,projectileCount:6 }),
   evolution('meteor-cluster','arrow-rain','流星箭簇','中心重箭领域。','field','field',['中心周期流星'],['重箭频率提高'],{ fieldRadius:84,fieldTtl:3.1,tickDamage:3.8,tickInterval:.42},{ damage:1.15,fieldRadius:100,tickDamage:5,tickInterval:.34 },{ fieldCenterStrike:{damageMultiplier:1.45,cooldown:1.2} }),
   evolution('thousand-feathers','arrow-rain','千羽暴雨','多波箭雨。','field','field',['中心主箭频率提高'],['大范围高频箭雨'],{ fieldRadius:104,fieldTtl:3.8,tickDamage:4.2,tickInterval:.34},{ damage:1.15,fieldRadius:124,fieldTtl:4.3,tickDamage:5.6,tickInterval:.28 },{ fieldCenterStrike:{damageMultiplier:1.45,cooldown:.9} }),
   evolution('thorn-whistle','venom-vine','荆羽呼啸','荆棘风暴。','field','field',['结束触发荆毒爆发'],['爆发范围和减速提高'],{ fieldRadius:74,fieldTtl:4.4,effect:'slow',effectStrength:.2,color:'#65a30d'},{ damage:1.15,fieldRadius:90,effectStrength:.3 },{ fieldEndBurst:{radiusMultiplier:1.1,damageMultiplier:.85,stunDuration:.7,slowDuration:1.2,slowFactor:.32} }),
@@ -285,6 +289,9 @@ export const getActiveSkillRuntimePresentation = (skill: Pick<ActiveSkillInstanc
 
 const legacyEvolutionIds = new Set(ARCHER_SKILL_EVOLUTIONS.map((entry) => entry.id))
 const legacySkillMigration: Record<string, { familyId: string; evolutionId?: string; minimumLevel?: number }> = {
+  'heavy-snipe': { familyId: 'spiral-break' },
+  'dawn-bolt': { familyId: 'spiral-break', evolutionId: 'cross-cut', minimumLevel: 4 },
+  'weakness-trace': { familyId: 'spiral-break', evolutionId: 'blood-scent', minimumLevel: 4 },
   'shock-bolt': { familyId: 'ricochet-feather', evolutionId: 'thunder-chain', minimumLevel: 4 },
   'shadow-erosion': { familyId: 'hunter-mark', minimumLevel: 3 },
   'celestial-feather': { familyId: 'curve-return', evolutionId: 'sky-judgement', minimumLevel: 5 },
@@ -295,8 +302,11 @@ const legacySkillMigration: Record<string, { familyId: string; evolutionId?: str
 export const migrateLegacyActiveSkill = (skill: ActiveSkillInstance): ActiveSkillInstance => {
   if (ARCHER_CORE_SKILL_CONTRACT_MAP[skill.skillId]) return { ...skill, skillId: skill.skillId, familyId: skill.skillId, evolutionId: skill.evolutionId }
   const explicit = legacySkillMigration[skill.skillId]
+  const storedEvolution = skill.evolutionId ? legacySkillMigration[skill.evolutionId] : undefined
   const evolution = ARCHER_SKILL_EVOLUTION_MAP[skill.skillId]
-  const migration = explicit ?? (evolution ? { familyId: evolution.familyId, evolutionId: evolution.id, minimumLevel: 4 } : undefined)
+  const migration = explicit
+    ? { ...explicit, evolutionId: storedEvolution?.evolutionId ?? explicit.evolutionId, minimumLevel: Math.max(explicit.minimumLevel ?? 1, storedEvolution?.minimumLevel ?? 1) }
+    : (evolution ? { familyId: evolution.familyId, evolutionId: evolution.id, minimumLevel: 4 } : undefined)
   if (!migration) return { ...skill }
   return { ...skill, skillId: migration.familyId, familyId: migration.familyId, evolutionId: migration.evolutionId, level: Math.min(5, Math.max(skill.level, migration.minimumLevel ?? 1)) }
 }

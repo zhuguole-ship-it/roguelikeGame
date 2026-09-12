@@ -1,0 +1,31 @@
+{
+  "source": "/Users/zackota/Desktop/AI项目-roguelikeGame/review-artifacts/弓箭手天赋系统_V3_第三版完整文档审阅稿_待确认.md",
+  "output": "/Users/zackota/Desktop/AI项目-roguelikeGame/review-artifacts/弓箭手天赋系统_V3_第三版完整文档审阅稿_待确认.xmind",
+  "sourceLineCount": 4975,
+  "effectiveSourceEntryCount": 4023,
+  "xmindSheetCount": 10,
+  "xmindTopicCount": 4023,
+  "missingEntryCount": 0,
+  "unexpectedEntryCount": 0,
+  "missingEntries": [],
+  "unexpectedEntries": [],
+  "chapterChecks": {
+    "功能天赋84": true,
+    "有限战斗天赋": true,
+    "无限成长": true,
+    "奖励方式": true,
+    "战斗抽取": true,
+    "装备与套装": true,
+    "技能联动隔离": true,
+    "存档与UI": true,
+    "天赋总数冲突已闭环": true
+  },
+  "zipEntries": [
+    "content.json",
+    "manifest.json",
+    "metadata.json"
+  ],
+  "metadataActiveSheetValid": true,
+  "manifestValid": true,
+  "passed": true
+}

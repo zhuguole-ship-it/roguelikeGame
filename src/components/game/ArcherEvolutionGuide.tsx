@@ -1,10 +1,11 @@
 import { useState, type CSSProperties, type FocusEvent, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 
-import { ARCHER_ACTIVE_SKILL_MAP, LV5_QUALITATIVE_TEXT, SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
+import { SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
 import { ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTION_MAP } from '../../game/archerSkillEvolution'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
 import type { SkillBuildTag } from '../../game/types'
+import { getSpiralBreakLevel5PresentationDescription, getSpiralBreakPresentationDescription } from './spiralBreakPresentationCopy'
 
 /**
  * UI-only view model consumed from A1's single evolution catalog contract.
@@ -21,6 +22,7 @@ export type ArcherEvolutionGuideFamily = Readonly<{
   name: string
   buildTag: SkillBuildTag
   iconUrl?: string
+  trajectoryPreview?: string
   evolutions: readonly ArcherEvolutionGuideEntry[]
 }>
 
@@ -36,6 +38,30 @@ export type ArcherEvolutionGuideEntry = Readonly<{
 
 const BUILD_ORDER: readonly SkillBuildTag[] = ['pierce', 'spread', 'control', 'beast']
 
+// E11 presentation copy only. Runtime geometry remains exclusively owned by
+// A1's per-cast snapshots; this gives the guide an accurate, readable summary
+// without duplicating angle/count/gameplay rules into UI state.
+const getFamilyTrajectoryPreview = (familyId: string) => (
+  familyId === 'quick-triple'
+    ? '真总角 45° 集中扇形；额外箭仅在同一扇角内加密。血羽·血雨时为 60°。'
+    : familyId === 'spiral-break'
+      ? getSpiralBreakPresentationDescription(familyId, '')
+    : undefined
+)
+
+const getEvolutionTrajectoryPreview = (evolutionId: string) => {
+  if (evolutionId === 'cross-cut' || evolutionId === 'blood-scent') {
+    return getSpiralBreakPresentationDescription(evolutionId, '')
+  }
+  if (evolutionId === 'gale-barrage' || evolutionId === 'final-hunt') {
+    return '真总角 45° 集中扇形；追加箭不会扩大扇角。血羽·血雨时为 60°。'
+  }
+  if (evolutionId === 'double-crescent') {
+    return '固定 60° 双月内收：沿扇面外展至 45% 节点后共同汇聚，并按入射方向越过 48 世界单位。'
+  }
+  return undefined
+}
+
 /**
  * Adapts A1's single skill-evolution contract to this read-only guide view.
  * No family, evolution, discovery or combat value is authored here.
@@ -43,16 +69,14 @@ const BUILD_ORDER: readonly SkillBuildTag[] = ['pierce', 'spread', 'control', 'b
 export const createArcherEvolutionGuideCatalog = (discoveredEvolutionIds: readonly string[]): ArcherEvolutionGuideCatalog => ({
   discoveredEvolutionIds,
   families: ARCHER_CORE_SKILLS.map((coreSkill) => {
-    const coreDefinition = ARCHER_ACTIVE_SKILL_MAP[coreSkill.id]
-
     return {
       familyId: coreSkill.id,
       name: coreSkill.name,
       buildTag: coreSkill.buildTag,
       iconUrl: getArcherSkillIconAssetUrl(coreSkill.id),
+      trajectoryPreview: getFamilyTrajectoryPreview(coreSkill.id),
       evolutions: coreSkill.evolutionIds.map((evolutionId) => {
         const evolution = ARCHER_SKILL_EVOLUTION_MAP[evolutionId]
-        const behaviorSkill = evolution ? ARCHER_ACTIVE_SKILL_MAP[evolution.behaviorSkillId] : undefined
 
         return {
           evolutionId,
@@ -63,9 +87,16 @@ export const createArcherEvolutionGuideCatalog = (discoveredEvolutionIds: readon
           iconUrl: evolution?.visualKind === 'beast'
             ? undefined
             : getArcherSkillIconAssetUrl(evolution?.behaviorSkillId ?? evolutionId),
-          level4Description: evolution?.description ?? coreDefinition?.description ?? '',
-          level5Description: LV5_QUALITATIVE_TEXT[evolution?.behaviorSkillId ?? evolutionId] ?? '',
-          tags: behaviorSkill?.tacticalTags ?? [],
+          level4Description: getSpiralBreakPresentationDescription(
+            evolutionId,
+            evolution?.description ?? coreSkill.description,
+          ),
+          level5Description: getSpiralBreakLevel5PresentationDescription(
+            evolutionId,
+            evolution?.level5Mechanics.join('；') ?? '',
+          ),
+          tags: [SKILL_BUILD_LABELS[coreSkill.buildTag], ...coreSkill.tacticalTags],
+          visualPreview: getEvolutionTrajectoryPreview(evolutionId),
         }
       }),
     }
@@ -221,10 +252,21 @@ export const ArcherEvolutionGuide = ({ catalog }: { catalog: ArcherEvolutionGuid
             {families.map((family) => (
               <section key={family.familyId} className="border-2 border-[#08100b] bg-[#0b100d] p-3" data-testid={`archer-evolution-guide-family-${family.familyId}`}>
                 <div className="flex min-w-0 items-center gap-3">
-                  {family.iconUrl ? <img src={family.iconUrl} alt="" className="h-12 w-12 shrink-0 border-2 border-[#9dd5ac] object-cover [image-rendering:pixelated]" data-testid={`archer-evolution-guide-core-image-${family.familyId}`} /> : null}
+                  {family.iconUrl ? (
+                    <img src={family.iconUrl} alt="" className="h-12 w-12 shrink-0 border-2 border-[#9dd5ac] object-cover [image-rendering:pixelated]" data-testid={`archer-evolution-guide-core-image-${family.familyId}`} />
+                  ) : (
+                    <span
+                      aria-hidden="true"
+                      className="grid h-12 w-12 shrink-0 place-items-center border-2 border-amber-300 bg-[#0c1510] px-1 text-center font-pixel text-[7px] leading-tight tracking-[0.04em] text-amber-200 [image-rendering:pixelated]"
+                      data-testid={`archer-evolution-guide-core-placeholder-${family.familyId}`}
+                    >
+                      {family.name}
+                    </span>
+                  )}
                   <div className="min-w-0">
                     <p className="font-pixel text-[9px] uppercase tracking-[0.12em] text-[#9dd5ac]">核心技能</p>
                     <h4 className="mt-1 break-words font-pixel text-xs tracking-[0.1em] text-[#f4f0d7]">{family.name}</h4>
+                    {family.trajectoryPreview ? <p className="mt-1 text-xs leading-relaxed text-[#b8c8b7]">轨迹：{family.trajectoryPreview}</p> : null}
                   </div>
                 </div>
                 <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2" data-testid={`archer-evolution-guide-entries-${family.familyId}`}>
@@ -283,7 +325,16 @@ export const ArcherEvolutionDetailSkillGrid = ({ catalog }: { catalog: ArcherEvo
       {catalog.families.map((family) => (
         <section key={family.familyId} className="min-w-0 border border-[rgba(157,213,172,0.28)] bg-[#08100b]/75 p-[clamp(0.2rem,0.32cqw,0.55rem)]" data-testid={`character-detail-evolution-family-${family.familyId}`}>
           <div className="flex min-w-0 items-center gap-[clamp(0.25rem,0.45cqw,0.7rem)]">
-            {family.iconUrl ? <img src={family.iconUrl} alt="" className="h-[clamp(1rem,1.9cqw,3.5rem)] w-[clamp(1rem,1.9cqw,3.5rem)] shrink-0 border border-[#9dd5ac] object-cover [image-rendering:pixelated]" /> : null}
+            {family.iconUrl ? (
+              <img src={family.iconUrl} alt="" className="h-[clamp(1rem,1.9cqw,3.5rem)] w-[clamp(1rem,1.9cqw,3.5rem)] shrink-0 border border-[#9dd5ac] object-cover [image-rendering:pixelated]" />
+            ) : (
+              <span
+                aria-hidden="true"
+                className="grid h-[clamp(1rem,1.9cqw,3.5rem)] w-[clamp(1rem,1.9cqw,3.5rem)] shrink-0 place-items-center border border-amber-300 bg-[#0c1510] px-px text-center font-pixel text-[clamp(0.2rem,0.36cqw,0.5rem)] leading-tight tracking-[0.04em] text-amber-200 [image-rendering:pixelated]"
+              >
+                {family.name}
+              </span>
+            )}
             <p className="min-w-0 truncate font-pixel text-[clamp(0.4rem,0.72cqw,1.15rem)] tracking-[0.08em] text-[#f4f0d7]" title={family.name}>{family.name}</p>
           </div>
           <div className="mt-[clamp(0.2rem,0.38cqw,0.6rem)] grid grid-cols-2 justify-items-start gap-[clamp(0.25rem,0.55cqw,0.9rem)]" data-testid={`character-detail-evolution-entries-${family.familyId}`}>

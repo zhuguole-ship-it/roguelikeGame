@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "home-combat-loading-transition-assets-v1",
+  "runtimeEligible": true,
+  "sourcePolicy": "original-bytes",
+  "width": 2052,
+  "height": 1154,
+  "assets": [
+    {
+      "id": "background-1",
+      "file": "background-1.jpg",
+      "sourceFile": "1.jpg",
+      "sha256": "8cf56600315a71ee85accd84efe8885077a1c9ebbd563be83150de843d9b94fb",
+      "format": "jpeg",
+      "hasAlpha": false
+    },
+    {
+      "id": "title-2",
+      "file": "title-2.png",
+      "sourceFile": "2.png",
+      "sha256": "b51ff743786d5a8f8084b5357201077fcc537a44d12e6c3e17bdce84f4a11f0e",
+      "format": "png",
+      "hasAlpha": true
+    },
+    {
+      "id": "final-3",
+      "file": "final-3.jpg",
+      "sourceFile": "3.jpg",
+      "sha256": "6272abf9e35b770dece044bd9635ae4b4f7f8b2f1e95566e5039a6774b0b1d3d",
+      "format": "jpeg",
+      "hasAlpha": false
+    }
+  ]
+}

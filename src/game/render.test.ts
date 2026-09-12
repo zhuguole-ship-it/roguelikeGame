@@ -1,35 +1,59 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 import { INFINITE_ACTIVE_CHUNK_LIMIT, TILE_SIZE, WORLD_HEIGHT, WORLD_WIDTH } from './config'
-import { advanceGame, createInitialSnapshot } from './engine'
+import { advanceGame, createInitialSnapshot, getBeastContractDomainPresentationSnapshot } from './engine'
 import {
   getCameraOffset,
+  getCombatCanvasBackingSize,
+  getCombatCanvasLogicalViewportSize,
   ENEMY_TALENT_STATUS_CHIP_FONT,
   ENEMY_TALENT_STATUS_CHIP_HEIGHT,
   ENEMY_TALENT_STATUS_CHIP_ROW_GAP,
   getInfiniteFloorTileIndex,
   getInfiniteFloorTileIndexForWorldPosition,
+  getLevelOneDungeonFloorTileRange,
   getPlayerArcherRenderInput,
   getEnemyTalentStateIndicators,
   getBeastCompanionEvolutionVisualScale,
   getFireSacExplosionFrameIndex,
-  getLevelOneDungeonFloorTileRange,
   CHAIN_CAPTAIN_COMMAND_RING_ALPHA,
   CHAIN_CAPTAIN_COMMAND_RING_FILL,
+  COMBAT_DARK_MASK_OPACITY,
+  COMBAT_DARK_MASK_SOURCE_SIZE,
+  COMBAT_DARK_MASK_SRC,
+  drawBeastContractDomainAuras,
+  drawBeastContractPawMarks,
   drawChainCaptainCommandRing,
+  drawCombatDarkMask,
   drawEnemySkillEffects,
   drawJailerChiefBind,
   drawJailerChiefWarningRing,
+  drawPackHuntTargetMarker,
   drawChainWraithPullVisual,
+  drawArrowTurrets,
+  drawProjectileFlightTrails,
+  drawSpiralBreakFlightTrails,
   drawSkillEvolutionEffectEvents,
+  getDoubleCrescentProjectileRenderSegments,
+  getDoubleCrescentRenderPaths,
+  getSpiralBreakProjectileRenderSegments,
   getSmoothedCameraOffset,
   getRenderableSkillEvolutionEffectEvents,
+  getSkillEvolutionFanRenderGeometry,
   getSkillEvolutionEffectRenderProfile,
+  getVisiblePackHuntTargetId,
   getTerrainAssetImageSrc,
   LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE,
   LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC,
   renderGame,
+  resetCombatDarkMaskImageForTests,
+  resetPackHuntTargetMarkerForTests,
+  shouldDrawLevelOneDungeonLegacyFallback,
   shouldDrawFixedRoomBoundary,
+  shouldRenderProjectileFlightTrail,
   shouldUseLevelOneDungeonFloorTile,
 } from './render'
 import {
@@ -110,16 +134,20 @@ import {
   setRuntimeAssetActionOverride,
   type RuntimeAssetDraftConfig,
 } from './runtimeAssetOverrides'
-import type { Enemy, EnemySkillEffect, GameSnapshot, Player, SkillEvolutionEffectEvent } from './types'
-import { ARCHER_SKILL_EVOLUTION_MAP } from './archerSkillEvolution'
+import type { Enemy, EnemySkillEffect, GameSnapshot, Player, Projectile, SkillEvolutionEffectEvent } from './types'
+import { ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTION_MAP } from './archerSkillEvolution'
 
 let runtimeOverrideSnapshot: RuntimeAssetDraftConfig | undefined
 
 beforeEach(() => {
   runtimeOverrideSnapshot = exportRuntimeAssetDraftConfig()
+  resetCombatDarkMaskImageForTests()
+  resetPackHuntTargetMarkerForTests()
 })
 
 afterEach(() => {
+  resetCombatDarkMaskImageForTests()
+  resetPackHuntTargetMarkerForTests()
   restoreRuntimeAssetOverrideSnapshot(runtimeOverrideSnapshot)
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -165,10 +193,228 @@ const createMockCanvasContext = () => ({
 }
 
 describe('game render helpers', () => {
+  it.each([
+    [1440, 900, 2048, 1280, 1024, 640],
+    [1920, 1080, 2276, 1280, 1138, 640],
+  ])('uses an undistorted full-canvas backing for a %dx%d battle viewport', (
+    viewportWidth,
+    viewportHeight,
+    backingWidth,
+    backingHeight,
+    logicalWidth,
+    logicalHeight,
+  ) => {
+    const backing = getCombatCanvasBackingSize(viewportWidth, viewportHeight)
+    expect(backing).toEqual({ width: backingWidth, height: backingHeight, logicalWidth, logicalHeight })
+    const context = createMockCanvasContext()
+    Object.assign(context, {
+      canvas: { width: backing.width, height: backing.height },
+      getTransform: () => ({ a: 2, d: 2 }),
+    })
+    expect(getCombatCanvasLogicalViewportSize(context)).toEqual({ width: logicalWidth, height: logicalHeight })
+
+    const snapshot = createInitialSnapshot('running')
+    const camera = getCameraOffset(snapshot, { width: logicalWidth, height: logicalHeight })
+    expect(snapshot.player.position.x - camera.x).toBe(logicalWidth / 2)
+    expect(snapshot.player.position.y - camera.y).toBe(logicalHeight / 2)
+  })
+
+  it('keeps the independently supplied combat mask as the exact project-local PNG resource', () => {
+    const assetPath = resolve(process.cwd(), 'public/assets/overlays/combat-mask-v1/dark-mask.png')
+    const bytes = readFileSync(assetPath)
+
+    expect(COMBAT_DARK_MASK_SRC).toMatch(/assets\/overlays\/combat-mask-v1\/dark-mask\.png$/)
+    expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    expect(bytes.readUInt32BE(16)).toBe(COMBAT_DARK_MASK_SOURCE_SIZE.width)
+    expect(bytes.readUInt32BE(20)).toBe(COMBAT_DARK_MASK_SOURCE_SIZE.height)
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe('612b596fed7f89f9fd2e300f972e47731aa0b6a3025d3bea04af101e3485606e')
+  })
+
+  it.each([
+    [1440, 900],
+    [1920, 1080],
+  ])('draws the combat mask at 0.60 over the full %dx%d canvas viewport', (width, height) => {
+    class MockMaskImage {
+      complete = true
+      naturalWidth = 2052
+      naturalHeight = 1154
+      decoding = 'async'
+      src = ''
+    }
+    vi.stubGlobal('Image', MockMaskImage)
+    const context = createMockCanvasContext()
+    Object.assign(context, {
+      canvas: { width, height },
+      getTransform: () => ({ a: 1, d: 1 }),
+    })
+    const drawImage = context.drawImage as unknown as ReturnType<typeof vi.fn>
+    drawImage.mockImplementation(() => {
+      expect(context.globalAlpha).toBe(COMBAT_DARK_MASK_OPACITY)
+      expect(context.imageSmoothingEnabled).toBe(false)
+      expect(context.globalCompositeOperation).toBe('source-over')
+    })
+
+    expect(COMBAT_DARK_MASK_SOURCE_SIZE).toEqual({ width: 2052, height: 1154 })
+    expect(drawCombatDarkMask(context)).toBe(true)
+    expect(drawImage).toHaveBeenCalledWith(expect.objectContaining({ src: COMBAT_DARK_MASK_SRC }), 0, 0, width, height)
+  })
+
+  it('places the mask after world effects and before health bars and damage text', () => {
+    class MockMaskImage {
+      complete = true
+      naturalWidth = 2052
+      naturalHeight = 1154
+      decoding = 'async'
+      src = ''
+    }
+    vi.stubGlobal('Image', MockMaskImage)
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = 23
+    snapshot.enemies = []
+    snapshot.projectiles = []
+    snapshot.enemyProjectiles = []
+    snapshot.mapObstacles = []
+    snapshot.mapDecorations = []
+    snapshot.skillFields = []
+    snapshot.skillEvolutionEffectEvents = []
+    snapshot.enemySkillEffects = []
+    snapshot.bursts = [{ id: 'under-mask-hit', position: { x: 100, y: 100 }, ttl: 0.2, color: 'rgba(255, 255, 255, ALPHA)', radius: 10 }]
+    snapshot.floatingTexts = [{ id: 'above-mask-damage', position: { x: 100, y: 80 }, velocity: { x: 0, y: -1 }, value: '12', color: '#fff', ttl: 0.2 }]
+    snapshot.player.hp = Math.max(1, snapshot.player.maxHp - 1)
+    const context = createMockCanvasContext()
+
+    renderGame(context, snapshot, { x: 0, y: 0 })
+
+    const drawImage = context.drawImage as unknown as ReturnType<typeof vi.fn>
+    const maskIndex = drawImage.mock.calls.findIndex(([image]) => image instanceof MockMaskImage && image.src === COMBAT_DARK_MASK_SRC)
+    expect(maskIndex).toBeGreaterThanOrEqual(0)
+    const maskOrder = drawImage.mock.invocationCallOrder[maskIndex]!
+    const fillRect = context.fillRect as unknown as ReturnType<typeof vi.fn>
+    const burstIndex = fillRect.mock.calls.findIndex((call) => call[0] === 90 && call[1] === 99 && call[2] === 20 && call[3] === 2)
+    const playerHealthIndex = fillRect.mock.calls.findIndex((call) => call[2] === 44 && call[3] === 5)
+    expect(fillRect.mock.invocationCallOrder[burstIndex]!).toBeLessThan(maskOrder)
+    expect(fillRect.mock.invocationCallOrder[playerHealthIndex]!).toBeGreaterThan(maskOrder)
+    const fillText = context.fillText as unknown as ReturnType<typeof vi.fn>
+    const damageOrders = fillText.mock.calls.flatMap(([value], index) => value === '12' ? [fillText.mock.invocationCallOrder[index]!] : [])
+    expect(damageOrders).toHaveLength(2)
+    expect(damageOrders.every((order) => order > maskOrder)).toBe(true)
+  })
+
+  it('skips an unready or failed mask without blocking world and feedback rendering', () => {
+    class UnavailableMaskImage {
+      complete = false
+      naturalWidth = 0
+      naturalHeight = 0
+      decoding = 'async'
+      src = ''
+    }
+    vi.stubGlobal('Image', UnavailableMaskImage)
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = 23
+    snapshot.enemies = []
+    snapshot.projectiles = []
+    snapshot.enemyProjectiles = []
+    snapshot.mapObstacles = []
+    snapshot.mapDecorations = []
+    snapshot.skillFields = []
+    snapshot.skillEvolutionEffectEvents = []
+    snapshot.enemySkillEffects = []
+    snapshot.bursts = []
+    snapshot.floatingTexts = [{ id: 'still-visible', position: { x: 40, y: 40 }, velocity: { x: 0, y: -1 }, value: '7', color: '#fff', ttl: 0.2 }]
+    const context = createMockCanvasContext()
+
+    expect(drawCombatDarkMask(context)).toBe(false)
+    renderGame(context, snapshot, { x: 0, y: 0 })
+
+    expect((context.fillText as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([value]) => value === '7')).toBe(true)
+    expect((context.clearRect as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalled()
+  })
+
   it('reads A1’s presentation-only companion scale so only a supplied single-beast boss renders 2×', () => {
     expect(getBeastCompanionEvolutionVisualScale({ visualScale: 2 })).toBe(2)
     expect(getBeastCompanionEvolutionVisualScale({ visualScale: 1 })).toBe(1)
     expect(getBeastCompanionEvolutionVisualScale({})).toBe(1)
+  })
+
+  it('draws one passive arrow-turret body per A1 tower record without decorative pseudo-projectiles, while retaining actual taunt and resonance state', () => {
+    const context = createMockCanvasContext()
+    const towerFields = [
+      {
+        id: 'tower-resonance',
+        kind: 'turret',
+        owner: 'player',
+        position: { x: 120, y: 80 },
+        ttl: 6,
+        radius: 0,
+        damage: 0,
+        tickInterval: 0,
+        tickCooldown: 0,
+        color: '#67e8f9',
+        effect: 'slow',
+        effectStrength: 0,
+        projectileCount: 0,
+        spread: 0,
+        projectileSpeed: 0,
+        sourceSkillId: 'arrow-turret',
+        sourceSkillFamilyId: 'arrow-turret',
+        sourceEvolutionId: 'feather-resonance',
+        arrowTurret: {
+          groupId: 'resonance', groupCreatedAt: 1, variant: 'resonance', hp: 120, maxHp: 150,
+          attackInterval: 0.48, attackCooldown: 0, totalFanAngleDegrees: 60,
+          inheritedEffect: {
+            familyId: 'fan-burst', evolutionId: 'double-crescent', name: '双月弧矢', skillLevel: 4,
+            damageMultiplier: 1, projectileBonus: 0, pierceBonus: 0, effect: 'slow', effectStrength: 0, explosionRadius: 0,
+          },
+        },
+      },
+      {
+        id: 'tower-taunt',
+        kind: 'turret',
+        owner: 'player',
+        position: { x: 180, y: 104 },
+        ttl: 4,
+        radius: 0,
+        damage: 0,
+        tickInterval: 0,
+        tickCooldown: 0,
+        color: '#fbbf24',
+        effect: 'slow',
+        effectStrength: 0,
+        projectileCount: 0,
+        spread: 0,
+        projectileSpeed: 0,
+        sourceSkillId: 'arrow-turret',
+        sourceSkillFamilyId: 'arrow-turret',
+        sourceEvolutionId: 'bait-bastion',
+        arrowTurret: {
+          groupId: 'taunt', groupCreatedAt: 2, variant: 'taunt', hp: 210, maxHp: 300,
+          attackInterval: 0.6, attackCooldown: 0, tauntRadius: 128, tauntRemaining: 1.2, berserkRemaining: 0.7,
+          totalFanAngleDegrees: 75,
+        },
+      },
+    ] satisfies GameSnapshot['skillFields']
+
+    drawArrowTurrets(context, { skillFields: towerFields })
+
+    expect(context.fillRect).toHaveBeenCalled()
+    expect(context.arc).toHaveBeenCalledWith(180, 104, 128, 0, Math.PI * 2)
+    expect(context.setLineDash).toHaveBeenCalledWith([4, 3])
+    expect(context.translate).not.toHaveBeenCalled()
+    expect(context.rotate).not.toHaveBeenCalled()
+
+    const legacyCompatibilityOnly = createMockCanvasContext()
+    drawArrowTurrets(legacyCompatibilityOnly, {
+      skillFields: [{
+        ...towerFields[0],
+        id: 'legacy-arrow-screen-preview',
+        sourceSkillId: 'arrow-screen',
+        sourceSkillFamilyId: 'arrow-screen',
+        sourceEvolutionId: 'moonshard-volley',
+        arrowTurret: undefined,
+        arrowScreenTower: towerFields[0].arrowTurret,
+      }],
+    })
+    expect(legacyCompatibilityOnly.fillRect).not.toHaveBeenCalled()
   })
 
   it('renders only A1 warning/body/hit event layers with a capped, distinct, behind-enemy presentation', () => {
@@ -233,13 +479,15 @@ describe('game render helpers', () => {
     // lookup keyed by the branch id.
     expect(profiles['wind-cut']).toMatchObject({ shape: 'line', range: 540, pierce: 3, tickInterval: 0.5 })
     expect(profiles['double-crescent']).toMatchObject({ shape: 'fan', projectileCount: 8, spread: 0.5 })
+    expect(profiles['cross-cut']).toMatchObject({ shape: 'orbit', projectileCount: 8 })
+    expect(profiles['blood-scent']).toMatchObject({ shape: 'orbit', projectileCount: 6 })
     expect(profiles['thunder-chain']).toMatchObject({ shape: 'burst', radius: 50, accent: '#67e8f9' })
     expect(profiles['meteor-cluster']).toMatchObject({ shape: 'field', radius: 100, tickInterval: 0.34 })
     expect(profiles['frost-wolf-king']).toMatchObject({ shape: 'beast', projectileCount: 1, radius: 120 })
     expect(profiles['frost-wolf-pack']).toMatchObject({ shape: 'beast', projectileCount: 7, radius: 90 })
   })
 
-  it('draws contract-distinct warning, body, and hit outlines for line, fan, burst, field, and beast branches', () => {
+  it('keeps non-scatter branch outlines while suppressing scatter preview geometry', () => {
     const event = (layer: Extract<SkillEvolutionEffectEvent['layer'], 'warning' | 'body' | 'hit'>, evolutionId: string): SkillEvolutionEffectEvent => ({
       eventId: `${layer}-${evolutionId}`,
       id: `${layer}-${evolutionId}`,
@@ -269,14 +517,705 @@ describe('game render helpers', () => {
       const beast = draw(layer, 'frost-wolf-king')
 
       // A field has its contract-driven square/circle contour, while a line
-      // never creates a field rect. Fan and burst introduce arcs; the single
-      // wolf’s triangle silhouette is preserved instead of being a tinted line.
+      // never creates a field rect. Scatter no longer draws warning/body
+      // previews; its real hit still emits a local impact burst only.
       expect(field.rect).toHaveBeenCalled()
       expect(line.rect).not.toHaveBeenCalled()
-      expect(fan.arc).toHaveBeenCalled()
       expect(burst.arc).toHaveBeenCalled()
       expect(beast.closePath).toHaveBeenCalled()
       expect(line.closePath).not.toHaveBeenCalled()
+      expect(fan.closePath).not.toHaveBeenCalled()
+      if (layer === 'hit') {
+        expect(fan.arc).toHaveBeenCalledWith(212, 106, expect.any(Number), 0, Math.PI * 2)
+      } else {
+        expect(fan.arc).not.toHaveBeenCalled()
+        expect(fan.lineTo).not.toHaveBeenCalled()
+      }
+    })
+  })
+
+  it('suppresses warning, body, and evolve geometry for every registered scatter core and evolution', () => {
+    const spreadCores = ARCHER_CORE_SKILLS.filter((skill) => skill.buildTag === 'spread')
+    const entries = spreadCores.flatMap((skill) => [skill.id, ...skill.evolutionIds].map((evolutionId) => ({
+      familyId: skill.id,
+      evolutionId,
+    })))
+
+    expect(entries).toHaveLength(15)
+    entries.forEach(({ familyId, evolutionId }) => {
+      ;(['warning', 'body', 'evolve'] as const).forEach((layer) => {
+        const context = createMockCanvasContext()
+        drawSkillEvolutionEffectEvents(context, {
+          elapsedTime: 4.4,
+          skillEvolutionEffectEvents: [{
+            eventId: `${familyId}-${evolutionId}-${layer}`,
+            id: `${familyId}-${evolutionId}-${layer}`,
+            familyId,
+            evolutionId,
+            kind: layer === 'evolve' ? 'evolve' : 'cast',
+            layer,
+            position: { x: 120, y: 90 },
+            origin: { x: 120, y: 90 },
+            direction: { x: 1, y: 0 },
+            fanGeometry: {
+              skillLevel: 5,
+              projectileCount: 9,
+              totalFanAngleDegrees: 90,
+              range: 260,
+              origin: { x: 120, y: 90 },
+              direction: { x: 1, y: 0 },
+              path: evolutionId === 'double-crescent'
+                ? { kind: 'double-crescent', convergencePoint: { x: 300, y: 90 }, expansionRatio: 0.45, exitLength: 48 }
+                : undefined,
+            },
+            startedAt: 4,
+            duration: 1,
+            ttl: 0.6,
+          }],
+        })
+        expect(context.arc).not.toHaveBeenCalled()
+        expect(context.lineTo).not.toHaveBeenCalled()
+        expect(context.closePath).not.toHaveBeenCalled()
+      })
+    })
+  })
+
+  it('suppresses immutable scatter fan geometry in every preview layer while retaining real hit feedback', () => {
+    const fanGeometry = {
+      skillLevel: 4,
+      projectileCount: 3,
+      totalFanAngleDegrees: 75,
+      range: 275,
+      origin: { x: 92, y: 68 },
+      direction: { x: 0, y: 1 },
+    }
+    const event = (layer: Extract<SkillEvolutionEffectEvent['layer'], 'warning' | 'body' | 'hit'>): SkillEvolutionEffectEvent => ({
+      eventId: `fan-${layer}`,
+      id: `fan-${layer}`,
+      familyId: 'fan-burst',
+      evolutionId: 'double-crescent',
+      kind: layer === 'hit' ? 'hit' : 'cast',
+      layer,
+      // Deliberately disagree with the authoritative fan snapshot so this
+      // catches accidental fallback to the old static profile/event fields.
+      position: { x: 420, y: 140 },
+      origin: { x: 120, y: 150 },
+      direction: { x: 1, y: 0 },
+      targetPosition: { x: 510, y: 188 },
+      length: 540,
+      radius: 56,
+      fanGeometry,
+      startedAt: 4,
+      duration: 1,
+      ttl: 0.6,
+    })
+    expect(getSkillEvolutionFanRenderGeometry(event('warning'))).toBe(fanGeometry)
+
+    ;(['warning', 'body', 'evolve'] as const).forEach((layer) => {
+      const ctx = createMockCanvasContext()
+      drawSkillEvolutionEffectEvents(ctx, { elapsedTime: 4.4, skillEvolutionEffectEvents: [{ ...event('warning'), layer }] })
+      expect(ctx.arc).not.toHaveBeenCalled()
+      expect(ctx.lineTo).not.toHaveBeenCalled()
+      expect(ctx.closePath).not.toHaveBeenCalled()
+    })
+
+    const hit = createMockCanvasContext()
+    drawSkillEvolutionEffectEvents(hit, { elapsedTime: 4.4, skillEvolutionEffectEvents: [event('hit')] })
+    expect(hit.arc).toHaveBeenCalledWith(510, 188, 9.9, 0, Math.PI * 2)
+    expect(hit.closePath).not.toHaveBeenCalled()
+  })
+
+  it('suppresses quick-triple and branch cast-preview geometry without changing their frozen fan snapshots', () => {
+    const event = (evolutionId: string, totalFanAngleDegrees: number): SkillEvolutionEffectEvent => ({
+      eventId: `${evolutionId}-${totalFanAngleDegrees}`,
+      id: `${evolutionId}-${totalFanAngleDegrees}`,
+      familyId: 'quick-triple',
+      evolutionId,
+      kind: 'cast',
+      layer: 'warning',
+      position: { x: 100, y: 90 },
+      origin: { x: 100, y: 90 },
+      direction: { x: 1, y: 0 },
+      length: 540,
+      fanGeometry: {
+        skillLevel: 5,
+        projectileCount: 9,
+        totalFanAngleDegrees,
+        range: 320,
+        origin: { x: 100, y: 90 },
+        direction: { x: 1, y: 0 },
+      },
+      startedAt: 4,
+      duration: 1,
+      ttl: 0.6,
+    })
+
+    ;(['quick-triple', 'gale-barrage', 'final-hunt'] as const).forEach((evolutionId) => {
+      const context = createMockCanvasContext()
+      drawSkillEvolutionEffectEvents(context, { elapsedTime: 4.4, skillEvolutionEffectEvents: [event(evolutionId, 45)] })
+      expect(getSkillEvolutionFanRenderGeometry(event(evolutionId, 45))?.totalFanAngleDegrees).toBe(45)
+      expect(context.arc).not.toHaveBeenCalled()
+      expect(context.closePath).not.toHaveBeenCalled()
+      expect(context.lineTo).not.toHaveBeenCalled()
+    })
+
+    const bloodRainContext = createMockCanvasContext()
+    drawSkillEvolutionEffectEvents(bloodRainContext, {
+      elapsedTime: 4.4,
+      skillEvolutionEffectEvents: [event('gale-barrage', 60)],
+    })
+    expect(getSkillEvolutionFanRenderGeometry(event('gale-barrage', 60))?.totalFanAngleDegrees).toBe(60)
+    expect(bloodRainContext.arc).not.toHaveBeenCalled()
+    expect(bloodRainContext.lineTo).not.toHaveBeenCalled()
+  })
+
+  it('keeps scatter arrow sprites and hit impacts while removing both flight and event geometry lines', () => {
+    const path = {
+      expansionPoint: { x: 180, y: 92 },
+      convergencePoint: { x: 260, y: 120 },
+      exitPoint: { x: 308, y: 136 },
+      phase: 'converge' as const,
+    }
+    const makeProjectile = (familyId: string, evolutionId?: string): Projectile => ({
+      id: `${familyId}-${evolutionId ?? 'base'}-flight`,
+      owner: 'player',
+      position: { x: 214, y: 104 },
+      origin: { x: 120, y: 72 },
+      velocity: { x: 180, y: 54 },
+      damage: 4,
+      ttl: 1.2,
+      size: 5,
+      color: '#e9d5ff',
+      pierceRemaining: 0,
+      explosionRadius: 0,
+      effect: 'none',
+      effectStrength: 0,
+      sourceSkillId: evolutionId ?? familyId,
+      sourceSkillFamilyId: familyId,
+      sourceEvolutionId: evolutionId,
+      doubleCrescentPath: { ...path },
+    })
+    const scatterFamiliesAndForms = [
+      ['quick-triple'], ['fan-burst'], ['arrow-screen'], ['afterimage-salvo'], ['arrow-turret'],
+      ['quick-triple', 'gale-barrage'], ['quick-triple', 'final-hunt'],
+      ['fan-burst', 'double-crescent'], ['fan-burst', 'hawk-wing'],
+      ['arrow-screen', 'moonshard-volley'], ['arrow-screen', 'sunflare-sweep'],
+      ['afterimage-salvo', 'light-split'], ['afterimage-salvo', 'chain-reflect'],
+      ['arrow-turret', 'feather-resonance'], ['arrow-turret', 'bait-bastion'],
+    ] as const
+    const scatterFlights = scatterFamiliesAndForms.map(([familyId, evolutionId]) => makeProjectile(familyId, evolutionId))
+
+    scatterFlights.forEach((projectile) => {
+      expect(shouldRenderProjectileFlightTrail(projectile)).toBe(false)
+    })
+    const scatterContext = createMockCanvasContext()
+    drawProjectileFlightTrails(scatterContext, scatterFlights)
+    expect(scatterContext.moveTo).not.toHaveBeenCalled()
+    expect(scatterContext.lineTo).not.toHaveBeenCalled()
+
+    // The permitted non-scatter route path remains renderable, proving this
+    // is not a global path-line switch.
+    const pierceFlight = makeProjectile('pierce-arrow', 'wind-cut')
+    const preservedNonScatterFlights = [
+      pierceFlight,
+      makeProjectile('arrow-rain', 'meteor-cluster'),
+      makeProjectile('raptor-dive', 'sky-raptor-king'),
+    ]
+    preservedNonScatterFlights.forEach((projectile) => {
+      expect(shouldRenderProjectileFlightTrail(projectile)).toBe(true)
+    })
+    const pierceContext = createMockCanvasContext()
+    drawProjectileFlightTrails(pierceContext, preservedNonScatterFlights)
+    expect(pierceContext.moveTo).toHaveBeenCalled()
+    expect(pierceContext.lineTo).toHaveBeenCalled()
+
+    // Reduced motion changes no eligibility: scatter stays line-free while a
+    // compatible non-scatter route is not suppressed by this change.
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })))
+    const reducedScatterContext = createMockCanvasContext()
+    drawProjectileFlightTrails(reducedScatterContext, scatterFlights)
+    expect(reducedScatterContext.lineTo).not.toHaveBeenCalled()
+    const reducedPierceContext = createMockCanvasContext()
+    drawProjectileFlightTrails(reducedPierceContext, preservedNonScatterFlights)
+    expect(reducedPierceContext.lineTo).toHaveBeenCalled()
+
+    class MockImage {
+      complete = true
+      naturalWidth = 192
+      naturalHeight = 192
+      src = ''
+    }
+    vi.stubGlobal('Image', MockImage)
+    resetPlayerArcherRuntimeImageCacheForTests()
+    const arrowContext = createMockCanvasContext()
+    drawProjectileSprite(arrowContext, scatterFlights[0]!, 0)
+    expect(arrowContext.drawImage).toHaveBeenCalled()
+
+    const event = (layer: 'warning' | 'hit'): SkillEvolutionEffectEvent => ({
+      eventId: `scatter-${layer}`,
+      id: `scatter-${layer}`,
+      familyId: 'fan-burst',
+      evolutionId: 'double-crescent',
+      kind: layer === 'hit' ? 'hit' : 'cast',
+      layer,
+      position: { x: 214, y: 104 },
+      origin: { x: 120, y: 72 },
+      direction: { x: 1, y: 0 },
+      targetPosition: { x: 260, y: 120 },
+      fanGeometry: {
+        skillLevel: 4,
+        projectileCount: 6,
+        totalFanAngleDegrees: 60,
+        range: 180,
+        origin: { x: 120, y: 72 },
+        direction: { x: 1, y: 0 },
+        path: {
+          kind: 'double-crescent',
+          convergencePoint: { x: 260, y: 120 },
+          expansionRatio: 0.45,
+          exitLength: 48,
+        },
+      },
+      startedAt: 4,
+      duration: 1,
+      ttl: 0.6,
+    })
+    const warningContext = createMockCanvasContext()
+    drawSkillEvolutionEffectEvents(warningContext, { elapsedTime: 4.4, skillEvolutionEffectEvents: [event('warning')] })
+    expect(warningContext.arc).not.toHaveBeenCalled()
+    expect(warningContext.lineTo).not.toHaveBeenCalled()
+    expect(warningContext.closePath).not.toHaveBeenCalled()
+
+    const hitContext = createMockCanvasContext()
+    drawSkillEvolutionEffectEvents(hitContext, { elapsedTime: 4.4, skillEvolutionEffectEvents: [event('hit')] })
+    expect(hitContext.arc).toHaveBeenCalledWith(260, 120, expect.any(Number), 0, Math.PI * 2)
+    expect(hitContext.closePath).not.toHaveBeenCalled()
+    expect(hitContext.lineTo).toHaveBeenCalled()
+  })
+
+  it('keeps double-crescent route data for real projectile travel while suppressing every event route frame', () => {
+    const fanGeometry = {
+      skillLevel: 5,
+      projectileCount: 3,
+      totalFanAngleDegrees: 60,
+      range: 420,
+      origin: { x: 100, y: 120 },
+      direction: { x: 1, y: 0 },
+      path: {
+        kind: 'double-crescent' as const,
+        convergencePoint: { x: 400, y: 120 },
+        expansionRatio: 0.45,
+        exitLength: 48,
+      },
+    }
+    const paths = getDoubleCrescentRenderPaths(fanGeometry)
+
+    expect(paths).toHaveLength(3)
+    expect(paths[1]).toMatchObject({
+      expansionPoint: { x: 235, y: 120 },
+      convergencePoint: { x: 400, y: 120 },
+      exitPoint: { x: 448, y: 120 },
+    })
+    expect(Math.hypot(paths[0]!.expansionPoint.x - 100, paths[0]!.expansionPoint.y - 120)).toBeCloseTo(135)
+
+    const event = (layer: Extract<SkillEvolutionEffectEvent['layer'], 'warning' | 'body' | 'hit'>): SkillEvolutionEffectEvent => ({
+      eventId: `double-crescent-${layer}`,
+      id: `double-crescent-${layer}`,
+      familyId: 'fan-burst',
+      evolutionId: 'double-crescent',
+      kind: layer === 'hit' ? 'hit' : 'cast',
+      layer,
+      position: { x: 240, y: 120 },
+      origin: { x: 100, y: 120 },
+      direction: { x: 1, y: 0 },
+      targetPosition: { x: 400, y: 120 },
+      fanGeometry,
+      startedAt: 4,
+      duration: 1,
+      ttl: 0.6,
+    })
+    ;(['warning', 'body'] as const).forEach((layer) => {
+      const eventContext = createMockCanvasContext()
+      drawSkillEvolutionEffectEvents(eventContext, { elapsedTime: 4.4, skillEvolutionEffectEvents: [event(layer)] })
+      expect(eventContext.arc).not.toHaveBeenCalled()
+      expect(eventContext.lineTo).not.toHaveBeenCalled()
+      expect(eventContext.closePath).not.toHaveBeenCalled()
+    })
+
+    const hitContext = createMockCanvasContext()
+    drawSkillEvolutionEffectEvents(hitContext, { elapsedTime: 4.4, skillEvolutionEffectEvents: [event('hit')] })
+    expect(hitContext.arc).toHaveBeenCalledWith(400, 120, expect.any(Number), 0, Math.PI * 2)
+    expect(hitContext.closePath).not.toHaveBeenCalled()
+
+    expect(getDoubleCrescentProjectileRenderSegments({
+      origin: fanGeometry.origin,
+      evolutionFanGeometry: fanGeometry,
+      position: { x: 300, y: 120 },
+      doubleCrescentPath: {
+        expansionPoint: paths[1]!.expansionPoint,
+        convergencePoint: paths[1]!.convergencePoint,
+        exitPoint: paths[1]!.exitPoint,
+        phase: 'converge',
+      },
+    })).toEqual([
+      { start: fanGeometry.origin, end: paths[1]!.expansionPoint },
+      { start: paths[1]!.expansionPoint, end: { x: 300, y: 120 } },
+    ])
+  })
+
+  it('keeps the double-crescent event route hidden with reduced motion', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })))
+    const event: SkillEvolutionEffectEvent = {
+      eventId: 'reduced-double-crescent',
+      id: 'reduced-double-crescent',
+      familyId: 'fan-burst',
+      evolutionId: 'double-crescent',
+      kind: 'cast',
+      layer: 'body',
+      position: { x: 44, y: 32 },
+      origin: { x: 44, y: 32 },
+      direction: { x: 1, y: 0 },
+      fanGeometry: {
+        skillLevel: 4,
+        projectileCount: 3,
+        totalFanAngleDegrees: 60,
+        range: 96,
+        origin: { x: 44, y: 32 },
+        direction: { x: 1, y: 0 },
+        path: {
+          kind: 'double-crescent',
+          convergencePoint: { x: 92, y: 32 },
+          expansionRatio: 0.45,
+          exitLength: 48,
+        },
+      },
+      startedAt: 4,
+      duration: 1,
+      ttl: 0.6,
+    }
+    const early = createMockCanvasContext()
+    const late = createMockCanvasContext()
+
+    drawSkillEvolutionEffectEvents(early, { elapsedTime: 4.1, skillEvolutionEffectEvents: [event] })
+    drawSkillEvolutionEffectEvents(late, { elapsedTime: 4.8, skillEvolutionEffectEvents: [event] })
+
+    expect(early.arc).not.toHaveBeenCalled()
+    expect(early.lineTo).not.toHaveBeenCalled()
+    expect(late.arc).not.toHaveBeenCalled()
+    expect(late.lineTo).not.toHaveBeenCalled()
+  })
+
+  it('renders active spiral-break flights from A1 sweep and lock snapshots, never as player-orbit or fan fallbacks', () => {
+    const state = {
+      projectiles: [
+        {
+          id: 'cross-left',
+          position: { x: 60, y: 50 },
+          sweptPathSegments: [{ start: { x: 20, y: 30 }, end: { x: 60, y: 50 } }],
+          spiralBreakFlight: {
+            castId: 'cross-cast',
+            familyId: 'spiral-break',
+            evolutionId: 'cross-cut',
+            arrowIndex: 0,
+            rotationDirection: 1,
+            castOrigin: { x: 20, y: 30 },
+            castDirection: { x: 1, y: 0 },
+            range: 240,
+            hitBudget: 3,
+            hitsRemaining: 3,
+            remainingDuration: 2.6,
+            lockedTargetId: 'left-target',
+            targetChain: ['left-target'],
+            targetHitTimes: {},
+          },
+        },
+        {
+          id: 'cross-right',
+          position: { x: 48, y: 70 },
+          sweptPathSegments: [{ start: { x: 20, y: 30 }, end: { x: 48, y: 70 } }],
+          spiralBreakFlight: {
+            castId: 'cross-cast',
+            familyId: 'spiral-break',
+            evolutionId: 'cross-cut',
+            arrowIndex: 1,
+            rotationDirection: -1,
+            castOrigin: { x: 20, y: 30 },
+            castDirection: { x: 1, y: 0 },
+            range: 240,
+            hitBudget: 3,
+            hitsRemaining: 3,
+            remainingDuration: 2.6,
+            lockedTargetId: 'right-target',
+            targetChain: ['right-target'],
+            targetHitTimes: {},
+          },
+        },
+      ],
+      spiralBreakFlights: [{ castId: 'cross-cast', presentationRemaining: 2.6 }],
+      enemies: [
+        { id: 'left-target', hp: 40, position: { x: 86, y: 44 } },
+        { id: 'right-target', hp: 40, position: { x: 92, y: 82 } },
+      ],
+    } as Pick<GameSnapshot, 'projectiles' | 'spiralBreakFlights' | 'enemies'>
+    const ctx = createMockCanvasContext()
+
+    drawSpiralBreakFlightTrails(ctx, state)
+
+    expect(getSpiralBreakProjectileRenderSegments(state.projectiles[0]!)).toEqual([
+      { start: { x: 20, y: 30 }, end: { x: 60, y: 50 } },
+    ])
+    expect(vi.mocked(ctx.moveTo).mock.calls).toEqual(expect.arrayContaining([
+      [20, 30], [60, 50], [20, 30], [48, 70],
+    ]))
+    expect(vi.mocked(ctx.lineTo).mock.calls).toEqual(expect.arrayContaining([
+      [60, 50], [86, 44], [48, 70], [92, 82],
+    ]))
+    expect(ctx.arc).not.toHaveBeenCalled()
+    expect(ctx.closePath).not.toHaveBeenCalled()
+
+    const reducedMotionContext = createMockCanvasContext()
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })))
+    drawSpiralBreakFlightTrails(reducedMotionContext, state)
+    // Reduced motion leaves the exact actual route and current locks visible;
+    // it only lowers the effect alpha.
+    expect(vi.mocked(reducedMotionContext.lineTo).mock.calls).toEqual(vi.mocked(ctx.lineTo).mock.calls)
+
+    const event = (
+      evolutionId: 'cross-cut' | 'blood-scent',
+      layer: Extract<SkillEvolutionEffectEvent['layer'], 'warning' | 'body' | 'hit'>,
+    ): SkillEvolutionEffectEvent => ({
+      eventId: `${evolutionId}-${layer}`,
+      id: `${evolutionId}-${layer}`,
+      familyId: 'spiral-break',
+      evolutionId,
+      kind: layer === 'hit' ? 'hit' : 'cast',
+      layer,
+      position: { x: 220, y: 180 },
+      origin: { x: 160, y: 120 },
+      direction: { x: 0, y: -1 },
+      targetPosition: { x: 280, y: 100 },
+      length: 320,
+      radius: 32,
+      // Deliberately absent: spiral-break variants are not genuine fan casts.
+      startedAt: 4,
+      duration: 1,
+      ttl: 0.6,
+    })
+
+    // Event-only warning/body layers must never fabricate a circle, cone, or
+    // static X. The live flight state above is the sole route presentation.
+    ;(['cross-cut', 'blood-scent'] as const).forEach((evolutionId) => {
+      ;(['warning', 'body'] as const).forEach((layer) => {
+        const eventContext = createMockCanvasContext()
+        drawSkillEvolutionEffectEvents(eventContext, { elapsedTime: 4.4, skillEvolutionEffectEvents: [event(evolutionId, layer)] })
+
+        expect(getSkillEvolutionFanRenderGeometry(event(evolutionId, layer))).toBeUndefined()
+        expect(eventContext.arc).not.toHaveBeenCalled()
+        expect(eventContext.lineTo).not.toHaveBeenCalled()
+        expect(eventContext.closePath).not.toHaveBeenCalled()
+      })
+    })
+
+    const malformedSpiralEvent = createMockCanvasContext()
+    drawSkillEvolutionEffectEvents(malformedSpiralEvent, {
+      elapsedTime: 4.4,
+      skillEvolutionEffectEvents: [{
+        ...event('cross-cut', 'warning'),
+        // A malformed future fan snapshot must not override the flight-only
+        // rule for this non-fan family.
+        fanGeometry: {
+          skillLevel: 5,
+          projectileCount: 8,
+          totalFanAngleDegrees: 90,
+          range: 300,
+          origin: { x: 160, y: 120 },
+          direction: { x: 0, y: -1 },
+        },
+      }],
+    })
+    expect(malformedSpiralEvent.closePath).not.toHaveBeenCalled()
+    expect(malformedSpiralEvent.arc).not.toHaveBeenCalled()
+
+    const mergedCrossHit = createMockCanvasContext()
+    drawSkillEvolutionEffectEvents(mergedCrossHit, {
+      elapsedTime: 4.4,
+      skillEvolutionEffectEvents: [{ ...event('cross-cut', 'hit'), hitCount: 2 }],
+    })
+    expect(vi.mocked(mergedCrossHit.fillText).mock.calls).toEqual([
+      ['交叉切击 2x', 316, 64],
+    ])
+    expect(vi.mocked(mergedCrossHit.lineTo).mock.calls).toHaveLength(2)
+
+    const bloodScentHit = createMockCanvasContext()
+    drawSkillEvolutionEffectEvents(bloodScentHit, {
+      elapsedTime: 4.4,
+      skillEvolutionEffectEvents: [{ ...event('blood-scent', 'hit'), hitCount: 1 }],
+    })
+    expect(bloodScentHit.fillText).not.toHaveBeenCalled()
+    expect(vi.mocked(bloodScentHit.lineTo).mock.calls).toHaveLength(1)
+
+    const suppressedScatterFan = createMockCanvasContext()
+    drawSkillEvolutionEffectEvents(suppressedScatterFan, {
+      elapsedTime: 4.4,
+      skillEvolutionEffectEvents: [{
+        ...event('cross-cut', 'warning'),
+        eventId: 'genuine-fan-regression',
+        id: 'genuine-fan-regression',
+        evolutionId: 'double-crescent',
+        familyId: 'fan-burst',
+        fanGeometry: {
+          skillLevel: 5,
+          projectileCount: 8,
+          totalFanAngleDegrees: 60,
+          range: 300,
+          origin: { x: 160, y: 120 },
+          direction: { x: 0, y: -1 },
+        },
+      }],
+    })
+    expect(suppressedScatterFan.closePath).not.toHaveBeenCalled()
+    expect(suppressedScatterFan.arc).not.toHaveBeenCalled()
+    expect(suppressedScatterFan.lineTo).not.toHaveBeenCalled()
+  })
+
+  it('suppresses every authoritative 45°–90° scatter preview while retaining non-scatter line events', () => {
+    const fanEvent = (totalFanAngleDegrees: number): SkillEvolutionEffectEvent => ({
+      eventId: `fan-angle-${totalFanAngleDegrees}`,
+      id: `fan-angle-${totalFanAngleDegrees}`,
+      familyId: 'arrow-screen',
+      evolutionId: 'sunflare-sweep',
+      kind: 'cast',
+      layer: 'warning',
+      position: { x: 80, y: 70 },
+      origin: { x: 80, y: 70 },
+      direction: { x: 1, y: 0 },
+      fanGeometry: {
+        skillLevel: 5,
+        projectileCount: 9,
+        totalFanAngleDegrees,
+        range: 96,
+        origin: { x: 18, y: 24 },
+        direction: { x: 1, y: 0 },
+      },
+      startedAt: 4,
+      duration: 1,
+      ttl: 0.6,
+    })
+
+    ;([45, 60, 75, 90] as const).forEach((totalFanAngleDegrees) => {
+      const ctx = createMockCanvasContext()
+      drawSkillEvolutionEffectEvents(ctx, { elapsedTime: 4.4, skillEvolutionEffectEvents: [fanEvent(totalFanAngleDegrees)] })
+      expect(getSkillEvolutionFanRenderGeometry(fanEvent(totalFanAngleDegrees))?.totalFanAngleDegrees).toBe(totalFanAngleDegrees)
+      expect(ctx.arc).not.toHaveBeenCalled()
+      expect(ctx.closePath).not.toHaveBeenCalled()
+      expect(ctx.lineTo).not.toHaveBeenCalled()
+    })
+
+    const straightContext = createMockCanvasContext()
+    drawSkillEvolutionEffectEvents(straightContext, {
+      elapsedTime: 4.4,
+      skillEvolutionEffectEvents: [{
+        eventId: 'straight-warning',
+        id: 'straight-warning',
+        familyId: 'pierce-arrow',
+        evolutionId: 'wind-cut',
+        kind: 'cast',
+        layer: 'warning',
+        position: { x: 100, y: 100 },
+        origin: { x: 100, y: 100 },
+        direction: { x: 1, y: 0 },
+        length: 240,
+        startedAt: 4,
+        duration: 1,
+        ttl: 0.6,
+      }],
+    })
+    expect(straightContext.arc).not.toHaveBeenCalled()
+    expect(straightContext.lineTo).toHaveBeenCalled()
+  })
+
+  it('keeps arrow-turret warning/body fan previews hidden while retaining its real-hit feedback', () => {
+    const towerEvent = (layer: SkillEvolutionEffectEvent['layer']): SkillEvolutionEffectEvent => ({
+      eventId: `tower-${layer}`,
+      id: `tower-${layer}`,
+      familyId: 'arrow-turret',
+      evolutionId: 'bait-bastion',
+      kind: layer === 'hit' ? 'hit' : 'cast',
+      layer,
+      position: { x: 200, y: 120 },
+      origin: { x: 72, y: 84 },
+      direction: { x: 0, y: -1 },
+      targetPosition: { x: 72, y: -52 },
+      targetId: 'tower-target',
+      fanGeometry: {
+        skillLevel: 5,
+        projectileCount: 7,
+        totalFanAngleDegrees: 75,
+        range: 196,
+        origin: { x: 72, y: 84 },
+        direction: { x: 0, y: -1 },
+      },
+      startedAt: 4,
+      duration: 1,
+      ttl: 0.6,
+    })
+
+    ;(['warning', 'body'] as const).forEach((layer) => {
+      const context = createMockCanvasContext()
+      drawSkillEvolutionEffectEvents(context, {
+        elapsedTime: 4.4,
+        skillEvolutionEffectEvents: [towerEvent(layer)],
+      })
+      expect(context.arc).not.toHaveBeenCalled()
+      expect(context.closePath).not.toHaveBeenCalled()
+      expect(context.lineTo).not.toHaveBeenCalled()
+    })
+
+    const hitContext = createMockCanvasContext()
+    drawSkillEvolutionEffectEvents(hitContext, {
+      elapsedTime: 4.4,
+      skillEvolutionEffectEvents: [towerEvent('hit')],
+    })
+    expect(hitContext.arc).toHaveBeenCalledWith(72, -52, expect.any(Number), 0, Math.PI * 2)
+    expect(hitContext.closePath).not.toHaveBeenCalled()
+    expect(hitContext.lineTo).toHaveBeenCalled()
+  })
+
+  it('keeps reduced-motion scatter hit feedback local without restoring fan geometry', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })))
+    const event: SkillEvolutionEffectEvent = {
+      eventId: 'reduced-fan-hit',
+      id: 'reduced-fan-hit',
+      familyId: 'fan-burst',
+      evolutionId: 'hawk-wing',
+      kind: 'hit',
+      layer: 'hit',
+      position: { x: 44, y: 32 },
+      origin: { x: 44, y: 32 },
+      direction: { x: 1, y: 0 },
+      targetPosition: { x: 92, y: 32 },
+      fanGeometry: {
+        skillLevel: 5,
+        projectileCount: 3,
+        totalFanAngleDegrees: 45,
+        range: 96,
+        origin: { x: 44, y: 32 },
+        direction: { x: 1, y: 0 },
+      },
+      startedAt: 4,
+      duration: 1,
+      ttl: 0.6,
+    }
+    const early = createMockCanvasContext()
+    const late = createMockCanvasContext()
+
+    drawSkillEvolutionEffectEvents(early, { elapsedTime: 4.1, skillEvolutionEffectEvents: [event] })
+    drawSkillEvolutionEffectEvents(late, { elapsedTime: 4.8, skillEvolutionEffectEvents: [event] })
+
+    ;([early, late] as const).forEach((context) => {
+      expect(context.arc).toHaveBeenCalledWith(92, 32, expect.any(Number), 0, Math.PI * 2)
+      expect(context.closePath).not.toHaveBeenCalled()
+      expect(context.lineTo).toHaveBeenCalled()
     })
   })
 
@@ -319,6 +1258,71 @@ describe('game render helpers', () => {
       { key: 'bleed', label: '流血', detail: 'x3 · 2.1s', color: '#ef4444' },
       { key: 'crystalCharge', label: '晶能', detail: 'x12', color: '#67e8f9' },
     ])
+  })
+
+  it('draws only the authoritative 1-5 Beast Contract paw stacks as compact enemy-top pixels', () => {
+    const enemy = { position: { x: 160, y: 120 }, size: 24 } as Enemy
+    const threeMarks = createMockCanvasContext()
+    drawBeastContractPawMarks(threeMarks, enemy, 3)
+    expect(threeMarks.fillRect).toHaveBeenCalledTimes(9)
+    expect(threeMarks.fillText).not.toHaveBeenCalled()
+
+    const cappedMarks = createMockCanvasContext()
+    drawBeastContractPawMarks(cappedMarks, enemy, 99)
+    expect(cappedMarks.fillRect).toHaveBeenCalledTimes(15)
+
+    const noMarks = createMockCanvasContext()
+    drawBeastContractPawMarks(noMarks, enemy, 0)
+    expect(noMarks.fillRect).not.toHaveBeenCalled()
+  })
+
+  it('shows the pack-hunt marker only for a newly observed target event and never replays a mounted snapshot', () => {
+    const snapshot = createInitialSnapshot('running')
+    const visible = new Set(['hunt-target'])
+    const baseline = getBeastContractDomainPresentationSnapshot(snapshot)
+    expect(getVisiblePackHuntTargetId(baseline.beast, 4, visible)).toBeUndefined()
+
+    snapshot.beastContractDomainState!.beast.lastPackHuntTargetId = 'hunt-target'
+    snapshot.beastContractDomainState!.beast.packHuntEventSequence = 1
+    const triggered = getBeastContractDomainPresentationSnapshot(snapshot)
+    expect(getVisiblePackHuntTargetId(triggered.beast, 4.1, visible)).toBe('hunt-target')
+    expect(getVisiblePackHuntTargetId(triggered.beast, 4.7, visible)).toBe('hunt-target')
+    expect(getVisiblePackHuntTargetId(triggered.beast, 4.76, visible)).toBeUndefined()
+
+    snapshot.beastContractDomainState!.beast.lastPackHuntTargetId = 'missing-target'
+    snapshot.beastContractDomainState!.beast.packHuntEventSequence = 2
+    expect(getVisiblePackHuntTargetId(getBeastContractDomainPresentationSnapshot(snapshot).beast, 5, visible)).toBeUndefined()
+
+    resetPackHuntTargetMarkerForTests()
+    expect(getVisiblePackHuntTargetId(getBeastContractDomainPresentationSnapshot(snapshot).beast, 5, visible)).toBeUndefined()
+
+    const markerContext = createMockCanvasContext()
+    drawPackHuntTargetMarker(markerContext, { position: { x: 160, y: 120 }, size: 24 })
+    expect(markerContext.stroke).toHaveBeenCalledTimes(1)
+    expect(markerContext.fillRect).toHaveBeenCalledTimes(3)
+    expect(markerContext.fillText).not.toHaveBeenCalled()
+  })
+
+  it('renders distinct static, low-obstruction Beast, resonance, suppression, and celestial state contours', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.beastContractDomainState = {
+      beast: { ...snapshot.beastContractDomainState!.beast, domainRemaining: 4 },
+      domain: {
+        ...snapshot.beastContractDomainState!.domain,
+        resonanceCount: 1,
+        suppressionCount: 1,
+        celestialRemaining: 3,
+      },
+    }
+    const context = createMockCanvasContext()
+
+    drawBeastContractDomainAuras(context, snapshot)
+
+    expect(context.arc).toHaveBeenCalledTimes(4)
+    expect(context.closePath).toHaveBeenCalledTimes(1)
+    expect(context.stroke).toHaveBeenCalledTimes(4)
+    expect(context.fill).not.toHaveBeenCalled()
+    expect(context.fillRect).not.toHaveBeenCalled()
   })
 
   it('draws compact talent state labels from the enemy state instead of inferring them from selected nodes', () => {
@@ -2800,23 +3804,31 @@ describe('game render helpers', () => {
     expect(shouldDrawFixedRoomBoundary(village)).toBe(true)
   })
 
-  it('uses the designer dungeon floor tile for first-campaign infinite and boss-arena combat', () => {
+  it('keeps the 128px project-local tile as a failure-only fallback for first-campaign infinite and boss-arena combat', () => {
     const firstCampaign = createInitialSnapshot('running')
     firstCampaign.level = 1
     firstCampaign.battlefield.mode = 'infinite'
 
-    expect(LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC).toContain('/assets/tiles/dungeon-floor-level1-128-image2.png')
+    expect(LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE).toBe(128)
+    expect(LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC).toBe(`${import.meta.env.BASE_URL}assets/tiles/dungeon-floor-level1-128-image2.png`)
+    expect(LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC).not.toContain('/Downloads/')
     expect(shouldUseLevelOneDungeonFloorTile(firstCampaign)).toBe(true)
+    expect(shouldDrawLevelOneDungeonLegacyFallback(firstCampaign, 'loading')).toBe(false)
+    expect(shouldDrawLevelOneDungeonLegacyFallback(firstCampaign, 'failed')).toBe(true)
+    expect(shouldDrawLevelOneDungeonLegacyFallback(firstCampaign, 'building')).toBe(false)
+    expect(shouldDrawLevelOneDungeonLegacyFallback(firstCampaign, 'drawn')).toBe(false)
 
     const firstCampaignBoss = createInitialSnapshot('running')
     firstCampaignBoss.level = 22
     firstCampaignBoss.battlefield.mode = 'boss-arena'
     expect(shouldUseLevelOneDungeonFloorTile(firstCampaignBoss)).toBe(true)
+    expect(shouldDrawLevelOneDungeonLegacyFallback(firstCampaignBoss, 'building')).toBe(false)
 
     const secondCampaign = createInitialSnapshot('running')
     secondCampaign.level = 23
     secondCampaign.battlefield.mode = 'infinite'
     expect(shouldUseLevelOneDungeonFloorTile(secondCampaign)).toBe(false)
+    expect(shouldDrawLevelOneDungeonLegacyFallback(secondCampaign, 'loading')).toBe(false)
 
     const secondCampaignBoss = createInitialSnapshot('running')
     secondCampaignBoss.level = 44
@@ -2915,23 +3927,137 @@ describe('game render helpers', () => {
     })
   })
 
-  it('tiles the first-campaign dungeon floor on a stable 128px world grid', () => {
-    const camera = { x: LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE * 3 + 17, y: -LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE * 2 + 91 }
-    const range = getLevelOneDungeonFloorTileRange(camera)
+  it('uses the same 128px world tile range for infinite and boss-arena world coordinates', () => {
+    const camera = { x: 19_842, y: -761 }
+    const infinite = createInitialSnapshot('running')
+    infinite.level = 1
+    infinite.battlefield.mode = 'infinite'
+    const boss = createInitialSnapshot('running')
+    boss.level = 22
+    boss.battlefield.mode = 'boss-arena'
 
-    expect(range.startTileX).toBe(2)
-    expect(range.startTileY).toBe(-3)
-    expect(range.endTileX).toBe(Math.ceil((camera.x + WORLD_WIDTH) / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) + 1)
-    expect(range.endTileY).toBe(Math.ceil((camera.y + WORLD_HEIGHT) / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) + 1)
+    expect(shouldUseLevelOneDungeonFloorTile(infinite)).toBe(true)
+    expect(shouldUseLevelOneDungeonFloorTile(boss)).toBe(true)
+    expect(getLevelOneDungeonFloorTileRange(camera)).toEqual({
+      startTileX: 154,
+      endTileX: 164,
+      startTileY: -7,
+      endTileY: 1,
+    })
+    expect(getLevelOneDungeonFloorTileRange(camera)).toEqual(getLevelOneDungeonFloorTileRange(camera))
+  })
 
-    const watchedTileX = 4
-    const watchedTileWorldX = watchedTileX * LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE + 8
-    const beforeBoundaryCamera = { x: LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE - 2, y: 0 }
-    const afterBoundaryCamera = { x: LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE + 2, y: 0 }
-    expect(Math.floor(watchedTileWorldX / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE)).toBe(watchedTileX)
-    expect(getLevelOneDungeonFloorTileRange(beforeBoundaryCamera).startTileX).toBe(-1)
-    expect(getLevelOneDungeonFloorTileRange(afterBoundaryCamera).startTileX).toBe(0)
-    expect(watchedTileX).toBeGreaterThanOrEqual(getLevelOneDungeonFloorTileRange(afterBoundaryCamera).startTileX)
+  it('delegates campaign-one infinite and boss-arena floors to the same terrain renderer', async () => {
+    class MockFloorImage {
+      complete = true
+      naturalWidth = 128
+      decoding = 'async'
+      src = ''
+    }
+    vi.stubGlobal('Image', MockFloorImage)
+    const drawTerrain = vi.fn()
+      .mockReturnValueOnce('loading' as const)
+      .mockReturnValue('drawn' as const)
+    vi.resetModules()
+    vi.doMock('./firstDungeonGodotTerrainRenderer', () => ({
+      drawFirstDungeonGodotTerrain: drawTerrain,
+    }))
+    const {
+      renderGame: renderFresh,
+    } = await import('./render')
+    const createCampaignOneSnapshot = (mode: 'infinite' | 'boss-arena') => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.level = mode === 'boss-arena' ? 22 : 1
+      snapshot.battlefield.mode = mode
+      snapshot.battlefield.seed = 19_842
+      snapshot.enemies = []
+      snapshot.projectiles = []
+      snapshot.pickups = []
+      snapshot.mapObstacles = []
+      snapshot.mapDecorations = []
+      snapshot.skillFields = []
+      snapshot.skillEvolutionEffectEvents = []
+      snapshot.enemySkillEffects = []
+      snapshot.bursts = []
+      snapshot.floatingTexts = []
+      return snapshot
+    }
+
+    const worldCamera = { x: 19_842, y: -761 }
+    const infinite = createCampaignOneSnapshot('infinite')
+    const firstPass = createMockCanvasContext()
+    renderFresh(firstPass, infinite, worldCamera)
+
+    const returned = createMockCanvasContext()
+    renderFresh(returned, infinite, worldCamera)
+
+    const boss = createCampaignOneSnapshot('boss-arena')
+    const bossContext = createMockCanvasContext()
+    renderFresh(bossContext, boss, worldCamera)
+
+    const nonFirstCampaign = createCampaignOneSnapshot('infinite')
+    nonFirstCampaign.level = 23
+    const nonFirstContext = createMockCanvasContext()
+    renderFresh(nonFirstContext, nonFirstCampaign, worldCamera)
+
+    expect(drawTerrain).toHaveBeenNthCalledWith(1, firstPass, 19_842, worldCamera, 1, 1)
+    expect(drawTerrain).toHaveBeenNthCalledWith(2, returned, 19_842, worldCamera, 1, 1)
+    expect(drawTerrain).toHaveBeenNthCalledWith(3, bossContext, 19_842, worldCamera, 1, 22)
+    expect(drawTerrain).toHaveBeenCalledTimes(3)
+    expect((firstPass.drawImage as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([image]) => (
+      image instanceof MockFloorImage && image.src === LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC
+    ))).toBe(false)
+    expect((returned.drawImage as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([image]) => (
+      image instanceof MockFloorImage && image.src === LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC
+    ))).toBe(false)
+    expect(firstPass.stroke).not.toHaveBeenCalled()
+    vi.doUnmock('./firstDungeonGodotTerrainRenderer')
+    vi.resetModules()
+  })
+
+  it('loads the old tile lazily only after primary terrain failure and keeps drawing it', async () => {
+    const requestedUrls: string[] = []
+    class MockFloorImage {
+      complete = true
+      naturalWidth = 128
+      decoding = 'async'
+      private value = ''
+      get src() { return this.value }
+      set src(value: string) { this.value = value; requestedUrls.push(value) }
+    }
+    vi.stubGlobal('Image', MockFloorImage)
+    vi.resetModules()
+    vi.doMock('./firstDungeonGodotTerrainRenderer', () => ({
+      drawFirstDungeonGodotTerrain: vi.fn(() => 'failed' as const),
+    }))
+    const { renderGame: renderFresh } = await import('./render')
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = 1
+    snapshot.battlefield.mode = 'infinite'
+    snapshot.enemies = []
+    snapshot.projectiles = []
+    snapshot.pickups = []
+    snapshot.mapObstacles = []
+    snapshot.mapDecorations = []
+    snapshot.skillFields = []
+    snapshot.skillEvolutionEffectEvents = []
+    snapshot.enemySkillEffects = []
+    snapshot.bursts = []
+    snapshot.floatingTexts = []
+    const firstFallbackFrame = createMockCanvasContext()
+    const nextFallbackFrame = createMockCanvasContext()
+
+    renderFresh(firstFallbackFrame, snapshot, { x: 0, y: 0 })
+    renderFresh(nextFallbackFrame, snapshot, { x: 128, y: 0 })
+
+    expect(requestedUrls.filter((url) => url === LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC)).toHaveLength(1)
+    for (const frame of [firstFallbackFrame, nextFallbackFrame]) {
+      expect((frame.drawImage as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([image]) => (
+        image instanceof MockFloorImage && image.src === LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC
+      ))).toBe(true)
+    }
+    vi.doUnmock('./firstDungeonGodotTerrainRenderer')
+    vi.resetModules()
   })
 
   it('draws first-campaign terrain asset images for decorations and obstacles', () => {

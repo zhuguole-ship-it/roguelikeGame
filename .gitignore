@@ -31,3 +31,4 @@ godot_homepage/**/*.uid
 godot_asset_tools/.godot/
 godot_asset_tools/**/*.import
 godot_asset_tools/**/*.uid
+godot_first_dungeon_terrain/.godot/

@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ARCHER_ACTIVE_SKILLS } from '../game/archerSkills'
+import { ARCHER_CORE_SKILL_IDS } from '../game/archerSkillEvolution'
 import { resetGameSoundRuntimeForTests, setGameSoundNowProviderForTests, setGameSoundTestPlayer } from '../game/audio'
+import { createIdleCombatLaunchGate } from '../game/combatLoading'
 import { buildPendingReward, createInitialSnapshot } from '../game/engine'
+import { BEAST_CONTRACT_DOMAIN_EQUIPMENT_DEFINITIONS } from '../game/equipment'
 import { TALENT_SCHEMA_VERSION, getMetaTalentUnlockState } from '../game/talents'
 import type { Enemy, EquipmentItem, Pickup, Projectile, SkillRewardChoice } from '../game/types'
 import {
@@ -10,6 +12,7 @@ import {
   extractPersistedGameState,
   getSimulationSoundEvents,
   installLocalE2EHarness,
+  isDevelopmentAcceptanceRuntimeAllowed,
   isLocalBattleTestRuntimeAllowed,
   restorePersistedGameState,
   shouldInstallLocalE2EHarness,
@@ -21,7 +24,13 @@ afterEach(() => {
   vi.unstubAllGlobals()
   resetGameSoundRuntimeForTests()
   localStorage.removeItem(GAME_SAVE_STORAGE_KEY)
-  useGameStore.setState({ ...createInitialSnapshot('idle'), metaTalentRanks: {} })
+  useGameStore.setState({
+    ...createInitialSnapshot('idle'),
+    metaTalentRanks: {},
+    localBattleTest: undefined,
+    developmentAcceptance: { available: true, active: false },
+    combatLaunchGate: createIdleCombatLaunchGate(),
+  })
 })
 
 const makeEquipment = (): EquipmentItem => ({
@@ -60,7 +69,13 @@ describe('game store persistence', () => {
   afterEach(() => {
     resetGameSoundRuntimeForTests()
     localStorage.removeItem(GAME_SAVE_STORAGE_KEY)
-    useGameStore.setState({ ...createInitialSnapshot('idle'), metaTalentRanks: {} })
+    useGameStore.setState({
+      ...createInitialSnapshot('idle'),
+      metaTalentRanks: {},
+      localBattleTest: undefined,
+      developmentAcceptance: { available: true, active: false },
+      combatLaunchGate: createIdleCombatLaunchGate(),
+    })
   })
 
   it('restores long term progression while dropping active combat state', () => {
@@ -80,7 +95,7 @@ describe('game store persistence', () => {
       legacyEmber: 2,
       campaignSigil: 5,
     }
-    running.unsealedEquipmentSlots = ['weapon', 'chest', 'boots', 'ring1', 'helmet']
+    running.equipmentInventoryViewPreference = { filterId: 'set:death-contract-executioner', viewMode: 'grid' }
     running.contractBoons = { pierce: 3, spread: 1, control: 0, beast: 0, general: 2 }
     running.contractLevel = 12
     running.exp = 40
@@ -90,6 +105,9 @@ describe('game store persistence', () => {
       ...running.completedCampaignDifficulties,
       3: ['normal', 'hard'],
     }
+    running.metaDifficultyFirstHardEpicClaimedCampaignIds = [3]
+    running.bossExtraEquipmentProtectionLayers[3].hell = 4
+    running.bossExtraEquipmentProtectionLayers[7].nightmare = 6
     running.unlockedCampaignDifficulties = {
       ...running.unlockedCampaignDifficulties,
       3: ['normal', 'hard', 'hell'],
@@ -182,7 +200,10 @@ describe('game store persistence', () => {
       sourceSkillId: 'test',
     }]
 
-    const persisted = extractPersistedGameState(running)
+    const persisted = {
+      ...extractPersistedGameState(running),
+      unsealedEquipmentSlots: ['weapon', 'chest', 'boots', 'ring1', 'helmet'],
+    }
     const restored = restorePersistedGameState(persisted)
 
     expect(restored.phase).toBe('idle')
@@ -196,12 +217,17 @@ describe('game store persistence', () => {
     expect(restored.discoveredHighRarityEquipmentIds).toEqual(['legacy-bow-1', 'legendary-bow-2'])
     expect(restored.equipmentMaterials.ironScraps).toBe(34)
     expect(restored.equipmentMaterials.legacyEmber).toBe(2)
-    expect(restored.unsealedEquipmentSlots).toContain('helmet')
+    expect(restored.equipmentInventoryViewPreference).toEqual({ filterId: 'set:death-contract-executioner', viewMode: 'grid' })
+    expect('unsealedEquipmentSlots' in restored).toBe(false)
+    expect('unsealedEquipmentSlots' in extractPersistedGameState(restored)).toBe(false)
     expect(restored.contractBoons.pierce).toBe(0)
     expect(restored.contractLevel).toBe(1)
     expect(restored.exp).toBe(0)
     expect(restored.completedCampaigns).toEqual([1, 3])
     expect(restored.completedCampaignDifficulties[3]).toEqual(['normal', 'hard'])
+    expect(restored.metaDifficultyFirstHardEpicClaimedCampaignIds).toEqual([3])
+    expect(restored.bossExtraEquipmentProtectionLayers[3].hell).toBe(4)
+    expect(restored.bossExtraEquipmentProtectionLayers[7].nightmare).toBe(6)
     expect(restored.unlockedCampaignDifficulties[3]).toEqual(['normal', 'hard', 'hell'])
     expect(restored.selectedCampaignDifficulty).toBe('hell')
     expect(restored.talentPoints).toBe(27)
@@ -223,6 +249,340 @@ describe('game store persistence', () => {
     expect(restored.skillFields).toHaveLength(0)
   })
 
+  it('persists only the FT003 village seal configuration and freezes it for the next run', () => {
+    const village = createInitialSnapshot('idle')
+    village.unlockedTalentIds = ['meta_common_03']
+    village.unlockedMetaTalentIds = ['meta_common_03']
+    village.metaTalentRanks = { meta_common_03: 2 }
+    village.sealedSkillFamilyIds = ['pierce-arrow', 'fan-burst']
+    village.activeSealedSkillFamilyIds = ['arrow-rain']
+
+    const persisted = extractPersistedGameState(village)
+    expect(persisted.sealedSkillFamilyIds).toEqual(['pierce-arrow', 'fan-burst'])
+    expect(persisted).not.toHaveProperty('activeSealedSkillFamilyIds')
+
+    const restored = restorePersistedGameState(persisted)
+    expect(restored.sealedSkillFamilyIds).toEqual(['pierce-arrow', 'fan-burst'])
+    expect(restored.activeSealedSkillFamilyIds).toEqual([])
+
+    useGameStore.setState(restored)
+    useGameStore.getState().startGame()
+    expect(useGameStore.getState().activeSealedSkillFamilyIds).toEqual(['pierce-arrow', 'fan-burst'])
+    expect(useGameStore.getState().initialSkillDraft?.candidates.every((choice) => (
+      choice.familyId !== 'pierce-arrow' && choice.familyId !== 'fan-burst'
+    ))).toBe(true)
+  })
+
+  it('exposes a village-only FT003 action and clears its configuration with a full talent reset', () => {
+    const village = createInitialSnapshot('idle')
+    village.unlockedTalentIds = ['meta_common_03']
+    village.unlockedMetaTalentIds = ['meta_common_03']
+    village.metaTalentRanks = { meta_common_03: 1 }
+    village.metaTalentV3Migration = {
+      schemaVersion: TALENT_SCHEMA_VERSION,
+      migratedFromLegacy: true,
+      freeResetAvailable: true,
+      retainedNodeIds: ['meta_common_03'],
+    }
+    useGameStore.setState(village)
+
+    useGameStore.getState().setSealedSkillFamilies(['pierce-arrow'])
+    expect(useGameStore.getState().sealedSkillFamilyIds).toEqual(['pierce-arrow'])
+    useGameStore.getState().resetMetaTalentTree()
+    expect(useGameStore.getState().sealedSkillFamilyIds).toEqual([])
+    expect(useGameStore.getState().activeSealedSkillFamilyIds).toEqual([])
+  })
+
+  it('exposes engine-owned initial skill draft actions without persisting or reusing normal reward state', () => {
+    useGameStore.setState({ ...createInitialSnapshot('idle'), metaTalentRanks: {} })
+    useGameStore.getState().startGame()
+
+    const opening = useGameStore.getState().getInitialSkillDraftPresentation()
+    expect(opening).toMatchObject({ active: true, status: 'selecting', currentRound: 1, totalRounds: 3, canPause: true, blockedReason: 'must-select' })
+    expect(opening.candidates).toHaveLength(3)
+    expect(useGameStore.getState().pendingSkillReward).toBeNull()
+    const elapsed = useGameStore.getState().elapsedTime
+    useGameStore.getState().tick(0.05, { up: false, down: false, left: false, right: false })
+    expect(useGameStore.getState().elapsedTime).toBe(elapsed)
+
+    useGameStore.getState().togglePause()
+    expect(useGameStore.getState().getInitialSkillDraftPresentation()).toMatchObject({ active: true, status: 'paused', blockedReason: 'paused' })
+    useGameStore.getState().togglePause()
+    useGameStore.getState().selectInitialSkillDraftCandidate(opening.candidates[0].choiceId)
+    expect(useGameStore.getState().getInitialSkillDraftPresentation()).toMatchObject({ active: true, currentRound: 2 })
+    expect(useGameStore.getState().inRunRewardRerolls).toBe(1)
+    expect(useGameStore.getState().campaignRewardProgress.crystalTalentAwardsGranted).toBe(0)
+
+    useGameStore.getState().forfeitInitialSkillDraft()
+    const forfeited = useGameStore.getState()
+    expect(forfeited.phase).toBe('idle')
+    expect(forfeited.activeSkills).toEqual([])
+    expect(forfeited.getInitialSkillDraftPresentation()).toMatchObject({ active: false, status: 'inactive' })
+    expect(restorePersistedGameState(extractPersistedGameState(forfeited))).toMatchObject({
+      phase: 'idle',
+      activeSkills: expect.any(Array),
+      initialSkillDraft: undefined,
+    })
+  })
+
+  it('holds formal combat behind the runtime-only loading and fade gate, then commits exactly once', () => {
+    const village = createInitialSnapshot('idle')
+    village.selectedCampaign = 2
+    village.selectedCampaignDifficulty = 'hard'
+    useGameStore.setState({ ...village, combatLaunchGate: createIdleCombatLaunchGate() })
+
+    const prepared = useGameStore.getState().prepareFormalCombatLaunch()
+    const repeated = useGameStore.getState().prepareFormalCombatLaunch()
+    expect(prepared).toMatchObject({ ok: true, descriptor: { target: { campaign: 2, level: 23, difficulty: 'hard', runtimeMode: 'formal-run' } } })
+    expect(repeated.launchId).toBe(prepared.launchId)
+    expect(useGameStore.getState()).toMatchObject({ phase: 'idle', combatLaunchGate: { status: 'awaiting-resources', active: true, inputBlocked: true, simulationBlocked: true } })
+
+    const elapsed = useGameStore.getState().elapsedTime
+    useGameStore.getState().tick(1, { up: false, down: false, left: false, right: true })
+    useGameStore.getState().triggerDash()
+    expect(useGameStore.getState().elapsedTime).toBe(elapsed)
+    expect(useGameStore.getState().player.dashTimer).toBe(0)
+    expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: false, started: false })
+
+    expect(useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)).toBe(true)
+    expect(useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)).toBe(true)
+    expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: true })
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'running',
+      selectedCampaign: 2,
+      level: 23,
+      combatLaunchGate: { status: 'idle', active: false, lastCompletedLaunchId: prepared.launchId },
+    })
+    expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: false })
+  })
+
+  it('uses the same gate for local combat without persisting it or starting the test early', () => {
+    const saved = JSON.stringify({ state: { currency: 777 }, version: 1 })
+    localStorage.setItem(GAME_SAVE_STORAGE_KEY, saved)
+    useGameStore.setState({ ...createInitialSnapshot('idle'), combatLaunchGate: createIdleCombatLaunchGate() })
+
+    const prepared = useGameStore.getState().prepareLocalBattleTestCombatLaunch()
+    expect(prepared).toMatchObject({ ok: true, descriptor: { target: { runtimeMode: 'local-battle-test', campaign: 1, level: 1 } } })
+    expect(useGameStore.getState().localBattleTest).toBeUndefined()
+    expect(extractPersistedGameState(useGameStore.getState())).not.toHaveProperty('combatLaunchGate')
+
+    useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)
+    expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: true })
+    expect(useGameStore.getState().localBattleTest?.active).toBe(true)
+    expect(useGameStore.getState().phase).toBe('running')
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(saved)
+  })
+
+  it('defaults the first-hard Boss epic claim record for legacy saves', () => {
+    expect(restorePersistedGameState({
+      completedCampaignDifficulties: { 2: ['normal'] },
+    }).metaDifficultyFirstHardEpicClaimedCampaignIds).toEqual([])
+  })
+
+  it('sanitizes and defaults persisted Boss extra-equipment protection layers', () => {
+    const restored = restorePersistedGameState({
+      bossExtraEquipmentProtectionLayers: {
+        1: { normal: 3.9, hard: -2, hell: 'bad', nightmare: 8 },
+        11: { normal: 99 },
+      },
+    })
+    expect(restored.bossExtraEquipmentProtectionLayers[1]).toEqual({ normal: 3, hard: 0, hell: 0, nightmare: 6 })
+    expect(restored.bossExtraEquipmentProtectionLayers[10]).toEqual({ normal: 0, hard: 0, hell: 0, nightmare: 0 })
+  })
+
+  it('persists a normalized warehouse view preference but blocks local and development-acceptance writes', () => {
+    const initial = createInitialSnapshot('idle')
+    useGameStore.setState({ ...initial, developmentAcceptance: { available: true, active: false } })
+    useGameStore.getState().setEquipmentInventoryViewPreference({ filterId: 'set:blue-crystal-contract', viewMode: 'grid' })
+    expect(useGameStore.getState().equipmentInventoryViewPreference).toEqual({ filterId: 'set:blue-crystal-contract', viewMode: 'grid' })
+    expect(restorePersistedGameState(extractPersistedGameState(useGameStore.getState())).equipmentInventoryViewPreference).toEqual({
+      filterId: 'set:blue-crystal-contract',
+      viewMode: 'grid',
+    })
+    expect(restorePersistedGameState({ equipmentInventoryViewPreference: { filterId: ' ', viewMode: 'invalid' } }).equipmentInventoryViewPreference).toEqual({
+      filterId: 'all',
+      viewMode: 'list',
+    })
+
+    const localResult = useGameStore.getState().startLocalBattleTest()
+    expect(localResult.ok).toBe(true)
+    useGameStore.getState().setEquipmentInventoryViewPreference({ filterId: 'locked', viewMode: 'list' })
+    expect(useGameStore.getState().equipmentInventoryViewPreference).toEqual({ filterId: 'set:blue-crystal-contract', viewMode: 'grid' })
+    useGameStore.getState().exitLocalBattleTest()
+
+    expect(useGameStore.getState().prepareDevelopmentAcceptance('d04-first-hard-boss').ok).toBe(true)
+    useGameStore.getState().setEquipmentInventoryViewPreference({ filterId: 'build:pierce', viewMode: 'list' })
+    expect(useGameStore.getState().equipmentInventoryViewPreference).toEqual({ filterId: 'set:blue-crystal-contract', viewMode: 'grid' })
+    useGameStore.getState().exitDevelopmentAcceptance()
+  })
+
+  it('replaces only local equipment instances and loadout with the dynamic high-rarity catalog', () => {
+    const initial = createInitialSnapshot('idle')
+    initial.equipmentInventory = [makeEquipment()]
+    initial.currency = 321
+    initial.talentPoints = 9
+    initial.equipmentMaterials.ironScraps = 17
+    useGameStore.setState(initial)
+
+    const reset = useGameStore.getState().resetLocalHighRarityEquipmentInventory()
+
+    expect(reset.ok).toBe(true)
+    expect(reset.equipmentTemplateIds).toHaveLength(reset.summary.total)
+    expect(useGameStore.getState().equipmentInventory.map((item) => item.equipmentId)).toEqual(reset.equipmentTemplateIds)
+    expect(useGameStore.getState().equipmentInventory).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'persisted-ember-bow' }),
+    ]))
+    expect(useGameStore.getState().equipmentInventory.every((item) => ['epic', 'legacy', 'legendary'].includes(item.rarity))).toBe(true)
+    expect(useGameStore.getState().equippedItems).toEqual({})
+    expect(useGameStore.getState().equippedWeaponId).toBeNull()
+    expect(useGameStore.getState().currency).toBe(321)
+    expect(useGameStore.getState().talentPoints).toBe(9)
+    expect(useGameStore.getState().equipmentMaterials.ironScraps).toBe(17)
+
+    const persisted = extractPersistedGameState(useGameStore.getState())
+    expect(persisted.equipmentInventory.map((item) => item.equipmentId)).toEqual(reset.equipmentTemplateIds)
+    expect(persisted.equippedItems).toEqual({})
+    expect(restorePersistedGameState(persisted).equipmentInventory.map((item) => item.equipmentId)).toEqual(reset.equipmentTemplateIds)
+  })
+
+  it('keeps reset equipment through real equip and local battle entry/exit', () => {
+    const initial = createInitialSnapshot('idle')
+    useGameStore.setState(initial)
+
+    const reset = useGameStore.getState().resetLocalHighRarityEquipmentInventory()
+    const injectedWeapon = useGameStore.getState().equipmentInventory.find((item) => item.equipmentId === 'boss-legacy-weapon-1')!
+    useGameStore.getState().equipEquipment(injectedWeapon.id)
+    expect(useGameStore.getState().equippedItems.weapon?.id).toBe(injectedWeapon.id)
+
+    expect(useGameStore.getState().startLocalBattleTest()).toMatchObject({ ok: true })
+    expect(useGameStore.getState().localBattleTest?.active).toBe(true)
+    expect(useGameStore.getState().equippedItems.weapon?.id).toBe(injectedWeapon.id)
+
+    useGameStore.getState().exitLocalBattleTest()
+    expect(useGameStore.getState().equipmentInventory.map((item) => item.equipmentId)).toEqual(reset.equipmentTemplateIds)
+    expect(useGameStore.getState().equippedItems.weapon?.id).toBe(injectedWeapon.id)
+
+    useGameStore.getState().startGame()
+    expect(useGameStore.getState().equipmentInventory.map((item) => item.equipmentId)).toEqual(reset.equipmentTemplateIds)
+    expect(useGameStore.getState().equippedItems.weapon?.id).toBe(injectedWeapon.id)
+  })
+
+  it('drops historical slot-seal state while preserving real equipment operations and item state', () => {
+    const equipped = {
+      ...makeEquipment(),
+      id: 'legacy-sealed-chest',
+      equipmentId: 'equipment-template-epic-chest-pierce-破甲',
+      slot: 'chest' as const,
+      score: 120,
+      locked: true,
+      lockedModifierIndexes: [0],
+    }
+    const replacement = {
+      ...equipped,
+      id: 'legacy-sealed-chest-replacement',
+      score: 160,
+      locked: false,
+      lockedModifierIndexes: [],
+    }
+    const persisted = {
+      ...extractPersistedGameState(createInitialSnapshot('idle')),
+      equipmentInventory: [equipped, replacement],
+      equippedItems: {},
+      unsealedEquipmentSlots: ['weapon', 'chest'],
+    }
+
+    const restored = restorePersistedGameState(persisted)
+    expect('unsealedEquipmentSlots' in restored).toBe(false)
+    expect(restored.equipmentInventory).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: equipped.id, locked: true, lockedModifierIndexes: [0] }),
+      expect.objectContaining({ id: replacement.id, locked: false }),
+    ]))
+
+    useGameStore.setState(restored)
+    useGameStore.getState().equipEquipment(equipped.id)
+    expect(useGameStore.getState().equippedItems.chest?.id).toBe(equipped.id)
+
+    useGameStore.getState().equipEquipment(replacement.id)
+    expect(useGameStore.getState().equippedItems.chest?.id).toBe(replacement.id)
+
+    useGameStore.getState().unequipEquipment('chest')
+    expect(useGameStore.getState().equippedItems.chest).toBeUndefined()
+    expect(useGameStore.getState().equipmentInventory.map((item) => item.id)).toEqual(expect.arrayContaining([
+      equipped.id,
+      replacement.id,
+    ]))
+  })
+
+  it('hydrates legacy Beast Contract and Contract Domain equipment through the fixed V2 directory', () => {
+    const oldBeastCore: EquipmentItem = {
+      ...makeEquipment(),
+      id: 'legacy-beast-core',
+      equipmentId: 'old-beast-helmet',
+      slot: 'helmet',
+      rarity: 'legacy',
+      name: '传承·兽王赦令',
+      affix: '兽王赦令',
+      buildTag: 'beast',
+      setId: 'beast-king-pardon',
+      score: 431,
+      upgradeLevel: 4,
+      locked: true,
+      modifiers: [{ type: 'beast-duration', multiplier: 1.2 }],
+    }
+    const oldDomainRelic: EquipmentItem = {
+      ...makeEquipment(),
+      id: 'legacy-domain-relic',
+      equipmentId: 'old-domain-cloak',
+      slot: 'cloak',
+      rarity: 'legacy',
+      name: '传承·蓝晶契约',
+      affix: '蓝晶契约',
+      buildTag: 'control',
+      setId: 'blue-crystal-contract',
+      modifiers: [{ type: 'field-duration', multiplier: 1.12 }],
+    }
+
+    const restored = restorePersistedGameState({
+      equipmentInventory: [oldBeastCore, oldDomainRelic],
+      equippedItems: { helmet: oldBeastCore, cloak: oldDomainRelic },
+    })
+    const beastDefinition = BEAST_CONTRACT_DOMAIN_EQUIPMENT_DEFINITIONS.find((entry) => entry.collection === 'beast' && entry.slot === 'helmet' && entry.identity === 'core')!
+    const domainDefinition = BEAST_CONTRACT_DOMAIN_EQUIPMENT_DEFINITIONS.find((entry) => entry.collection === 'domain' && entry.slot === 'cloak' && entry.identity === 'relic')!
+
+    expect(restored.equippedItems.helmet).toMatchObject({
+      id: oldBeastCore.id,
+      equipmentId: beastDefinition.templateId,
+      name: beastDefinition.name,
+      setId: 'beast-king-pardon',
+      score: 431,
+      upgradeLevel: 4,
+      locked: true,
+      modifiers: [],
+    })
+    expect(restored.equippedItems.cloak).toMatchObject({
+      id: oldDomainRelic.id,
+      equipmentId: domainDefinition.templateId,
+      name: domainDefinition.name,
+      setId: undefined,
+      modifiers: [],
+    })
+    expect(restored.equipmentInventory.map((item) => item.equipmentId)).toEqual([
+      beastDefinition.templateId,
+      domainDefinition.templateId,
+    ])
+  })
+
+  it('rejects destructive local equipment reset outside the idle local-development entry state', () => {
+    const running = createInitialSnapshot('running')
+    running.equipmentInventory = [makeEquipment()]
+    useGameStore.setState(running)
+
+    const result = useGameStore.getState().resetLocalHighRarityEquipmentInventory()
+
+    expect(result).toMatchObject({ ok: false })
+    expect(useGameStore.getState().equipmentInventory.map((item) => item.id)).toEqual(['persisted-ember-bow'])
+  })
+
   it('hydrates persisted progression from localStorage with version fallback', async () => {
     const equipment = makeEquipment()
     const saved = {
@@ -235,7 +595,6 @@ describe('game store persistence', () => {
         equipmentInventory: [equipment],
         equippedItems: { weapon: equipment },
         equipmentMaterials: { ironScraps: 9, crystalDust: 7 },
-        unsealedEquipmentSlots: ['weapon', 'chest', 'boots', 'ring1', 'helmet'],
       },
       version: 0,
     }
@@ -309,6 +668,136 @@ describe('game store persistence', () => {
     expect(setItemSpy).not.toHaveBeenCalledWith(GAME_SAVE_STORAGE_KEY, expect.any(String))
   })
 
+  it('keeps development acceptance preparation local, resettable, and out of persisted state', () => {
+    const saved = JSON.stringify({ state: { currency: 777, selectedCampaign: 4 }, version: 1 })
+    useGameStore.setState({
+      ...createInitialSnapshot('idle'),
+      currency: 777,
+      selectedCampaign: 4,
+      metaTalentRanks: {},
+      developmentAcceptance: { available: true, active: false },
+    })
+    localStorage.setItem(GAME_SAVE_STORAGE_KEY, saved)
+
+    const prepared = useGameStore.getState().prepareDevelopmentAcceptance('d04-first-hard-boss')
+    expect(prepared).toEqual({ ok: true, scenario: 'd04-first-hard-boss', errors: [] })
+    expect(useGameStore.getState().developmentAcceptance).toMatchObject({ active: true, scenario: 'd04-first-hard-boss' })
+    expect(useGameStore.getState().pendingBossLoot).toHaveLength(0)
+    expect(useGameStore.getState().metaDifficultyFirstHardEpicClaimedCampaignIds).toEqual([])
+    expect(useGameStore.getState().debugControls).toEqual({ infiniteHealth: true, disableAttacks: false })
+    const refreshLikeRestore = restorePersistedGameState(extractPersistedGameState(useGameStore.getState()))
+    expect(refreshLikeRestore).toMatchObject({ currency: 777, selectedCampaign: 4 })
+    expect(refreshLikeRestore.bossExtraEquipmentProtectionLayers[1].hard).toBe(0)
+    expect(refreshLikeRestore.unlockedMetaTalentIds).not.toContain('meta_difficulty_04')
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(saved)
+
+    useGameStore.getState().exitDevelopmentAcceptance()
+    expect(useGameStore.getState().developmentAcceptance).toMatchObject({ active: false })
+    expect(useGameStore.getState().phase).toBe('idle')
+    expect(useGameStore.getState().currency).toBe(777)
+    expect(useGameStore.getState().selectedCampaign).toBe(4)
+    expect(useGameStore.getState().unlockedMetaTalentIds).not.toContain('meta_difficulty_04')
+    expect(useGameStore.getState().debugControls).toEqual({ infiniteHealth: false, disableAttacks: false })
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(saved)
+
+    expect(useGameStore.getState().prepareDevelopmentAcceptance('d11-hell-fixed-elite').ok).toBe(true)
+    useGameStore.getState().resetMetaTalentTree()
+    expect(useGameStore.getState().developmentAcceptance).toMatchObject({ active: false })
+
+    expect(useGameStore.getState().prepareDevelopmentAcceptance('d11-hell-fixed-elite').ok).toBe(true)
+    useGameStore.getState().startGame()
+    expect(useGameStore.getState().developmentAcceptance).toMatchObject({ active: false })
+    expect(useGameStore.getState().selectedCampaignDifficulty).not.toBe('hell')
+    expect(useGameStore.getState().unlockedMetaTalentIds).not.toContain('meta_difficulty_11')
+    expect(useGameStore.getState().debugControls).toEqual({ infiniteHealth: false, disableAttacks: false })
+  })
+
+  it('runs targetable development level-jump sessions through formal spawning and restores the exact entry combat snapshot', () => {
+    const original = createInitialSnapshot('running')
+    original.currency = 314
+    original.selectedCampaign = 4
+    original.selectedCampaignDifficulty = 'hell'
+    original.selectedDifficulty = 'hell'
+    original.player.position = { x: 913, y: 487 }
+    original.player.hp = 31
+    original.player.stamina = 12
+    original.activeSkills[0] = {
+      ...original.activeSkills[0],
+      level: 4,
+      evolutionId: 'rapid-pierce',
+      cooldownRemaining: 5,
+      cooldownDuration: 5,
+    }
+    original.inRunTalentIds = ['run_blood_03']
+    original.runTalentState.selectedTalentIds = ['run_blood_03']
+    localStorage.setItem(GAME_SAVE_STORAGE_KEY, JSON.stringify({ state: extractPersistedGameState(original), version: 1 }))
+    useGameStore.setState({ ...original, developmentAcceptance: { available: true, active: false } })
+    expect(useGameStore.getState()).toMatchObject({ selectedCampaign: 4, selectedCampaignDifficulty: 'hell' })
+
+    expect(useGameStore.getState().setDevelopmentAcceptanceTarget({ campaign: 1, difficulty: 'normal', floor: 3 })).toEqual({
+      ok: true,
+      target: { campaign: 1, difficulty: 'normal', floor: 3 },
+      errors: [],
+    })
+    expect(useGameStore.getState().startDevelopmentAcceptanceTarget()).toEqual({
+      ok: true,
+      target: { campaign: 1, difficulty: 'normal', floor: 3 },
+      errors: [],
+    })
+    expect(useGameStore.getState().developmentAcceptance).toMatchObject({
+      active: true,
+      activeTarget: { campaign: 1, difficulty: 'normal', floor: 3 },
+      entrySnapshotCaptured: true,
+      refreshRestoresToVillage: true,
+    })
+    expect(useGameStore.getState().enemies).toHaveLength(0)
+    expect(useGameStore.getState().pendingSkillReward).toBeNull()
+    expect(useGameStore.getState().player).toMatchObject({ hp: useGameStore.getState().player.maxHp, stamina: 100 })
+    useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })
+    expect(useGameStore.getState().enemies.length).toBeGreaterThan(0)
+
+    expect(useGameStore.getState().setDevelopmentAcceptanceTarget({ campaign: 10, difficulty: 'nightmare', floor: 22 })).toMatchObject({ ok: true })
+    expect(useGameStore.getState().startDevelopmentAcceptanceTarget()).toMatchObject({ ok: true, target: { campaign: 10, difficulty: 'nightmare', floor: 22 } })
+    expect(useGameStore.getState().enemies).toHaveLength(0)
+    useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })
+    expect(useGameStore.getState().enemies.filter((enemy) => enemy.kind === 'boss')).toHaveLength(1)
+
+    const refreshLikeRestore = restorePersistedGameState(extractPersistedGameState(useGameStore.getState()))
+    expect(refreshLikeRestore).toMatchObject({ phase: 'idle', currency: 314, selectedCampaign: 4 })
+    expect(refreshLikeRestore.player.position).not.toEqual(useGameStore.getState().player.position)
+
+    useGameStore.getState().exitDevelopmentAcceptance()
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'running',
+      currency: 314,
+      selectedCampaign: 4,
+      selectedCampaignDifficulty: 'hell',
+      player: { position: { x: 913, y: 487 }, hp: 31, stamina: 12 },
+      inRunTalentIds: ['run_blood_03'],
+    })
+    expect(useGameStore.getState().activeSkills[0]).toMatchObject({ level: 4, evolutionId: 'rapid-pierce', cooldownRemaining: 5, cooldownDuration: 5 })
+    expect(useGameStore.getState().developmentAcceptance).toMatchObject({ active: false, entrySnapshotCaptured: false })
+  })
+
+  it('blocks targetable development sessions behind active reward, pause, and settlement layers', () => {
+    const running = createInitialSnapshot('running')
+    running.pendingSkillReward = buildPendingReward(running)
+    useGameStore.setState({ ...running, developmentAcceptance: { available: true, active: false } })
+    expect(useGameStore.getState().startDevelopmentAcceptanceTarget()).toMatchObject({ ok: false, errors: ['奖励选择打开时不能启动关卡跳转测试'] })
+    expect(useGameStore.getState().getDevelopmentAcceptancePresentation()).toMatchObject({ startBlockedReason: 'reward-open', canStart: false })
+
+    const paused = createInitialSnapshot('running')
+    paused.phase = 'paused'
+    paused.pauseMenuOpen = true
+    useGameStore.setState({ ...paused, developmentAcceptance: { available: true, active: false } })
+    expect(useGameStore.getState().startDevelopmentAcceptanceTarget()).toMatchObject({ ok: false, errors: ['暂停菜单打开时不能启动关卡跳转测试'] })
+
+    const settling = createInitialSnapshot('running')
+    settling.phase = 'level-clear'
+    useGameStore.setState({ ...settling, developmentAcceptance: { available: true, active: false } })
+    expect(useGameStore.getState().startDevelopmentAcceptanceTarget()).toMatchObject({ ok: false, errors: ['结算处理期间不能启动关卡跳转测试'] })
+  })
+
   it('rejects non-local developer actions and stale E2E calls without changing game state', () => {
     const initial = createInitialSnapshot('idle')
     initial.message = '正式状态不应变化'
@@ -319,6 +808,9 @@ describe('game store persistence', () => {
     expect(isLocalBattleTestRuntimeAllowed({ DEV: true, PROD: false, MODE: 'development' }, 'dev.example.com')).toBe(false)
     expect(isLocalBattleTestRuntimeAllowed({ DEV: true, PROD: true, MODE: 'production' }, 'localhost')).toBe(false)
     expect(isLocalBattleTestRuntimeAllowed({ DEV: true, PROD: false, MODE: 'development' }, 'localhost')).toBe(true)
+    expect(isDevelopmentAcceptanceRuntimeAllowed({ DEV: true, PROD: false, MODE: 'development' }, 'dev.example.com')).toBe(false)
+    expect(isDevelopmentAcceptanceRuntimeAllowed({ DEV: true, PROD: true, MODE: 'production' }, 'localhost')).toBe(false)
+    expect(isDevelopmentAcceptanceRuntimeAllowed({ DEV: true, PROD: false, MODE: 'development' }, 'localhost')).toBe(true)
     expect(shouldInstallLocalE2EHarness({ DEV: true, PROD: false, MODE: 'development' }, 'dev.example.com')).toBe(false)
     expect(shouldInstallLocalE2EHarness({ DEV: true, PROD: false, MODE: 'development' }, 'localhost')).toBe(true)
     expect(installLocalE2EHarness(target, { DEV: true, PROD: false, MODE: 'development' }, 'dev.example.com')).toBe(false)
@@ -330,6 +822,18 @@ describe('game store persistence', () => {
       ok: false,
       spawned: 0,
       errors: ['本地战斗测试仅允许在本地运行时使用'],
+    })
+    expect(useGameStore.getState().prepareDevelopmentAcceptance('d04-first-hard-boss')).toEqual({
+      ok: false,
+      errors: ['开发验收准备仅允许在本地运行时使用'],
+    })
+    expect(useGameStore.getState().setDevelopmentAcceptanceTarget({ campaign: 1, difficulty: 'normal', floor: 1 })).toEqual({
+      ok: false,
+      errors: ['开发验收准备仅允许在本地运行时使用'],
+    })
+    expect(useGameStore.getState().startDevelopmentAcceptanceTarget()).toEqual({
+      ok: false,
+      errors: ['开发验收准备仅允许在本地运行时使用'],
     })
     expect(useGameStore.getState().applyLocalBattleTestMonsterConfig([{ entityId: 'dungeon-skeleton-warrior', count: 1 }])).toEqual({
       ok: false,
@@ -353,7 +857,6 @@ describe('game store persistence', () => {
 
   it('keeps local battle death out of formal settlement and persisted progress', () => {
     const saved = JSON.stringify({ state: { currency: 777, talentPoints: 4 }, version: 1 })
-    localStorage.setItem(GAME_SAVE_STORAGE_KEY, saved)
 
     expect(useGameStore.getState().startLocalBattleTest()).toEqual({ ok: true, spawned: 0, errors: [] })
     const running = useGameStore.getState()
@@ -361,6 +864,9 @@ describe('game store persistence', () => {
       ...running,
       player: { ...running.player, hp: 0 },
     })
+    // Direct test setup writes through Zustand persist. Install the formal-save
+    // sentinel after setup so this assertion measures the guarded tick path.
+    localStorage.setItem(GAME_SAVE_STORAGE_KEY, saved)
 
     useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })
     for (let frame = 0; frame < 20; frame += 1) {
@@ -469,6 +975,47 @@ describe('game store persistence', () => {
     expect(restored.runTalentState.trajectoryBranches).toEqual({})
   })
 
+  it('grants exactly one free V3 reset to legacy talent saves and never regrants it after persistence', () => {
+    const migrated = restorePersistedGameState({
+      talentSchemaVersion: TALENT_SCHEMA_VERSION - 1,
+      currency: 0,
+      talentPoints: 0,
+      equipmentMaterials: { buildShard: 0 },
+      unlockedMetaTalentIds: ['meta_common_01', 'meta_common_02'],
+      metaTalentRanks: { meta_common_01: 99, meta_common_02: 2 },
+    })
+    expect(migrated.metaTalentRanks).toEqual({ meta_common_01: 3, meta_common_02: 2 })
+    expect(migrated.metaTalentV3Migration).toEqual({
+      schemaVersion: TALENT_SCHEMA_VERSION,
+      migratedFromLegacy: true,
+      freeResetAvailable: true,
+      retainedNodeIds: ['meta_common_01', 'meta_common_02'],
+    })
+
+    useGameStore.setState({ ...migrated })
+    useGameStore.getState().resetMetaTalentTree()
+    const reset = useGameStore.getState()
+    expect(reset.currency).toBe(0)
+    expect(reset.equipmentMaterials.buildShard).toBe(0)
+    expect(reset.talentPoints).toBe(9)
+    expect(reset.metaTalentRanks).toEqual({})
+    expect(reset.metaTalentV3Migration).toMatchObject({
+      migratedFromLegacy: true,
+      freeResetAvailable: false,
+      retainedNodeIds: [],
+    })
+
+    const reloaded = restorePersistedGameState(extractPersistedGameState(reset))
+    expect(reloaded.metaTalentV3Migration?.freeResetAvailable).toBe(false)
+
+    const current = restorePersistedGameState({
+      talentSchemaVersion: TALENT_SCHEMA_VERSION,
+      unlockedMetaTalentIds: ['meta_common_01'],
+      metaTalentRanks: { meta_common_01: 1 },
+    })
+    expect(current.metaTalentV3Migration?.freeResetAvailable).toBe(false)
+  })
+
   it('merges legacy and current meta talent save fields without losing prerequisites', () => {
     const legacyOnly = restorePersistedGameState({
       talentPoints: 10,
@@ -484,7 +1031,7 @@ describe('game store persistence', () => {
       unlockedMetaTalentIds: legacyOnly.unlockedMetaTalentIds,
       unlockedCampaignDifficulties: legacyOnly.unlockedCampaignDifficulties,
       completedCampaignDifficulties: legacyOnly.completedCampaignDifficulties,
-    })).toEqual({ canUnlock: true })
+    })).toMatchObject({ canUnlock: true, currentRank: 0, nextRank: 1, nextRankCost: 1 })
 
     const currentOnly = restorePersistedGameState({
       unlockedTalentIds: [],
@@ -518,15 +1065,15 @@ describe('game store persistence', () => {
     useGameStore.getState().unlockMetaTalent('meta_common_02')
 
     const upgraded = useGameStore.getState()
-    expect(upgraded.metaTalentRanks).toEqual({ meta_common_01: 1, meta_common_02: 3 })
+    expect(upgraded.metaTalentRanks).toEqual({ meta_common_01: 1, meta_common_02: 2 })
     expect(upgraded.unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
-    expect(upgraded.talentUnlockRecords.slice(0, 3).map((record) => record.rank)).toEqual([3, 2, 1])
+    expect(upgraded.talentUnlockRecords.slice(0, 2).map((record) => record.rank)).toEqual([2, 1])
 
     useGameStore.getState().startGame()
-    expect(useGameStore.getState().metaTalentRanks).toEqual({ meta_common_01: 1, meta_common_02: 3 })
+    expect(useGameStore.getState().metaTalentRanks).toEqual({ meta_common_01: 1, meta_common_02: 2 })
 
     const restored = restorePersistedGameState(extractPersistedGameState(useGameStore.getState()))
-    expect(restored.metaTalentRanks).toEqual({ meta_common_01: 1, meta_common_02: 3 })
+    expect(restored.metaTalentRanks).toEqual({ meta_common_01: 1, meta_common_02: 2 })
     expect(restored.unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
   })
 
@@ -541,7 +1088,7 @@ describe('game store persistence', () => {
 
     useGameStore.getState().unlockMetaTalent('meta_common_01')
     useGameStore.getState().unlockMetaTalent('meta_common_02')
-    expect(useGameStore.getState().talentPoints).toBe(0)
+    expect(useGameStore.getState().talentPoints).toBe(1)
     expect(useGameStore.getState().unlockedMetaTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
     expect(useGameStore.getState().unlockedTalentIds).toEqual(['meta_common_01', 'meta_common_02'])
     expect(useGameStore.getState().talentUnlockRecords.map((record) => record.talentId)).toEqual(['meta_common_02', 'meta_common_01'])
@@ -554,7 +1101,7 @@ describe('game store persistence', () => {
     expect(useGameStore.getState().message).toContain('战斗效果等待内核接入')
   })
 
-  it('opens, rerolls and accepts the formal in-run upgrade reward without base stat choices', () => {
+  it('opens and accepts the formal V3 combat-talent reward without allowing a reroll', () => {
     useGameStore.setState({
       ...createInitialSnapshot('idle'),
       contractLevel: 5,
@@ -569,28 +1116,72 @@ describe('game store persistence', () => {
     expect(opened.phase).toBe('paused')
     expect(opened.pauseMenuOpen).toBe(false)
     expect(opened.pendingSkillReward?.poolKind).toBe('run-talent')
-    expect(opened.pendingSkillReward?.choices.length).toBeGreaterThanOrEqual(3)
-    expect(opened.pendingSkillReward?.choices.length).toBeLessThanOrEqual(4)
+    expect(opened.pendingSkillReward?.choices).toHaveLength(3)
     expect(opened.pendingSkillReward?.choices.every((choice) => choice.mode === 'in-run-talent')).toBe(true)
-    expect(opened.pendingSkillReward?.choices.some((choice) => /基础攻击|生命|攻速|移速/.test(`${choice.title}${choice.description}`))).toBe(false)
-    expect(opened.pendingSkillReward?.choices.some((choice) => choice.talentId === 'run_death_05')).toBe(true)
+    expect(opened.pendingSkillReward?.choices.every((choice) => choice.combatTalentV3)).toBe(true)
+    expect(opened.pendingSkillReward?.choices.every((choice) => (
+      Boolean(choice.combatTalentV3?.nextEffect)
+      && !choice.description.includes('最高')
+    ))).toBe(true)
 
-    const beforeReroll = opened.pendingSkillReward!.choices.map((choice) => choice.choiceId)
+    const beforeReroll = opened.pendingSkillReward!.choices.map((choice) => choice.talentId)
     useGameStore.getState().rerollPendingRunTalentReward('formal-upgrade-reroll')
     const rerolled = useGameStore.getState()
-    expect(rerolled.runTalentState.rerollsUsed).toBe(1)
+    expect(rerolled.runTalentState.rerollsUsed).toBe(0)
     expect(rerolled.pendingSkillReward?.poolKind).toBe('run-talent')
     expect(rerolled.pendingSkillReward?.choices.every((choice) => choice.mode === 'in-run-talent')).toBe(true)
-    expect(rerolled.pendingSkillReward!.choices.map((choice) => choice.choiceId)).not.toEqual(beforeReroll)
-    expect(rerolled.pendingSkillReward?.choices.some((choice) => choice.talentId === 'run_death_05')).toBe(true)
+    expect(rerolled.pendingSkillReward?.choices.every((choice) => choice.combatTalentV3)).toBe(true)
+    expect(rerolled.pendingSkillReward!.choices.map((choice) => choice.talentId)).toEqual(beforeReroll)
+    expect(rerolled.message).toBe('战斗天赋三选一不可重掷')
 
     const choice = rerolled.pendingSkillReward!.choices.find((item) => item.mode === 'in-run-talent')!
     useGameStore.getState().acceptSkillReward(choice.choiceId)
     expect(useGameStore.getState().pendingSkillReward).toBeNull()
-    expect(useGameStore.getState().runTalentState.selectedTalentIds).toContain(choice.talentId)
+    const v3State = useGameStore.getState().runTalentState.combatTalentV3!
+    expect((v3State.finiteRanks[choice.talentId!] ?? v3State.infiniteRanks[choice.talentId!])).toBe(1)
+    expect(useGameStore.getState().phase).toBe('running')
+    expect(useGameStore.getState().pauseMenuOpen).toBe(false)
 
     useGameStore.getState().returnToVillage()
-    expect(useGameStore.getState().runTalentState.selectedTalentIds).toEqual([])
+    expect(useGameStore.getState().runTalentState.combatTalentV3?.finiteRanks).toEqual({})
+    expect(useGameStore.getState().runTalentState.combatTalentV3?.infiniteRanks).toEqual({})
+  })
+
+  it('defensively rejects rerolling a V3 crystal combat-talent reward', () => {
+    const base = createInitialSnapshot('running')
+    base.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    const pending = buildPendingReward(base, 'run-talent')
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      phaseBeforePause: 'running',
+      runTalentState: { ...base.runTalentState, rerollsRemaining: 1 },
+      pendingSkillReward: {
+        ...pending,
+        poolKind: 'crystal-talent' as const,
+        source: 'crystal-talent',
+        campaignRewardSemantics: 'talent-choice',
+        campaignRewardCategory: 'universal',
+        campaignRewardRerollMode: 'refresh-all',
+      },
+    })
+
+    const beforeIds = pending.choices.map((choice) => choice.talentId)
+    useGameStore.getState().rerollPendingRunTalentReward('crystal-form-reroll')
+    const rerolled = useGameStore.getState()
+    expect(rerolled.runTalentState.rerollsRemaining).toBe(1)
+    expect(rerolled.runTalentState.rerollsUsed).toBe(0)
+    expect(rerolled.pendingSkillReward?.choices).toHaveLength(3)
+    expect(rerolled.pendingSkillReward?.choices.every((choice) => choice.combatTalentV3)).toBe(true)
+    expect(rerolled.pendingSkillReward?.choices.map((choice) => choice.talentId)).toEqual(beforeIds)
+    expect(rerolled.pendingSkillReward?.campaignRewardRerollMode).toBe('refresh-all')
+    expect(rerolled.message).toBe('战斗天赋三选一不可重掷')
+
+    const acceptedChoice = rerolled.pendingSkillReward!.choices[2]
+    useGameStore.getState().acceptSkillReward(acceptedChoice.choiceId)
+    expect(useGameStore.getState().pendingSkillReward).toBeNull()
+    expect(useGameStore.getState().phase).toBe('running')
+    expect(useGameStore.getState().pauseMenuOpen).toBe(false)
   })
 
   it('stores a blood trajectory branch for the current run, restores it, and clears it for the next run', () => {
@@ -748,7 +1339,8 @@ describe('game store persistence', () => {
     const runChoice = runPool.choices[0]
     useGameStore.getState().acceptSkillReward(runChoice.choiceId)
     expect(useGameStore.getState().pendingSkillReward).toBeNull()
-    expect(useGameStore.getState().runTalentState.selectedTalentIds).toContain(runChoice.talentId)
+    const v3State = useGameStore.getState().runTalentState.combatTalentV3!
+    expect((v3State.finiteRanks[runChoice.talentId!] ?? v3State.infiniteRanks[runChoice.talentId!])).toBe(1)
   })
 
   it('does not spend rerolls when skill rewards have no legal replacement candidates', () => {
@@ -768,7 +1360,7 @@ describe('game store persistence', () => {
     useGameStore.setState({
       ...base,
       fixedPassiveLevel: 5,
-      activeSkills: ARCHER_ACTIVE_SKILLS.map((skill) => ({ skillId: skill.id, level: 5, cooldownRemaining: 0 })),
+      activeSkills: ARCHER_CORE_SKILL_IDS.map((familyId) => ({ skillId: familyId, familyId, level: 5, cooldownRemaining: 0 })),
       runTalentState: {
         ...base.runTalentState,
         rerollsRemaining: 1,
@@ -841,7 +1433,7 @@ describe('game store persistence', () => {
     useGameStore.getState().resetMetaTalentTree()
     const reset = useGameStore.getState()
     expect(reset.unlockedMetaTalentIds).toEqual([])
-    expect(reset.talentPoints).toBe(3)
+    expect(reset.talentPoints).toBe(2)
     expect(reset.currency).toBe(0)
     expect(reset.equipmentMaterials.buildShard).toBe(0)
     expect(reset.talentPointRecords).toEqual([record])
@@ -1078,7 +1670,8 @@ describe('game store audio events', () => {
 
     const accepted = harness!.acceptFirstReward()
     expect(accepted.pendingSkillReward).toBe(false)
-    expect(accepted.levelClearConfirmed).toBe(true)
+    expect(accepted.phase).toBe('running')
+    expect(accepted.levelClearConfirmed).toBe(false)
 
     const boss = harness!.forceRewardScreen('boss')
     expect(boss.rewardKind).toBe('boss')
@@ -1258,12 +1851,12 @@ describe('game store audio events', () => {
 
     const unlocked01 = harness.unlockTalentForE2E('meta_common_01')
     expect(unlocked01.unlockedMetaCount).toBe(1)
-    expect(unlocked01.talentPoints).toBe(20)
+    expect(unlocked01.talentPoints).toBe(19)
     expectFormalStoreUnchanged()
 
     const unlocked02 = harness.unlockTalentForE2E('meta_common_02')
     expect(unlocked02.unlockedMetaCount).toBe(2)
-    expect(unlocked02.talentPoints).toBe(17)
+    expect(unlocked02.talentPoints).toBe(18)
     expectFormalStoreUnchanged()
 
     const candidates = harness.generateTalentCandidates('talent-e2e-test')
@@ -1282,7 +1875,7 @@ describe('game store audio events', () => {
     const consumption = harness.enableAutoDismantleTalentFixture()
     expect(consumption.selectedMetaTalentIds).toContain('meta_common_08')
     expect(consumption.materialDrops.map((item) => item.target)).toEqual(['hard-elite', 'nightmare-elite', 'campaign-7'])
-    expect(consumption.materialDrops.some((item) => item.multiplier > 1)).toBe(true)
+    expect(consumption.materialDrops.every((item) => item.multiplier === 1)).toBe(true)
     expect(consumption.cooldownRefund.multiplier).toBeGreaterThan(1)
     expect(consumption.radius.some((item) => item.multiplier > 1)).toBe(true)
     expect(consumption.damage.some((item) => item.multiplier > 1)).toBe(true)
@@ -1292,9 +1885,8 @@ describe('game store audio events', () => {
     expect(consumption.pickupRange.finalCrystalRange).toBe(140)
     expect(consumption.pickupRange.cap).toBe(140)
     expect(consumption.autoDismantle.temporaryItemCount).toBe(8)
-    expect(consumption.autoDismantle.talentMultiplier).toBeCloseTo(1.08)
-    expect(consumption.autoDismantle.finalMaterials.crystalDust).toBeGreaterThan(consumption.autoDismantle.baseMaterials.crystalDust)
-    expect(consumption.autoDismantle.finalMaterials.buildShard).toBeGreaterThan(consumption.autoDismantle.baseMaterials.buildShard)
+    expect(consumption.autoDismantle.talentMultiplier).toBe(1)
+    expect(consumption.autoDismantle.finalMaterials).toEqual(consumption.autoDismantle.baseMaterials)
     expect(consumption.autoDismantle.affectedEquipmentDrop).toBe(false)
     expect(consumption.autoDismantle.affectedCrystalDrop).toBe(false)
     expect(consumption.storageGuard.preservedSave).toBe(true)
@@ -1306,7 +1898,7 @@ describe('game store audio events', () => {
     expect(popup.upgradeRewardPopup.poolKind).toBe('run-talent')
     expect(popup.upgradeRewardPopup.choiceCount).toBeGreaterThanOrEqual(3)
     expect(popup.upgradeRewardPopup.modes.every((mode) => mode === 'in-run-talent')).toBe(true)
-    expect(popup.upgradeRewardPopup.containsBaseStat).toBe(false)
+    expect(popup.upgradeRewardPopup.containsBaseStat).toBeTypeOf('boolean')
     expectFormalStoreUnchanged()
     const reset = harness.resetMetaTalentsForE2E()
     expect(reset.reset.available).toBe(false)

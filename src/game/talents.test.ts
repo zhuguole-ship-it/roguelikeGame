@@ -3,12 +3,16 @@ import { describe, expect, it } from 'vitest'
 import {
   META_TALENT_NODES,
   RUN_TALENT_NODES,
+  generateCrystalRunTalentCandidates,
   THREE_RANK_META_TALENT_IDS,
+  FIVE_RANK_META_TALENT_IDS,
+  TWO_RANK_META_TALENT_IDS,
   generateRunTalentCandidates,
   getDefaultRunTalentGuaranteeState,
   getTalentCampaignTags,
   getMetaTalentBonusSummary,
   getMetaTalentRank,
+  getMetaTalentPresentationSnapshot,
   getMetaTalentUnlockState,
   getFocusedRunTalentMinimumTotalAngleDegrees,
   getRunTalentTrajectoryBranch,
@@ -37,21 +41,24 @@ const emptyUnlockContext: MetaTalentUnlockContext = {
 }
 
 describe('talent data definitions', () => {
-  it('defines the confirmed 84 meta talents and 40 in-run talents', () => {
+  it('defines the confirmed 84 meta talents and 42 base in-run talents', () => {
     expect(META_TALENT_NODES).toHaveLength(84)
     expect(new Set(META_TALENT_NODES.map((node) => node.id)).size).toBe(84)
-    expect(META_TALENT_NODES.reduce((sum, node) => sum + node.cost, 0)).toBe(469)
+    expect(META_TALENT_NODES.reduce((sum, node) => sum + node.rankCosts.reduce((rankSum, cost) => rankSum + cost, 0), 0)).toBe(395)
+    expect(new Set(META_TALENT_NODES.map((node) => node.authorityId)).size).toBe(84)
 
-    expect(RUN_TALENT_NODES).toHaveLength(40)
-    expect(new Set(RUN_TALENT_NODES.map((node) => node.id)).size).toBe(40)
-    expect(RUN_TALENT_NODES.filter((node) => node.id.startsWith('run_common_'))).toHaveLength(8)
+    expect(RUN_TALENT_NODES).toHaveLength(42)
+    expect(new Set(RUN_TALENT_NODES.map((node) => node.id)).size).toBe(42)
+    expect(RUN_TALENT_NODES.filter((node) => node.id.startsWith('run_common_'))).toHaveLength(10)
     expect(RUN_TALENT_NODES.filter((node) => node.id.startsWith('run_death_'))).toHaveLength(8)
     expect(RUN_TALENT_NODES.filter((node) => node.id.startsWith('run_blood_'))).toHaveLength(8)
     expect(RUN_TALENT_NODES.filter((node) => node.id.startsWith('run_beast_'))).toHaveLength(8)
     expect(RUN_TALENT_NODES.filter((node) => node.id.startsWith('run_crystal_'))).toHaveLength(8)
-    expect(THREE_RANK_META_TALENT_IDS).toHaveLength(42)
+    expect(THREE_RANK_META_TALENT_IDS).toHaveLength(45)
+    expect(FIVE_RANK_META_TALENT_IDS).toHaveLength(6)
+    expect(TWO_RANK_META_TALENT_IDS).toEqual(['meta_common_02'])
     expect(new Set(META_TALENT_NODES.filter((node) => node.maxRank === 3).map((node) => node.id))).toEqual(new Set(THREE_RANK_META_TALENT_IDS))
-    expect(META_TALENT_NODES.filter((node) => node.maxRank === 1)).toHaveLength(42)
+    expect(META_TALENT_NODES.filter((node) => node.maxRank === 1)).toHaveLength(32)
   })
 
   it('defines explicit original death and blood trajectory identities without expanding the candidate pool', () => {
@@ -78,7 +85,7 @@ describe('talent data definitions', () => {
     expect(RUN_TALENT_TRAJECTORY_CONFIG.run_blood_03).toMatchObject({
       kind: 'blood-fan',
       applicability: 'applicable',
-      applicableSkillIds: ['fan-burst'],
+      applicableSkillIds: ['fan-burst', 'arrow-screen', 'moonshard-volley', 'sunflare-sweep', 'arrow-turret'],
       supportsBranchSelection: true,
     })
     expect(bloodConfigs.filter((config) => config.applicability === 'not-applicable')).toHaveLength(7)
@@ -116,19 +123,14 @@ describe('talent data definitions', () => {
       baseTotalAngleDegrees: 0,
     })
 
-    // Base straight identity is present on the first cast, before any death
-    // node is selected.  The 0.08 second queue remains a separate takeover.
-    expect(getRunTalentTrajectorySkillState([], {}, 'heavy-snipe', 3)).toMatchObject({
-      baseTrajectory: 'straight',
-      baseTotalAngleDegrees: 0,
+    // Spiral tracking is intentionally not part of the straight-line
+    // takeover list: death effects consume its real arrivals without
+    // replacing the E12 homing trajectory.
+    expect(getRunTalentTrajectorySkillState(['run_death_06'], {}, 'spiral-break', 1)).toMatchObject({
+      baseTrajectory: 'configured',
+      baseTotalAngleDegrees: null,
       deathTrajectoryTakeover: false,
       deathTalentIds: [],
-    })
-    expect(getRunTalentTrajectorySkillState(['run_death_06'], {}, 'heavy-snipe', 3)).toMatchObject({
-      baseTrajectory: 'straight',
-      baseTotalAngleDegrees: 0,
-      deathTrajectoryTakeover: true,
-      deathTalentIds: ['run_death_06'],
     })
     expect(getRunTalentTrajectorySkillState([], {}, 'fan-burst', 3)).toMatchObject({
       baseTrajectory: 'configured',
@@ -137,7 +139,7 @@ describe('talent data definitions', () => {
     })
   })
 
-  it('keeps the runtime talent catalogue strictly to the original forty plus thirty-two forms', () => {
+  it('keeps the runtime talent catalogue to forty-two base nodes plus thirty-two forms', () => {
     const baseContext = {
       openingBuild: 'beast' as const,
       ownedSkillTags: ['beast'],
@@ -156,59 +158,98 @@ describe('talent data definitions', () => {
       evolvedFamilyIds: ['ring-volley'],
       candidateCount: 4,
     })
-    expect(RUN_TALENT_NODES).toHaveLength(40)
+    expect(RUN_TALENT_NODES).toHaveLength(42)
     expect(RUN_TALENT_FORM_DEFINITIONS).toHaveLength(32)
-    expect(RUN_TALENT_RUNTIME_NODES).toHaveLength(72)
-    expect(RUN_TALENT_NODE_BY_ID).toHaveLength(72)
+    expect(RUN_TALENT_RUNTIME_NODES).toHaveLength(74)
+    expect(RUN_TALENT_NODE_BY_ID).toHaveLength(74)
     expect(RUN_TALENT_NODE_BY_ID.has('run_beast_legendary_hunt')).toBe(false)
     expect(eligible.candidates.some((candidate) => candidate.node.id === 'run_beast_legendary_hunt')).toBe(false)
     expect(getRunTalentPresentationItems({
       ...baseContext,
       ownedBeastFamilyIds: ['ring-volley', 'raptor-dive'],
       evolvedFamilyIds: ['ring-volley'],
-    })).toHaveLength(72)
+    })).toHaveLength(74)
+  })
+
+  it('builds exactly three category-legal crystal candidates and retains an anchored form pair', () => {
+    const universal = generateCrystalRunTalentCandidates({
+      openingBuild: 'death',
+      ownedSkillTags: ['pierce'],
+      equipmentTags: [],
+      campaignTags: [],
+      currentLevel: 20,
+      selectedTalentIds: [],
+      rerollsUsed: 0,
+      guaranteeState: getDefaultRunTalentGuaranteeState(),
+      seed: 'crystal-universal',
+    }, 'universal')
+    expect(universal.candidates).toHaveLength(3)
+    expect(new Set(universal.candidates.map((candidate) => candidate.node.id)).size).toBe(3)
+    expect(universal.candidates.every((candidate) => candidate.node.module === 'common')).toBe(true)
+
+    const specialized = generateCrystalRunTalentCandidates({
+      openingBuild: 'death',
+      ownedSkillTags: ['pierce', 'line-projectile'],
+      ownedSkillLevels: { 'pierce-arrow': 4 },
+      evolvedCoreSkills: [{ familyId: 'pierce-arrow', evolutionId: 'wind-cut', tags: ['pierce', 'line-projectile'], completedAt: 1 }],
+      equipmentTags: [],
+      campaignTags: [],
+      currentLevel: 5,
+      selectedTalentIds: [],
+      rerollsUsed: 0,
+      guaranteeState: getDefaultRunTalentGuaranteeState(),
+      seed: 'crystal-specialized',
+    }, 'specialized')
+    expect(specialized.candidates).toHaveLength(3)
+    expect(specialized.formPairTalentIds).toEqual(['run_death_09', 'run_death_10'])
+    expect(specialized.candidates.slice(0, 2).map((candidate) => candidate.node.id)).toEqual(['run_death_09', 'run_death_10'])
+    expect(specialized.candidates[2].node.module).not.toBe('common')
   })
 
   it('enforces meta talent costs, prerequisites, campaign clears and difficulty gates', () => {
-    expect(getMetaTalentUnlockState('meta_common_01', emptyUnlockContext)).toEqual({ canUnlock: true })
-    expect(getMetaTalentUnlockState('meta_common_02', { ...emptyUnlockContext, talentPoints: 3 }).reason).toContain('契约记忆')
-    expect(unlockMetaTalent('meta_common_02', { ...emptyUnlockContext, talentPoints: 2, unlockedMetaTalentIds: ['meta_common_01'] })).toMatchObject({
-      ok: false,
-      reason: '需要 3 天赋点',
-    })
+    expect(getMetaTalentUnlockState('meta_common_01', { ...emptyUnlockContext, talentPoints: 1 })).toMatchObject({ canUnlock: true, nextRankCost: 1 })
+    expect(getMetaTalentUnlockState('meta_common_07', { ...emptyUnlockContext, talentPoints: 5 }).reason).toContain('累计投入 6 点')
+    expect(getMetaTalentUnlockState('meta_common_10', { ...emptyUnlockContext, talentPoints: 5 }).reason).toContain('累计投入 15 点')
+    expect(getMetaTalentUnlockState('meta_death_base_01', { ...emptyUnlockContext, talentPoints: 1 }).reason).toContain('累计投入 3 点')
+    expect(getMetaTalentUnlockState('meta_death_advanced_01', {
+      ...emptyUnlockContext,
+      talentPoints: 1,
+      metaTalentRanks: { meta_common_01: 2, meta_death_base_01: 3, meta_death_base_02: 2 },
+    }).reason).toContain('累计投入 12 点')
 
     expect(getMetaTalentUnlockState('meta_campaign_01', {
       ...emptyUnlockContext,
-      talentPoints: 6,
-      unlockedMetaTalentIds: ['meta_common_01'],
+      talentPoints: 1,
     }).reason).toContain('第 1 关普通通关')
     expect(getMetaTalentUnlockState('meta_campaign_01', {
       ...emptyUnlockContext,
-      talentPoints: 6,
-      unlockedMetaTalentIds: ['meta_common_01'],
+      talentPoints: 1,
       completedCampaignDifficulties: { 1: ['normal'] },
-    })).toEqual({ canUnlock: true })
+    })).toMatchObject({ canUnlock: true, nextRankCost: 1 })
 
     expect(getMetaTalentUnlockState('meta_difficulty_05', {
       ...emptyUnlockContext,
-      talentPoints: 5,
-      unlockedMetaTalentIds: ['meta_difficulty_04'],
+      talentPoints: 1,
     }).reason).toContain('困难')
     expect(getMetaTalentUnlockState('meta_endgame_03', {
       ...emptyUnlockContext,
-      talentPoints: 10,
-      unlockedMetaTalentIds: ['meta_endgame_02'],
-      unlockedCampaignDifficulties: { 1: ['normal', 'hard', 'hell'] },
-    }).reason).toContain('折磨')
+      talentPoints: 1,
+      completedCampaignDifficulties: { 10: ['normal'] },
+    }).reason).toContain('困难')
   })
 
   it('summarizes meta and in-run talent effects without applying combat effects', () => {
-    const metaSummary = getMetaTalentBonusSummary(['meta_common_02', 'meta_common_04', 'meta_common_05'])
+    const metaSummary = getMetaTalentBonusSummary(
+      ['meta_common_02', 'meta_common_04', 'meta_common_06'],
+      { meta_common_02: 2, meta_common_04: 2, meta_common_06: 3 },
+    )
 
     expect(metaSummary.unlockedCount).toBe(3)
-    expect(metaSummary.extraSkillRerolls).toBe(1)
-    expect(metaSummary.candidateWeights['opening-build']).toBe(15)
-    expect(metaSummary.pickupRangeMultiplier).toBeCloseTo(1.1)
+    expect(metaSummary.extraSkillRerolls).toBe(0)
+    expect(metaSummary.openingDraftRerollsPerRound).toBe(2)
+    expect(metaSummary.candidateWeights['selected-pre-run-archetype']).toBe(20)
+    expect(metaSummary.crystalExperienceMultiplier).toBeCloseTo(1.09)
+    expect(metaSummary.pickupRangeMultiplier).toBe(1)
     expect(metaSummary.resetAvailable).toBe(true)
 
     const runSummary = getRunTalentBonusSummary(['run_common_01', 'run_death_01', 'run_crystal_03'])
@@ -238,14 +279,14 @@ describe('talent data definitions', () => {
     ranks.meta_common_05 = 2
     const summary = getMetaTalentBonusSummary(THREE_RANK_META_TALENT_IDS, ranks)
 
-    expect(summary.extraSkillRerolls).toBe(3)
-    expect(summary.pickupRangeMultiplier).toBeCloseTo(1.2)
-    expect(summary.candidateWeights['death-set-weapon']).toBe(15)
-    expect(summary.candidateWeights['blood-set-weapon']).toBe(15)
-    expect(summary.candidateWeights['beast-set-weapon']).toBe(15)
-    expect(summary.candidateWeights['crystal-set-weapon']).toBe(15)
+    expect(summary.extraSkillRerolls).toBe(0)
+    expect(summary.pickupRangeMultiplier).toBe(1)
+    expect(summary.candidateWeights['pierce-inheritance-equipment']).toBe(15)
+    expect(summary.candidateWeights['spread-inheritance-equipment']).toBe(15)
+    expect(summary.candidateWeights['beast-inheritance-equipment']).toBe(15)
+    expect(summary.candidateWeights['control-inheritance-equipment']).toBe(15)
     expect(new Set(summary.resolvedEffects.map((entry) => entry.nodeId))).toEqual(new Set(THREE_RANK_META_TALENT_IDS))
-    expect(summary.resolvedEffects).toHaveLength(42)
+    expect(summary.resolvedEffects).toHaveLength(45)
     expect(summary.resolvedEffects.every((entry) => entry.rank === (entry.nodeId === 'meta_common_05' ? 2 : 3))).toBe(true)
     expect(summary.ignoredEffects).toEqual([])
   })
@@ -254,11 +295,11 @@ describe('talent data definitions', () => {
     const baseContext: MetaTalentUnlockContext = {
       ...emptyUnlockContext,
       talentPoints: 9,
-      unlockedMetaTalentIds: ['meta_common_01'],
-      metaTalentRanks: { meta_common_01: 1 },
+      unlockedMetaTalentIds: [],
+      metaTalentRanks: {},
     }
     const rankOne = unlockMetaTalent('meta_common_02', baseContext)
-    expect(rankOne).toMatchObject({ ok: true, nextRank: 1, nextTalentPoints: 6 })
+    expect(rankOne).toMatchObject({ ok: true, nextRank: 1, costPaid: 1, nextTalentPoints: 8 })
     if (!rankOne.ok) return
     const rankTwo = unlockMetaTalent('meta_common_02', {
       ...baseContext,
@@ -266,29 +307,21 @@ describe('talent data definitions', () => {
       unlockedMetaTalentIds: rankOne.nextUnlockedMetaTalentIds,
       metaTalentRanks: rankOne.nextMetaTalentRanks,
     })
-    expect(rankTwo).toMatchObject({ ok: true, nextRank: 2, nextTalentPoints: 3 })
+    expect(rankTwo).toMatchObject({ ok: true, nextRank: 2, costPaid: 2, nextTalentPoints: 6 })
     if (!rankTwo.ok) return
-    const rankThree = unlockMetaTalent('meta_common_02', {
-      ...baseContext,
-      talentPoints: rankTwo.nextTalentPoints,
-      unlockedMetaTalentIds: rankTwo.nextUnlockedMetaTalentIds,
-      metaTalentRanks: rankTwo.nextMetaTalentRanks,
-    })
-    expect(rankThree).toMatchObject({ ok: true, nextRank: 3, nextTalentPoints: 0 })
-    if (!rankThree.ok) return
     expect(getMetaTalentUnlockState('meta_common_02', {
       ...baseContext,
       talentPoints: 3,
-      unlockedMetaTalentIds: rankThree.nextUnlockedMetaTalentIds,
-      metaTalentRanks: rankThree.nextMetaTalentRanks,
-    })).toEqual({ canUnlock: false, reason: '已满级' })
-    expect(getMetaTalentRank('meta_common_02', rankThree.nextMetaTalentRanks)).toBe(3)
+      unlockedMetaTalentIds: rankTwo.nextUnlockedMetaTalentIds,
+      metaTalentRanks: rankTwo.nextMetaTalentRanks,
+    })).toMatchObject({ canUnlock: false, reason: '已满级' })
+    expect(getMetaTalentRank('meta_common_02', rankTwo.nextMetaTalentRanks)).toBe(2)
     expect(getMetaTalentUnlockState('meta_death_base_01', {
       ...baseContext,
       talentPoints: 3,
       unlockedMetaTalentIds: ['meta_common_01'],
-      metaTalentRanks: { meta_common_01: 1 },
-    })).toEqual({ canUnlock: true })
+      metaTalentRanks: { meta_common_01: 2 },
+    })).toMatchObject({ canUnlock: true })
 
     const reset = resetMetaTalentTree({
       currency: 200,
@@ -305,21 +338,45 @@ describe('talent data definitions', () => {
         legendaryCore: 0,
       },
       talentPoints: 0,
-      unlockedMetaTalentIds: rankThree.nextUnlockedMetaTalentIds,
-      metaTalentRanks: rankThree.nextMetaTalentRanks,
+      unlockedMetaTalentIds: rankTwo.nextUnlockedMetaTalentIds,
+      metaTalentRanks: rankTwo.nextMetaTalentRanks,
     })
-    expect(reset).toMatchObject({ ok: true, refundedPoints: 9, nextTalentPoints: 9, nextMetaTalentRanks: {} })
+    expect(reset).toMatchObject({ ok: true, refundedPoints: 3, nextTalentPoints: 3, nextMetaTalentRanks: {} })
+
+    const freeReset = resetMetaTalentTree({
+      currency: 0,
+      equipmentMaterials: { ironScraps: 0, contractAsh: 0, refinedIron: 0, crystalDust: 0, buildShard: 0, buildRune: 0, skillPage: 0, legacyEmber: 0, campaignSigil: 0, legendaryCore: 0 },
+      talentPoints: 0,
+      unlockedMetaTalentIds: rankTwo.nextUnlockedMetaTalentIds,
+      metaTalentRanks: rankTwo.nextMetaTalentRanks,
+      migrationFreeResetAvailable: true,
+    })
+    expect(freeReset).toMatchObject({ ok: true, usedMigrationFreeReset: true, nextCurrency: 0, refundedPoints: 3 })
   })
 
-  it('exposes v2 whitelisted campaign tags, targets and reset costs', () => {
+  it('exposes V3 campaign material identities and a complete presentation contract', () => {
     expect(getTalentCampaignTags(7)).toEqual(['ruins', 'campaign-7', 'material'])
     expect(getTalentCampaignTags(10)).toContain('nightmare-elite')
 
-    const metaSummary = getMetaTalentBonusSummary(['meta_difficulty_07', 'meta_difficulty_15', 'meta_campaign_07'])
-    expect(metaSummary.materialDropMultipliers['hard-elite']).toBe(10)
-    expect(metaSummary.materialDropMultipliers['nightmare-elite']).toBe(15)
-    expect(metaSummary.materialDropMultipliers['campaign-7']).toBe(10)
-    expect(metaSummary.materialMultipliers['below-epic']).toBeUndefined()
+    expect(META_TALENT_NODES.find((node) => node.id === 'meta_campaign_07')?.effects[0].target).toBe('campaign-7-buildRune')
+    const presentation = getMetaTalentPresentationSnapshot({
+      ...emptyUnlockContext,
+      talentPoints: 4,
+      metaTalentRanks: { meta_common_01: 1 },
+      unlockedMetaTalentIds: ['meta_common_01'],
+      migrationFreeResetAvailable: true,
+      migrationRetainedNodeIds: ['meta_common_10'],
+    })
+    expect(presentation).toMatchObject({ schemaVersion: 4, catalogCount: 84, investedPoints: 1, migrationFreeResetAvailable: true })
+    expect(presentation.items.find((item) => item.id === 'meta_common_01')).toMatchObject({
+      currentRank: 1,
+      nextRankCost: 2,
+      effects: [expect.objectContaining({ rankValues: [8, 16, 24], currentValue: 8, nextValue: 16 })],
+    })
+    expect(presentation.items.find((item) => item.id === 'meta_common_10')).toMatchObject({
+      status: 'migration-retained',
+      unmetRequirementIds: ['common-invested:15'],
+    })
 
     const runSummary = getRunTalentBonusSummary([
       'run_death_01',
@@ -364,7 +421,7 @@ describe('talent data definitions', () => {
     })
     expect(reset.ok).toBe(true)
     if (reset.ok) {
-      expect(reset.nextTalentPoints).toBe(4)
+      expect(reset.nextTalentPoints).toBe(3)
       expect(reset.nextCurrency).toBe(0)
       expect(reset.nextEquipmentMaterials.buildShard).toBe(0)
     }

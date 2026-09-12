@@ -26,7 +26,7 @@ export type LocalBattleSessionView = {
 }
 
 export type LocalBattleSessionController = {
-  start: () => LocalBattleTestApplyResult
+  start: () => Readonly<{ ok: boolean; errors: readonly string[] }>
   exit: () => void
   clearMonsters: () => LocalBattleTestApplyResult
   applyMonsterConfig: (config: LocalBattleMonsterConfig) => LocalBattleTestApplyResult
@@ -39,7 +39,7 @@ type LocalBattleTestPanelProps = {
   spawnOptions: LocalBattleTestSpawnOption[]
 }
 
-const describeResult = (result: LocalBattleTestApplyResult, successMessage: string) => (
+const describeResult = (result: Readonly<{ ok: boolean; errors: readonly string[] }>, successMessage: string) => (
   result.ok ? successMessage : (result.errors[0] ?? '本地战斗测试操作失败')
 )
 
@@ -113,7 +113,7 @@ export function LocalBattleTestPanel({ onClose, controller, session, spawnOption
                 className="border border-[rgba(218,165,71,0.55)] px-3 py-2 font-pixel text-sm text-[#facc15] disabled:cursor-not-allowed disabled:opacity-50"
                 data-testid="local-battle-enter"
                 disabled={session.active}
-                onClick={() => setMessage(describeResult(controller.start(), '已进入第一关本地战斗测试'))}
+                onClick={() => setMessage(describeResult(controller.start(), '已准备第一关本地战斗资源'))}
               >
                 进入第 1 关战斗
               </button>

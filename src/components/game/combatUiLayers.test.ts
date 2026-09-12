@@ -40,6 +40,20 @@ describe('combat UI layer hierarchy', () => {
       pauseMenuOpen: false,
       hasPendingReward: false,
       isLocalBattleFailure: false,
+      initialSkillDraftActive: true,
+    })).toBe(COMBAT_UI_LAYER.initialDraft)
+    expect(getHighestCombatUiLayer({
+      phase: 'paused',
+      pauseMenuOpen: true,
+      hasPendingReward: false,
+      isLocalBattleFailure: false,
+      initialSkillDraftActive: true,
+    })).toBe(COMBAT_UI_LAYER.pause)
+    expect(getHighestCombatUiLayer({
+      phase: 'running',
+      pauseMenuOpen: false,
+      hasPendingReward: false,
+      isLocalBattleFailure: false,
     })).toBe(COMBAT_UI_LAYER.combat)
   })
 

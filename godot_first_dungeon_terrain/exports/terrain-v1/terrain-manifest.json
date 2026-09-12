@@ -1,0 +1,103 @@
+{
+  "appliesTo": [
+    "infinite",
+    "boss-arena"
+  ],
+  "campaign": 1,
+  "exports": {
+    "atlas": {
+      "cellSize": 16,
+      "columns": 4,
+      "filter": "nearest",
+      "format": "RGBA8",
+      "height": 64,
+      "mipmaps": false,
+      "path": "exports/terrain-v1/terrain-atlas-16px.png",
+      "rows": 4,
+      "sha256": "4727d99b98b4708cce47cc2660559853b706f915615fc534cc5240eb5c8d945b",
+      "width": 64
+    },
+    "fixturePreviews": [
+      {
+        "globalOriginCell": {
+          "x": 32,
+          "y": 0
+        },
+        "path": "exports/terrain-v1/terrain-preview-east-512.png",
+        "sha256": "29944a25f4ba42b7dcceaa27b7c8ba408b8d96502cf32a9af852d480f5e4a97f"
+      },
+      {
+        "globalOriginCell": {
+          "x": 0,
+          "y": 32
+        },
+        "path": "exports/terrain-v1/terrain-preview-south-512.png",
+        "sha256": "7341b31d748a5144b71ec8a436debbacf7c39436b2b3ef70122b7a8f36fbf2ed"
+      }
+    ],
+    "fixtures": {
+      "path": "exports/terrain-v1/terrain-fixtures-v1.json",
+      "schemaVersion": "first-dungeon-terrain-fixtures-v1",
+      "sha256": "f6ad8d029fc5545d85c1c4042237fe6d1b6f3b02e79aa69e8707b11caea48213"
+    },
+    "preview": {
+      "battlefieldSeed": 305419896,
+      "filter": "nearest",
+      "format": "RGBA8",
+      "globalOriginCell": {
+        "x": 0,
+        "y": 0
+      },
+      "height": 512,
+      "path": "exports/terrain-v1/terrain-preview-512.png",
+      "sha256": "6589f541ab8929ae65bbc3a7b05b59baab1b8c7271f69d4f36802fcc62721dcd",
+      "width": 512
+    },
+    "rules": {
+      "path": "exports/terrain-v1/terrain-rules.json",
+      "sha256": "a4f013e6bc3c73e1e403607d3752a452590d6a6dd6dc4bc14ca9df017a0392fe"
+    },
+    "tileset": {
+      "cellSize": 16,
+      "path": "terrain/first_dungeon_terrain_tileset.tres",
+      "terrainMode": "n/e/s/w-sides",
+      "tileCount": 16
+    }
+  },
+  "fallback": {
+    "preserve": "assets/tiles/dungeon-floor-level1-128-image2.png",
+    "when": "terrain export is unavailable or fails resource/performance validation"
+  },
+  "manifestVersion": "first-dungeon-terrain-manifest-v2",
+  "runtimeBoundary": {
+    "neverConsumes": [
+      "Godot runtime",
+      "Godot Web/WASM",
+      "GDScript",
+      "collision"
+    ],
+    "presentationOnly": true,
+    "webConsumes": [
+      "exported static PNG",
+      "terrain-rules.json",
+      "terrain-manifest.json"
+    ]
+  },
+  "schemaVersion": "first-dungeon-terrain-export-v1",
+  "sources": [
+    {
+      "path": "sources/stone/1.jpg",
+      "role": "stone",
+      "sha256": "2584ddad06c7b5abddb9b886a7b465b6fbd68271ae2275d950f6c73dba6c1fab"
+    },
+    {
+      "path": "sources/moss/2.jpg",
+      "role": "moss",
+      "sha256": "45e542620ec30dd04bcdc30f38e4c7c99324c9ded1f9173386a9a3caf758b857"
+    }
+  ],
+  "stability": {
+    "deterministic": true,
+    "generatedAtExcludedFromStableHash": true
+  }
+}

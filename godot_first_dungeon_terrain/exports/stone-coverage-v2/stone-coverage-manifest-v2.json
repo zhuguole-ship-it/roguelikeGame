@@ -1,0 +1,479 @@
+{
+	"appliesTo": [
+		"infinite",
+		"boss-arena"
+	],
+	"atlas": {
+		"filter": "nearest",
+		"format": "RGBA8",
+		"height": 64,
+		"mipmaps": false,
+		"path": "exports/stone-coverage-v2/stone-coverage-mask-atlas-64.png",
+		"sha256": "16980a02e8dc3f03ff2e5b22aaeb2124a06611196abcbf9f1976ecd803ccf261",
+		"smoothing": false,
+		"width": 64
+	},
+	"campaign": 1,
+	"fallback": {
+		"changed": false,
+		"owner": "A1",
+		"preserve": "assets/tiles/dungeon-floor-level1-128-image2.png"
+	},
+	"manifestVersion": 1,
+	"masks": [
+		{
+			"alphaAudit": {
+				"opaque": 0,
+				"transparent": 256
+			},
+			"atlas": {
+				"x": 0,
+				"y": 0
+			},
+			"channelAudit": {
+				"mossSideEdge": 0,
+				"stoneCoverage": 0
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 0,
+			"neighbors": {
+				"east": false,
+				"north": false,
+				"south": false,
+				"west": false
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-00.png",
+			"sha256": "38be5a9fb712cb81d81245d38f669df298b6e8490018f0617986489249ce0494",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 212,
+				"transparent": 44
+			},
+			"atlas": {
+				"x": 1,
+				"y": 0
+			},
+			"channelAudit": {
+				"mossSideEdge": 66,
+				"stoneCoverage": 146
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 1,
+			"neighbors": {
+				"east": false,
+				"north": true,
+				"south": false,
+				"west": false
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-01.png",
+			"sha256": "a6304cdd0b37c96c934f94950a7f3aa48f4f343865aaaccd0ea900937e95bd75",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 212,
+				"transparent": 44
+			},
+			"atlas": {
+				"x": 2,
+				"y": 0
+			},
+			"channelAudit": {
+				"mossSideEdge": 60,
+				"stoneCoverage": 152
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 2,
+			"neighbors": {
+				"east": true,
+				"north": false,
+				"south": false,
+				"west": false
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-02.png",
+			"sha256": "5c8305c71de61374b0bac3e7b84a4d64c69925e8a26f8c7a5a040730f4f165c4",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 229,
+				"transparent": 27
+			},
+			"atlas": {
+				"x": 3,
+				"y": 0
+			},
+			"channelAudit": {
+				"mossSideEdge": 44,
+				"stoneCoverage": 185
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 3,
+			"neighbors": {
+				"east": true,
+				"north": true,
+				"south": false,
+				"west": false
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-03.png",
+			"sha256": "378e4aa75177d330b1b7a65b1249eb6df496a0c872a76cf5e072b3b93042b76f",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 212,
+				"transparent": 44
+			},
+			"atlas": {
+				"x": 0,
+				"y": 1
+			},
+			"channelAudit": {
+				"mossSideEdge": 66,
+				"stoneCoverage": 146
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 4,
+			"neighbors": {
+				"east": false,
+				"north": false,
+				"south": true,
+				"west": false
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-04.png",
+			"sha256": "fd4ac2331a4023952fa91714695fe44de1ea7e531317dad3388912c553cec7dc",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 236,
+				"transparent": 20
+			},
+			"atlas": {
+				"x": 1,
+				"y": 1
+			},
+			"channelAudit": {
+				"mossSideEdge": 48,
+				"stoneCoverage": 188
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 5,
+			"neighbors": {
+				"east": false,
+				"north": true,
+				"south": true,
+				"west": false
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-05.png",
+			"sha256": "8e923b02f5f137b2f54b45d615fbdf0ca3f70710dc71082b64b8789cd57585a2",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 229,
+				"transparent": 27
+			},
+			"atlas": {
+				"x": 2,
+				"y": 1
+			},
+			"channelAudit": {
+				"mossSideEdge": 44,
+				"stoneCoverage": 185
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 6,
+			"neighbors": {
+				"east": true,
+				"north": false,
+				"south": true,
+				"west": false
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-06.png",
+			"sha256": "a1183648f3d45ef31a1dd4d55b61005feb9e8749e0a52483bdca3add897b1242",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 246,
+				"transparent": 10
+			},
+			"atlas": {
+				"x": 3,
+				"y": 1
+			},
+			"channelAudit": {
+				"mossSideEdge": 28,
+				"stoneCoverage": 218
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 7,
+			"neighbors": {
+				"east": true,
+				"north": true,
+				"south": true,
+				"west": false
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-07.png",
+			"sha256": "5dc21b3683fe8a7eec64f1ff330b921fbc8fd7848f4073a439a59499e8bda37a",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 212,
+				"transparent": 44
+			},
+			"atlas": {
+				"x": 0,
+				"y": 2
+			},
+			"channelAudit": {
+				"mossSideEdge": 60,
+				"stoneCoverage": 152
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 8,
+			"neighbors": {
+				"east": false,
+				"north": false,
+				"south": false,
+				"west": true
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-08.png",
+			"sha256": "e87ad9ae3bb7f8d134f1cdd4abd8864d37bd4dbb796f00d4a71ec0b6960fa11b",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 229,
+				"transparent": 27
+			},
+			"atlas": {
+				"x": 1,
+				"y": 2
+			},
+			"channelAudit": {
+				"mossSideEdge": 44,
+				"stoneCoverage": 185
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 9,
+			"neighbors": {
+				"east": false,
+				"north": true,
+				"south": false,
+				"west": true
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-09.png",
+			"sha256": "3df00852fb03e10831ff2c09f4927b047b5f14d68bfea834f02052c302a3b0bc",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 236,
+				"transparent": 20
+			},
+			"atlas": {
+				"x": 2,
+				"y": 2
+			},
+			"channelAudit": {
+				"mossSideEdge": 36,
+				"stoneCoverage": 200
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 10,
+			"neighbors": {
+				"east": true,
+				"north": false,
+				"south": false,
+				"west": true
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-10.png",
+			"sha256": "3d3ca6f8d3c23df2306902d226438228e286d1596c700549d69522f525e29deb",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 246,
+				"transparent": 10
+			},
+			"atlas": {
+				"x": 3,
+				"y": 2
+			},
+			"channelAudit": {
+				"mossSideEdge": 22,
+				"stoneCoverage": 224
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 11,
+			"neighbors": {
+				"east": true,
+				"north": true,
+				"south": false,
+				"west": true
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-11.png",
+			"sha256": "841d0324693b4b6ccfd0c36759daf2c0c5627cc27c3e3a9a2980d7722c329da8",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 229,
+				"transparent": 27
+			},
+			"atlas": {
+				"x": 0,
+				"y": 3
+			},
+			"channelAudit": {
+				"mossSideEdge": 44,
+				"stoneCoverage": 185
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 12,
+			"neighbors": {
+				"east": false,
+				"north": false,
+				"south": true,
+				"west": true
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-12.png",
+			"sha256": "03635f4e4093e31c16abdfb6ba0198a6c8fdf3a94573cb308433ad2c4f38c978",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 246,
+				"transparent": 10
+			},
+			"atlas": {
+				"x": 1,
+				"y": 3
+			},
+			"channelAudit": {
+				"mossSideEdge": 28,
+				"stoneCoverage": 218
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 13,
+			"neighbors": {
+				"east": false,
+				"north": true,
+				"south": true,
+				"west": true
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-13.png",
+			"sha256": "ad32ad4306b1b9ea505090584badf442690cf2adb9696cb2d7ecf4a8c0e944b5",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 246,
+				"transparent": 10
+			},
+			"atlas": {
+				"x": 2,
+				"y": 3
+			},
+			"channelAudit": {
+				"mossSideEdge": 22,
+				"stoneCoverage": 224
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 14,
+			"neighbors": {
+				"east": true,
+				"north": false,
+				"south": true,
+				"west": true
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-14.png",
+			"sha256": "24ebfb3005327a6e4a1e79dbce5103a153f3b09e257148acc712ebad2910a38b",
+			"width": 16
+		},
+		{
+			"alphaAudit": {
+				"opaque": 256,
+				"transparent": 0
+			},
+			"atlas": {
+				"x": 3,
+				"y": 3
+			},
+			"channelAudit": {
+				"mossSideEdge": 0,
+				"stoneCoverage": 256
+			},
+			"format": "RGBA8",
+			"height": 16,
+			"mask": 15,
+			"neighbors": {
+				"east": true,
+				"north": true,
+				"south": true,
+				"west": true
+			},
+			"path": "exports/stone-coverage-v2/stone-coverage-mask-15.png",
+			"sha256": "928472ab843025677cfa56511dda1ca3c1147bf1e35e9c843e49489fea3764f3",
+			"width": 16
+		}
+	],
+	"presentationOnly": true,
+	"rules": {
+		"path": "exports/stone-coverage-v2/stone-coverage-rules-v2.json",
+		"sha256": "a057d84dbcb44745212443b600c5adf34902ce2458d89ddd611220a1d77695e4"
+	},
+	"runtimeBoundary": {
+		"neverConsumes": [
+			"Godot runtime",
+			"Godot Web/WASM",
+			"GDScript",
+			"collision",
+			"Downloads paths"
+		],
+		"webConsumesOnlyAfterA1Integration": [
+			"static PNG masks",
+			"rules JSON",
+			"manifest JSON"
+		]
+	},
+	"runtimeEligible": false,
+	"schemaVersion": "first-dungeon-stone-coverage-manifest-v2",
+	"sourceProvenance": "E26 start: Downloads originals were unavailable; files were copied from the existing project-controlled E24 source copies and verified against their recorded SHA-256 values.",
+	"sources": [
+		{
+			"height": 512,
+			"path": "sources/official-v2/stone-brick-512.jpg",
+			"role": "stone",
+			"sha256": "2584ddad06c7b5abddb9b886a7b465b6fbd68271ae2275d950f6c73dba6c1fab",
+			"width": 512
+		},
+		{
+			"height": 512,
+			"path": "sources/official-v2/moss-512.jpg",
+			"role": "moss",
+			"sha256": "45e542620ec30dd04bcdc30f38e4c7c99324c9ded1f9173386a9a3caf758b857",
+			"width": 512
+		}
+	]
+}

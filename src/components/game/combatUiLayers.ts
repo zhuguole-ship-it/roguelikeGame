@@ -15,6 +15,10 @@ export const COMBAT_UI_LAYER = {
   hud: 'top-5',
   combat: 'top-4',
   reward: 'top-3',
+  // The mandatory opening draft shares the documented Top3 modal slot with
+  // reward selection, but is a distinct presentation state and never mounts
+  // ordinary reward controls.
+  initialDraft: 'top-3',
   settlement: 'top-2',
   pause: 'top-1',
 } as const
@@ -37,6 +41,7 @@ type CombatUiLayerInput = {
   pauseMenuOpen: boolean
   hasPendingReward: boolean
   isLocalBattleFailure: boolean
+  initialSkillDraftActive?: boolean
 }
 
 export const getHighestCombatUiLayer = ({
@@ -44,6 +49,7 @@ export const getHighestCombatUiLayer = ({
   pauseMenuOpen,
   hasPendingReward,
   isLocalBattleFailure,
+  initialSkillDraftActive = false,
 }: CombatUiLayerInput): CombatUiHighestLayer => {
   // A terminal state owns the visible Top2 surface even if a stale reward
   // payload is still present. Otherwise the settlement can mount inert while
@@ -60,6 +66,9 @@ export const getHighestCombatUiLayer = ({
   }
   if (phase === 'paused' && pauseMenuOpen) {
     return COMBAT_UI_LAYER.pause
+  }
+  if (initialSkillDraftActive) {
+    return COMBAT_UI_LAYER.initialDraft
   }
   if (phase === 'running' || phase === 'paused') {
     return COMBAT_UI_LAYER.combat
@@ -93,7 +102,22 @@ export const useCombatUiLayerState = () => {
   const isLocalBattleFailure = useGameStore((state) => (
     state.localBattleTest?.active === true && state.localBattleTest.status === 'failed'
   ))
-  const highestLayer = getHighestCombatUiLayer({ phase, pauseMenuOpen, hasPendingReward, isLocalBattleFailure })
+  // The initial draft's derived presentation is the UI contract. The raw
+  // state subscription only causes React to refresh when the engine replaces
+  // a round; it is not used to infer eligibility, candidates, or progress.
+  const initialSkillDraftState = useGameStore((state) => state.initialSkillDraft)
+  const getInitialSkillDraftPresentation = useGameStore((state) => state.getInitialSkillDraftPresentation)
+  const initialSkillDraftPresentation = getInitialSkillDraftPresentation()
+  const initialSkillDraftActive = Boolean(initialSkillDraftState)
+    && initialSkillDraftPresentation.active
+    && initialSkillDraftPresentation.status === 'selecting'
+  const highestLayer = getHighestCombatUiLayer({
+    phase,
+    pauseMenuOpen,
+    hasPendingReward,
+    isLocalBattleFailure,
+    initialSkillDraftActive,
+  })
 
   return { highestLayer, phase }
 }

@@ -1,0 +1,219 @@
+{
+	"boundaryCompatibility": {
+		"checkedConnectorPairs": 128,
+		"rule": "all boundary stone samples are white on both matched neighbors; no #293A2E crosses a matched connector",
+		"sharedStoneSamples": 2048
+	},
+	"contract": {
+		"contacts": "N/E/S/W connectors are white across a matched neighbor boundary; no edge color crosses that contact",
+		"edge": "#293A2E / alpha 255 / 2 source pixels / hard / no antialias",
+		"moss": "alpha 0 / continuous moss texture",
+		"size": "16x16 RGBA8",
+		"stone": "#FFFFFF / alpha 255 / continuous texture sampling only"
+	},
+	"failures": [],
+	"maskCount": 16,
+	"masks": [
+		{
+			"counts": {
+				"mossSideEdge": 0,
+				"other": 0,
+				"stoneCoverage": 0,
+				"transparent": 256
+			},
+			"edgeDistanceSet": [],
+			"mask": 0
+		},
+		{
+			"counts": {
+				"mossSideEdge": 66,
+				"other": 0,
+				"stoneCoverage": 146,
+				"transparent": 44
+			},
+			"edgeDistanceSet": [
+				1,
+				2
+			],
+			"mask": 1
+		},
+		{
+			"counts": {
+				"mossSideEdge": 60,
+				"other": 0,
+				"stoneCoverage": 152,
+				"transparent": 44
+			},
+			"edgeDistanceSet": [
+				1,
+				2
+			],
+			"mask": 2
+		},
+		{
+			"counts": {
+				"mossSideEdge": 44,
+				"other": 0,
+				"stoneCoverage": 185,
+				"transparent": 27
+			},
+			"edgeDistanceSet": [
+				1,
+				2
+			],
+			"mask": 3
+		},
+		{
+			"counts": {
+				"mossSideEdge": 66,
+				"other": 0,
+				"stoneCoverage": 146,
+				"transparent": 44
+			},
+			"edgeDistanceSet": [
+				1,
+				2
+			],
+			"mask": 4
+		},
+		{
+			"counts": {
+				"mossSideEdge": 48,
+				"other": 0,
+				"stoneCoverage": 188,
+				"transparent": 20
+			},
+			"edgeDistanceSet": [
+				1,
+				2
+			],
+			"mask": 5
+		},
+		{
+			"counts": {
+				"mossSideEdge": 44,
+				"other": 0,
+				"stoneCoverage": 185,
+				"transparent": 27
+			},
+			"edgeDistanceSet": [
+				1,
+				2
+			],
+			"mask": 6
+		},
+		{
+			"counts": {
+				"mossSideEdge": 28,
+				"other": 0,
+				"stoneCoverage": 218,
+				"transparent": 10
+			},
+			"edgeDistanceSet": [
+				1,
+				2
+			],
+			"mask": 7
+		},
+		{
+			"counts": {
+				"mossSideEdge": 60,
+				"other": 0,
+				"stoneCoverage": 152,
+				"transparent": 44
+			},
+			"edgeDistanceSet": [
+				1,
+				2
+			],
+			"mask": 8
+		},
+		{
+			"counts": {
+				"mossSideEdge": 44,
+				"other": 0,
+				"stoneCoverage": 185,
+				"transparent": 27
+			},
+			"edgeDistanceSet": [
+				1,
+				2
+			],
+			"mask": 9
+		},
+		{
+			"counts": {
+				"mossSideEdge": 36,
+				"other": 0,
+				"stoneCoverage": 200,
+				"transparent": 20
+			},
+			"edgeDistanceSet": [
+				1
+			],
+			"mask": 10
+		},
+		{
+			"counts": {
+				"mossSideEdge": 22,
+				"other": 0,
+				"stoneCoverage": 224,
+				"transparent": 10
+			},
+			"edgeDistanceSet": [
+				1
+			],
+			"mask": 11
+		},
+		{
+			"counts": {
+				"mossSideEdge": 44,
+				"other": 0,
+				"stoneCoverage": 185,
+				"transparent": 27
+			},
+			"edgeDistanceSet": [
+				1,
+				2
+			],
+			"mask": 12
+		},
+		{
+			"counts": {
+				"mossSideEdge": 28,
+				"other": 0,
+				"stoneCoverage": 218,
+				"transparent": 10
+			},
+			"edgeDistanceSet": [
+				1,
+				2
+			],
+			"mask": 13
+		},
+		{
+			"counts": {
+				"mossSideEdge": 22,
+				"other": 0,
+				"stoneCoverage": 224,
+				"transparent": 10
+			},
+			"edgeDistanceSet": [
+				1
+			],
+			"mask": 14
+		},
+		{
+			"counts": {
+				"mossSideEdge": 0,
+				"other": 0,
+				"stoneCoverage": 256,
+				"transparent": 0
+			},
+			"edgeDistanceSet": [],
+			"mask": 15
+		}
+	],
+	"passed": true,
+	"schemaVersion": "first-dungeon-stone-coverage-audit-v2"
+}

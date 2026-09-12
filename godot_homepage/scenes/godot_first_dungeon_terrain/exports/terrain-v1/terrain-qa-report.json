@@ -1,0 +1,29 @@
+{
+  "atlas": {
+    "height": 64,
+    "rgba8": true,
+    "sha256": "4727d99b98b4708cce47cc2660559853b706f915615fc534cc5240eb5c8d945b",
+    "width": 64
+  },
+  "collisions": "none",
+  "downloadsReferences": "none",
+  "failures": [],
+  "fixtures": {
+    "chunkCount": 3,
+    "comparisonSeedChangedCellCount": 491.0,
+    "sha256": "f6ad8d029fc5545d85c1c4042237fe6d1b6f3b02e79aa69e8707b11caea48213",
+    "sharedEdgeCount": 2
+  },
+  "maskCount": 16,
+  "preview": {
+    "height": 512,
+    "rgba8": true,
+    "sha256": "6589f541ab8929ae65bbc3a7b05b59baab1b8c7271f69d4f36802fcc62721dcd",
+    "width": 512
+  },
+  "schemaVersion": "first-dungeon-terrain-qa-v1",
+  "sourceHashes": {
+    "sources/moss/2.jpg": "45e542620ec30dd04bcdc30f38e4c7c99324c9ded1f9173386a9a3caf758b857",
+    "sources/stone/1.jpg": "2584ddad06c7b5abddb9b886a7b465b6fbd68271ae2275d950f6c73dba6c1fab"
+  }
+}

@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
-import { createInitialSnapshot, getCampaignRewardPresentationSnapshot } from '../../game/engine'
+import { createInitialSnapshot } from '../../game/engine'
 import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
 import { RUN_TALENT_NODE_BY_ID } from '../../game/talents'
 import type { RunSettlementSummary } from '../../game/types'
@@ -35,11 +35,10 @@ afterEach(() => {
 
 describe('RunSettlementOverlay', () => {
   it('uses the Top2 black-gold layout for a successful immutable settlement summary', () => {
-    const snapshot = createInitialSnapshot('game-over')
-    useGameStore.setState({ ...snapshot })
+    useGameStore.setState({ ...createInitialSnapshot('game-over') })
     const onReturnToVillage = vi.fn()
 
-    render(<RunSettlementOverlay summary={successSummary} campaignRewardSnapshot={getCampaignRewardPresentationSnapshot(snapshot)} onReturnToVillage={onReturnToVillage} />)
+    render(<RunSettlementOverlay summary={successSummary} onReturnToVillage={onReturnToVillage} />)
 
     const overlay = screen.getByTestId('game-over-settlement')
     expect(overlay.getAttribute('data-combat-ui-layer')).toBe('top-2')
@@ -65,8 +64,8 @@ describe('RunSettlementOverlay', () => {
     expect(screen.queryByTestId('run-settlement-title-frame')).toBeNull()
     expect(screen.getByTestId('run-settlement-return-frame').className).toContain('h-[72px]')
     expect(screen.getByTestId('run-settlement-return-frame').className).toContain('max-w-[420px]')
-    expect(screen.getByTestId('run-settlement-campaign-reward-region')).toBeTruthy()
-    expect(screen.getByTestId('settlement-campaign-reward-summary').getAttribute('data-current-reward-source')).toBe('')
+    expect(screen.queryByTestId('run-settlement-campaign-reward-region')).toBeNull()
+    expect(screen.queryByTestId('settlement-campaign-reward-summary')).toBeNull()
     const returnButton = screen.getByTestId('run-settlement-return-button')
     expect(returnButton.getAttribute('type')).toBe('button')
     expect(returnButton.className).toContain('hover:font-bold')
@@ -165,6 +164,10 @@ describe('RunSettlementOverlay', () => {
     const statusBanner = screen.getByTestId('run-settlement-status-banner').querySelector('img')
     expect(statusBanner?.getAttribute('src')).toContain('level-failed-title-v2.png')
     expect(statusBanner?.getAttribute('src')).not.toContain('status-banners/level-failed-banner-transparent.png')
+    expect(screen.queryByTestId('run-settlement-campaign-reward-region')).toBeNull()
+    expect(screen.queryByTestId('settlement-campaign-reward-summary')).toBeNull()
+    expect(screen.getByTestId('run-settlement-panels')).toBeTruthy()
+    expect(screen.getByTestId('run-settlement-return-button')).toBeTruthy()
     expect(statusBanner?.getAttribute('alt')).toBe('通关失败')
     expect(screen.getByTestId('game-over-settlement').className).toContain('items-start')
     expect(screen.getByTestId('game-over-settlement').getAttribute('data-settlement-background')).toBe('frozen-battle-frame-glass')

@@ -1,20 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { CANVAS_HEIGHT, CANVAS_SCALE, CANVAS_WIDTH, WORLD_HEIGHT, WORLD_WIDTH } from '../../game/config'
+import { CANVAS_HEIGHT, CANVAS_SCALE, CANVAS_WIDTH, getCampaignIndex, WORLD_HEIGHT, WORLD_WIDTH } from '../../game/config'
+import { buildCombatSceneAssetDependencyDescriptor } from '../../game/combatLoading'
 import { isCombatMinimapVisible } from '../../game/combatMinimap'
-import { getSmoothedCameraOffset, renderGame } from '../../game/render'
+import { createCombatSceneAssetManifestFromDescriptor, HOME_SCENE_ASSET_MANIFEST_V1 } from '../../game/homeSceneAssetManifest'
+import { getCombatCanvasBackingSize, getSmoothedCameraOffset, renderGame } from '../../game/render'
 import { loadRuntimeAssetDraftConfigFromStorage, loadRuntimeAssetProjectConfig } from '../../game/runtimeAssetOverrides'
 import { preloadPlayerArcherAssets } from '../../game/sprites'
 import { useGameLoop } from '../../hooks/useGameLoop'
 import { useKeyboard } from '../../hooks/useKeyboard'
 import { useGameStore } from '../../store/useGameStore'
 import { DeveloperAssetPanel, isDeveloperAssetPanelVisible } from './DeveloperAssetPanel'
+import { DevelopmentAcceptancePanel } from './DevelopmentAcceptancePanel'
+import { FirstDungeonChunkObservabilityPanel } from './FirstDungeonChunkObservabilityPanel'
 import { CombatDamageLog } from './CombatDamageLog'
 import { CombatMinimap } from './CombatMinimap'
 import { GameOverlay } from './GameOverlay'
+import { InitialSkillDraftOverlay } from './InitialSkillDraftOverlay'
 import { GamePauseOverlay } from './GamePauseOverlay'
 import { GameStatusBar } from './GameStatusBar'
 import { LocalBattleTestPanel } from './LocalBattleTestPanel'
+import { SoulCrystalCollectionFeedback } from './SoulCrystalCollectionFeedback'
+import { SceneLoadingTransition } from './SceneLoadingTransition'
 import {
   COMBAT_UI_LAYER,
   getCombatUiLayerAccessibilityProps,
@@ -33,6 +40,7 @@ function LocalTestControls({
   avoidMinimap,
   highestLayer,
   isVillageModalOpen,
+  onAcceptanceOpenChange,
 }: {
   onOpenChange: (open: boolean) => void
   controller: LocalBattleSessionController
@@ -41,23 +49,41 @@ function LocalTestControls({
   avoidMinimap: boolean
   highestLayer: CombatUiHighestLayer
   isVillageModalOpen: boolean
+  onAcceptanceOpenChange: (open: boolean) => void
 }) {
   const [open, setOpen] = useState(false)
   const [battleOpen, setBattleOpen] = useState(false)
+  const [acceptanceOpen, setAcceptanceOpen] = useState(false)
+  const [chunkObservabilityOpen, setChunkObservabilityOpen] = useState(false)
+  const acceptanceLaunchRef = useRef<HTMLButtonElement | null>(null)
+  const developmentAcceptance = useGameStore((state) => state.developmentAcceptance)
   const canRenderDeveloperControls = !isVillageModalOpen
     && (highestLayer === null || highestLayer === COMBAT_UI_LAYER.combat)
 
   useEffect(() => {
-    onOpenChange(open || battleOpen)
-  }, [battleOpen, onOpenChange, open])
+    onOpenChange(open || battleOpen || chunkObservabilityOpen)
+  }, [battleOpen, chunkObservabilityOpen, onOpenChange, open])
+
+  useEffect(() => {
+    onAcceptanceOpenChange(acceptanceOpen)
+  }, [acceptanceOpen, onAcceptanceOpenChange])
+
+  useEffect(() => {
+    if (!acceptanceOpen && developmentAcceptance.active) {
+      acceptanceLaunchRef.current?.focus({ preventScroll: true })
+    }
+  }, [acceptanceOpen, developmentAcceptance.active])
 
   useEffect(() => {
     if (!canRenderDeveloperControls) {
       setOpen(false)
       setBattleOpen(false)
+      setAcceptanceOpen(false)
+      setChunkObservabilityOpen(false)
       onOpenChange(false)
+      onAcceptanceOpenChange(false)
     }
-  }, [canRenderDeveloperControls, onOpenChange])
+  }, [canRenderDeveloperControls, onAcceptanceOpenChange, onOpenChange])
 
   if (!isDeveloperAssetPanelVisible() || !canRenderDeveloperControls) {
     return null
@@ -85,44 +111,112 @@ function LocalTestControls({
       >
         战斗
       </button>
+      {developmentAcceptance.available ? (
+        <button
+          ref={acceptanceLaunchRef}
+          type="button"
+          className="mt-2 block w-full border-2 border-[#080b0a] bg-[#132846] px-4 py-2 font-pixel text-[10px] text-[#dbeafe] shadow-[0_0_0_1px_rgba(147,197,253,0.52),0_4px_0_rgba(0,0,0,0.34)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#bfdbfe]"
+          data-testid="development-acceptance-entry"
+          aria-expanded={acceptanceOpen}
+          aria-label={developmentAcceptance.active
+            ? '关卡跳转测试台临时未保存会话，打开恢复选项'
+            : '打开关卡跳转测试台'}
+          onClick={() => setAcceptanceOpen((value) => !value)}
+        >
+          {developmentAcceptance.active ? '关卡测试 · 临时未保存' : '关卡测试'}
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="mt-2 block w-full border-2 border-[#080b0a] bg-[#164e63] px-4 py-2 font-pixel text-[10px] text-[#ecfeff] shadow-[0_0_0_1px_rgba(103,232,249,0.52),0_4px_0_rgba(0,0,0,0.34)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#a5f3fc]"
+        data-testid="first-dungeon-chunk-observability-entry"
+        aria-expanded={chunkObservabilityOpen}
+        aria-label="打开第一关区块观测"
+        onClick={() => setChunkObservabilityOpen((value) => !value)}
+      >
+        地形观测
+      </button>
       {open ? <DeveloperAssetPanel onClose={() => setOpen(false)} /> : null}
       {battleOpen ? <LocalBattleTestPanel controller={controller} session={session} spawnOptions={spawnOptions} onClose={() => setBattleOpen(false)} /> : null}
+      {acceptanceOpen ? (
+        <DevelopmentAcceptancePanel
+          onClose={() => {
+            setAcceptanceOpen(false)
+          }}
+          onStarted={() => setAcceptanceOpen(false)}
+        />
+      ) : null}
+      {chunkObservabilityOpen ? <FirstDungeonChunkObservabilityPanel onClose={() => setChunkObservabilityOpen(false)} /> : null}
     </div>
   )
 }
 
-export function GameCanvas() {
+export function GameCanvas({ enableSceneLoading = import.meta.env.MODE !== 'test' }: { enableSceneLoading?: boolean } = {}) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const latestState = useRef(useGameStore.getState())
   const cameraRef = useRef({ x: 0, y: 0 })
   const inputRef = useKeyboard()
   const [developerPanelOpen, setDeveloperPanelOpen] = useState(false)
+  const [developmentAcceptancePanelOpen, setDevelopmentAcceptancePanelOpen] = useState(false)
   const [isVillageModalOpen, setVillageModalOpen] = useState(false)
   const tick = useGameStore((state) => state.tick)
   const phase = useGameStore((state) => state.phase)
+  const combatLaunchGate = useGameStore((state) => state.combatLaunchGate)
+  const prepareLocalBattleTestCombatLaunch = useGameStore((state) => state.prepareLocalBattleTestCombatLaunch)
+  const markCombatLaunchFadeStarted = useGameStore((state) => state.markCombatLaunchFadeStarted)
+  const completeCombatLaunchFade = useGameStore((state) => state.completeCombatLaunchFade)
+  const level = useGameStore((state) => state.level)
+  const battlefieldMode = useGameStore((state) => state.battlefield.mode)
   const togglePause = useGameStore((state) => state.togglePause)
+  const initialSkillDraftState = useGameStore((state) => state.initialSkillDraft)
+  const getInitialSkillDraftPresentation = useGameStore((state) => state.getInitialSkillDraftPresentation)
   const triggerActiveSkill = useGameStore((state) => state.triggerActiveSkill)
   const triggerDash = useGameStore((state) => state.triggerDash)
   const updateAimPoint = useGameStore((state) => state.updateAimPoint)
   const localBattleTest = useGameStore((state) => state.localBattleTest)
   const localBattleTestEnemyCount = useGameStore((state) => state.enemies.length)
   const localBattleTestMessage = useGameStore((state) => state.message)
-  const startLocalBattleTest = useGameStore((state) => state.startLocalBattleTest)
   const applyLocalBattleTestMonsterConfig = useGameStore((state) => state.applyLocalBattleTestMonsterConfig)
   const clearLocalBattleTestMonsters = useGameStore((state) => state.clearLocalBattleTestMonsters)
   const exitLocalBattleTest = useGameStore((state) => state.exitLocalBattleTest)
   const getLocalBattleTestSpawnOptions = useGameStore((state) => state.getLocalBattleTestSpawnOptions)
   const { highestLayer } = useCombatUiLayerState()
-  const isWorldInputActive = highestLayer === COMBAT_UI_LAYER.combat && !developerPanelOpen
+  const previousPhaseRef = useRef(phase)
+  const [homeLoadingCycle, setHomeLoadingCycle] = useState(phase === 'idle' ? 1 : 0)
+  const [homeLoadingActive, setHomeLoadingActive] = useState(enableSceneLoading && phase === 'idle')
+  const combatLoadingManifest = useMemo(() => {
+    if (!enableSceneLoading || !combatLaunchGate.active || !combatLaunchGate.descriptor) return undefined
+    return createCombatSceneAssetManifestFromDescriptor(
+      buildCombatSceneAssetDependencyDescriptor(combatLaunchGate.descriptor.target),
+    )
+  }, [combatLaunchGate.active, combatLaunchGate.descriptor, enableSceneLoading])
+  const shouldShowHomeLoading = enableSceneLoading
+    && phase === 'idle'
+    && (homeLoadingActive || previousPhaseRef.current !== 'idle')
+  const usesFullViewportTerrainCanvas = getCampaignIndex(level) === 1
+    && (battlefieldMode === 'infinite' || battlefieldMode === 'boss-arena')
+  // The presentation is the only initial-draft input used for interaction.
+  // This subscription simply refreshes the shell when the engine advances a
+  // draft round and replaces its immutable state.
+  const initialSkillDraftPresentation = getInitialSkillDraftPresentation()
+  const canPauseInitialSkillDraft = Boolean(initialSkillDraftState)
+    && initialSkillDraftPresentation.active
+    && initialSkillDraftPresentation.status === 'selecting'
+    && initialSkillDraftPresentation.canPause
+  const isWorldInputActive = highestLayer === COMBAT_UI_LAYER.combat
+    && !developerPanelOpen
+    && !developmentAcceptancePanelOpen
+    && !combatLaunchGate.active
+    && !shouldShowHomeLoading
 
   const localBattleSpawnOptions = useMemo(() => getLocalBattleTestSpawnOptions(), [getLocalBattleTestSpawnOptions])
   const localBattleController = useMemo<LocalBattleSessionController>(() => ({
-    start: startLocalBattleTest,
+    start: prepareLocalBattleTestCombatLaunch,
     applyMonsterConfig: applyLocalBattleTestMonsterConfig,
     clearMonsters: clearLocalBattleTestMonsters,
     exit: exitLocalBattleTest,
-  }), [applyLocalBattleTestMonsterConfig, clearLocalBattleTestMonsters, exitLocalBattleTest, startLocalBattleTest])
+  }), [applyLocalBattleTestMonsterConfig, clearLocalBattleTestMonsters, exitLocalBattleTest, prepareLocalBattleTestCombatLaunch])
   const localBattleSession = useMemo<LocalBattleSessionView>(() => ({
     active: Boolean(localBattleTest?.active),
     paused: developerPanelOpen,
@@ -136,6 +230,18 @@ export function GameCanvas() {
     void preloadPlayerArcherAssets()
   }, [])
 
+  useEffect(() => {
+    const previousPhase = previousPhaseRef.current
+    previousPhaseRef.current = phase
+    if (!enableSceneLoading) return
+    if (phase === 'idle' && previousPhase !== 'idle') {
+      setHomeLoadingCycle((cycle) => cycle + 1)
+      setHomeLoadingActive(true)
+    } else if (phase !== 'idle') {
+      setHomeLoadingActive(false)
+    }
+  }, [enableSceneLoading, phase])
+
   const renderCurrentState = useMemo(() => {
     return () => {
       const canvas = canvasRef.current
@@ -143,16 +249,34 @@ export function GameCanvas() {
         return
       }
 
+      const hostRect = containerRef.current?.getBoundingClientRect()
+      const viewportWidth = hostRect?.width || window.innerWidth || WORLD_WIDTH
+      const viewportHeight = hostRect?.height || window.innerHeight || WORLD_HEIGHT
+      const backing = usesFullViewportTerrainCanvas
+        ? getCombatCanvasBackingSize(viewportWidth, viewportHeight)
+        : { width: CANVAS_WIDTH, height: CANVAS_HEIGHT, logicalWidth: WORLD_WIDTH, logicalHeight: WORLD_HEIGHT }
+      if (canvas.width !== backing.width) canvas.width = backing.width
+      if (canvas.height !== backing.height) canvas.height = backing.height
+
       const context = canvas.getContext('2d')
       if (!context) {
         return
       }
 
       context.setTransform(CANVAS_SCALE, 0, 0, CANVAS_SCALE, 0, 0)
-      cameraRef.current = getSmoothedCameraOffset(latestState.current, cameraRef.current)
+      cameraRef.current = getSmoothedCameraOffset(latestState.current, cameraRef.current, {
+        width: backing.logicalWidth,
+        height: backing.logicalHeight,
+      })
       renderGame(context, latestState.current, cameraRef.current)
     }
-  }, [])
+  }, [usesFullViewportTerrainCanvas])
+
+  useEffect(() => {
+    const handleResize = () => renderCurrentState()
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [renderCurrentState])
 
   useEffect(() => {
     if (!isDeveloperAssetPanelVisible()) {
@@ -209,8 +333,12 @@ export function GameCanvas() {
           return
         }
 
-        const scaleX = WORLD_WIDTH / rect.width
-        const scaleY = WORLD_HEIGHT / rect.height
+        const canvas = canvasRef.current
+        if (!canvas) {
+          return
+        }
+        const scaleX = (canvas.width / CANVAS_SCALE) / rect.width
+        const scaleY = (canvas.height / CANVAS_SCALE) / rect.height
         const camera = cameraRef.current
         updateAimPoint({
           x: (event.clientX - rect.left) * scaleX + camera.x,
@@ -224,6 +352,12 @@ export function GameCanvas() {
           || highestLayer === COMBAT_UI_LAYER.settlement
 
         if (!isWorldInputActive) {
+          if (event.key === 'Escape' && !event.repeat && canPauseInitialSkillDraft) {
+            event.preventDefault()
+            event.stopPropagation()
+            togglePause()
+            return
+          }
           if (hasModalPriority && (event.key === 'Escape' || key === 'q' || key === 'e' || key === 'r' || event.key === ' ')) {
             event.preventDefault()
             event.stopPropagation()
@@ -258,10 +392,20 @@ export function GameCanvas() {
         }
       }}
     >
-      <canvas ref={canvasRef} className="m-auto h-auto max-h-screen w-full max-w-[calc(100vh*1.5)] object-contain" width={CANVAS_WIDTH} height={CANVAS_HEIGHT} aria-label="游戏画布" />
+      <canvas
+        ref={canvasRef}
+        className={usesFullViewportTerrainCanvas
+          ? 'absolute inset-0 z-10 h-full w-full'
+          : 'relative z-10 m-auto h-auto max-h-screen w-full max-w-[calc(100vh*1.5)] object-contain'}
+        width={CANVAS_WIDTH}
+        height={CANVAS_HEIGHT}
+        aria-label="游戏画布"
+      />
+      <SoulCrystalCollectionFeedback canvasRef={canvasRef} cameraRef={cameraRef} />
       <GameStatusBar />
       <CombatMinimap />
       <GameOverlay onVillageModalVisibilityChange={setVillageModalOpen} />
+      <InitialSkillDraftOverlay />
       <GamePauseOverlay />
       <CombatDamageLog />
       <LocalTestControls
@@ -272,7 +416,24 @@ export function GameCanvas() {
         avoidMinimap={isCombatMinimapVisible(phase)}
         highestLayer={highestLayer}
         isVillageModalOpen={isVillageModalOpen}
+        onAcceptanceOpenChange={setDevelopmentAcceptancePanelOpen}
       />
+      {enableSceneLoading && combatLoadingManifest && combatLaunchGate.launchId ? (
+        <SceneLoadingTransition
+          key={`combat-${combatLaunchGate.launchId}`}
+          manifest={combatLoadingManifest}
+          onExitStart={() => markCombatLaunchFadeStarted(combatLaunchGate.launchId!)}
+          onComplete={() => {
+            completeCombatLaunchFade(combatLaunchGate.launchId!)
+          }}
+        />
+      ) : shouldShowHomeLoading ? (
+        <SceneLoadingTransition
+          key={`home-${homeLoadingCycle}`}
+          manifest={HOME_SCENE_ASSET_MANIFEST_V1}
+          onComplete={() => setHomeLoadingActive(false)}
+        />
+      ) : null}
     </div>
   )
 }

@@ -1,5 +1,8 @@
 import {
   BOSS_ARENA_RADIUS,
+  CANVAS_HEIGHT,
+  CANVAS_SCALE,
+  CANVAS_WIDTH,
   CONTRACT_RIFT_RADIUS,
   getCampaignIndex,
   ROOM_PADDING,
@@ -10,6 +13,7 @@ import {
   WORLD_WIDTH,
 } from './config'
 import { getCampaignThemeForLevel } from './campaignThemes'
+import { getArrowTurretPresentation, getBeastContractDomainPresentationSnapshot } from './engine'
 import {
   FIRE_SAC_EXPLOSION_FRAME_COUNT,
   getFireSacExplosionPublicFrameUrls,
@@ -32,6 +36,10 @@ import {
   type PlayerArcherRenderInput,
 } from './sprites'
 import { getPlayerArcherStableBodyCenter } from './archerAssetFrames'
+import {
+  drawFirstDungeonGodotTerrain,
+  type FirstDungeonGodotTerrainDrawStatus,
+} from './firstDungeonGodotTerrainRenderer'
 import { drawReferenceArt } from './referenceArt'
 import { getTerrainAssetById, type TerrainAssetDefinition } from './terrainAssets'
 import {
@@ -39,14 +47,64 @@ import {
   ARCHER_SKILL_EVOLUTION_MAP,
   type ArcherSkillEvolutionEffectContract,
 } from './archerSkillEvolution'
-import type { BeastCompanion, Enemy, EnemySkillEffect, GameSnapshot, Player, SkillEvolutionEffectEvent, SkillLevelConfig, Vector2 } from './types'
+import type {
+  BeastCompanion,
+  Enemy,
+  EnemySkillEffect,
+  GameSnapshot,
+  Player,
+  Projectile,
+  SkillEvolutionEffectEvent,
+  SkillEvolutionFanGeometry,
+  SkillLevelConfig,
+  Vector2,
+} from './types'
 import { drawVillageMenuBackground } from './villageMenuBackground'
 import { clamp } from '../utils/math'
 
 export const LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE = 128
 export const LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC = `${import.meta.env.BASE_URL}assets/tiles/dungeon-floor-level1-128-image2.png`
+export const COMBAT_DARK_MASK_SRC = `${import.meta.env.BASE_URL}assets/overlays/combat-mask-v1/dark-mask.png`
+export const COMBAT_DARK_MASK_OPACITY = 0.6
+export const COMBAT_DARK_MASK_SOURCE_SIZE = Object.freeze({ width: 2052, height: 1154 })
+
+export type CombatCanvasViewportSize = Readonly<{
+  width: number
+  height: number
+}>
+
+export type CombatCanvasBackingSize = Readonly<{
+  width: number
+  height: number
+  logicalWidth: number
+  logicalHeight: number
+}>
+
+export const getCombatCanvasBackingSize = (
+  viewportWidth: number,
+  viewportHeight: number,
+): CombatCanvasBackingSize => {
+  const safeWidth = Math.max(1, viewportWidth)
+  const safeHeight = Math.max(1, viewportHeight)
+  const viewportAspect = safeWidth / safeHeight
+  const baseAspect = CANVAS_WIDTH / CANVAS_HEIGHT
+  const width = viewportAspect >= baseAspect
+    ? Math.ceil((CANVAS_HEIGHT * viewportAspect) / CANVAS_SCALE) * CANVAS_SCALE
+    : CANVAS_WIDTH
+  const height = viewportAspect >= baseAspect
+    ? CANVAS_HEIGHT
+    : Math.ceil((CANVAS_WIDTH / viewportAspect) / CANVAS_SCALE) * CANVAS_SCALE
+
+  return Object.freeze({
+    width,
+    height,
+    logicalWidth: width / CANVAS_SCALE,
+    logicalHeight: height / CANVAS_SCALE,
+  })
+}
 
 let levelOneDungeonFloorImage: HTMLImageElement | null = null
+let combatDarkMaskImage: HTMLImageElement | null = null
 const terrainAssetImageCache = new Map<string, HTMLImageElement>()
 const fireSacExplosionImageCache = new Map<string, HTMLImageElement>()
 
@@ -260,6 +318,106 @@ const getEffectPulse = (profile: SkillEvolutionEffectRenderProfile, event: Skill
   return 0.72 + 0.28 * Math.sin(progress * Math.PI * pulses)
 }
 
+/**
+ * A1 emits this immutable snapshot beside every genuine scatter/fan layer.
+ * Keep it untouched here: it is the same source used to create the actual
+ * projectiles, rather than a renderer-side Lv.4/Lv.5 reconstruction.
+ */
+export const getSkillEvolutionFanRenderGeometry = (event: Pick<SkillEvolutionEffectEvent, 'fanGeometry'>): SkillEvolutionFanGeometry | undefined => (
+  event.fanGeometry
+)
+
+type DoubleCrescentRenderPath = Readonly<{
+  expansionPoint: Vector2
+  convergencePoint: Vector2
+  exitPoint: Vector2
+}>
+
+/**
+ * Project the A1-provided double-crescent snapshot into the same three
+ * segments used by its real arrows. No level/configuration data is consulted:
+ * the cast's total angle, convergence point, expansion ratio and exit length
+ * are all immutable event fields.
+ */
+export const getDoubleCrescentRenderPaths = (geometry: SkillEvolutionFanGeometry): readonly DoubleCrescentRenderPath[] => {
+  const path = geometry.path
+  if (path?.kind !== 'double-crescent') return []
+
+  const convergencePoint = path.convergencePoint
+  const distanceToConvergence = Math.hypot(
+    convergencePoint.x - geometry.origin.x,
+    convergencePoint.y - geometry.origin.y,
+  )
+  const expansionDistance = Math.min(distanceToConvergence, distanceToConvergence * path.expansionRatio)
+  const centreAngle = Math.atan2(geometry.direction.y, geometry.direction.x)
+  const totalAngleRadians = geometry.totalFanAngleDegrees * Math.PI / 180
+
+  return Array.from({ length: geometry.projectileCount }, (_, index) => {
+    const offset = geometry.projectileCount <= 1
+      ? 0
+      : (index - (geometry.projectileCount - 1) / 2) * (totalAngleRadians / (geometry.projectileCount - 1))
+    const shotAngle = centreAngle + offset
+    const expansionPoint = {
+      x: geometry.origin.x + Math.cos(shotAngle) * expansionDistance,
+      y: geometry.origin.y + Math.sin(shotAngle) * expansionDistance,
+    }
+    const incomingVector = {
+      x: convergencePoint.x - expansionPoint.x,
+      y: convergencePoint.y - expansionPoint.y,
+    }
+    const incomingMagnitude = Math.hypot(incomingVector.x, incomingVector.y)
+    const incomingDirection = incomingMagnitude > 0.000001
+      ? { x: incomingVector.x / incomingMagnitude, y: incomingVector.y / incomingMagnitude }
+      : { x: Math.cos(shotAngle), y: Math.sin(shotAngle) }
+
+    return {
+      expansionPoint,
+      convergencePoint,
+      exitPoint: {
+        x: convergencePoint.x + incomingDirection.x * path.exitLength,
+        y: convergencePoint.y + incomingDirection.y * path.exitLength,
+      },
+    }
+  })
+}
+
+/**
+ * Draw only the part of an actual double-crescent projectile route it has
+ * already travelled. The engine owns path advancement and collision; this is
+ * a thin, behind-enemy trace of the frozen points it exposes.
+ */
+export const getDoubleCrescentProjectileRenderSegments = (
+  projectile: Pick<Projectile, 'doubleCrescentPath' | 'evolutionFanGeometry' | 'origin' | 'position'>,
+): readonly Readonly<{ start: Vector2; end: Vector2 }>[] => {
+  const path = projectile.doubleCrescentPath
+  const origin = projectile.origin ?? projectile.evolutionFanGeometry?.origin
+  if (!path || !origin) return []
+
+  if (path.phase === 'expand') {
+    return [{ start: origin, end: projectile.position }]
+  }
+  if (path.phase === 'converge') {
+    return [
+      { start: origin, end: path.expansionPoint },
+      { start: path.expansionPoint, end: projectile.position },
+    ]
+  }
+  return [
+    { start: origin, end: path.expansionPoint },
+    { start: path.expansionPoint, end: path.convergencePoint },
+    { start: path.convergencePoint, end: path.phase === 'complete' ? path.exitPoint : projectile.position },
+  ]
+}
+
+/**
+ * Spiral-break collision already advances as world-space sweep segments in
+ * A1. Rendering may show those segments, but never invents a target, path or
+ * hit from aim input or combat logs.
+ */
+export const getSpiralBreakProjectileRenderSegments = (
+  projectile: Pick<Projectile, 'spiralBreakFlight' | 'sweptPathSegments'>,
+) => projectile.spiralBreakFlight ? projectile.sweptPathSegments ?? [] : []
+
 const getPerpendicular = (direction: Vector2) => ({ x: -direction.y, y: direction.x })
 
 const drawShapeLine = (ctx: CanvasRenderingContext2D, origin: Vector2, target: Vector2) => {
@@ -269,11 +427,17 @@ const drawShapeLine = (ctx: CanvasRenderingContext2D, origin: Vector2, target: V
   ctx.stroke()
 }
 
-const drawShapeFan = (ctx: CanvasRenderingContext2D, origin: Vector2, direction: Vector2, length: number, spread: number, spokeCount: number) => {
+const drawShapeFanArc = (
+  ctx: CanvasRenderingContext2D,
+  origin: Vector2,
+  direction: Vector2,
+  length: number,
+  totalAngleRadians: number,
+  spokeCount: number,
+) => {
   const angle = Math.atan2(direction.y, direction.x)
-  const halfSpread = Math.max(0.16, Math.min(1.25, spread || 0.52)) / 2
-  const start = angle - halfSpread
-  const end = angle + halfSpread
+  const start = angle - totalAngleRadians / 2
+  const end = angle + totalAngleRadians / 2
   ctx.beginPath()
   ctx.moveTo(origin.x, origin.y)
   ctx.lineTo(origin.x + Math.cos(start) * length, origin.y + Math.sin(start) * length)
@@ -288,6 +452,124 @@ const drawShapeFan = (ctx: CanvasRenderingContext2D, origin: Vector2, direction:
     })
   }
 }
+
+const drawShapeFan = (ctx: CanvasRenderingContext2D, origin: Vector2, direction: Vector2, length: number, spread: number, spokeCount: number) => {
+  const totalAngleRadians = Math.max(0.16, Math.min(1.25, spread || 0.52))
+  drawShapeFanArc(ctx, origin, direction, length, totalAngleRadians, spokeCount)
+}
+
+const drawShapeFanGeometry = (ctx: CanvasRenderingContext2D, geometry: SkillEvolutionFanGeometry) => {
+  drawShapeFanArc(
+    ctx,
+    geometry.origin,
+    geometry.direction,
+    geometry.range,
+    geometry.totalFanAngleDegrees * Math.PI / 180,
+    geometry.projectileCount,
+  )
+}
+
+const drawShapeDoubleCrescent = (ctx: CanvasRenderingContext2D, geometry: SkillEvolutionFanGeometry) => {
+  getDoubleCrescentRenderPaths(geometry).forEach((path) => {
+    ctx.beginPath()
+    ctx.moveTo(geometry.origin.x, geometry.origin.y)
+    ctx.lineTo(path.expansionPoint.x, path.expansionPoint.y)
+    ctx.lineTo(path.convergencePoint.x, path.convergencePoint.y)
+    ctx.lineTo(path.exitPoint.x, path.exitPoint.y)
+    ctx.stroke()
+  })
+}
+
+const getProjectileRenderFamilyId = (projectile: Pick<Projectile, 'sourceSkillFamilyId' | 'sourceEvolutionId'>) => (
+  projectile.sourceSkillFamilyId
+  ?? (projectile.sourceEvolutionId ? ARCHER_SKILL_EVOLUTION_MAP[projectile.sourceEvolutionId]?.familyId : undefined)
+)
+
+/**
+ * Flight-route lines are deliberately opt-in. The runtime provenance is the
+ * only classifier: all scatter-suppression families (core and evolved) keep
+ * their actual arrow sprites, but no longer draw a line behind each arrow.
+ * Other families retain their route rendering if they expose a compatible
+ * path contract.
+ */
+export const shouldRenderProjectileFlightTrail = (
+  projectile: Pick<Projectile, 'doubleCrescentPath' | 'sourceSkillFamilyId' | 'sourceEvolutionId'>,
+) => {
+  if (!projectile.doubleCrescentPath) return false
+  const familyId = getProjectileRenderFamilyId(projectile)
+  return ARCHER_CORE_SKILL_CONTRACT_MAP[familyId ?? '']?.buildTag !== 'spread'
+}
+
+/**
+ * Draws only explicitly permitted in-flight route lines. This stays separate
+ * from cast warnings, hit feedback, fields and arrow sprites so suppressing
+ * scatter trails can never alter simulation or those other presentation
+ * layers.
+ */
+export const drawProjectileFlightTrails = (ctx: CanvasRenderingContext2D, projectiles: readonly Projectile[]) => {
+  const trailedProjectiles = projectiles.filter(shouldRenderProjectileFlightTrail)
+  if (trailedProjectiles.length === 0) return
+
+  withEffectAlpha(ctx, 0.24, () => {
+    ctx.lineWidth = 1
+    trailedProjectiles.forEach((projectile) => {
+      ctx.strokeStyle = projectile.color
+      getDoubleCrescentProjectileRenderSegments(projectile).forEach(({ start, end }) => {
+        drawShapeLine(ctx, start, end)
+      })
+    })
+  })
+}
+
+export const drawSpiralBreakFlightTrails = (
+  ctx: CanvasRenderingContext2D,
+  state: Pick<GameSnapshot, 'projectiles' | 'spiralBreakFlights' | 'enemies'>,
+) => {
+  const visibleCastIds = new Set(
+    (state.spiralBreakFlights ?? [])
+      .filter((flight) => flight.presentationRemaining > 0)
+      .map((flight) => flight.castId),
+  )
+  const arrows = state.projectiles.filter((projectile) => (
+    projectile.spiralBreakFlight && visibleCastIds.has(projectile.spiralBreakFlight.castId)
+  ))
+  if (arrows.length === 0) return
+
+  withEffectAlpha(ctx, prefersReducedMotion() ? 0.3 : 0.38, () => {
+    arrows.forEach((projectile) => {
+      const flight = projectile.spiralBreakFlight!
+      const target = flight.lockedTargetId
+        ? state.enemies.find((enemy) => enemy.id === flight.lockedTargetId && enemy.hp > 0)
+        : undefined
+      const isCrossCut = flight.evolutionId === 'cross-cut'
+      ctx.strokeStyle = flight.evolutionId === 'blood-scent'
+        ? '#fda4af'
+        : isCrossCut && flight.rotationDirection < 0
+          ? '#bfdbfe'
+          : '#e9d5ff'
+      ctx.lineWidth = isCrossCut ? 1.5 : 1.25
+      getSpiralBreakProjectileRenderSegments(projectile).forEach(({ start, end }) => {
+        drawShapeLine(ctx, start, end)
+      })
+      if (target) {
+        // This is a lock indicator, not an invented projectile path. Target
+        // selection and boundary checks remain entirely in A1's flight state.
+        ctx.setLineDash([2, 3])
+        drawShapeLine(ctx, projectile.position, target.position)
+        ctx.setLineDash([])
+      }
+    })
+  })
+}
+
+const getFanImpactRadius = (geometry: SkillEvolutionFanGeometry) => (
+  geometry.range * (0.02 + geometry.skillLevel * 0.004)
+)
+
+const prefersReducedMotion = () => (
+  typeof globalThis.matchMedia === 'function'
+  && globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches
+)
 
 const drawShapeBurst = (ctx: CanvasRenderingContext2D, target: Vector2, radius: number, rayCount: number, progress: number) => {
   ctx.beginPath()
@@ -328,8 +610,65 @@ const drawShapeBeast = (ctx: CanvasRenderingContext2D, target: Vector2, radius: 
   }
 }
 
+const isSpiralBreakEffectEvent = (event: SkillEvolutionEffectEvent) => event.familyId === 'spiral-break'
+
+const getSkillEvolutionEffectFamilyId = (event: Pick<SkillEvolutionEffectEvent, 'familyId' | 'evolutionId'>) => (
+  event.familyId ?? ARCHER_SKILL_EVOLUTION_MAP[event.evolutionId]?.familyId
+)
+
+/**
+ * Scatter casts already have real arrow sprites and hit events. Their fan and
+ * route strokes are presentation-only geometry previews, so never render
+ * them in any event lifecycle layer.
+ */
+const isScatterSuppressionEffectEvent = (event: Pick<SkillEvolutionEffectEvent, 'familyId' | 'evolutionId'>) => (
+  ARCHER_CORE_SKILL_CONTRACT_MAP[getSkillEvolutionEffectFamilyId(event) ?? '']?.buildTag === 'spread'
+)
+
+/**
+ * The engine emits this only after a real spiral-break arrival resolves.  The
+ * renderer deliberately keeps the feedback to one mark: a cross-cut's
+ * `hitCount: 2` is the already-merged real 2x hit, not two invented hits.
+ */
+const drawSpiralBreakHitFeedback = (ctx: CanvasRenderingContext2D, event: SkillEvolutionEffectEvent) => {
+  const target = event.targetPosition ?? event.position
+  const direction = getEffectDirection(event)
+  const perpendicular = getPerpendicular(direction)
+  const radius = Math.max(8, event.radius ?? 10)
+
+  if (event.evolutionId === 'cross-cut' && event.hitCount === 2) {
+    ctx.strokeStyle = '#fef3c7'
+    ctx.lineWidth = 2
+    drawShapeLine(ctx,
+      { x: target.x - direction.x * radius - perpendicular.x * radius * 0.6, y: target.y - direction.y * radius - perpendicular.y * radius * 0.6 },
+      { x: target.x + direction.x * radius + perpendicular.x * radius * 0.6, y: target.y + direction.y * radius + perpendicular.y * radius * 0.6 },
+    )
+    drawShapeLine(ctx,
+      { x: target.x - direction.x * radius + perpendicular.x * radius * 0.6, y: target.y - direction.y * radius + perpendicular.y * radius * 0.6 },
+      { x: target.x + direction.x * radius - perpendicular.x * radius * 0.6, y: target.y + direction.y * radius - perpendicular.y * radius * 0.6 },
+    )
+    ctx.fillStyle = '#fef3c7'
+    ctx.font = '10px monospace'
+    ctx.fillText('交叉切击 2x', target.x + radius + 4, target.y - radius - 4)
+    return
+  }
+
+  // A single actual arrival gets one short directional notch. This does not
+  // express an execute threshold and never fabricates a second impact.
+  ctx.strokeStyle = event.evolutionId === 'blood-scent' ? '#fda4af' : '#e9d5ff'
+  ctx.lineWidth = 1.5
+  drawShapeLine(ctx,
+    { x: target.x - direction.x * radius, y: target.y - direction.y * radius },
+    { x: target.x + direction.x * radius, y: target.y + direction.y * radius },
+  )
+}
+
 const drawSkillEvolutionWarning = (ctx: CanvasRenderingContext2D, event: SkillEvolutionEffectEvent, progress: number) => {
+  // The active flight snapshot and real projectile sweeps own spiral-break
+  // paths. Event-only rings would detach the cue from current locks.
+  if (isSpiralBreakEffectEvent(event) || isScatterSuppressionEffectEvent(event)) return
   const profile = getSkillEvolutionEffectRenderProfile(event.evolutionId)
+  const fanGeometry = getSkillEvolutionFanRenderGeometry(event)
   const direction = getEffectDirection(event)
   const target = getEffectTarget(event, direction)
   const radius = getEffectRadius(event, profile)
@@ -339,7 +678,11 @@ const drawSkillEvolutionWarning = (ctx: CanvasRenderingContext2D, event: SkillEv
     ctx.strokeStyle = profile.edge
     ctx.lineWidth = 1.5
     ctx.setLineDash([4, 3])
-    if (profile.shape === 'fan') {
+    if (fanGeometry?.path?.kind === 'double-crescent') {
+      drawShapeDoubleCrescent(ctx, fanGeometry)
+    } else if (fanGeometry) {
+      drawShapeFanGeometry(ctx, fanGeometry)
+    } else if (profile.shape === 'fan') {
       drawShapeFan(ctx, event.origin, direction, length, profile.spread, Math.min(5, profile.projectileCount))
     } else if (profile.shape === 'burst') {
       drawShapeBurst(ctx, target, radius * (0.68 + progress * 0.32), Math.min(6, profile.projectileCount + 2), progress)
@@ -359,7 +702,9 @@ const drawSkillEvolutionWarning = (ctx: CanvasRenderingContext2D, event: SkillEv
 }
 
 const drawSkillEvolutionBody = (ctx: CanvasRenderingContext2D, event: SkillEvolutionEffectEvent, progress: number) => {
+  if (isSpiralBreakEffectEvent(event) || isScatterSuppressionEffectEvent(event)) return
   const profile = getSkillEvolutionEffectRenderProfile(event.evolutionId)
+  const fanGeometry = getSkillEvolutionFanRenderGeometry(event)
   const direction = getEffectDirection(event)
   const target = getEffectTarget(event, direction)
   const radius = getEffectRadius(event, profile) * getEffectPulse(profile, event, progress)
@@ -367,7 +712,13 @@ const drawSkillEvolutionBody = (ctx: CanvasRenderingContext2D, event: SkillEvolu
   withEffectAlpha(ctx, 0.56 * (1 - progress * 0.45), () => {
     ctx.strokeStyle = profile.accent
     ctx.lineWidth = 2
-    if (profile.shape === 'fan') {
+    if (fanGeometry?.path?.kind === 'double-crescent') {
+      drawShapeDoubleCrescent(ctx, fanGeometry)
+      return
+    } else if (fanGeometry) {
+      drawShapeFanGeometry(ctx, fanGeometry)
+      return
+    } else if (profile.shape === 'fan') {
       drawShapeFan(ctx, event.origin, direction, length, profile.spread, Math.min(6, profile.projectileCount))
     } else if (profile.shape === 'burst') {
       drawShapeBurst(ctx, target, radius, Math.min(7, profile.projectileCount + profile.pierce + 2), progress)
@@ -402,14 +753,57 @@ const drawSkillEvolutionBody = (ctx: CanvasRenderingContext2D, event: SkillEvolu
 }
 
 const drawSkillEvolutionHit = (ctx: CanvasRenderingContext2D, event: SkillEvolutionEffectEvent, progress: number) => {
+  if (isSpiralBreakEffectEvent(event)) {
+    withEffectAlpha(ctx, 0.62 * (1 - progress * 0.55), () => drawSpiralBreakHitFeedback(ctx, event))
+    return
+  }
   const profile = getSkillEvolutionEffectRenderProfile(event.evolutionId)
+  const fanGeometry = getSkillEvolutionFanRenderGeometry(event)
   const direction = getEffectDirection(event)
   const target = getEffectTarget(event, direction)
   const radius = getEffectRadius(event, profile) * (0.55 + progress * 0.85)
+
+  if (isScatterSuppressionEffectEvent(event)) {
+    // This event exists only after real damage resolution. Keep the actual
+    // impact/status burst while omitting every cone, arc, spoke, and route
+    // outline that would otherwise preview scatter geometry.
+    const impactRadius = fanGeometry
+      ? getFanImpactRadius(fanGeometry)
+      : radius * 0.5
+    withEffectAlpha(ctx, 0.68 * (1 - progress * 0.6), () => {
+      ctx.strokeStyle = profile.accent
+      ctx.lineWidth = 1.5
+      drawShapeBurst(ctx, target, impactRadius, Math.min(6, profile.projectileCount + 2), progress)
+    })
+    return
+  }
+
   withEffectAlpha(ctx, 0.68 * (1 - progress * 0.6), () => {
     ctx.strokeStyle = profile.edge
     ctx.lineWidth = 2
-    if (profile.shape === 'fan') {
+    if (fanGeometry?.path?.kind === 'double-crescent') {
+      drawShapeDoubleCrescent(ctx, fanGeometry)
+      ctx.strokeStyle = profile.accent
+      ctx.lineWidth = 1
+      drawShapeBurst(
+        ctx,
+        target,
+        getFanImpactRadius(fanGeometry),
+        fanGeometry.projectileCount,
+        prefersReducedMotion() ? 0 : progress,
+      )
+    } else if (fanGeometry) {
+      drawShapeFanGeometry(ctx, fanGeometry)
+      ctx.strokeStyle = profile.accent
+      ctx.lineWidth = 1
+      drawShapeBurst(
+        ctx,
+        target,
+        getFanImpactRadius(fanGeometry),
+        fanGeometry.projectileCount,
+        prefersReducedMotion() ? 0 : progress,
+      )
+    } else if (profile.shape === 'fan') {
       drawShapeFan(ctx, target, direction, radius, profile.spread, Math.min(6, profile.projectileCount))
     } else if (profile.shape === 'burst') {
       drawShapeBurst(ctx, target, radius, Math.min(8, profile.projectileCount + profile.pierce + 2), progress)
@@ -428,13 +822,16 @@ const drawSkillEvolutionHit = (ctx: CanvasRenderingContext2D, event: SkillEvolut
         { x: target.x + direction.x * radius - perpendicular.x * radius * 0.35, y: target.y + direction.y * radius - perpendicular.y * radius * 0.35 },
       )
     }
-    ctx.strokeStyle = profile.accent
-    ctx.lineWidth = 1.5
-    drawShapeBurst(ctx, target, radius * 0.5, Math.min(6, profile.projectileCount + 2), progress)
+    if (!fanGeometry) {
+      ctx.strokeStyle = profile.accent
+      ctx.lineWidth = 1.5
+      drawShapeBurst(ctx, target, radius * 0.5, Math.min(6, profile.projectileCount + 2), progress)
+    }
   })
 }
 
 const drawSkillEvolutionEvolve = (ctx: CanvasRenderingContext2D, event: SkillEvolutionEffectEvent, progress: number) => {
+  if (isSpiralBreakEffectEvent(event) || isScatterSuppressionEffectEvent(event)) return
   const profile = getSkillEvolutionEffectRenderProfile(event.evolutionId)
   const radius = getEffectRadius(event, profile) * (0.6 + progress * 0.45)
   withEffectAlpha(ctx, 0.58 * (1 - progress * 0.35), () => {
@@ -581,14 +978,17 @@ export const getInfiniteFloorTileIndexForWorldPosition = (
   seed: number,
 ) => getInfiniteFloorTileIndex(Math.floor(x / TILE_SIZE), Math.floor(y / TILE_SIZE), level, seed)
 
-export const getCameraOffset = (state: GameSnapshot): Vector2 => {
+export const getCameraOffset = (
+  state: GameSnapshot,
+  viewport: CombatCanvasViewportSize = { width: WORLD_WIDTH, height: WORLD_HEIGHT },
+): Vector2 => {
   if (state.phase === 'idle' || state.phase === 'game-over' || state.battlefield.mode === 'village') {
     return { x: 0, y: 0 }
   }
 
   return {
-    x: Math.round(state.player.position.x - WORLD_WIDTH / 2),
-    y: Math.round(state.player.position.y - WORLD_HEIGHT / 2),
+    x: Math.round(state.player.position.x - viewport.width / 2),
+    y: Math.round(state.player.position.y - viewport.height / 2),
   }
 }
 
@@ -608,8 +1008,12 @@ const moveCameraAxis = (previous: number, target: number) => {
   return Math.round(previous + step)
 }
 
-export const getSmoothedCameraOffset = (state: GameSnapshot, previous?: Vector2): Vector2 => {
-  const target = getCameraOffset(state)
+export const getSmoothedCameraOffset = (
+  state: GameSnapshot,
+  previous?: Vector2,
+  viewport: CombatCanvasViewportSize = { width: WORLD_WIDTH, height: WORLD_HEIGHT },
+): Vector2 => {
+  const target = getCameraOffset(state, viewport)
   if (!previous || state.phase === 'idle' || state.phase === 'game-over' || state.battlefield.mode === 'village') {
     return target
   }
@@ -629,11 +1033,21 @@ export const shouldUseLevelOneDungeonFloorTile = (state: GameSnapshot) => (
   && getCampaignIndex(state.level) === 1
 )
 
-export const getLevelOneDungeonFloorTileRange = (camera: Vector2) => ({
+// The legacy tile is loaded lazily only after the primary source fails. Once
+// the source is ready, in-progress chunk builds retain an available surface.
+export const shouldDrawLevelOneDungeonLegacyFallback = (
+  state: GameSnapshot,
+  terrainStatus: FirstDungeonGodotTerrainDrawStatus,
+) => shouldUseLevelOneDungeonFloorTile(state) && terrainStatus === 'failed'
+
+export const getLevelOneDungeonFloorTileRange = (
+  camera: Vector2,
+  viewport: CombatCanvasViewportSize = { width: WORLD_WIDTH, height: WORLD_HEIGHT },
+) => ({
   startTileX: Math.floor(camera.x / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) - 1,
-  endTileX: Math.ceil((camera.x + WORLD_WIDTH) / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) + 1,
+  endTileX: Math.ceil((camera.x + viewport.width) / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) + 1,
   startTileY: Math.floor(camera.y / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) - 1,
-  endTileY: Math.ceil((camera.y + WORLD_HEIGHT) / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) + 1,
+  endTileY: Math.ceil((camera.y + viewport.height) / LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE) + 1,
 })
 
 const getLoadedLevelOneDungeonFloorImage = () => {
@@ -652,6 +1066,43 @@ const getLoadedLevelOneDungeonFloorImage = () => {
   }
 
   return levelOneDungeonFloorImage
+}
+
+export const getCombatCanvasLogicalViewportSize = (ctx: CanvasRenderingContext2D): CombatCanvasViewportSize => {
+  const transform = typeof ctx.getTransform === 'function' ? ctx.getTransform() : undefined
+  const scaleX = Math.abs(transform?.a ?? 1) || 1
+  const scaleY = Math.abs(transform?.d ?? 1) || 1
+  return {
+    width: ctx.canvas?.width ? ctx.canvas.width / scaleX : WORLD_WIDTH,
+    height: ctx.canvas?.height ? ctx.canvas.height / scaleY : WORLD_HEIGHT,
+  }
+}
+
+export const resetCombatDarkMaskImageForTests = () => {
+  combatDarkMaskImage = null
+}
+
+export const drawCombatDarkMask = (ctx: CanvasRenderingContext2D) => {
+  if (typeof Image === 'undefined') return false
+  if (!combatDarkMaskImage) {
+    combatDarkMaskImage = new Image()
+    combatDarkMaskImage.decoding = 'async'
+    combatDarkMaskImage.src = COMBAT_DARK_MASK_SRC
+  }
+  if (
+    !combatDarkMaskImage.complete
+    || combatDarkMaskImage.naturalWidth !== COMBAT_DARK_MASK_SOURCE_SIZE.width
+    || combatDarkMaskImage.naturalHeight !== COMBAT_DARK_MASK_SOURCE_SIZE.height
+  ) return false
+
+  const viewport = getCombatCanvasLogicalViewportSize(ctx)
+  ctx.save()
+  ctx.imageSmoothingEnabled = false
+  ctx.globalCompositeOperation = 'source-over'
+  ctx.globalAlpha = COMBAT_DARK_MASK_OPACITY
+  ctx.drawImage(combatDarkMaskImage, 0, 0, viewport.width, viewport.height)
+  ctx.restore()
+  return true
 }
 
 export const getTerrainAssetImageSrc = (asset: TerrainAssetDefinition) => `${import.meta.env.BASE_URL}${asset.src}`
@@ -743,7 +1194,7 @@ const drawLevelOneDungeonFloor = (ctx: CanvasRenderingContext2D, camera: Vector2
   ctx.imageSmoothingEnabled = false
   ctx.save()
   ctx.translate(-camera.x, -camera.y)
-  const range = getLevelOneDungeonFloorTileRange(camera)
+  const range = getLevelOneDungeonFloorTileRange(camera, getCombatCanvasLogicalViewportSize(ctx))
   for (let tileY = range.startTileY; tileY <= range.endTileY; tileY += 1) {
     for (let tileX = range.startTileX; tileX <= range.endTileX; tileX += 1) {
       ctx.drawImage(
@@ -830,21 +1281,39 @@ const drawDungeonWardenArenaStatus = (ctx: CanvasRenderingContext2D, state: Game
   ctx.restore()
 }
 
-const drawInfiniteFloor = (ctx: CanvasRenderingContext2D, state: GameSnapshot, camera: Vector2) => {
+const drawInfiniteFloor = (
+  ctx: CanvasRenderingContext2D,
+  state: GameSnapshot,
+  camera: Vector2,
+) => {
   const theme = getCampaignThemeForLevel(state.level)
+  const viewport = getCombatCanvasLogicalViewportSize(ctx)
   ctx.fillStyle = theme.floorDark
-  ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
+  ctx.fillRect(0, 0, viewport.width, viewport.height)
 
-  if (shouldUseLevelOneDungeonFloorTile(state) && drawLevelOneDungeonFloor(ctx, camera)) {
-    return
+  if (shouldUseLevelOneDungeonFloorTile(state)) {
+    const terrainStatus = drawFirstDungeonGodotTerrain(
+      ctx,
+      state.battlefield.seed,
+      camera,
+      getCampaignIndex(state.level),
+      state.level,
+    )
+    if (terrainStatus === 'drawn' || terrainStatus === 'building') {
+      return
+    }
+    // The old tile is requested only after a primary-resource failure.
+    if (shouldDrawLevelOneDungeonLegacyFallback(state, terrainStatus) && drawLevelOneDungeonFloor(ctx, camera)) {
+      return
+    }
   }
 
   ctx.save()
   ctx.translate(-camera.x, -camera.y)
   const startTileX = Math.floor(camera.x / TILE_SIZE) - 1
-  const endTileX = Math.ceil((camera.x + WORLD_WIDTH) / TILE_SIZE) + 1
+  const endTileX = Math.ceil((camera.x + viewport.width) / TILE_SIZE) + 1
   const startTileY = Math.floor(camera.y / TILE_SIZE) - 1
-  const endTileY = Math.ceil((camera.y + WORLD_HEIGHT) / TILE_SIZE) + 1
+  const endTileY = Math.ceil((camera.y + viewport.height) / TILE_SIZE) + 1
   const seed = state.battlefield.seed
   for (let tileY = startTileY; tileY <= endTileY; tileY += 1) {
     for (let tileX = startTileX; tileX <= endTileX; tileX += 1) {
@@ -1119,8 +1588,62 @@ const drawMiniArrow = (ctx: CanvasRenderingContext2D, x: number, y: number, angl
   ctx.restore()
 }
 
+/**
+ * The tower body is a passive visualization of A1's deployed records. It
+ * deliberately never draws volley arrows: actual tower projectiles and their
+ * warning/body/hit effects arrive through the shared runtime event stream.
+ */
+export const drawArrowTurrets = (ctx: CanvasRenderingContext2D, state: Pick<GameSnapshot, 'skillFields'>) => {
+  getArrowTurretPresentation(state).forEach((tower) => {
+    const isResonance = tower.variant === 'resonance'
+    const isTaunt = tower.variant === 'taunt'
+    const isTaunting = tower.tauntRemaining > 0
+    const isBerserk = tower.berserkRemaining > 0
+    const coreColor = isResonance ? '#67e8f9' : isTaunt ? '#fbbf24' : '#93c5fd'
+    const edgeColor = isBerserk ? '#fb7185' : '#f4f0d7'
+
+    ctx.save()
+
+    if (isTaunting && tower.tauntRadius !== undefined) {
+      ctx.globalAlpha = 0.2
+      ctx.strokeStyle = '#fde68a'
+      ctx.lineWidth = 1
+      ctx.setLineDash([4, 3])
+      ctx.beginPath()
+      ctx.arc(tower.position.x, tower.position.y, tower.tauntRadius, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
+
+    pixel(ctx, tower.position.x - 13, tower.position.y - 20, 26, 34, 'rgba(8, 16, 11, 0.46)')
+    pixel(ctx, tower.position.x - 10, tower.position.y - 18, 20, 28, '#22313a')
+    pixel(ctx, tower.position.x - 8, tower.position.y - 16, 16, 18, coreColor)
+    pixel(ctx, tower.position.x - 6, tower.position.y - 14, 12, 14, '#101c24')
+    pixel(ctx, tower.position.x - 8, tower.position.y - 24, 16, 8, edgeColor)
+    pixel(ctx, tower.position.x - 16, tower.position.y + 12, 32, 4, isBerserk ? '#fb7185' : coreColor)
+
+    if (isResonance && tower.inheritedEffect) {
+      pixel(ctx, tower.position.x - 2, tower.position.y - 31, 4, 5, '#a7f3d0')
+      pixel(ctx, tower.position.x - 5, tower.position.y - 29, 10, 2, '#67e8f9')
+    }
+
+    if (isBerserk) {
+      pixel(ctx, tower.position.x - 13, tower.position.y - 29, 4, 3, '#fda4af')
+      pixel(ctx, tower.position.x + 9, tower.position.y - 29, 4, 3, '#fda4af')
+    }
+
+    ctx.restore()
+  })
+}
+
 const drawSkillFields = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
   state.skillFields.forEach((field) => {
+    // The independent arrow-turret has its own static body renderer. Keeping it out of
+    // the generic turret path prevents decorative mini-arrows from implying
+    // projectiles that A1 did not create.
+    if (field.sourceSkillFamilyId === 'arrow-turret' && field.arrowTurret) {
+      return
+    }
     const pulse = 0.5 + Math.sin(state.elapsedTime * 5 + field.position.x * 0.01) * 0.18
     const isIce = field.sourceSkillId.includes('ice') || field.sourceSkillId.includes('frost') || field.color === '#bfdbfe'
     const isFire = field.sourceSkillId.includes('fire') || field.sourceSkillId.includes('starfire') || field.sourceSkillId.includes('sun')
@@ -1233,6 +1756,8 @@ const drawSkillFields = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => 
       }
     }
   })
+
+  drawArrowTurrets(ctx, state)
 }
 
 const getEliteRingFadeAlpha = (effect: EnemySkillEffect) => (
@@ -1649,8 +2174,150 @@ export const getEnemyTalentStateIndicators = (enemy: Enemy): EnemyTalentStateInd
     .map(({ key, label, color, ttl = 0, stacks = 0 }) => ({ key, label, color, detail: formatTalentStateDetail(ttl, stacks) }))
 }
 
-const drawEnemyStatusIndicators = (ctx: CanvasRenderingContext2D, enemy: Enemy, time: number) => {
+export const drawBeastContractPawMarks = (
+  ctx: CanvasRenderingContext2D,
+  enemy: Pick<Enemy, 'position' | 'size'>,
+  marks: number,
+) => {
+  const visibleMarks = Math.max(0, Math.min(5, Math.floor(marks)))
+  if (visibleMarks === 0) return
+  const topY = enemy.position.y - enemy.size * 0.82 - 29
+  const totalWidth = visibleMarks * 7 - 1
+  const left = enemy.position.x - totalWidth / 2
+  ctx.save()
+  for (let index = 0; index < visibleMarks; index += 1) {
+    const x = left + index * 7
+    pixel(ctx, x + 2, topY + 3, 4, 3, '#fbbf24')
+    pixel(ctx, x + 1, topY + 1, 2, 2, '#fef3c7')
+    pixel(ctx, x + 4, topY, 2, 2, '#fef3c7')
+  }
+  ctx.restore()
+}
+
+const PACK_HUNT_MARKER_DURATION = 0.65
+
+let observedPackHuntEventSequence: number | undefined
+let activePackHuntMarker: { targetId: string; expiresAt: number } | null = null
+
+export const resetPackHuntTargetMarkerForTests = () => {
+  observedPackHuntEventSequence = undefined
+  activePackHuntMarker = null
+}
+
+export const getVisiblePackHuntTargetId = (
+  beast: Pick<ReturnType<typeof getBeastContractDomainPresentationSnapshot>['beast'], 'lastPackHuntTargetId' | 'packHuntEventSequence'>,
+  elapsedTime: number,
+  visibleEnemyIds: ReadonlySet<string>,
+) => {
+  const sequence = beast.packHuntEventSequence
+  if (observedPackHuntEventSequence === undefined) {
+    observedPackHuntEventSequence = sequence
+    return undefined
+  }
+  if (sequence < observedPackHuntEventSequence || !beast.lastPackHuntTargetId) {
+    observedPackHuntEventSequence = sequence
+    activePackHuntMarker = null
+    return undefined
+  }
+  if (sequence > observedPackHuntEventSequence) {
+    observedPackHuntEventSequence = sequence
+    activePackHuntMarker = visibleEnemyIds.has(beast.lastPackHuntTargetId)
+      ? { targetId: beast.lastPackHuntTargetId, expiresAt: elapsedTime + PACK_HUNT_MARKER_DURATION }
+      : null
+  }
+  if (!activePackHuntMarker
+    || elapsedTime > activePackHuntMarker.expiresAt
+    || !visibleEnemyIds.has(activePackHuntMarker.targetId)) {
+    activePackHuntMarker = null
+    return undefined
+  }
+  return activePackHuntMarker.targetId
+}
+
+export const drawPackHuntTargetMarker = (
+  ctx: CanvasRenderingContext2D,
+  enemy: Pick<Enemy, 'position' | 'size'>,
+) => {
+  const radius = enemy.size * 0.72 + 8
+  const left = enemy.position.x - radius
+  const right = enemy.position.x + radius
+  const top = enemy.position.y - radius
+  const bottom = enemy.position.y + radius
+  const corner = 7
+  ctx.save()
+  ctx.strokeStyle = '#fde68a'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(left, top + corner)
+  ctx.lineTo(left, top)
+  ctx.lineTo(left + corner, top)
+  ctx.moveTo(right - corner, top)
+  ctx.lineTo(right, top)
+  ctx.lineTo(right, top + corner)
+  ctx.moveTo(right, bottom - corner)
+  ctx.lineTo(right, bottom)
+  ctx.lineTo(right - corner, bottom)
+  ctx.moveTo(left + corner, bottom)
+  ctx.lineTo(left, bottom)
+  ctx.lineTo(left, bottom - corner)
+  ctx.stroke()
+  drawBeastContractPawMarks(ctx, enemy, 1)
+  ctx.restore()
+}
+
+export const drawBeastContractDomainAuras = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
+  const presentation = getBeastContractDomainPresentationSnapshot(state)
+  if (presentation.beast.domainRemaining <= 0
+    && presentation.domain.resonanceCount <= 0
+    && presentation.domain.suppressionCount <= 0
+    && presentation.domain.celestialRemaining <= 0) return
+
+  ctx.save()
+  ctx.lineWidth = 2
+  if (presentation.beast.domainRemaining > 0) {
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.46)'
+    ctx.beginPath()
+    ctx.arc(state.player.position.x, state.player.position.y, 34, 0.16, Math.PI * 1.84)
+    ctx.stroke()
+  }
+  if (presentation.domain.resonanceCount > 0) {
+    ctx.strokeStyle = 'rgba(45, 212, 191, 0.4)'
+    ctx.beginPath()
+    ctx.arc(state.player.position.x, state.player.position.y, 27, Math.PI * 0.12, Math.PI * 0.7)
+    ctx.arc(state.player.position.x, state.player.position.y, 27, Math.PI * 1.12, Math.PI * 1.7)
+    ctx.stroke()
+  }
+  if (presentation.domain.suppressionCount > 0) {
+    const radius = 31
+    ctx.strokeStyle = 'rgba(167, 139, 250, 0.42)'
+    ctx.beginPath()
+    ctx.moveTo(state.player.position.x, state.player.position.y - radius)
+    ctx.lineTo(state.player.position.x + radius, state.player.position.y)
+    ctx.lineTo(state.player.position.x, state.player.position.y + radius)
+    ctx.lineTo(state.player.position.x - radius, state.player.position.y)
+    ctx.closePath()
+    ctx.stroke()
+  }
+  if (presentation.domain.celestialRemaining > 0) {
+    ctx.strokeStyle = 'rgba(94, 234, 212, 0.44)'
+    ctx.beginPath()
+    ctx.arc(state.player.position.x, state.player.position.y, 43, Math.PI * 0.16, Math.PI * 1.84)
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+export const drawEnemyStatusIndicators = (
+  ctx: CanvasRenderingContext2D,
+  enemy: Enemy,
+  time: number,
+  beastContractMarks = 0,
+  packHuntTarget = false,
+) => {
   const topY = enemy.position.y - enemy.size * 0.82
+
+  if (packHuntTarget) drawPackHuntTargetMarker(ctx, enemy)
+  drawBeastContractPawMarks(ctx, enemy, beastContractMarks)
 
   if (enemy.markStacks > 0) {
     const width = 10 + enemy.markStacks * 4
@@ -1681,7 +2348,9 @@ const drawEnemyStatusIndicators = (ctx: CanvasRenderingContext2D, enemy: Enemy, 
     const totalHeight = talentIndicators.length * ENEMY_TALENT_STATUS_CHIP_HEIGHT
       + (talentIndicators.length - 1) * ENEMY_TALENT_STATUS_CHIP_ROW_GAP
     const healthBarTop = enemy.position.y - enemy.size * 0.72 - 13
-    const markTop = enemy.markStacks > 0 ? topY - 17 : Number.POSITIVE_INFINITY
+    const legacyMarkTop = enemy.markStacks > 0 ? topY - 17 : Number.POSITIVE_INFINITY
+    const beastMarkTop = beastContractMarks > 0 ? topY - 29 : Number.POSITIVE_INFINITY
+    const markTop = Math.min(legacyMarkTop, beastMarkTop)
     const chipBottom = Math.min(healthBarTop - 4, markTop - 4)
     let chipY = chipBottom - totalHeight
 
@@ -2051,9 +2720,20 @@ const drawVillage = (ctx: CanvasRenderingContext2D, state: GameSnapshot) => {
   drawPortalAndBoard(ctx, state)
 }
 
-export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot, cameraOverride?: Vector2) => {
+export type RenderGameOptions = Readonly<{
+  suppressLevelOneDungeonFloor?: boolean
+}>
+
+export const renderGame = (
+  ctx: CanvasRenderingContext2D,
+  state: GameSnapshot,
+  cameraOverride?: Vector2,
+  options: RenderGameOptions = {},
+) => {
+  void options
   ctx.imageSmoothingEnabled = false
-  ctx.clearRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
+  const viewport = getCombatCanvasLogicalViewportSize(ctx)
+  ctx.clearRect(0, 0, viewport.width, viewport.height)
   const camera = cameraOverride ?? getCameraOffset(state)
 
   if (state.phase === 'idle' || state.phase === 'game-over') {
@@ -2082,6 +2762,8 @@ export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot, c
     drawPickups(ctx, state)
     drawSkillFields(ctx, state)
     drawEnemySkillEffects(ctx, state)
+    drawProjectileFlightTrails(ctx, state.projectiles)
+    drawSpiralBreakFlightTrails(ctx, state)
 
     state.projectiles
       .filter((projectile) => (projectile.releaseDelayRemaining ?? 0) <= 0)
@@ -2090,25 +2772,47 @@ export const renderGame = (ctx: CanvasRenderingContext2D, state: GameSnapshot, c
     drawSkillEvolutionEffectEvents(ctx, state)
     state.beastCompanions.forEach((beast) => {
       drawBeastCompanionSprite(ctx, beast, state.elapsedTime, getBeastCompanionEvolutionVisualScale(beast))
-      drawBeastHealthBar(ctx, beast)
     })
     state.enemies.forEach((enemy) => {
       const actionOverride = state.chainWraithPullVisual?.casterId === enemy.id ? 'skill' : undefined
       drawEnemySprite(ctx, enemy, state.elapsedTime, state.level, { actionOverride })
-      if (enemy.hp > 0) {
-        drawEnemyHealthBar(ctx, enemy)
-        drawEnemyStatusIndicators(ctx, enemy, state.elapsedTime)
-      }
     })
 
     drawChainWraithPullVisual(ctx, state)
 
     drawPlayerGrowthEffects(ctx, state)
+    drawBeastContractDomainAuras(ctx, state)
     drawPlayerSprite(ctx, state.player, state.elapsedTime, getPlayerArcherRenderInput(state))
     drawJailerChiefBind(ctx, state.player, state.elapsedTime)
+    drawBursts(ctx, state)
+    ctx.restore()
+
+    drawCombatDarkMask(ctx)
+
+    ctx.save()
+    ctx.translate(-camera.x, -camera.y)
+    state.beastCompanions.forEach((beast) => drawBeastHealthBar(ctx, beast))
+    const beastContractDomainPresentation = getBeastContractDomainPresentationSnapshot(state)
+    const visibleEnemyIds = new Set(state.enemies.filter((enemy) => enemy.hp > 0).map((enemy) => enemy.id))
+    const packHuntTargetId = getVisiblePackHuntTargetId(
+      beastContractDomainPresentation.beast,
+      state.elapsedTime,
+      visibleEnemyIds,
+    )
+    state.enemies.forEach((enemy) => {
+      if (enemy.hp > 0) {
+        drawEnemyHealthBar(ctx, enemy)
+        drawEnemyStatusIndicators(
+          ctx,
+          enemy,
+          state.elapsedTime,
+          beastContractDomainPresentation.beast.marksByEnemyId[enemy.id] ?? 0,
+          packHuntTargetId === enemy.id,
+        )
+      }
+    })
     drawPlayerHealthBar(ctx, state.player)
     drawAimCursor(ctx, state)
-    drawBursts(ctx, state)
     drawFloatingTexts(ctx, state)
     ctx.restore()
     drawDungeonWardenArenaOverlay(ctx, state, camera)
