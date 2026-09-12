@@ -16,6 +16,12 @@ import {
   type CombatLaunchTarget,
 } from '../game/combatLoading'
 import {
+  clearCombatLaunchRuntimePreparation,
+  createCombatLaunchRuntimeContext,
+  isCombatLaunchRuntimeReady,
+  startCombatLaunchRuntimePreparation,
+} from '../game/combatRuntimeReadiness'
+import {
   acceptSkillRewardSnapshot,
   advanceGame,
   applyLocalBattleTestMonsterConfigSnapshot,
@@ -1046,9 +1052,14 @@ export const useGameStore = create<GameStore>()(
             return state
           }
           const launchId = createCombatLaunchId()
+          const runtimeContext = createCombatLaunchRuntimeContext()
           result = { ok: true, launchId, descriptor, errors: [] }
-          return { ...state, combatLaunchGate: createPendingCombatLaunchGate(launchId, descriptor) }
+          return { ...state, combatLaunchGate: createPendingCombatLaunchGate(launchId, descriptor, runtimeContext) }
         })
+        const gate = get().combatLaunchGate
+        if (result.ok && gate.launchId && gate.descriptor && gate.runtimeContext) {
+          startCombatLaunchRuntimePreparation(gate.launchId, gate.descriptor, gate.runtimeContext)
+        }
         return result
       },
       prepareLocalBattleTestCombatLaunch: () => {
@@ -1073,9 +1084,14 @@ export const useGameStore = create<GameStore>()(
             return state
           }
           const launchId = createCombatLaunchId()
+          const runtimeContext = createCombatLaunchRuntimeContext()
           result = { ok: true, launchId, descriptor, errors: [] }
-          return { ...state, combatLaunchGate: createPendingCombatLaunchGate(launchId, descriptor) }
+          return { ...state, combatLaunchGate: createPendingCombatLaunchGate(launchId, descriptor, runtimeContext) }
         })
+        const gate = get().combatLaunchGate
+        if (result.ok && gate.launchId && gate.descriptor && gate.runtimeContext) {
+          startCombatLaunchRuntimePreparation(gate.launchId, gate.descriptor, gate.runtimeContext)
+        }
         return result
       },
       prepareDevelopmentAcceptanceCombatLaunch: () => {
@@ -1115,14 +1131,20 @@ export const useGameStore = create<GameStore>()(
             return state
           }
           const launchId = createCombatLaunchId()
+          const runtimeContext = createCombatLaunchRuntimeContext()
           result = { ok: true, launchId, descriptor, errors: [] }
-          return { ...state, combatLaunchGate: createPendingCombatLaunchGate(launchId, descriptor) }
+          return { ...state, combatLaunchGate: createPendingCombatLaunchGate(launchId, descriptor, runtimeContext) }
         })
+        const gate = get().combatLaunchGate
+        if (result.ok && gate.launchId && gate.descriptor && gate.runtimeContext) {
+          startCombatLaunchRuntimePreparation(gate.launchId, gate.descriptor, gate.runtimeContext)
+        }
         return result
       },
       markCombatLaunchFadeStarted: (launchId) => {
         let accepted = false
         set((state) => {
+          if (!isCombatLaunchRuntimeReady(launchId)) return state
           const nextGate = markCombatLaunchFadeStartedState(state.combatLaunchGate, launchId)
           accepted = nextGate.status === 'fading-out' && nextGate.launchId === launchId
           return nextGate === state.combatLaunchGate ? state : { ...state, combatLaunchGate: nextGate }
@@ -1142,6 +1164,9 @@ export const useGameStore = create<GameStore>()(
         if (gate.status !== 'fading-out') {
           return { ok: false, started: false, launchId, errors: ['战斗加载过场尚未完成淡出'] }
         }
+        if (!isCombatLaunchRuntimeReady(launchId) || !gate.runtimeContext) {
+          return { ok: false, started: false, launchId, errors: ['战斗运行时资源尚未就绪'] }
+        }
 
         let result: CombatLaunchCommitResult = { ok: false, started: false, launchId, errors: ['战斗启动尚未完成'] }
         const commit = () => {
@@ -1156,6 +1181,11 @@ export const useGameStore = create<GameStore>()(
               return state
             }
             const descriptor = state.combatLaunchGate.descriptor
+            const runtimeContext = state.combatLaunchGate.runtimeContext
+            if (!runtimeContext || !isCombatLaunchRuntimeReady(launchId)) {
+              result = { ok: false, started: false, launchId, errors: ['战斗运行时资源尚未就绪'] }
+              return state
+            }
             const mode = descriptor.target.runtimeMode
             const idleGate = createIdleCombatLaunchGate(launchId)
             result = { ok: true, started: true, launchId, errors: [] }
@@ -1164,14 +1194,14 @@ export const useGameStore = create<GameStore>()(
               const base = restoreDevelopmentAcceptanceSnapshot(state)
               playSnapshotSound(base, 'button')
               return {
-                ...startRunSnapshot(base),
+                ...startRunSnapshot(base, runtimeContext.battlefieldSeed),
                 combatLaunchGate: idleGate,
                 developmentAcceptance: createDevelopmentAcceptancePresentation({ selectedTarget: base.developmentAcceptance.selectedTarget }),
               }
             }
 
             if (mode === 'local-battle-test') {
-              const next = startLocalBattleTestSnapshot(restoreDevelopmentAcceptanceSnapshot(state))
+              const next = startLocalBattleTestSnapshot(restoreDevelopmentAcceptanceSnapshot(state), runtimeContext.battlefieldSeed)
               return { ...next, combatLaunchGate: idleGate }
             }
 
@@ -1182,7 +1212,7 @@ export const useGameStore = create<GameStore>()(
             })
             const canRetarget = Boolean(state.developmentAcceptance.activeTarget)
             if (!canRetarget) captureDevelopmentAcceptanceBackups(state)
-            const prepared = prepareDevelopmentAcceptanceTargetSnapshot(state, target)
+            const prepared = prepareDevelopmentAcceptanceTargetSnapshot(state, target, runtimeContext.battlefieldSeed)
             return {
               ...prepared,
               combatLaunchGate: idleGate,
@@ -1201,6 +1231,7 @@ export const useGameStore = create<GameStore>()(
         } else {
           runWithPreservedGameSaveStorage(commit)
         }
+        if (result.ok) clearCombatLaunchRuntimePreparation(launchId)
         return result
       },
       getCombatLaunchPresentation: () => get().combatLaunchGate,

@@ -3,8 +3,10 @@ import { createPortal } from 'react-dom'
 
 import { SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
 import { ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTION_MAP } from '../../game/archerSkillEvolution'
-import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
+import { getHomeSceneSkillIconResource } from '../../game/homeSceneAssetManifest'
+import type { SceneAssetResource } from '../../game/sceneAssetLoading'
 import type { SkillBuildTag } from '../../game/types'
+import { SceneAssetImage } from './SceneAssetImage'
 import { getSpiralBreakLevel5PresentationDescription, getSpiralBreakPresentationDescription } from './spiralBreakPresentationCopy'
 
 /**
@@ -21,7 +23,7 @@ export type ArcherEvolutionGuideFamily = Readonly<{
   familyId: string
   name: string
   buildTag: SkillBuildTag
-  iconUrl?: string
+  iconResource?: SceneAssetResource
   trajectoryPreview?: string
   evolutions: readonly ArcherEvolutionGuideEntry[]
 }>
@@ -29,7 +31,7 @@ export type ArcherEvolutionGuideFamily = Readonly<{
 export type ArcherEvolutionGuideEntry = Readonly<{
   evolutionId: string
   name: string
-  iconUrl?: string
+  iconResource?: SceneAssetResource
   level4Description: string
   level5Description: string
   tags: readonly string[]
@@ -73,7 +75,7 @@ export const createArcherEvolutionGuideCatalog = (discoveredEvolutionIds: readon
       familyId: coreSkill.id,
       name: coreSkill.name,
       buildTag: coreSkill.buildTag,
-      iconUrl: getArcherSkillIconAssetUrl(coreSkill.id),
+      iconResource: getHomeSceneSkillIconResource(coreSkill.id),
       trajectoryPreview: getFamilyTrajectoryPreview(coreSkill.id),
       evolutions: coreSkill.evolutionIds.map((evolutionId) => {
         const evolution = ARCHER_SKILL_EVOLUTION_MAP[evolutionId]
@@ -84,9 +86,9 @@ export const createArcherEvolutionGuideCatalog = (discoveredEvolutionIds: readon
           // New beast branches have no final artwork yet. Their readable name
           // placeholders are deliberate UI presentation; established branches
           // continue to reuse their existing mapped skill icon.
-          iconUrl: evolution?.visualKind === 'beast'
+          iconResource: evolution?.visualKind === 'beast'
             ? undefined
-            : getArcherSkillIconAssetUrl(evolution?.behaviorSkillId ?? evolutionId),
+            : getHomeSceneSkillIconResource(evolution?.behaviorSkillId ?? evolutionId),
           level4Description: getSpiralBreakPresentationDescription(
             evolutionId,
             evolution?.description ?? coreSkill.description,
@@ -151,9 +153,9 @@ const EvolutionGuideIcon = ({
   compact?: boolean
 }) => {
   const tooltipId = `${testIdPrefix}-tooltip-${evolution.evolutionId}`
-  const icon = evolution.iconUrl ? (
-    <img
-      src={evolution.iconUrl}
+  const icon = evolution.iconResource ? (
+    <SceneAssetImage
+      resource={evolution.iconResource}
       alt=""
       className={`block shrink-0 border-2 object-cover [image-rendering:pixelated] ${compact ? 'h-full w-full' : 'h-14 w-14'} ${discovered ? 'border-[#9dd5ac]' : 'border-slate-600 grayscale opacity-60'}`}
       data-testid={`${testIdPrefix}-image-${evolution.evolutionId}`}
@@ -252,8 +254,8 @@ export const ArcherEvolutionGuide = ({ catalog }: { catalog: ArcherEvolutionGuid
             {families.map((family) => (
               <section key={family.familyId} className="border-2 border-[#08100b] bg-[#0b100d] p-3" data-testid={`archer-evolution-guide-family-${family.familyId}`}>
                 <div className="flex min-w-0 items-center gap-3">
-                  {family.iconUrl ? (
-                    <img src={family.iconUrl} alt="" className="h-12 w-12 shrink-0 border-2 border-[#9dd5ac] object-cover [image-rendering:pixelated]" data-testid={`archer-evolution-guide-core-image-${family.familyId}`} />
+                  {family.iconResource ? (
+                    <SceneAssetImage resource={family.iconResource} alt="" className="h-12 w-12 shrink-0 border-2 border-[#9dd5ac] object-cover [image-rendering:pixelated]" data-testid={`archer-evolution-guide-core-image-${family.familyId}`} />
                   ) : (
                     <span
                       aria-hidden="true"
@@ -325,8 +327,8 @@ export const ArcherEvolutionDetailSkillGrid = ({ catalog }: { catalog: ArcherEvo
       {catalog.families.map((family) => (
         <section key={family.familyId} className="min-w-0 border border-[rgba(157,213,172,0.28)] bg-[#08100b]/75 p-[clamp(0.2rem,0.32cqw,0.55rem)]" data-testid={`character-detail-evolution-family-${family.familyId}`}>
           <div className="flex min-w-0 items-center gap-[clamp(0.25rem,0.45cqw,0.7rem)]">
-            {family.iconUrl ? (
-              <img src={family.iconUrl} alt="" className="h-[clamp(1rem,1.9cqw,3.5rem)] w-[clamp(1rem,1.9cqw,3.5rem)] shrink-0 border border-[#9dd5ac] object-cover [image-rendering:pixelated]" />
+            {family.iconResource ? (
+              <SceneAssetImage resource={family.iconResource} alt="" className="h-[clamp(1rem,1.9cqw,3.5rem)] w-[clamp(1rem,1.9cqw,3.5rem)] shrink-0 border border-[#9dd5ac] object-cover [image-rendering:pixelated]" />
             ) : (
               <span
                 aria-hidden="true"

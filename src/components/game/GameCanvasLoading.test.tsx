@@ -2,6 +2,11 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createIdleCombatLaunchGate } from '../../game/combatLoading'
+import {
+  clearCombatLaunchRuntimePreparation,
+  getCombatLaunchRuntimePreparation,
+  setCombatLaunchRuntimePreparationStatusForTests,
+} from '../../game/combatRuntimeReadiness'
 import { createInitialSnapshot } from '../../game/engine'
 import * as gameRender from '../../game/render'
 import { useGameStore } from '../../store/useGameStore'
@@ -12,18 +17,27 @@ vi.mock('./SceneLoadingTransition', () => ({
     manifest,
     onExitStart,
     onComplete,
+    getRuntimePreparation,
+    isRuntimePreparationReady,
   }: {
     manifest: { key: string; scene: string; resources: readonly { key: string }[] }
     onExitStart?: () => boolean | void
     onComplete: () => void
+    getRuntimePreparation?: () => { status: string; terrainReady: boolean } | undefined
+    isRuntimePreparationReady?: () => boolean
   }) => (
     <section
       data-testid="scene-loading-transition-mock"
       data-manifest-key={manifest.key}
       data-scene={manifest.scene}
       data-resource-keys={manifest.resources.map((resource) => resource.key).join(',')}
+      data-runtime-status={getRuntimePreparation?.()?.status ?? 'not-required'}
+      data-runtime-terrain-ready={getRuntimePreparation?.()?.terrainReady ?? true}
+      data-runtime-strict-ready={isRuntimePreparationReady?.() ?? true}
     >
-      <button type="button" onClick={() => onExitStart?.()}>begin fade</button>
+      <button type="button" onClick={() => {
+        if (isRuntimePreparationReady?.() ?? true) onExitStart?.()
+      }}>begin fade</button>
       <button type="button" onClick={onComplete}>finish fade</button>
     </section>
   ),
@@ -70,6 +84,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  const launchId = useGameStore.getState().combatLaunchGate.launchId
+  if (launchId) clearCombatLaunchRuntimePreparation(launchId)
   useGameStore.setState({
     ...createInitialSnapshot('idle'),
     combatLaunchGate: createIdleCombatLaunchGate(),
@@ -102,6 +118,13 @@ describe('GameCanvas scene loading gate integration', () => {
     const combatGate = screen.getByTestId('scene-loading-transition-mock')
     expect(combatGate.dataset.scene).toBe('combat')
     expect(combatGate.dataset.resourceKeys).toContain('transition.background')
+    expect(combatGate.dataset.runtimeStatus).toBe('ready')
+    expect(combatGate.dataset.runtimeTerrainReady).toBe('true')
+    expect(combatGate.dataset.runtimeStrictReady).toBe('true')
+    expect(getCombatLaunchRuntimePreparation(prepared.launchId!)).toMatchObject({
+      status: 'ready',
+      terrainReady: true,
+    })
     expect(useGameStore.getState()).toMatchObject({
       phase: 'idle',
       combatLaunchGate: { status: 'awaiting-resources', simulationBlocked: true },
@@ -119,6 +142,61 @@ describe('GameCanvas scene loading gate integration', () => {
       combatLaunchGate: { status: 'idle', active: false },
     })
     expect(screen.queryByTestId('scene-loading-transition-mock')).toBeNull()
+  })
+
+  it('passes the A1 runtime preparation getter and refuses fade while that barrier is retrying', () => {
+    const prepared = useGameStore.getState().prepareFormalCombatLaunch()
+    expect(prepared.ok).toBe(true)
+    expect(setCombatLaunchRuntimePreparationStatusForTests(
+      prepared.launchId!,
+      'retrying',
+      'first-screen terrain unavailable',
+    )).toBe(true)
+
+    render(<GameCanvas enableSceneLoading />)
+    expect(screen.getByTestId('scene-loading-transition-mock').dataset.runtimeStatus).toBe('retrying')
+    expect(screen.getByTestId('scene-loading-transition-mock').dataset.runtimeStrictReady).toBe('false')
+    fireEvent.click(screen.getByRole('button', { name: 'begin fade' }))
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'idle',
+      combatLaunchGate: { status: 'awaiting-resources', simulationBlocked: true },
+    })
+
+    expect(setCombatLaunchRuntimePreparationStatusForTests(prepared.launchId!, 'ready')).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'begin fade' }))
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'idle',
+      combatLaunchGate: { status: 'fading-out', simulationBlocked: true },
+    })
+  })
+
+  it.each([
+    ['fallback', { terrainFallback: true }],
+    ['substitute surface', { terrainSubstituteSurface: true }],
+    ['building reason', { terrainBuildingReason: 'visible-surfaces-building' as const }],
+    ['surface count mismatch', {
+      terrainVisibleSurfaceCount: 2,
+      terrainReadySurfaceCount: 1,
+      terrainDrawnSurfaceCount: 2,
+    }],
+  ])('keeps fade blocked when the strict A1 predicate rejects %s', (_label, terrainPatch) => {
+    const prepared = useGameStore.getState().prepareFormalCombatLaunch()
+    expect(prepared.ok).toBe(true)
+    expect(setCombatLaunchRuntimePreparationStatusForTests(
+      prepared.launchId!,
+      'ready',
+      undefined,
+      terrainPatch,
+    )).toBe(true)
+
+    render(<GameCanvas enableSceneLoading />)
+    const transition = screen.getByTestId('scene-loading-transition-mock')
+    expect(transition.dataset.runtimeStrictReady).toBe('false')
+    fireEvent.click(screen.getByRole('button', { name: 'begin fade' }))
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'idle',
+      combatLaunchGate: { status: 'awaiting-resources', simulationBlocked: true },
+    })
   })
 
   it('routes the local battle button into the same prepare gate without direct simulation start', () => {

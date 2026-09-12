@@ -254,6 +254,88 @@ describe('first dungeon three-original terrain', () => {
     expect(factory.contexts.some((ctx) => ctx.arc.mock.calls.length > 0)).toBe(true)
   })
 
+  it('does not release the first-screen terrain barrier until every visible surface is ready', () => {
+    const factory = surfaceFactory()
+    const retainedTiles = Array.from({ length: 3 }, (_, index) => ({ id: `retained-${index}` } as unknown as CanvasImageSource))
+    const renderer = new FirstDungeonGodotTerrainRenderer({
+      createSurface: factory.createSurface,
+      buildCellsPerFrame: 1,
+      buildTimeBudgetMs: 100,
+      clock: () => 0,
+      observabilityEnabled: false,
+    })
+    expect(renderer.hydrateSharedResources(retainedTiles)).toBe(true)
+    const viewport = { width: 960, height: 640 }
+    const camera = { x: -240, y: -160 }
+    let snapshot = renderer.prepareViewport(0x13572468, camera, viewport, 1, 1)
+    expect(snapshot).toMatchObject({
+      status: 'building',
+      reason: 'visible-surfaces-building',
+      fallback: false,
+      allVisibleSurfacesReady: false,
+      allVisibleSurfacesDrawn: false,
+    })
+    expect(snapshot.substituteSurface).toBe(true)
+    for (let frame = 0; frame < 32 && snapshot.status !== 'ready'; frame += 1) {
+      snapshot = renderer.prepareViewport(0x13572468, camera, viewport, 1, 1)
+    }
+    expect(snapshot).toEqual({
+      status: 'ready',
+      reason: undefined,
+      visibleSurfaceCount: snapshot.visibleSurfaceCount,
+      readySurfaceCount: snapshot.visibleSurfaceCount,
+      drawnSurfaceCount: snapshot.visibleSurfaceCount,
+      allVisibleSurfacesReady: true,
+      allVisibleSurfacesDrawn: true,
+      fallback: false,
+      substituteSurface: false,
+    })
+    expect(renderer.getDiagnostics().readyChunkCount).toBeGreaterThanOrEqual(6)
+    expect(factory.contexts.flatMap((ctx) => ctx.drawImage.mock.calls).some(([source]) => retainedTiles.includes(source))).toBe(true)
+  })
+
+  it('reports resource fallback and selected-tile substitution as non-ready terrain', () => {
+    const seed = 0x24681357
+    const selectedIndex = getFirstDungeonStoneTileState(seed, 0, 0, 1, 1).assetIndex
+    const substitute = { id: 'substitute' } as unknown as CanvasImageSource
+    const resources: (CanvasImageSource | null)[] = [null, null, null]
+    resources[(selectedIndex + 1) % resources.length] = substitute
+    const substitutedRenderer = new FirstDungeonGodotTerrainRenderer({
+      createSurface: surfaceFactory().createSurface,
+      resources,
+      buildCellsPerFrame: 1,
+      buildTimeBudgetMs: 100,
+      clock: () => 0,
+      observabilityEnabled: false,
+    })
+
+    expect(substitutedRenderer.prepareViewport(seed, { x: 0, y: 0 }, { width: 1, height: 1 }, 1, 1)).toMatchObject({
+      status: 'failed',
+      reason: 'visible-surface-substitution',
+      fallback: false,
+      substituteSurface: true,
+      allVisibleSurfacesReady: true,
+      allVisibleSurfacesDrawn: true,
+    })
+
+    const failedRenderer = new FirstDungeonGodotTerrainRenderer({
+      createSurface: () => null,
+      resources: [substitute, substitute, substitute],
+      buildCellsPerFrame: 1,
+      buildTimeBudgetMs: 100,
+      clock: () => 0,
+      observabilityEnabled: false,
+    })
+    expect(failedRenderer.prepareViewport(seed, { x: 0, y: 0 }, { width: 1, height: 1 }, 1, 1)).toMatchObject({
+      status: 'failed',
+      reason: 'visible-surface-build-failed',
+      fallback: true,
+      substituteSurface: false,
+      allVisibleSurfacesReady: false,
+      allVisibleSurfacesDrawn: false,
+    })
+  })
+
   it('keeps ready ground visible while newly entered chunks are still building', () => {
     const factory = surfaceFactory()
     const tiles = Array.from({ length: 3 }, () => ({ naturalWidth: 1469, naturalHeight: 4350 } as CanvasImageSource))

@@ -16,7 +16,9 @@ import {
   type FirstDungeonGodotTerrainCoverageSummary,
 } from './firstDungeonGodotTerrain'
 import { WORLD_HEIGHT, WORLD_WIDTH } from './config'
+import { COMBAT_LOADING_CONTRACT_VERSION, createCombatRuntimeImageResource } from './combatLoading'
 import { isLocalDevelopmentRuntime, type LocalRuntimeEnvironment } from './localRuntime'
+import { acquireSceneAssetImage } from './sceneAssetLoading'
 import type { Vector2 } from './types'
 
 type TerrainSurface = OffscreenCanvas | HTMLCanvasElement
@@ -32,11 +34,24 @@ type TerrainChunkEntry = {
   chunkY: number
   surface?: TerrainSurface
   ready: boolean
+  sourceDrawn: boolean
+  usedSubstituteTile: boolean
   buildDurationMs: number
 }
 
 export type FirstDungeonGodotTerrainResourceState = 'loading' | 'ready' | 'failed'
 export type FirstDungeonGodotTerrainDrawStatus = 'drawn' | 'loading' | 'building' | 'failed'
+export type FirstDungeonGodotTerrainViewportPreparationSnapshot = Readonly<{
+  status: 'loading' | 'building' | 'ready' | 'failed'
+  reason?: 'resources-loading' | 'resource-validation-failed' | 'visible-surfaces-building' | 'visible-surface-substitution' | 'visible-surface-build-failed'
+  visibleSurfaceCount: number
+  readySurfaceCount: number
+  drawnSurfaceCount: number
+  allVisibleSurfacesReady: boolean
+  allVisibleSurfacesDrawn: boolean
+  fallback: boolean
+  substituteSurface: boolean
+}>
 export type FirstDungeonGodotTerrainDiagnostics = Readonly<{
   resourceState: FirstDungeonGodotTerrainResourceState
   readyChunkCount: number
@@ -99,7 +114,7 @@ export type FirstDungeonGodotTerrainRendererOptions = Readonly<{
   clock?: () => number
   createSurface?: (width: number, height: number) => TerrainSurface | null
   loadImage?: (url: string, width: number, height: number) => Promise<CanvasImageSource | null>
-  resources?: readonly CanvasImageSource[]
+  resources?: TerrainResources
   observabilityEnabled?: boolean
 }>
 
@@ -115,13 +130,17 @@ const createTerrainSurface = (width: number, height: number): TerrainSurface | n
   canvas.height = height
   return canvas
 }
-const loadImage = (url: string, width: number, height: number): Promise<CanvasImageSource | null> => new Promise((resolve) => {
-  if (typeof Image === 'undefined') return resolve(null)
-  const image = new Image()
-  image.onload = () => resolve(image.naturalWidth === width && image.naturalHeight === height ? image : null)
-  image.onerror = () => resolve(null)
-  image.src = url
-})
+const loadImage = async (url: string, width: number, height: number): Promise<CanvasImageSource | null> => {
+  const handle = await acquireSceneAssetImage(createCombatRuntimeImageResource(
+    `environment.c1.floor.runtime.${url}`,
+    'environment',
+    url,
+    COMBAT_LOADING_CONTRACT_VERSION,
+  ))
+  return handle.naturalWidth === width && handle.naturalHeight === height
+    ? handle.drawable ?? null
+    : null
+}
 export const getFirstDungeonGodotTerrainChunkCacheKey = (seed: number, campaign: number, level: number, x: number, y: number) => (
   `${seed >>> 0}:${campaign}:${getFirstDungeonGodotTerrainVisualLevel(campaign, level)}:${x}:${y}`
 )
@@ -189,6 +208,78 @@ export class FirstDungeonGodotTerrainRenderer {
       cacheLimit: this.cacheLimit,
       retainedIntermediateSurfaceCount: 0,
     }
+  }
+
+  /** Installs the exact retained drawable objects owned by the shared scene cache. */
+  hydrateSharedResources(resources: readonly CanvasImageSource[]) {
+    if (resources.length !== FIRST_DUNGEON_GODOT_TERRAIN_PUBLIC_ASSETS.length) return false
+    this.resources = Object.freeze([...resources])
+    this.resourceState = 'ready'
+    this.resourceValidation = 'passed'
+    this.resourceFailureReason = undefined
+    this.resourceLoad = Promise.resolve()
+    return true
+  }
+
+  prepareViewport(
+    seed: number,
+    camera: Vector2,
+    viewport: Readonly<{ width: number; height: number }>,
+    campaign = 1,
+    level = 1,
+  ): FirstDungeonGodotTerrainViewportPreparationSnapshot {
+    if (!this.ensureResources()) {
+      const failed = this.resourceState === 'failed'
+      return Object.freeze({
+        status: failed ? 'failed' : 'loading',
+        reason: failed ? 'resource-validation-failed' : 'resources-loading',
+        visibleSurfaceCount: 0,
+        readySurfaceCount: 0,
+        drawnSurfaceCount: 0,
+        allVisibleSurfacesReady: false,
+        allVisibleSurfacesDrawn: false,
+        fallback: failed,
+        substituteSurface: false,
+      })
+    }
+    const visible = this.requestVisibleAndNeighbors(
+      seed,
+      campaign,
+      level,
+      getFirstDungeonGodotTerrainChunkRange(camera, viewport.width, viewport.height),
+    )
+    this.processBuildWork()
+    const readySurfaceCount = visible.filter((entry) => entry.ready && entry.surface).length
+    const drawnSurfaceCount = visible.filter((entry) => entry.ready && entry.surface && entry.sourceDrawn).length
+    const substitutedTile = visible.some((entry) => entry.usedSubstituteTile)
+    const allVisibleSurfacesReady = visible.length > 0 && readySurfaceCount === visible.length
+    const allVisibleSurfacesDrawn = visible.length > 0 && drawnSurfaceCount === visible.length
+    const substituteSurface = substitutedTile || (
+      !allVisibleSurfacesReady
+      && [...this.cache.values()].some((entry) => entry.ready && entry.surface)
+    )
+    const failed = this.resourceState === 'failed' || substitutedTile
+    const ready = !failed
+      && allVisibleSurfacesReady
+      && allVisibleSurfacesDrawn
+      && !substituteSurface
+    return Object.freeze({
+      status: ready ? 'ready' : failed ? 'failed' : 'building',
+      reason: ready
+        ? undefined
+        : substitutedTile
+          ? 'visible-surface-substitution'
+          : this.resourceState === 'failed'
+            ? 'visible-surface-build-failed'
+            : 'visible-surfaces-building',
+      visibleSurfaceCount: visible.length,
+      readySurfaceCount,
+      drawnSurfaceCount,
+      allVisibleSurfacesReady,
+      allVisibleSurfacesDrawn,
+      fallback: this.resourceState === 'failed',
+      substituteSurface,
+    })
   }
 
   getRendererNativeObservation(environment?: LocalRuntimeEnvironment, hostname?: string): FirstDungeonGodotTerrainRendererNativeObservation | null {
@@ -301,7 +392,18 @@ export class FirstDungeonGodotTerrainRenderer {
     const key = getFirstDungeonGodotTerrainChunkCacheKey(seed, campaign, level, chunkX, chunkY)
     const existing = this.cache.get(key)
     if (existing) { this.reuseCount += 1; this.touch(existing); return existing }
-    const entry: TerrainChunkEntry = { key, seed: seed >>> 0, campaign, level, chunkX, chunkY, ready: false, buildDurationMs: 0 }
+    const entry: TerrainChunkEntry = {
+      key,
+      seed: seed >>> 0,
+      campaign,
+      level,
+      chunkX,
+      chunkY,
+      ready: false,
+      sourceDrawn: false,
+      usedSubstituteTile: false,
+      buildDurationMs: 0,
+    }
     this.cache.set(key, entry)
     this.queue.push(entry)
     this.evict()
@@ -344,15 +446,20 @@ export class FirstDungeonGodotTerrainRenderer {
     const endX = getFirstDungeonStoneWorldTileCoordinate(worldX + FIRST_DUNGEON_GODOT_TERRAIN_CHUNK_PIXELS - 1, 'x')
     const startY = getFirstDungeonStoneWorldTileCoordinate(worldY, 'y')
     const endY = getFirstDungeonStoneWorldTileCoordinate(worldY + FIRST_DUNGEON_GODOT_TERRAIN_CHUNK_PIXELS - 1, 'y')
+    let usedSubstituteTile = false
     for (let tileY = startY; tileY <= endY; tileY += 1) for (let tileX = startX; tileX <= endX; tileX += 1) {
       const state = getFirstDungeonStoneTileState(entry.seed, tileX, tileY, entry.campaign, entry.level)
-      const tile = this.resources[state.assetIndex]
+      const selectedTile = this.resources[state.assetIndex]
+      const tile = selectedTile
         ?? this.resources.find((candidate): candidate is CanvasImageSource => candidate !== null)
       if (!tile) return false
+      if (!selectedTile) usedSubstituteTile = true
       this.drawStoneTile(context, tile, state, tileX * FIRST_DUNGEON_GODOT_TERRAIN_TILE_WIDTH - worldX, tileY * FIRST_DUNGEON_GODOT_TERRAIN_TILE_HEIGHT - worldY)
     }
     entry.surface = surface
     entry.ready = true
+    entry.sourceDrawn = true
+    entry.usedSubstituteTile = usedSubstituteTile
     this.builtCellCount += (endX - startX + 1) * (endY - startY + 1)
     return true
   }
@@ -408,3 +515,11 @@ export class FirstDungeonGodotTerrainRenderer {
 export const firstDungeonGodotTerrainRenderer = new FirstDungeonGodotTerrainRenderer()
 export const drawFirstDungeonGodotTerrain = (ctx: CanvasRenderingContext2D, seed: number, camera: Vector2, campaign = 1, level = 1) => firstDungeonGodotTerrainRenderer.drawWithStatus(ctx, seed, camera, campaign, level)
 export const getFirstDungeonGodotTerrainRendererNativeObservation = (environment?: LocalRuntimeEnvironment, hostname?: string) => firstDungeonGodotTerrainRenderer.getRendererNativeObservation(environment, hostname)
+export const hydrateFirstDungeonGodotTerrainResources = (resources: readonly CanvasImageSource[]) => firstDungeonGodotTerrainRenderer.hydrateSharedResources(resources)
+export const prepareFirstDungeonGodotTerrainViewport = (
+  seed: number,
+  camera: Vector2,
+  viewport: Readonly<{ width: number; height: number }>,
+  campaign = 1,
+  level = 1,
+) => firstDungeonGodotTerrainRenderer.prepareViewport(seed, camera, viewport, campaign, level)

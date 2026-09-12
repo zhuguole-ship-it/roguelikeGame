@@ -61,6 +61,8 @@ import {
   type MetaTalentIconPresentation,
   type MetaTalentProgrammaticIconGroup,
 } from '../../game/metaTalentIcons'
+import { getHomeSceneMetaTalentIconResource } from '../../game/homeSceneAssetManifest'
+import type { SceneAssetResource } from '../../game/sceneAssetLoading'
 import type {
   EnemyKind,
   EquipmentCandidateRewardSource,
@@ -94,6 +96,7 @@ import { getDeathBloodSetEffectCopy } from './deathBloodEquipmentCodexCopy'
 import { BeastContractDomainEquipmentDetails } from './BeastContractDomainEquipmentDetails'
 import { ArcherCombatTalentV3Catalog } from './ArcherTalentV3Presentation'
 import { CampaignRewardSnapshotSummary } from './CampaignRewardPresentation'
+import { SceneAssetImage } from './SceneAssetImage'
 
 type VillageModal = 'campaign' | 'shop' | 'guide' | 'character' | 'inventory' | 'settings' | 'hunter-home' | null
 type VillageModalId = Exclude<VillageModal, null>
@@ -374,18 +377,21 @@ const metaTalentProgrammaticIconClasses: Record<MetaTalentProgrammaticIconGroup,
 const MetaTalentIconVisual = ({
   nodeId,
   presentation,
+  resource,
   context,
   dimmed = false,
 }: {
   nodeId: string
   presentation: MetaTalentIconPresentation
+  resource?: SceneAssetResource
   context: 'node' | 'tooltip'
   dimmed?: boolean
 }) => {
   if (presentation.kind === 'asset') {
+    if (!resource) throw new Error(`Meta talent icon ${nodeId} is missing from the home scene manifest`)
     return (
-      <img
-        src={presentation.assetUrl}
+      <SceneAssetImage
+        resource={resource}
         alt=""
         className={`block h-full w-full object-cover [image-rendering:pixelated] ${dimmed ? 'opacity-55' : ''}`}
         data-testid={context === 'node'
@@ -923,6 +929,7 @@ const MetaTalentShelfNode = ({
   const tooltipRef = useRef<HTMLDivElement>(null)
   const [tooltipPlacement, setTooltipPlacement] = useState<MetaTalentTooltipPlacement | null>(null)
   const iconPresentation = getMetaTalentIconPresentation(node)
+  const iconResource = getHomeSceneMetaTalentIconResource(node)
   const rank = presentation.currentRank
   const maxRank = presentation.maxRank
   const canUnlock = presentation.status === 'available'
@@ -1002,6 +1009,7 @@ const MetaTalentShelfNode = ({
         <MetaTalentIconVisual
           nodeId={node.id}
           presentation={iconPresentation}
+          resource={iconResource}
           context="node"
           dimmed={rank <= 0 && !canUnlock}
         />
@@ -1028,6 +1036,7 @@ const MetaTalentShelfNode = ({
             <MetaTalentIconVisual
               nodeId={node.id}
               presentation={iconPresentation}
+              resource={iconResource}
               context="tooltip"
             />
           </div>

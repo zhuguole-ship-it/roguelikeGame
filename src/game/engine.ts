@@ -2354,14 +2354,14 @@ const beginPlayerArcherDeath = (snapshot: GameSnapshot) => {
   snapshot.player.animationState = 'idle'
 }
 
-const createBaseSnapshot = (phase: GamePhase): GameSnapshot => {
+const createBaseSnapshot = (phase: GamePhase, battlefieldSeed?: number): GameSnapshot => {
   const level = 1
   const targetKills = getLevelGoal(level)
   const skillAllocations = createEmptySkillAllocations()
   const fixedPassiveLevel = 1
   const isVillagePhase = phase === 'idle' || phase === 'game-over'
   const playerPosition = isVillagePhase ? VILLAGE_POINTS.campfire : { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }
-  const battlefield = createBattlefieldState(getBattlefieldMode(phase, level), level, playerPosition)
+  const battlefield = createBattlefieldState(getBattlefieldMode(phase, level), level, playerPosition, battlefieldSeed)
   const mapObstacles = isVillagePhase
     ? createVillageObstacles()
     : battlefield.mode === 'infinite'
@@ -18800,8 +18800,8 @@ const recycleDistantTransientResources = (snapshot: GameSnapshot) => {
   })
 }
 
-export const createInitialSnapshot = (phase: GamePhase = 'idle') => {
-  const snapshot = createBaseSnapshot(phase)
+export const createInitialSnapshot = (phase: GamePhase = 'idle', battlefieldSeed?: number) => {
+  const snapshot = createBaseSnapshot(phase, battlefieldSeed)
   snapshot.activeSkills = createDefaultActiveSkills()
   return snapshot
 }
@@ -19395,8 +19395,8 @@ export const restartRunSnapshot = (current: GameSnapshot): GameSnapshot => {
   return next
 }
 
-export const startRunSnapshot = (current: GameSnapshot): GameSnapshot => {
-  const next = preserveMetaProgress(createInitialSnapshot('running'), current)
+export const startRunSnapshot = (current: GameSnapshot, battlefieldSeed?: number): GameSnapshot => {
+  const next = preserveMetaProgress(createInitialSnapshot('running', battlefieldSeed), current)
   next.debugControls = { ...current.debugControls }
   applySelectedCampaignStart(next, current.selectedCampaign ?? 1, current.selectedCampaignDifficulty ?? current.selectedDifficulty)
   applyMetaTalentRunStartState(next)
@@ -19531,9 +19531,10 @@ export const normalizeDevelopmentAcceptanceTarget = (
 export const prepareDevelopmentAcceptanceTargetSnapshot = (
   current: GameSnapshot,
   target: Partial<DevelopmentAcceptanceTarget>,
+  battlefieldSeed?: number,
 ): GameSnapshot => {
   const normalizedTarget = normalizeDevelopmentAcceptanceTarget(target)
-  const next = preserveMetaProgress(createInitialSnapshot('running'), current)
+  const next = preserveMetaProgress(createInitialSnapshot('running', battlefieldSeed), current)
   next.unlockedCampaignDifficulties = {
     ...next.unlockedCampaignDifficulties,
     [normalizedTarget.campaign]: ['normal', 'hard', 'hell', 'nightmare'],
@@ -19587,8 +19588,8 @@ export const prepareDevelopmentAcceptanceTargetSnapshot = (
   return prepared
 }
 
-export const startLocalBattleTestSnapshot = (current: GameSnapshot): GameSnapshot => {
-  const next = preserveMetaProgress(createInitialSnapshot('running'), current)
+export const startLocalBattleTestSnapshot = (current: GameSnapshot, battlefieldSeed?: number): GameSnapshot => {
+  const next = preserveMetaProgress(createInitialSnapshot('running', battlefieldSeed), current)
   applySelectedCampaignStart(next, 1, 'normal')
   preserveCurrentCombatBuildForLocalTest(next, current)
   applyMetaTalentRunStartState(next)

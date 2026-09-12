@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { ARCHER_CORE_SKILL_IDS, ARCHER_SKILL_EVOLUTIONS } from './archerSkillEvolution'
-import { PLAYER_ARCHER_ACTIONS } from './archerAssetFrames'
+import { PLAYER_ARCHER_ACTIONS, getPlayerArcherFrameUrls } from './archerAssetFrames'
 import { CAMPAIGN_MONSTER_THEMES } from './campaignMonsters'
 import {
   buildCombatLoadingDependencyDescriptor,
@@ -10,6 +10,15 @@ import {
   createPendingCombatLaunchGate,
   markCombatLaunchFadeStarted,
 } from './combatLoading'
+import {
+  HOME_SCENE_ASSET_MANIFEST_V1,
+  getHomeSceneSkillIconResource,
+} from './homeSceneAssetManifest'
+import {
+  getSceneAssetCacheKey,
+  resolveSceneAssetCanonicalIdentity,
+} from './sceneAssetLoading'
+import { SHARED_SCENE_ASSET_CONTENT_VERSIONS } from './sharedSceneAssetContentVersions'
 
 describe('combat loading contract', () => {
   it('builds one stable, current-campaign dependency descriptor without other campaign monsters', () => {
@@ -34,6 +43,10 @@ describe('combat loading contract', () => {
     expect(descriptor.enemies.every((enemy) => enemy.actionSlots.length > 0)).toBe(true)
     expect(descriptor.environment.obstacleAssetIds).toEqual([])
     expect(descriptor.environment.decorationAssetIds).toEqual([])
+    const resources = buildCombatSceneAssetDependencyDescriptor(descriptor.target).resources
+    expect(resources.some((resource) => resource.key.startsWith('environment.c1.floor.'))).toBe(false)
+    expect(resources.some((resource) => resource.key.startsWith('enemy-projectile.c1.'))).toBe(false)
+    expect(resources.some((resource) => resource.key === 'environment.combat-mask')).toBe(true)
   })
 
   it('includes the complete character, player-skill, shared battle, and transition semantic domains', () => {
@@ -109,6 +122,9 @@ describe('combat loading contract', () => {
     })
     expect(keys).toEqual(expect.arrayContaining([
       'environment.c1.floor.1',
+      'environment.combat-mask',
+      'enemy-projectile.c1.skeleton-arrow',
+      'enemy-skill-fx.c1.fire-sac.1',
       'enemy.dungeon-skeleton-warrior.idle.1',
       'enemy.dungeon-warden.death.1',
       'combat-hud.portrait',
@@ -118,8 +134,54 @@ describe('combat loading contract', () => {
       'combat-audio.archer-basic-attack',
     ]))
     expect(keys.some((key) => key.includes('vampire-thrall'))).toBe(false)
+    expect(manifestInput.resources.filter((resource) => resource.domain === 'enemy-actions').length).toBeGreaterThan(0)
+    expect(manifestInput.resources.filter((resource) => resource.domain === 'player-actions').length).toBeGreaterThan(0)
     expect(manifestInput.resources.every((resource) => (
       resource.kind === 'font' ? Boolean(resource.fontFamily) : Boolean(resource.url)
     ))).toBe(true)
+  })
+
+  it('uses one neutral content identity for every URL shared by home and combat', () => {
+    const combatResources = buildCombatSceneAssetDependencyDescriptor({
+      runtimeMode: 'formal-run',
+      campaign: 1,
+      level: 1,
+      difficulty: 'normal',
+      battlefieldMode: 'infinite',
+      professionId: 'archer',
+    }).resources
+    const homeByLogicalUrl = new Map(HOME_SCENE_ASSET_MANIFEST_V1.resources.flatMap((resource) => {
+      const logicalUrl = resolveSceneAssetCanonicalIdentity(resource).logicalUrl
+      return logicalUrl ? [[logicalUrl, resource] as const] : []
+    }))
+    const sharedPairs = combatResources.flatMap((combatResource) => {
+      const logicalUrl = resolveSceneAssetCanonicalIdentity(combatResource).logicalUrl
+      const homeResource = logicalUrl ? homeByLogicalUrl.get(logicalUrl) : undefined
+      return homeResource ? [{ logicalUrl, homeResource, combatResource }] : []
+    })
+
+    expect(sharedPairs.length).toBeGreaterThan(0)
+    expect(sharedPairs.flatMap(({ logicalUrl, homeResource, combatResource }) => (
+      combatResource.version === homeResource.version
+        && getSceneAssetCacheKey(combatResource) === getSceneAssetCacheKey(homeResource)
+        ? []
+        : [{ logicalUrl, homeVersion: homeResource.version, combatVersion: combatResource.version }]
+    ))).toEqual([])
+
+    const idleUrl = getPlayerArcherFrameUrls('idle')[0]!
+    const idlePair = sharedPairs.find(({ logicalUrl }) => logicalUrl === resolveSceneAssetCanonicalIdentity({
+      key: 'idle.lookup', domain: 'test', kind: 'image', version: 'ignored', url: idleUrl,
+    }).logicalUrl)
+    expect(idlePair?.homeResource.key).toBe('character.idle.1')
+    expect(idlePair?.combatResource.version).toBe(SHARED_SCENE_ASSET_CONTENT_VERSIONS.playerArcherFrames)
+
+    const skillId = ARCHER_CORE_SKILL_IDS[0]!
+    const homeSkillIcon = getHomeSceneSkillIconResource(skillId)!
+    const combatSkillIcon = combatResources.find((resource) => (
+      resolveSceneAssetCanonicalIdentity(resource).logicalUrl
+      === resolveSceneAssetCanonicalIdentity(homeSkillIcon).logicalUrl
+    ))
+    expect(combatSkillIcon?.version).toBe(SHARED_SCENE_ASSET_CONTENT_VERSIONS.archerSkillIcons)
+    expect(getSceneAssetCacheKey(combatSkillIcon!)).toBe(getSceneAssetCacheKey(homeSkillIcon))
   })
 })

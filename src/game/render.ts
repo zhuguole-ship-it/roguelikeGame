@@ -61,10 +61,15 @@ import type {
 } from './types'
 import { drawVillageMenuBackground } from './villageMenuBackground'
 import { clamp } from '../utils/math'
+import {
+  COMBAT_DARK_MASK_ASSET_URL,
+  createCombatRuntimeImageResource,
+} from './combatLoading'
+import { acquireSceneAssetImage, getReadySceneAssetImage } from './sceneAssetLoading'
 
 export const LEVEL_ONE_DUNGEON_FLOOR_TILE_SIZE = 128
 export const LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC = `${import.meta.env.BASE_URL}assets/tiles/dungeon-floor-level1-128-image2.png`
-export const COMBAT_DARK_MASK_SRC = `${import.meta.env.BASE_URL}assets/overlays/combat-mask-v1/dark-mask.png`
+export const COMBAT_DARK_MASK_SRC = COMBAT_DARK_MASK_ASSET_URL
 export const COMBAT_DARK_MASK_OPACITY = 0.6
 export const COMBAT_DARK_MASK_SOURCE_SIZE = Object.freeze({ width: 2052, height: 1154 })
 
@@ -107,6 +112,17 @@ let levelOneDungeonFloorImage: HTMLImageElement | null = null
 let combatDarkMaskImage: HTMLImageElement | null = null
 const terrainAssetImageCache = new Map<string, HTMLImageElement>()
 const fireSacExplosionImageCache = new Map<string, HTMLImageElement>()
+
+const getSharedCombatRuntimeImage = (key: string, domain: string, src: string) => {
+  const resource = createCombatRuntimeImageResource(key, domain, src)
+  const ready = getReadySceneAssetImage(resource)?.image
+  if (ready) return ready
+  if (import.meta.env.MODE !== 'test') {
+    void acquireSceneAssetImage(resource).catch(() => undefined)
+    return null
+  }
+  return undefined
+}
 
 export const getPlayerArcherRenderInput = (state: GameSnapshot): PlayerArcherRenderInput => {
   const player = state.player
@@ -1084,6 +1100,8 @@ export const resetCombatDarkMaskImageForTests = () => {
 
 export const drawCombatDarkMask = (ctx: CanvasRenderingContext2D) => {
   if (typeof Image === 'undefined') return false
+  const retainedMask = getSharedCombatRuntimeImage('environment.combat-mask', 'environment', COMBAT_DARK_MASK_SRC)
+  if (retainedMask) combatDarkMaskImage = retainedMask
   if (!combatDarkMaskImage) {
     combatDarkMaskImage = new Image()
     combatDarkMaskImage.decoding = 'async'
@@ -1113,6 +1131,9 @@ const getLoadedTerrainAssetImage = (asset: TerrainAssetDefinition) => {
   }
 
   const src = getTerrainAssetImageSrc(asset)
+  const retainedImage = getSharedCombatRuntimeImage(`environment.${asset.id}`, 'environment', src)
+  if (retainedImage) return retainedImage
+  if (retainedImage === null) return null
   let image = terrainAssetImageCache.get(src)
   if (!image) {
     image = new Image()
@@ -1133,6 +1154,9 @@ const getLoadedFireSacExplosionImage = (src: string) => {
     return null
   }
 
+  const retainedImage = getSharedCombatRuntimeImage(`enemy-skill-fx.c1.fire-sac.${src}`, 'enemy-skill-fx', src)
+  if (retainedImage) return retainedImage
+  if (retainedImage === null) return null
   let image = fireSacExplosionImageCache.get(src)
   if (!image) {
     image = new Image()

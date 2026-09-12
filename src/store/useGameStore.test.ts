@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ARCHER_CORE_SKILL_IDS } from '../game/archerSkillEvolution'
 import { resetGameSoundRuntimeForTests, setGameSoundNowProviderForTests, setGameSoundTestPlayer } from '../game/audio'
 import { createIdleCombatLaunchGate } from '../game/combatLoading'
+import {
+  getCombatLaunchRuntimePreparation,
+  setCombatLaunchRuntimePreparationStatusForTests,
+} from '../game/combatRuntimeReadiness'
 import { buildPendingReward, createInitialSnapshot } from '../game/engine'
 import { BEAST_CONTRACT_DOMAIN_EQUIPMENT_DEFINITIONS } from '../game/equipment'
 import { TALENT_SCHEMA_VERSION, getMetaTalentUnlockState } from '../game/talents'
@@ -336,6 +340,9 @@ describe('game store persistence', () => {
     expect(prepared).toMatchObject({ ok: true, descriptor: { target: { campaign: 2, level: 23, difficulty: 'hard', runtimeMode: 'formal-run' } } })
     expect(repeated.launchId).toBe(prepared.launchId)
     expect(useGameStore.getState()).toMatchObject({ phase: 'idle', combatLaunchGate: { status: 'awaiting-resources', active: true, inputBlocked: true, simulationBlocked: true } })
+    const reservedSeed = useGameStore.getState().combatLaunchGate.runtimeContext?.battlefieldSeed
+    expect(reservedSeed).toEqual(expect.any(Number))
+    expect(getCombatLaunchRuntimePreparation(prepared.launchId!)).toMatchObject({ status: 'ready', terrainReady: true })
 
     const elapsed = useGameStore.getState().elapsedTime
     useGameStore.getState().tick(1, { up: false, down: false, left: false, right: true })
@@ -351,9 +358,72 @@ describe('game store persistence', () => {
       phase: 'running',
       selectedCampaign: 2,
       level: 23,
+      battlefield: { seed: reservedSeed },
       combatLaunchGate: { status: 'idle', active: false, lastCompletedLaunchId: prepared.launchId },
     })
     expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: false })
+  })
+
+  it('refuses fade and commit while the retained runtime or derived terrain barrier is not ready', () => {
+    useGameStore.setState({ ...createInitialSnapshot('idle'), combatLaunchGate: createIdleCombatLaunchGate() })
+    const prepared = useGameStore.getState().prepareFormalCombatLaunch()
+    expect(setCombatLaunchRuntimePreparationStatusForTests(prepared.launchId!, 'retrying', 'terrain surface unavailable')).toBe(true)
+
+    expect(useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)).toBe(false)
+    expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: false, started: false })
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'idle',
+      combatLaunchGate: { status: 'awaiting-resources', active: true },
+    })
+
+    expect(setCombatLaunchRuntimePreparationStatusForTests(prepared.launchId!, 'ready')).toBe(true)
+    expect(useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)).toBe(true)
+    expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: true })
+  })
+
+  it('rejects fade when the first-screen terrain audit reports fallback or a substitute surface', () => {
+    useGameStore.setState({ ...createInitialSnapshot('idle'), combatLaunchGate: createIdleCombatLaunchGate() })
+    const prepared = useGameStore.getState().prepareFormalCombatLaunch()
+    expect(prepared.ok).toBe(true)
+
+    expect(setCombatLaunchRuntimePreparationStatusForTests(prepared.launchId!, 'ready', undefined, {
+      terrainFallback: true,
+      terrainBuildingReason: 'resource-validation-failed',
+    })).toBe(true)
+    expect(getCombatLaunchRuntimePreparation(prepared.launchId!)).toMatchObject({
+      status: 'retrying',
+      terrainReady: true,
+      terrainFallback: true,
+      terrainSubstituteSurface: false,
+      terrainBuildingReason: 'resource-validation-failed',
+    })
+    expect(useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)).toBe(false)
+
+    expect(setCombatLaunchRuntimePreparationStatusForTests(prepared.launchId!, 'ready', undefined, {
+      terrainFallback: false,
+      terrainSubstituteSurface: true,
+      terrainBuildingReason: 'visible-surfaces-building',
+    })).toBe(true)
+    expect(getCombatLaunchRuntimePreparation(prepared.launchId!)).toMatchObject({
+      status: 'retrying',
+      terrainFallback: false,
+      terrainSubstituteSurface: true,
+      terrainBuildingReason: 'visible-surfaces-building',
+    })
+    expect(useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)).toBe(false)
+
+    expect(setCombatLaunchRuntimePreparationStatusForTests(prepared.launchId!, 'ready')).toBe(true)
+    expect(getCombatLaunchRuntimePreparation(prepared.launchId!)).toMatchObject({
+      status: 'ready',
+      terrainReady: true,
+      terrainFallback: false,
+      terrainSubstituteSurface: false,
+      terrainBuildingReason: undefined,
+      terrainVisibleSurfaceCount: 1,
+      terrainReadySurfaceCount: 1,
+      terrainDrawnSurfaceCount: 1,
+    })
+    expect(useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)).toBe(true)
   })
 
   it('uses the same gate for local combat without persisting it or starting the test early', () => {
@@ -365,11 +435,13 @@ describe('game store persistence', () => {
     expect(prepared).toMatchObject({ ok: true, descriptor: { target: { runtimeMode: 'local-battle-test', campaign: 1, level: 1 } } })
     expect(useGameStore.getState().localBattleTest).toBeUndefined()
     expect(extractPersistedGameState(useGameStore.getState())).not.toHaveProperty('combatLaunchGate')
+    const reservedSeed = useGameStore.getState().combatLaunchGate.runtimeContext?.battlefieldSeed
 
     useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)
     expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: true })
     expect(useGameStore.getState().localBattleTest?.active).toBe(true)
     expect(useGameStore.getState().phase).toBe('running')
+    expect(useGameStore.getState().battlefield.seed).toBe(reservedSeed)
     expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(saved)
   })
 

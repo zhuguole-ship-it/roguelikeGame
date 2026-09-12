@@ -30,7 +30,13 @@ const catalog: ArcherEvolutionGuideCatalog = {
         {
           evolutionId: 'test-evolution-with-art',
           name: '已有图标进化',
-          iconUrl: '/assets/test-evolution.png',
+          iconResource: {
+            key: 'skill-icon.test-evolution-with-art',
+            version: 'test-v1',
+            domain: 'skill-icons',
+            kind: 'image',
+            url: '/assets/test-evolution.png',
+          },
           level4Description: '使用正式图标。',
           level5Description: '继续强化。',
           tags: ['命中'],
@@ -50,7 +56,8 @@ describe('ArcherEvolutionGuide', () => {
     const discovered = screen.getByTestId('archer-evolution-guide-discovered-test-evolution-discovered')
     expect(discovered.getAttribute('aria-describedby')).toBe('archer-evolution-guide-tooltip-test-evolution-discovered')
     expect(screen.getByTestId('evolution-name-placeholder-文字占位进化').textContent).toBe('文字占位进化')
-    expect(screen.getByTestId('archer-evolution-guide-image-test-evolution-with-art').getAttribute('src')).toBe('/assets/test-evolution.png')
+    expect(screen.getByTestId('archer-evolution-guide-image-test-evolution-with-art').getAttribute('data-scene-asset-logical-url')).toBe('/assets/test-evolution.png')
+    expect(screen.getByTestId('archer-evolution-guide-image-test-evolution-with-art').getAttribute('src')).toBeNull()
 
     fireEvent.mouseEnter(discovered)
     const tooltip = screen.getByTestId('archer-evolution-guide-tooltip-test-evolution-discovered')
@@ -106,9 +113,9 @@ describe('ArcherEvolutionGuide', () => {
     expect(liveCatalog.discoveredEvolutionIds).toEqual(['wind-cut', 'cross-cut', 'blood-scent'])
     const windCut = liveCatalog.families.flatMap((family) => family.evolutions).find((entry) => entry.evolutionId === 'wind-cut')
     expect(windCut).toMatchObject({ name: ARCHER_SKILL_EVOLUTION_MAP['wind-cut'].name })
-    expect(windCut?.iconUrl).toContain('/assets/skills/archer/icons/')
+    expect(windCut?.iconResource?.url).toContain('/assets/skills/archer/icons/')
     const beastEvolution = liveCatalog.families.flatMap((family) => family.evolutions).find((entry) => entry.evolutionId === 'frost-wolf-king')
-    expect(beastEvolution?.iconUrl).toBeUndefined()
+    expect(beastEvolution?.iconResource).toBeUndefined()
     expect(liveCatalog.families.map((family) => family.familyId)).not.toEqual(expect.arrayContaining(['heavy-snipe', 'dawn-bolt', 'weakness-trace']))
     const spiralBreak = liveCatalog.families.find((family) => family.familyId === 'spiral-break')
     expect(spiralBreak).toMatchObject({ buildTag: 'pierce' })

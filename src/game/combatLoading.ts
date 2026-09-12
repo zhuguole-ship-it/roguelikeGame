@@ -8,11 +8,16 @@ import { FLOORS_PER_CAMPAIGN, getCampaignFloor, isBossLevel } from './config'
 import { FIRST_DUNGEON_GODOT_TERRAIN_PUBLIC_ASSETS } from './firstDungeonGodotTerrain'
 import { HOME_COMBAT_LOADING_ASSETS } from './homeSceneAssetManifest'
 import type { CombatSceneAssetDependencyDescriptor } from './homeSceneAssetManifest'
-import type { SceneAssetResource } from './sceneAssetLoading'
+import { getSceneAssetCacheKey, type SceneAssetResource } from './sceneAssetLoading'
 import { CAMPAIGN_ONE_DECORATION_ASSETS, CAMPAIGN_ONE_OBSTACLE_ASSETS } from './terrainAssets'
+import { getFireSacExplosionPublicFrameUrls } from './c1SlimeVariantAssetFrames'
+import { getSkeletonArcherImage2PublicArrowUrl } from './skeletonArcherAssetFrames'
+import { getRuntimeAssetActionOverride } from './runtimeAssetOverrides'
+import { getSharedSceneAssetContentVersionForUrl } from './sharedSceneAssetContentVersions'
 import type { BattlefieldMode, CampaignDifficulty, EnemyKind, EnemyMovementTrait, EnemySkillTrait, ProfessionId } from './types'
 
 export const COMBAT_LOADING_CONTRACT_VERSION = 'combat-loading-v1' as const
+export const COMBAT_DARK_MASK_ASSET_URL = `${import.meta.env.BASE_URL}assets/overlays/combat-mask-v1/dark-mask.png`
 
 export const COMBAT_LOADING_TRANSITION_ASSET_IDS = [
   'loading-transition-background',
@@ -93,7 +98,14 @@ export type CombatLaunchGatePresentation = Readonly<{
   simulationBlocked: boolean
   launchId?: string
   descriptor?: CombatLoadingDependencyDescriptor
+  runtimeContext?: CombatLaunchRuntimeContext
   lastCompletedLaunchId?: string
+}>
+
+export type CombatLaunchRuntimeContext = Readonly<{
+  battlefieldSeed: number
+  initialCamera: Readonly<{ x: number; y: number }>
+  viewport: Readonly<{ width: number; height: number }>
 }>
 
 export type CombatLaunchPrepareResult = Readonly<{
@@ -132,46 +144,55 @@ const publicAssetUrl = (pathOrUrl: string) => {
   return `${(import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')}${pathOrUrl.replace(/^\/+/, '')}`
 }
 
-const imageResource = (
+export const createCombatRuntimeImageResource = (
   key: string,
   domain: string,
   pathOrUrl: string,
   version: string = COMBAT_LOADING_CONTRACT_VERSION,
-): SceneAssetResource => Object.freeze({
-  key,
-  domain,
-  kind: 'image',
-  version,
-  url: publicAssetUrl(pathOrUrl),
-})
+): SceneAssetResource => {
+  const url = publicAssetUrl(pathOrUrl)
+  return Object.freeze({
+    key,
+    domain,
+    kind: 'image',
+    version: getSharedSceneAssetContentVersionForUrl(url) ?? version,
+    url,
+  })
+}
 
 const getEnemyAssetResources = (enemyIds: ReadonlySet<string>) => developerAssetEntities
   .filter((entity) => enemyIds.has(entity.id))
   .flatMap((entity) => entity.actions.flatMap((action) => {
-    const urls = action.frameUrls?.length
+    const runtimeOverride = getRuntimeAssetActionOverride(entity.id, action.slot)
+    const urls = runtimeOverride?.frameUrls.length
+      ? runtimeOverride.frameUrls
+      : action.frameUrls?.length
       ? action.frameUrls
       : action.guideFrame
         ? [action.guideFrame]
         : []
-    return urls.map((url, index) => imageResource(
+    return urls.map((url, index) => createCombatRuntimeImageResource(
       `enemy.${entity.id}.${action.slot}.${index + 1}`,
       'enemy-actions',
       url,
+      runtimeOverride?.assetRevision ?? COMBAT_LOADING_CONTRACT_VERSION,
     ))
   }))
 
-const getCombatAssetResources = (descriptor: CombatLoadingDependencyDescriptor): readonly SceneAssetResource[] => {
+export const getCombatAssetResources = (descriptor: CombatLoadingDependencyDescriptor): readonly SceneAssetResource[] => {
   const enemyIds = new Set(descriptor.enemies.map((enemy) => enemy.archetypeId))
   const terrainAssets = descriptor.target.campaign === 1
     ? [
-        ...FIRST_DUNGEON_GODOT_TERRAIN_PUBLIC_ASSETS.map((url, index) => imageResource(`environment.c1.floor.${index + 1}`, 'environment', url)),
-        ...CAMPAIGN_ONE_OBSTACLE_ASSETS.map((asset) => imageResource(`environment.${asset.id}`, 'environment', asset.src)),
-        ...CAMPAIGN_ONE_DECORATION_ASSETS.map((asset) => imageResource(`environment.${asset.id}`, 'environment', asset.src)),
+        ...FIRST_DUNGEON_GODOT_TERRAIN_PUBLIC_ASSETS.map((url, index) => createCombatRuntimeImageResource(`environment.c1.floor.${index + 1}`, 'environment', url)),
+        ...CAMPAIGN_ONE_OBSTACLE_ASSETS.map((asset) => createCombatRuntimeImageResource(`environment.${asset.id}`, 'environment', asset.src)),
+        ...CAMPAIGN_ONE_DECORATION_ASSETS.map((asset) => createCombatRuntimeImageResource(`environment.${asset.id}`, 'environment', asset.src)),
+        createCombatRuntimeImageResource('enemy-projectile.c1.skeleton-arrow', 'enemy-projectiles', getSkeletonArcherImage2PublicArrowUrl()),
+        ...getFireSacExplosionPublicFrameUrls().map((url, index) => createCombatRuntimeImageResource(`enemy-skill-fx.c1.fire-sac.${index + 1}`, 'enemy-skill-fx', url)),
       ]
     : []
   const transitionAssets = Object.entries(HOME_COMBAT_LOADING_ASSETS)
     .filter(([key]) => key !== 'manifest')
-    .map(([key, asset]) => imageResource(
+    .map(([key, asset]) => createCombatRuntimeImageResource(
       `transition.${key}`,
       'transition',
       asset.path,
@@ -180,13 +201,14 @@ const getCombatAssetResources = (descriptor: CombatLoadingDependencyDescriptor):
   const skillIcons = [...descriptor.playerSkills.familyIds, ...descriptor.playerSkills.evolutionIds]
     .map((skillId) => ({ skillId, url: getArcherSkillIconAssetUrl(skillId) }))
     .filter((entry): entry is { skillId: string; url: string } => Boolean(entry.url))
-    .map((entry) => imageResource(`player-skill-icon.${entry.skillId}`, 'combat-icons', entry.url))
+    .map((entry) => createCombatRuntimeImageResource(`player-skill-icon.${entry.skillId}`, 'combat-icons', entry.url))
 
   const resources: SceneAssetResource[] = [
     ...terrainAssets,
+    createCombatRuntimeImageResource('environment.combat-mask', 'environment', COMBAT_DARK_MASK_ASSET_URL),
     ...getEnemyAssetResources(enemyIds),
-    ...getPlayerArcherRuntimeAssetUrls().map((url, index) => imageResource(`player.archer.frame.${index + 1}`, 'player-actions', url)),
-    ...Object.keys(COMBAT_HUD_V2_RUNTIME_ASSETS).map((assetId) => imageResource(
+    ...getPlayerArcherRuntimeAssetUrls().map((url, index) => createCombatRuntimeImageResource(`player.archer.frame.${index + 1}`, 'player-actions', url)),
+    ...Object.keys(COMBAT_HUD_V2_RUNTIME_ASSETS).map((assetId) => createCombatRuntimeImageResource(
       `combat-hud.${assetId}`,
       'combat-ui',
       getCombatHudV2AssetUrl(assetId as keyof typeof COMBAT_HUD_V2_RUNTIME_ASSETS),
@@ -206,7 +228,7 @@ const getCombatAssetResources = (descriptor: CombatLoadingDependencyDescriptor):
   ]
   const byCacheIdentity = new Map<string, SceneAssetResource>()
   resources.forEach((resource) => {
-    const identity = `${resource.kind}:${resource.url ?? resource.fontFamily ?? resource.key}@${resource.version}`
+    const identity = getSceneAssetCacheKey(resource)
     if (!byCacheIdentity.has(identity)) byCacheIdentity.set(identity, resource)
   })
   return Object.freeze(Array.from(byCacheIdentity.values()))
@@ -338,6 +360,7 @@ export const createIdleCombatLaunchGate = (
 export const createPendingCombatLaunchGate = (
   launchId: string,
   descriptor: CombatLoadingDependencyDescriptor,
+  runtimeContext?: CombatLaunchRuntimeContext,
 ): CombatLaunchGatePresentation => Object.freeze({
   status: 'awaiting-resources',
   active: true,
@@ -345,6 +368,7 @@ export const createPendingCombatLaunchGate = (
   simulationBlocked: true,
   launchId,
   descriptor,
+  runtimeContext,
 })
 
 export const markCombatLaunchFadeStarted = (

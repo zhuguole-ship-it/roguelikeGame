@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { CANVAS_HEIGHT, CANVAS_SCALE, CANVAS_WIDTH, getCampaignIndex, WORLD_HEIGHT, WORLD_WIDTH } from '../../game/config'
 import { buildCombatSceneAssetDependencyDescriptor } from '../../game/combatLoading'
+import { getCombatLaunchRuntimePreparation, isCombatLaunchRuntimeReady } from '../../game/combatRuntimeReadiness'
 import { isCombatMinimapVisible } from '../../game/combatMinimap'
 import { createCombatSceneAssetManifestFromDescriptor, HOME_SCENE_ASSET_MANIFEST_V1 } from '../../game/homeSceneAssetManifest'
 import { getCombatCanvasBackingSize, getSmoothedCameraOffset, renderGame } from '../../game/render'
@@ -422,6 +423,8 @@ export function GameCanvas({ enableSceneLoading = import.meta.env.MODE !== 'test
         <SceneLoadingTransition
           key={`combat-${combatLaunchGate.launchId}`}
           manifest={combatLoadingManifest}
+          getRuntimePreparation={() => getCombatLaunchRuntimePreparation(combatLaunchGate.launchId!)}
+          isRuntimePreparationReady={() => isCombatLaunchRuntimeReady(combatLaunchGate.launchId!)}
           onExitStart={() => markCombatLaunchFadeStarted(combatLaunchGate.launchId!)}
           onComplete={() => {
             completeCombatLaunchFade(combatLaunchGate.launchId!)

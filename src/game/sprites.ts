@@ -77,6 +77,13 @@ import {
   type PlayerArcherVisualState,
 } from './archerAssetFrames'
 import { getFirstCampaignMonsterBodyAssetReadiness } from './assetManifest'
+import { COMBAT_LOADING_CONTRACT_VERSION, createCombatRuntimeImageResource } from './combatLoading'
+import {
+  acquireSceneAssetImage,
+  getReadySceneAssetImage,
+  resolveSceneAssetCanonicalIdentity,
+  type SceneAssetResource,
+} from './sceneAssetLoading'
 import { getRuntimeAssetActionOverride, getRuntimeAssetActionOverrideWithFallback, hasRuntimeAssetEntityOverride } from './runtimeAssetOverrides'
 import type { BeastCompanion, Enemy, EnemyKind, MapObstacle, Pickup, Player, Projectile, Vector2, WeaponId } from './types'
 
@@ -1364,6 +1371,7 @@ export const CORROSIVE_SLIME_SPRITE_ATLAS: MonsterSpriteAtlas = {
 }
 
 const monsterAtlasImages = new Map<string, HTMLImageElement>()
+const sharedRuntimeImages = new Map<string, HTMLImageElement>()
 const runtimeAssetWarnings = new Set<string>()
 type RuntimeAssetImageState = 'loading' | 'ready' | 'failed'
 const runtimeAssetImageStates = new Map<string, RuntimeAssetImageState>()
@@ -1414,6 +1422,44 @@ const normalizeRuntimeAssetUrl = (src: string, revision?: string) => {
   return `${absoluteUrl}${separator}v=${encodeURIComponent(revision)}`
 }
 
+const getRuntimeSceneAssetResource = (src: string, revision?: string) => {
+  let embeddedRevision: string | undefined
+  try {
+    const parsed = new URL(src, 'https://runtime-assets.invalid/')
+    embeddedRevision = parsed.searchParams.get('v') ?? parsed.searchParams.get('assetVersion') ?? undefined
+  } catch {
+    embeddedRevision = undefined
+  }
+  return createCombatRuntimeImageResource(
+    `runtime-sprite.${src}`,
+    'runtime-sprites',
+    src,
+    revision || embeddedRevision || COMBAT_LOADING_CONTRACT_VERSION,
+  )
+}
+
+const getRuntimeLogicalUrl = (resource: SceneAssetResource) => (
+  resolveSceneAssetCanonicalIdentity(resource).logicalUrl ?? resource.url ?? resource.key
+)
+
+const retainSharedRuntimeImage = (resource: SceneAssetResource, image: HTMLImageElement) => {
+  sharedRuntimeImages.set(getRuntimeLogicalUrl(resource), image)
+  if (resource.url) sharedRuntimeImages.set(getRuntimeLogicalUrl(getRuntimeSceneAssetResource(resource.url)), image)
+}
+
+/** Hydrates the renderer with the exact retained image objects owned by the scene loader. */
+export const hydrateCombatRuntimeSpriteImages = (resources: readonly SceneAssetResource[]) => {
+  let hydrated = 0
+  resources.forEach((resource) => {
+    if (resource.kind !== 'image') return
+    const handle = getReadySceneAssetImage(resource)
+    if (!handle?.image) return
+    retainSharedRuntimeImage(resource, handle.image)
+    hydrated += 1
+  })
+  return hydrated
+}
+
 const warnRuntimeAssetOnce = (key: string, message: string) => {
   if (runtimeAssetWarnings.has(key) || typeof console === 'undefined') {
     return
@@ -1439,6 +1485,21 @@ const markRuntimeAtlasImageFailed = (src: string) => {
 
 const getRuntimeAtlasImage = (src: string) => {
   if (typeof Image === 'undefined') {
+    return null
+  }
+
+  const sharedResource = getRuntimeSceneAssetResource(src)
+  const logicalUrl = getRuntimeLogicalUrl(sharedResource)
+  const retainedImage = sharedRuntimeImages.get(logicalUrl) ?? getReadySceneAssetImage(sharedResource)?.image
+  if (retainedImage) {
+    retainSharedRuntimeImage(sharedResource, retainedImage)
+    return retainedImage
+  }
+
+  if (import.meta.env.MODE !== 'test') {
+    void acquireSceneAssetImage(sharedResource).then((handle) => {
+      if (handle.image) retainSharedRuntimeImage(sharedResource, handle.image)
+    }).catch(() => markRuntimeAtlasImageFailed(logicalUrl))
     return null
   }
 
@@ -1548,12 +1609,21 @@ const preloadRuntimeAtlasImage = (src: string) => {
 export const preloadPlayerArcherAssets = () => {
   if (!playerArcherPreloadPromise) {
     const urls = Array.from(new Set(getPlayerArcherRuntimeAssetUrls().map((url) => normalizeRuntimeAssetUrl(url))))
-    const preloadPromise = Promise.all(urls.map((url) => preloadRuntimeAtlasImage(url))).then((results) => {
+    const preloadPromise = (import.meta.env.MODE === 'test'
+      ? Promise.all(urls.map((url) => preloadRuntimeAtlasImage(url)))
+      : Promise.all(urls.map(async (url) => {
+          const resource = getRuntimeSceneAssetResource(url)
+          const handle = await acquireSceneAssetImage(resource)
+          if (handle.image) retainSharedRuntimeImage(resource, handle.image)
+          return Boolean(handle.image)
+        }))).then((results) => {
       if (!results.every(Boolean) && playerArcherPreloadPromise === preloadPromise) {
         // A completed failed pass must not persist across formal/local reentry.
         // The next pass retries only URLs that emitted a real error event.
         playerArcherPreloadPromise = null
       }
+    }).catch(() => {
+      if (playerArcherPreloadPromise === preloadPromise) playerArcherPreloadPromise = null
     })
     playerArcherPreloadPromise = preloadPromise
   }
@@ -1562,7 +1632,8 @@ export const preloadPlayerArcherAssets = () => {
 
 /** Shared-cache visibility for focused rendering regression tests. */
 export const getPlayerArcherCachedRuntimeImage = (src: string) => (
-  getRuntimeAtlasImage(normalizeRuntimeAssetUrl(src))
+  sharedRuntimeImages.get(getRuntimeLogicalUrl(getRuntimeSceneAssetResource(normalizeRuntimeAssetUrl(src))))
+  ?? getRuntimeAtlasImage(normalizeRuntimeAssetUrl(src))
 )
 
 /** Test-only reset for isolated mock Image lifecycles; never called at runtime. */
@@ -1573,6 +1644,7 @@ export const resetPlayerArcherRuntimeImageCacheForTests = () => {
     runtimeAssetImageStates.delete(normalizedUrl)
     runtimeAssetDecodePromises.delete(normalizedUrl)
     runtimeAssetWarnings.delete(`runtime-asset-load:${normalizedUrl}`)
+    sharedRuntimeImages.delete(getRuntimeLogicalUrl(getRuntimeSceneAssetResource(normalizedUrl)))
   })
   playerArcherPreloadPromise = null
   lastValidPlayerArcherFrame = null

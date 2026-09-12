@@ -7,10 +7,22 @@ import {
   HOME_COMBAT_LOADING_ASSETS,
   HOME_SCENE_ASSET_MANIFEST_V1,
   HOME_SCENE_DIRECT_DEPENDENCY_AUDIT,
+  HOME_SCENE_HUNTER_HOME_META_TALENT_ICON_RESOURCES,
+  HOME_SCENE_HUNTER_HOME_SKILL_ICON_RESOURCES,
   createCombatSceneAssetManifestFromDescriptor,
+  getHomeSceneMetaTalentIconResource,
+  getHomeSceneSkillIconResource,
 } from './homeSceneAssetManifest'
+import { ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTIONS } from './archerSkillEvolution'
+import { getArcherSkillIconAssetPath } from './archerSkillIcons'
 import { buildCombatSceneAssetDependencyDescriptor } from './combatLoading'
+import { getMetaTalentIconPresentation } from './metaTalentIcons'
 import { dedupeSceneAssetResources, getSceneAssetCacheKey } from './sceneAssetLoading'
+import {
+  getSharedSceneAssetContentVersionForUrl,
+  SHARED_SCENE_ASSET_CONTENT_VERSIONS,
+} from './sharedSceneAssetContentVersions'
+import { META_TALENT_NODES } from './talents'
 
 const projectRoot = process.cwd()
 const publicRoot = resolve(projectRoot, 'public')
@@ -90,6 +102,75 @@ describe('HOME_SCENE_ASSET_MANIFEST_V1', () => {
     urls.forEach((url) => {
       expect(url).not.toMatch(/Downloads|\/Users\/|file:/)
       expect(existsSync(publicFileForUrl(url)), `${url} should resolve under public/`).toBe(true)
+    })
+  })
+
+  it('declares every asset-backed Hunter Home skill image and excludes text placeholders', () => {
+    const manifestKeys = new Set(HOME_SCENE_ASSET_MANIFEST_V1.resources.map(getSceneAssetCacheKey))
+
+    ARCHER_CORE_SKILLS.forEach((skill) => {
+      const resource = getHomeSceneSkillIconResource(skill.id)
+      if (!getArcherSkillIconAssetPath(skill.id)) {
+        expect(resource).toBeUndefined()
+        return
+      }
+      expect(resource, `missing core icon descriptor for ${skill.id}`).toBeDefined()
+      expect(manifestKeys.has(getSceneAssetCacheKey(resource!))).toBe(true)
+    })
+    ARCHER_SKILL_EVOLUTIONS.forEach((evolution) => {
+      const resource = getHomeSceneSkillIconResource(evolution.behaviorSkillId)
+      if (!getArcherSkillIconAssetPath(evolution.behaviorSkillId)) {
+        expect(resource).toBeUndefined()
+        return
+      }
+      expect(resource, `missing evolution icon descriptor for ${evolution.id}`).toBeDefined()
+      expect(manifestKeys.has(getSceneAssetCacheKey(resource!))).toBe(true)
+    })
+    expect(HOME_SCENE_HUNTER_HOME_SKILL_ICON_RESOURCES.every((resource) => (
+      manifestKeys.has(getSceneAssetCacheKey(resource))
+    ))).toBe(true)
+  })
+
+  it('includes every asset-backed meta talent icon and excludes programmatic placeholders', () => {
+    const manifestKeys = new Set(HOME_SCENE_ASSET_MANIFEST_V1.resources.map(getSceneAssetCacheKey))
+    let assetCount = 0
+
+    META_TALENT_NODES.forEach((node) => {
+      const presentation = getMetaTalentIconPresentation(node)
+      const resource = getHomeSceneMetaTalentIconResource(node)
+      if (presentation.kind === 'programmatic') {
+        expect(resource).toBeUndefined()
+        return
+      }
+      assetCount += 1
+      expect(resource?.url).toBe(presentation.assetUrl)
+      expect(manifestKeys.has(getSceneAssetCacheKey(resource!))).toBe(true)
+    })
+    expect(HOME_SCENE_HUNTER_HOME_META_TALENT_ICON_RESOURCES).toHaveLength(assetCount)
+  })
+
+  it('uses neutral content revisions for every image URL shared with combat', () => {
+    const idleResources = HOME_SCENE_ASSET_MANIFEST_V1.resources.filter((resource) => (
+      resource.key.startsWith('character.idle.')
+    ))
+    expect(idleResources).toHaveLength(6)
+    expect(new Set(idleResources.map((resource) => resource.version))).toEqual(new Set([
+      SHARED_SCENE_ASSET_CONTENT_VERSIONS.playerArcherFrames,
+    ]))
+    expect(new Set(HOME_SCENE_HUNTER_HOME_SKILL_ICON_RESOURCES.map((resource) => resource.version))).toEqual(new Set([
+      SHARED_SCENE_ASSET_CONTENT_VERSIONS.archerSkillIcons,
+    ]))
+    expect([...idleResources, ...HOME_SCENE_HUNTER_HOME_SKILL_ICON_RESOURCES].some((resource) => (
+      /home|combat|loading/.test(resource.version)
+    ))).toBe(false)
+    ;[...idleResources, ...HOME_SCENE_HUNTER_HOME_SKILL_ICON_RESOURCES].forEach((resource) => {
+      expect(getSharedSceneAssetContentVersionForUrl(resource.url!)).toBe(resource.version)
+      expect(getSceneAssetCacheKey(resource)).toBe(getSceneAssetCacheKey({
+        ...resource,
+        key: `combat.consumer.${resource.key}`,
+        domain: 'combat-consumer',
+        version: getSharedSceneAssetContentVersionForUrl(resource.url!)!,
+      }))
     })
   })
 

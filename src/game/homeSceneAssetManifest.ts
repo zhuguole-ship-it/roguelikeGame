@@ -5,6 +5,7 @@ import { getPlayerArcherFrameUrls } from './archerAssetFrames'
 import { getMetaTalentIconAssetPath } from './metaTalentIcons'
 import { META_TALENT_NODES } from './talents'
 import type { SceneAssetManifest, SceneAssetResource } from './sceneAssetLoading'
+import { getSharedSceneAssetContentVersionForUrl } from './sharedSceneAssetContentVersions'
 
 const baseUrl = (import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')
 const encodeAssetPath = (path: string) => path.split('/').map(encodeURIComponent).join('/')
@@ -50,7 +51,12 @@ export const HOME_SCENE_DIRECT_DEPENDENCY_AUDIT = Object.freeze([
   { module: 'start-game', label: '开始游戏', domains: ['fonts', 'home-config'] },
 ] as const)
 
-const imageResource = (key: string, domain: string, pathOrUrl: string, version = 'home-v1'): SceneAssetResource => ({
+const imageResource = (
+  key: string,
+  domain: string,
+  pathOrUrl: string,
+  version = getSharedSceneAssetContentVersionForUrl(pathOrUrl) ?? 'home-v1',
+): SceneAssetResource => ({
   key,
   domain,
   kind: 'image',
@@ -58,14 +64,37 @@ const imageResource = (key: string, domain: string, pathOrUrl: string, version =
   url: pathOrUrl.startsWith(baseUrl) ? pathOrUrl : publicUrl(pathOrUrl),
 })
 
-const skillIconPaths = Array.from(new Set([
-  ...ARCHER_CORE_SKILLS.map((skill) => getArcherSkillIconAssetPath(skill.id)),
-  ...ARCHER_SKILL_EVOLUTIONS.map((skill) => getArcherSkillIconAssetPath(skill.id)),
-].filter((path): path is string => Boolean(path))))
+const skillIconIds = Array.from(new Set([
+  ...ARCHER_CORE_SKILLS.map((skill) => skill.id),
+  ...ARCHER_SKILL_EVOLUTIONS.flatMap((skill) => [skill.id, skill.behaviorSkillId]),
+]))
+const skillIconResourceById = new Map<string, SceneAssetResource>()
+const skillIconResourceByPath = new Map<string, SceneAssetResource>()
+skillIconIds.forEach((skillId) => {
+  const path = getArcherSkillIconAssetPath(skillId)
+  if (!path) return
+  const existing = skillIconResourceByPath.get(path)
+  const resource = existing ?? imageResource(`skill-icon.${skillId}`, 'skill-icons', path)
+  skillIconResourceByPath.set(path, resource)
+  skillIconResourceById.set(skillId, resource)
+})
 
-const metaTalentIconPaths = Array.from(new Set(
-  META_TALENT_NODES.map((node) => getMetaTalentIconAssetPath(node)).filter((path): path is string => Boolean(path)),
-))
+const metaTalentIconResourceByPath = new Map<string, SceneAssetResource>()
+META_TALENT_NODES.forEach((node) => {
+  const path = getMetaTalentIconAssetPath(node)
+  if (!path || metaTalentIconResourceByPath.has(path)) return
+  metaTalentIconResourceByPath.set(path, imageResource(`meta-talent-icon.${node.id}`, 'meta-talent-icons', path))
+})
+
+export const HOME_SCENE_HUNTER_HOME_SKILL_ICON_RESOURCES = Object.freeze(Array.from(skillIconResourceByPath.values()))
+export const HOME_SCENE_HUNTER_HOME_META_TALENT_ICON_RESOURCES = Object.freeze(Array.from(metaTalentIconResourceByPath.values()))
+
+export const getHomeSceneSkillIconResource = (skillId: string) => skillIconResourceById.get(skillId)
+
+export const getHomeSceneMetaTalentIconResource = (node: Pick<(typeof META_TALENT_NODES)[number], 'name'>) => {
+  const path = getMetaTalentIconAssetPath(node)
+  return path ? metaTalentIconResourceByPath.get(path) : undefined
+}
 
 const monsterGuideUrls = Array.from(new Set([
   ...developerAssetEntities.flatMap((entity) => {
@@ -112,8 +141,8 @@ export const HOME_SCENE_ASSET_MANIFEST_V1: SceneAssetManifest = Object.freeze({
     imageResource('character.detail-background', 'character-selection', 'assets/ui/character-selection/archer-detail-background.png'),
     imageResource('character.select-frame', 'character-selection', 'assets/ui/run-settlement-black-gold/action-frame-3x.png'),
     ...getPlayerArcherFrameUrls('idle').map((path, index) => imageResource(`character.idle.${index + 1}`, 'player-preview', path)),
-    ...skillIconPaths.map((path, index) => imageResource(`skill-icon.${index + 1}`, 'skill-icons', path)),
-    ...metaTalentIconPaths.map((path, index) => imageResource(`meta-talent-icon.${index + 1}`, 'meta-talent-icons', path)),
+    ...HOME_SCENE_HUNTER_HOME_SKILL_ICON_RESOURCES,
+    ...HOME_SCENE_HUNTER_HOME_META_TALENT_ICON_RESOURCES,
     ...monsterGuideUrls.map((url, index) => imageResource(`monster-guide.${index + 1}`, 'monster-guide', url)),
     { key: 'font.pixel', domain: 'fonts', kind: 'font' as const, version: 'google-font-v1', fontFamily: 'Press Start 2P' },
     { key: 'font.body', domain: 'fonts', kind: 'font' as const, version: 'google-font-v1', fontFamily: 'VT323' },
