@@ -381,6 +381,81 @@ describe('game store persistence', () => {
     expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: true })
   })
 
+  it.each([
+    'runtime-retrying',
+    'terrain-fallback',
+    'terrain-substitute',
+    'terrain-count-mismatch',
+  ] as const)('rechecks strict runtime readiness after fade starts for %s', (regression) => {
+    const village = createInitialSnapshot('idle')
+    village.selectedCampaign = 1
+    useGameStore.setState({ ...village, combatLaunchGate: createIdleCombatLaunchGate() })
+
+    const prepared = useGameStore.getState().prepareFormalCombatLaunch()
+    expect(prepared.ok).toBe(true)
+    expect(useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)).toBe(true)
+    expect(useGameStore.getState().combatLaunchGate).toMatchObject({
+      active: true,
+      status: 'fading-out',
+      simulationBlocked: true,
+      inputBlocked: true,
+    })
+
+    if (regression === 'runtime-retrying') {
+      expect(setCombatLaunchRuntimePreparationStatusForTests(
+        prepared.launchId!,
+        'retrying',
+        'runtime readiness regressed during fade',
+      )).toBe(true)
+    } else if (regression === 'terrain-fallback') {
+      expect(setCombatLaunchRuntimePreparationStatusForTests(prepared.launchId!, 'ready', undefined, {
+        terrainFallback: true,
+        terrainBuildingReason: 'resource-validation-failed',
+      })).toBe(true)
+    } else if (regression === 'terrain-substitute') {
+      expect(setCombatLaunchRuntimePreparationStatusForTests(prepared.launchId!, 'ready', undefined, {
+        terrainSubstituteSurface: true,
+        terrainBuildingReason: 'visible-surfaces-building',
+      })).toBe(true)
+    } else {
+      expect(setCombatLaunchRuntimePreparationStatusForTests(prepared.launchId!, 'ready', undefined, {
+        terrainVisibleSurfaceCount: 2,
+        terrainReadySurfaceCount: 1,
+        terrainDrawnSurfaceCount: 2,
+      })).toBe(true)
+    }
+
+    expect(getCombatLaunchRuntimePreparation(prepared.launchId!)).toMatchObject({ status: 'retrying' })
+    const beforeRejectedCommit = useGameStore.getState()
+    expect(beforeRejectedCommit.phase).toBe('idle')
+    expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({
+      ok: false,
+      started: false,
+    })
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'idle',
+      elapsedTime: beforeRejectedCommit.elapsedTime,
+      combatLaunchGate: { active: true, status: 'fading-out' },
+    })
+
+    useGameStore.getState().tick(1, { up: false, down: false, left: false, right: true })
+    useGameStore.getState().triggerDash()
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'idle',
+      elapsedTime: beforeRejectedCommit.elapsedTime,
+      player: { dashTimer: beforeRejectedCommit.player.dashTimer },
+      combatLaunchGate: { active: true, status: 'fading-out' },
+    })
+
+    expect(setCombatLaunchRuntimePreparationStatusForTests(prepared.launchId!, 'ready')).toBe(true)
+    expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: true })
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'running',
+      combatLaunchGate: { active: false, status: 'idle', lastCompletedLaunchId: prepared.launchId },
+    })
+    expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: false })
+  })
+
   it('rejects fade when the first-screen terrain audit reports fallback or a substitute surface', () => {
     useGameStore.setState({ ...createInitialSnapshot('idle'), combatLaunchGate: createIdleCombatLaunchGate() })
     const prepared = useGameStore.getState().prepareFormalCombatLaunch()
