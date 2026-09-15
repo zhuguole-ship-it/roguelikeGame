@@ -1143,12 +1143,73 @@ export const useGameStore = create<GameStore>()(
       },
       markCombatLaunchFadeStarted: (launchId) => {
         let accepted = false
-        set((state) => {
-          if (!isCombatLaunchRuntimeReady(launchId)) return state
-          const nextGate = markCombatLaunchFadeStartedState(state.combatLaunchGate, launchId)
-          accepted = nextGate.status === 'fading-out' && nextGate.launchId === launchId
-          return nextGate === state.combatLaunchGate ? state : { ...state, combatLaunchGate: nextGate }
-        })
+        const gate = get().combatLaunchGate
+        if (gate.active && gate.launchId === launchId && gate.status === 'fading-out') {
+          return true
+        }
+
+        const commit = () => {
+          set((state) => {
+            const currentGate = state.combatLaunchGate
+            if (
+              !currentGate.active
+              || currentGate.launchId !== launchId
+              || currentGate.status !== 'awaiting-resources'
+              || !currentGate.descriptor
+              || !currentGate.runtimeContext
+              || !isCombatLaunchRuntimeReady(launchId)
+            ) {
+              return state
+            }
+
+            const fadingGate = markCombatLaunchFadeStartedState(currentGate, launchId)
+            if (fadingGate.status !== 'fading-out') return state
+            accepted = true
+            const descriptor = currentGate.descriptor
+            const runtimeContext = currentGate.runtimeContext
+            const mode = descriptor.target.runtimeMode
+
+            if (mode === 'formal-run') {
+              const base = restoreDevelopmentAcceptanceSnapshot(state)
+              playSnapshotSound(base, 'button')
+              return {
+                ...startRunSnapshot(base, runtimeContext.battlefieldSeed),
+                combatLaunchGate: fadingGate,
+                developmentAcceptance: createDevelopmentAcceptancePresentation({ selectedTarget: base.developmentAcceptance.selectedTarget }),
+              }
+            }
+
+            if (mode === 'local-battle-test') {
+              const next = startLocalBattleTestSnapshot(restoreDevelopmentAcceptanceSnapshot(state), runtimeContext.battlefieldSeed)
+              return { ...next, combatLaunchGate: fadingGate }
+            }
+
+            const target = normalizeDevelopmentAcceptanceTarget({
+              campaign: descriptor.target.campaign,
+              difficulty: descriptor.target.difficulty,
+              floor: getCampaignFloor(descriptor.target.level),
+            })
+            const canRetarget = Boolean(state.developmentAcceptance.activeTarget)
+            if (!canRetarget) captureDevelopmentAcceptanceBackups(state)
+            const prepared = prepareDevelopmentAcceptanceTargetSnapshot(state, target, runtimeContext.battlefieldSeed)
+            return {
+              ...prepared,
+              combatLaunchGate: fadingGate,
+              developmentAcceptance: createDevelopmentAcceptancePresentation({
+                active: true,
+                selectedTarget: target,
+                activeTarget: target,
+                entrySnapshotCaptured: true,
+              }),
+            }
+          })
+        }
+
+        if (gate.descriptor?.target.runtimeMode === 'formal-run') {
+          commit()
+        } else {
+          runWithPreservedGameSaveStorage(commit)
+        }
         return accepted
       },
       completeCombatLaunchFade: (launchId) => {
@@ -1164,12 +1225,9 @@ export const useGameStore = create<GameStore>()(
         if (gate.status !== 'fading-out') {
           return { ok: false, started: false, launchId, errors: ['战斗加载过场尚未完成淡出'] }
         }
-        if (!isCombatLaunchRuntimeReady(launchId) || !gate.runtimeContext) {
-          return { ok: false, started: false, launchId, errors: ['战斗运行时资源尚未就绪'] }
-        }
 
         let result: CombatLaunchCommitResult = { ok: false, started: false, launchId, errors: ['战斗启动尚未完成'] }
-        const commit = () => {
+        const release = () => {
           set((state) => {
             if (
               !state.combatLaunchGate.active
@@ -1180,56 +1238,15 @@ export const useGameStore = create<GameStore>()(
               result = { ok: false, started: false, launchId, errors: ['战斗加载回调已失效'] }
               return state
             }
-            const descriptor = state.combatLaunchGate.descriptor
-            const runtimeContext = state.combatLaunchGate.runtimeContext
-            if (!runtimeContext || !isCombatLaunchRuntimeReady(launchId)) {
-              result = { ok: false, started: false, launchId, errors: ['战斗运行时资源尚未就绪'] }
-              return state
-            }
-            const mode = descriptor.target.runtimeMode
-            const idleGate = createIdleCombatLaunchGate(launchId)
             result = { ok: true, started: true, launchId, errors: [] }
-
-            if (mode === 'formal-run') {
-              const base = restoreDevelopmentAcceptanceSnapshot(state)
-              playSnapshotSound(base, 'button')
-              return {
-                ...startRunSnapshot(base, runtimeContext.battlefieldSeed),
-                combatLaunchGate: idleGate,
-                developmentAcceptance: createDevelopmentAcceptancePresentation({ selectedTarget: base.developmentAcceptance.selectedTarget }),
-              }
-            }
-
-            if (mode === 'local-battle-test') {
-              const next = startLocalBattleTestSnapshot(restoreDevelopmentAcceptanceSnapshot(state), runtimeContext.battlefieldSeed)
-              return { ...next, combatLaunchGate: idleGate }
-            }
-
-            const target = normalizeDevelopmentAcceptanceTarget({
-              campaign: descriptor.target.campaign,
-              difficulty: descriptor.target.difficulty,
-              floor: getCampaignFloor(descriptor.target.level),
-            })
-            const canRetarget = Boolean(state.developmentAcceptance.activeTarget)
-            if (!canRetarget) captureDevelopmentAcceptanceBackups(state)
-            const prepared = prepareDevelopmentAcceptanceTargetSnapshot(state, target, runtimeContext.battlefieldSeed)
-            return {
-              ...prepared,
-              combatLaunchGate: idleGate,
-              developmentAcceptance: createDevelopmentAcceptancePresentation({
-                active: true,
-                selectedTarget: target,
-                activeTarget: target,
-                entrySnapshotCaptured: true,
-              }),
-            }
+            return { ...state, combatLaunchGate: createIdleCombatLaunchGate(launchId) }
           })
         }
 
         if (gate.descriptor.target.runtimeMode === 'formal-run') {
-          commit()
+          release()
         } else {
-          runWithPreservedGameSaveStorage(commit)
+          runWithPreservedGameSaveStorage(release)
         }
         if (result.ok) clearCombatLaunchRuntimePreparation(launchId)
         return result

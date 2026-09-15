@@ -156,6 +156,29 @@ describe('RunSettlementOverlay', () => {
     expect(screen.queryByTestId('run-settlement-damage-icon-run_death_09')).toBeNull()
   })
 
+  it('renders frozen finite and infinite V3 entries in the shared skills panel with rank metadata', () => {
+    useGameStore.setState({ ...createInitialSnapshot('game-over') })
+    render(
+      <RunSettlementOverlay
+        summary={{
+          ...successSummary,
+          displayEntries: [
+            ...successSummary.displayEntries,
+            { kind: 'run-talent', sourceId: 'AT001', name: '穿刺校准', nodeKind: 'finite', rank: 2, order: 2 },
+            { kind: 'run-talent', sourceId: 'INF-CB-DAMAGE', name: '无尽轰炸', nodeKind: 'infinite', rank: 4, order: 3 },
+          ],
+        }}
+        onReturnToVillage={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByTestId('run-settlement-display-icon-AT001')).toBeTruthy()
+    expect(screen.getByTestId('run-settlement-display-icon-INF-CB-DAMAGE')).toBeTruthy()
+    expect(screen.getByText(/穿刺校准 · Lv\.2/)).toBeTruthy()
+    expect(screen.getByText(/无尽轰炸 · ×4/)).toBeTruthy()
+    expect(screen.queryByTestId('combat-talent-v3-settlement-summary')).toBeNull()
+  })
+
   it('uses the failed status banner while preserving the settlement structure', () => {
     useGameStore.setState({ ...createInitialSnapshot('game-over') })
 

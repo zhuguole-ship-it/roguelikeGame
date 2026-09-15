@@ -72,6 +72,8 @@ const advancePaintedTime = (durationMs: number) => {
   }
 }
 
+const advanceExitPaintHandshake = () => advancePaintedTime(32)
+
 const installImageRuntime = () => {
   let objectUrlSequence = 0
   const fetchMock = vi.fn(async () => ({
@@ -310,6 +312,7 @@ describe('SceneLoadingTransition', () => {
     expect(onComplete).not.toHaveBeenCalled()
 
     advancePaintedTime(64)
+    advanceExitPaintHandshake()
     expect(overlay.getAttribute('data-phase')).toBe('exiting')
     expect(onExitStart).toHaveBeenCalledTimes(1)
     expect(onComplete).not.toHaveBeenCalled()
@@ -348,6 +351,7 @@ describe('SceneLoadingTransition', () => {
     expect(overlay.getAttribute('data-display-complete')).toBe('false')
     expect(overlay.getAttribute('data-phase')).toBe('ready')
     advancePaintedTime(320)
+    advanceExitPaintHandshake()
     expect(overlay.getAttribute('data-phase')).toBe('exiting')
     expect(onComplete).not.toHaveBeenCalled()
     act(() => vi.advanceTimersByTime(400))
@@ -369,6 +373,7 @@ describe('SceneLoadingTransition', () => {
     )
     await flush()
     advancePaintedTime(2_544)
+    advanceExitPaintHandshake()
     expect(onExitStart).toHaveBeenCalledTimes(1)
     act(() => vi.advanceTimersByTime(400))
     expect(onComplete).toHaveBeenCalledTimes(1)
@@ -436,6 +441,7 @@ describe('SceneLoadingTransition', () => {
     expect(screen.getByTestId('scene-loading-background').style.opacity).toBe('1')
     expect(Number(screen.getByTestId('scene-loading-final').style.opacity)).toBeGreaterThan(0)
     advancePaintedTime(2_208)
+    advancePaintedTime(48)
     expect(screen.getByTestId('scene-loading-transition').getAttribute('data-phase')).toBe('exiting')
     expect(getReadySceneAssetImage(requiredResources[3])?.naturalWidth).toBe(2052)
   })
@@ -509,6 +515,7 @@ describe('SceneLoadingTransition', () => {
     advancePaintedTime(2_224)
     expect(onExitStart).not.toHaveBeenCalled()
     advancePaintedTime(320)
+    advanceExitPaintHandshake()
     expect(onExitStart).toHaveBeenCalledTimes(1)
     expect(overlay.getAttribute('data-phase')).toBe('exiting')
   })
@@ -826,6 +833,7 @@ describe('SceneLoadingTransition', () => {
     expect(screen.getByTestId('scene-loading-title').style.opacity).toBe('0')
     expect(onComplete).not.toHaveBeenCalled()
     advancePaintedTime(3_424)
+    advancePaintedTime(48)
     expect(screen.getByTestId('scene-loading-title').style.opacity).toBe('1')
     expect(overlay.getAttribute('data-phase')).toBe('exiting')
     expect(onComplete).not.toHaveBeenCalled()

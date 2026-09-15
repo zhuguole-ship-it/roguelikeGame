@@ -379,7 +379,32 @@ describe('game store persistence', () => {
     expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: false, started: false })
 
     expect(useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)).toBe(true)
+    const committed = useGameStore.getState()
+    expect(committed).toMatchObject({
+      phase: 'running',
+      selectedCampaign: 2,
+      level: 23,
+      battlefield: { seed: reservedSeed },
+      combatLaunchGate: {
+        status: 'fading-out',
+        active: true,
+        inputBlocked: true,
+        simulationBlocked: true,
+        launchId: prepared.launchId,
+      },
+    })
+    const committedPlayer = structuredClone(committed.player)
+    useGameStore.getState().tick(1, { up: false, down: false, left: false, right: true })
+    useGameStore.getState().triggerDash()
+    expect(useGameStore.getState()).toMatchObject({
+      elapsedTime: committed.elapsedTime,
+      levelTimer: committed.levelTimer,
+      player: committedPlayer,
+      enemies: committed.enemies,
+      combatLaunchGate: { status: 'fading-out', active: true },
+    })
     expect(useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)).toBe(true)
+    expect(useGameStore.getState().battlefield.seed).toBe(reservedSeed)
     expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: true })
     expect(useGameStore.getState()).toMatchObject({
       phase: 'running',
@@ -413,7 +438,7 @@ describe('game store persistence', () => {
     'terrain-fallback',
     'terrain-substitute',
     'terrain-count-mismatch',
-  ] as const)('rechecks strict runtime readiness after fade starts for %s', (regression) => {
+  ] as const)('does not reconstruct committed combat if runtime readiness changes during fade for %s', (regression) => {
     const village = createInitialSnapshot('idle')
     village.selectedCampaign = 1
     useGameStore.setState({ ...village, combatLaunchGate: createIdleCombatLaunchGate() })
@@ -427,6 +452,9 @@ describe('game store persistence', () => {
       simulationBlocked: true,
       inputBlocked: true,
     })
+    const committed = useGameStore.getState()
+    const committedSeed = committed.battlefield.seed
+    expect(committed.phase).toBe('running')
 
     if (regression === 'runtime-retrying') {
       expect(setCombatLaunchRuntimePreparationStatusForTests(
@@ -453,31 +481,15 @@ describe('game store persistence', () => {
     }
 
     expect(getCombatLaunchRuntimePreparation(prepared.launchId!)).toMatchObject({ status: 'retrying' })
-    const beforeRejectedCommit = useGameStore.getState()
-    expect(beforeRejectedCommit.phase).toBe('idle')
+    const beforeRelease = useGameStore.getState()
     expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({
-      ok: false,
-      started: false,
+      ok: true,
+      started: true,
     })
-    expect(useGameStore.getState()).toMatchObject({
-      phase: 'idle',
-      elapsedTime: beforeRejectedCommit.elapsedTime,
-      combatLaunchGate: { active: true, status: 'fading-out' },
-    })
-
-    useGameStore.getState().tick(1, { up: false, down: false, left: false, right: true })
-    useGameStore.getState().triggerDash()
-    expect(useGameStore.getState()).toMatchObject({
-      phase: 'idle',
-      elapsedTime: beforeRejectedCommit.elapsedTime,
-      player: { dashTimer: beforeRejectedCommit.player.dashTimer },
-      combatLaunchGate: { active: true, status: 'fading-out' },
-    })
-
-    expect(setCombatLaunchRuntimePreparationStatusForTests(prepared.launchId!, 'ready')).toBe(true)
-    expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: true })
     expect(useGameStore.getState()).toMatchObject({
       phase: 'running',
+      elapsedTime: beforeRelease.elapsedTime,
+      battlefield: { seed: committedSeed },
       combatLaunchGate: { active: false, status: 'idle', lastCompletedLaunchId: prepared.launchId },
     })
     expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: false })
@@ -539,12 +551,55 @@ describe('game store persistence', () => {
     expect(extractPersistedGameState(useGameStore.getState())).not.toHaveProperty('combatLaunchGate')
     const reservedSeed = useGameStore.getState().combatLaunchGate.runtimeContext?.battlefieldSeed
 
-    useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)
+    expect(useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)).toBe(true)
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'running',
+      localBattleTest: { active: true },
+      battlefield: { seed: reservedSeed },
+      combatLaunchGate: { active: true, status: 'fading-out' },
+    })
+    expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(saved)
     expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: true })
     expect(useGameStore.getState().localBattleTest?.active).toBe(true)
     expect(useGameStore.getState().phase).toBe('running')
     expect(useGameStore.getState().battlefield.seed).toBe(reservedSeed)
     expect(localStorage.getItem(GAME_SAVE_STORAGE_KEY)).toBe(saved)
+  })
+
+  it('commits a development target under the fade gate and releases that same launch only once', () => {
+    const running = createInitialSnapshot('running')
+    running.currency = 444
+    useGameStore.setState({
+      ...running,
+      developmentAcceptance: { available: true, active: false },
+      combatLaunchGate: createIdleCombatLaunchGate(),
+    })
+    expect(useGameStore.getState().setDevelopmentAcceptanceTarget({ campaign: 3, difficulty: 'hell', floor: 7 })).toMatchObject({ ok: true })
+
+    const prepared = useGameStore.getState().prepareDevelopmentAcceptanceCombatLaunch()
+    expect(prepared).toMatchObject({
+      ok: true,
+      descriptor: { target: { campaign: 3, difficulty: 'hell', runtimeMode: 'development-acceptance' } },
+    })
+    const reservedSeed = useGameStore.getState().combatLaunchGate.runtimeContext?.battlefieldSeed
+
+    expect(useGameStore.getState().markCombatLaunchFadeStarted(prepared.launchId!)).toBe(true)
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'running',
+      selectedCampaign: 3,
+      selectedCampaignDifficulty: 'hell',
+      battlefield: { seed: reservedSeed },
+      developmentAcceptance: { active: true, activeTarget: { campaign: 3, difficulty: 'hell', floor: 7 } },
+      combatLaunchGate: { active: true, status: 'fading-out', launchId: prepared.launchId },
+    })
+    expect(useGameStore.getState().markCombatLaunchFadeStarted('stale-launch')).toBe(false)
+    expect(useGameStore.getState().battlefield.seed).toBe(reservedSeed)
+
+    expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: true })
+    expect(useGameStore.getState().combatLaunchGate).toMatchObject({ active: false, lastCompletedLaunchId: prepared.launchId })
+    expect(useGameStore.getState().completeCombatLaunchFade(prepared.launchId!)).toMatchObject({ ok: true, started: false })
+    useGameStore.getState().exitDevelopmentAcceptance()
+    expect(useGameStore.getState()).toMatchObject({ phase: 'running', currency: 444, developmentAcceptance: { active: false } })
   })
 
   it('defaults the first-hard Boss epic claim record for legacy saves', () => {

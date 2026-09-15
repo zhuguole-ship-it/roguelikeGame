@@ -138,14 +138,12 @@ describe('Archer talent V3 UI integration', () => {
     expect(screen.getByTestId('combat-talent-v3-pause-summary').textContent).toContain('累计：')
     paused.unmount()
 
-    const presentation = useGameStore.getState()
     render(
       <RunSettlementOverlay
-        combatTalentPresentation={getArcherCombatTalentV3SnapshotForGame(presentation)}
         onReturnToVillage={() => undefined}
       />,
     )
-    expect(screen.getByTestId('combat-talent-v3-settlement-summary').textContent).toContain('有限投入：2')
+    expect(screen.queryByTestId('combat-talent-v3-settlement-summary')).toBeNull()
   })
 
   it('keeps new control infinite selections synchronized across HUD, pause and settlement summaries', () => {
@@ -176,13 +174,9 @@ describe('Archer talent V3 UI integration', () => {
 
     render(
       <RunSettlementOverlay
-        combatTalentPresentation={getArcherCombatTalentV3SnapshotForGame(running)}
         onReturnToVillage={() => undefined}
       />,
     )
-    const settlementSummary = screen.getByTestId('combat-talent-v3-settlement-summary')
-    expect(settlementSummary.textContent).toContain('无限成长：3')
-    expect(screen.getByTestId('combat-talent-v3-settlement-infinite-selections').textContent).toContain('无尽轰炸×2')
-    expect(screen.getByTestId('combat-talent-v3-settlement-infinite-selections').textContent).toContain('精准落点×1')
+    expect(screen.queryByTestId('combat-talent-v3-settlement-summary')).toBeNull()
   })
 })

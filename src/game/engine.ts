@@ -254,6 +254,8 @@ import {
 } from './talents'
 import { RUN_TALENT_FORM_BY_ID, RUN_TALENT_FORM_DEFINITIONS, type RunTalentFormDefinition } from './runTalentForms'
 import {
+  ARCHER_FINITE_COMBAT_TALENTS_V3,
+  ARCHER_INFINITE_COMBAT_TALENTS_V3,
   acceptArcherCombatTalentV3Choice,
   createArcherCombatTalentV3RuntimeState,
   generateArcherCombatTalentV3Offer,
@@ -19116,7 +19118,35 @@ const createRunSettlementDisplayEntries = (snapshot: GameSnapshot): RunSettlemen
       order: activeSkillEntries.length + index,
     }
   })
-  return [...activeSkillEntries, ...talentEntries]
+  const combatTalentV3 = normalizeArcherCombatTalentV3RuntimeState(snapshot.runTalentState?.combatTalentV3)
+  const v3StartOrder = activeSkillEntries.length + talentEntries.length
+  const finiteEntries = ARCHER_FINITE_COMBAT_TALENTS_V3.flatMap((definition) => {
+    const rank = combatTalentV3.finiteRanks[definition.id] ?? 0
+    if (rank <= 0) return []
+    return [{
+      sourceId: definition.id,
+      name: definition.name,
+      kind: 'run-talent' as const,
+      nodeKind: 'finite' as const,
+      rank,
+    }]
+  })
+  const infiniteEntries = ARCHER_INFINITE_COMBAT_TALENTS_V3.flatMap((definition) => {
+    const rank = combatTalentV3.infiniteRanks[definition.id] ?? 0
+    if (rank <= 0) return []
+    return [{
+      sourceId: definition.id,
+      name: definition.name,
+      kind: 'run-talent' as const,
+      nodeKind: 'infinite' as const,
+      rank,
+    }]
+  })
+  const v3Entries = [...finiteEntries, ...infiniteEntries].map((entry, index) => ({
+    ...entry,
+    order: v3StartOrder + index,
+  }))
+  return [...activeSkillEntries, ...talentEntries, ...v3Entries]
 }
 
 const createRunSettlementSummary = (

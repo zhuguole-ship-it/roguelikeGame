@@ -152,6 +152,7 @@ export function SceneLoadingTransition({
 }: SceneLoadingTransitionProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const completionStartedRef = useRef(false)
+  const exitPaintFramesRef = useRef<number[]>([])
   const onCompleteRef = useRef(onComplete)
   const onExitStartRef = useRef(onExitStart)
   const reducedMotionRef = useRef(prefersReducedMotion())
@@ -167,6 +168,7 @@ export function SceneLoadingTransition({
   const timeline = allReadyAtStartRef.current ? SCENE_LOADING_TIMELINES.cached : SCENE_LOADING_TIMELINES.cold
   const [snapshot, setSnapshot] = useState(() => makeInitialSnapshot(manifest, initialReadyCheckRef.current))
   const [isExiting, setIsExiting] = useState(false)
+  const [exitArmed, setExitArmed] = useState(false)
 
   const combinedTotal = snapshot.total + (runtimeBarrierRequired ? 1 : 0)
   const combinedReadyCount = snapshot.ready + (runtimeBarrierRequired && runtimeReady ? 1 : 0)
@@ -357,8 +359,29 @@ export function SceneLoadingTransition({
     ) return
     if (onExitStartRef.current?.() === false) return
     completionStartedRef.current = true
-    setIsExiting(true)
+    setExitArmed(true)
   }, [displayProgressComplete, minimumDurationComplete, realProgressComplete])
+
+  // The combat snapshot is committed while the gate remains opaque. Two RAFs
+  // give React a commit and the browser a paint opportunity before revealing it.
+  useEffect(() => {
+    if (!exitArmed || isExiting) return
+    let disposed = false
+    const first = window.requestAnimationFrame(() => {
+      if (disposed) return
+      const second = window.requestAnimationFrame(() => {
+        if (disposed) return
+        setIsExiting(true)
+      })
+      exitPaintFramesRef.current.push(second)
+    })
+    exitPaintFramesRef.current.push(first)
+    return () => {
+      disposed = true
+      exitPaintFramesRef.current.forEach((frame) => window.cancelAnimationFrame(frame))
+      exitPaintFramesRef.current = []
+    }
+  }, [exitArmed, isExiting])
 
   useEffect(() => {
     if (!isExiting) return

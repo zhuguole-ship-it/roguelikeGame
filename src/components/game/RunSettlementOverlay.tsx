@@ -7,8 +7,7 @@ import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
 import { isRunTalentFormId } from '../../game/runTalentForms'
 import { RUN_TALENT_NODE_BY_ID } from '../../game/talents'
 import type { RunSettlementSummary } from '../../game/types'
-import type { ArcherCombatTalentV3PresentationSnapshot } from '../../game/archerTalentSystemV3'
-import { ArcherCombatTalentV3CompactSummary } from './ArcherTalentV3Presentation'
+import { ArcherTalentV3SettlementIcon } from './ArcherTalentV3Presentation'
 import {
   COMBAT_UI_LAYER,
   getCombatUiLayerAccessibilityProps,
@@ -19,7 +18,6 @@ import {
 
 type RunSettlementOverlayProps = {
   summary?: RunSettlementSummary
-  combatTalentPresentation?: ArcherCombatTalentV3PresentationSnapshot
   onReturnToVillage: () => void
 }
 
@@ -117,7 +115,7 @@ const BlackGoldFrame = ({ asset, children, className = '', testId }: {
   </section>
 )
 
-export function RunSettlementOverlay({ summary, combatTalentPresentation, onReturnToVillage }: RunSettlementOverlayProps) {
+export function RunSettlementOverlay({ summary, onReturnToVillage }: RunSettlementOverlayProps) {
   const settlementRef = useRef<HTMLDivElement | null>(null)
   const { highestLayer } = useCombatUiLayerState()
   useCombatUiLayerInitialFocus(settlementRef, COMBAT_UI_LAYER.settlement, highestLayer)
@@ -177,12 +175,6 @@ export function RunSettlementOverlay({ summary, combatTalentPresentation, onRetu
           ))}
         </div>
 
-        {combatTalentPresentation ? (
-          <div className="mx-auto mt-4 w-full max-w-[1080px]">
-            <ArcherCombatTalentV3CompactSummary presentation={combatTalentPresentation} placement="settlement" />
-          </div>
-        ) : null}
-
         <div className="mx-auto mt-0 grid min-w-0 w-full max-w-[1280px] grid-cols-1 gap-7 xl:grid-cols-2" data-testid="run-settlement-panels">
           <BlackGoldFrame asset="content" className="min-w-0 h-[min(52vh,440px)] min-h-[270px] xl:h-[min(44vh,440px)]" testId="run-settlement-skills-panel">
             <div className="flex h-full min-h-0 flex-col px-8 pb-7 pt-9 sm:px-10 sm:pb-9 sm:pt-11">
@@ -193,9 +185,13 @@ export function RunSettlementOverlay({ summary, combatTalentPresentation, onRetu
                     return (
                       <div key={`${entry.kind}:${entry.sourceId}`} className="min-w-0 text-center" title={entry.name}>
                         <div className="flex justify-center">
-                          <SettlementSourceIcon sourceId={entry.sourceId} name={entry.name} expectedKind={entry.kind} testId={`run-settlement-display-icon-${entry.sourceId}`} />
+                          {entry.kind === 'run-talent' && entry.nodeKind ? (
+                            <ArcherTalentV3SettlementIcon sourceId={entry.sourceId} nodeKind={entry.nodeKind} name={entry.name} rank={entry.rank} testId={`run-settlement-display-icon-${entry.sourceId}`} />
+                          ) : (
+                            <SettlementSourceIcon sourceId={entry.sourceId} name={entry.name} expectedKind={entry.kind} testId={`run-settlement-display-icon-${entry.sourceId}`} />
+                          )}
                         </div>
-                        <p className="mt-1 break-words font-pixel text-[10px] leading-tight text-[#e8e1c5]">{entry.name}</p>
+                        <p className="mt-1 break-words font-pixel text-[10px] leading-tight text-[#e8e1c5]">{entry.name}{entry.rank ? ` · ${entry.nodeKind === 'infinite' ? `×${entry.rank}` : `Lv.${entry.rank}`}` : ''}</p>
                       </div>
                     )
                   })}

@@ -9,6 +9,10 @@ export type RunSettlementDisplayEntry = {
   sourceId: string
   name: string
   kind: 'active-skill' | 'run-talent'
+  /** Present for V3 combat talents; legacy run talents intentionally omit it. */
+  nodeKind?: 'finite' | 'infinite'
+  /** Final frozen V3 rank. Repeated infinite selections remain one entry. */
+  rank?: number
 }
 
 export type RunSettlementDamageEntry = {

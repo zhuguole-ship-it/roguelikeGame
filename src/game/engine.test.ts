@@ -114,6 +114,7 @@ import {
 } from './equipment'
 import { getMonsterDropProfile } from './monsterDataCards'
 import { CAMPAIGN_ONE_DECORATION_ASSETS, CAMPAIGN_ONE_OBSTACLE_ASSETS } from './terrainAssets'
+import { ARCHER_FINITE_COMBAT_TALENTS_V3, ARCHER_INFINITE_COMBAT_TALENTS_V3 } from './archerTalentSystemV3'
 import type { Enemy, EquipmentItem, EquipmentSetId, EquipmentSlot, GameSnapshot, MapObstacle, Projectile, SkillField, Vector2 } from './types'
 import { distance, normalize } from '../utils/math'
 import { extractPersistedGameState, restorePersistedGameState } from '../store/useGameStore'
@@ -3923,6 +3924,8 @@ describe('game engine', () => {
     success.activeSkills = [{ skillId: 'pierce-arrow', level: 2, cooldownRemaining: 0 }]
     success.inRunTalentIds = ['run_blood_02']
     success.runTalentState.selectedTalentIds = ['run_blood_02']
+    success.runTalentState.combatTalentV3!.finiteRanks = { PT101: 2 }
+    success.runTalentState.combatTalentV3!.infiniteRanks = { 'INF-COMMON-DAMAGE': 4 }
     success.equipmentInventory = [...success.equipmentInventory, carriedEpic, dismantledRare]
     success.equippedItems = { ...success.equippedItems, ring1: carriedEpic, boots: dismantledRare }
     success.runSettlementDamageStats = [
@@ -3957,6 +3960,13 @@ describe('game engine', () => {
     expect(summary?.displayEntries).toEqual([
       expect.objectContaining({ sourceId: 'pierce-arrow', name: '穿刺箭', kind: 'active-skill', order: 0, level: 2 }),
       expect.objectContaining({ sourceId: 'run_blood_02', name: '流血箭簇', kind: 'run-talent', order: 1 }),
+      expect.objectContaining({ sourceId: 'PT101', name: '贯体积累', kind: 'run-talent', nodeKind: 'finite', rank: 2, order: 2 }),
+      expect.objectContaining({ sourceId: 'INF-COMMON-DAMAGE', name: '全局伤害', kind: 'run-talent', nodeKind: 'infinite', rank: 4, order: 3 }),
+    ])
+    expect(summary?.displayEntries.filter((entry) => entry.sourceId === 'INF-COMMON-DAMAGE')).toHaveLength(1)
+    expect(summary?.displayEntries.slice(2).map((entry) => entry.sourceId)).toEqual([
+      ...ARCHER_FINITE_COMBAT_TALENTS_V3.filter((entry) => entry.id === 'PT101').map((entry) => entry.id),
+      ...ARCHER_INFINITE_COMBAT_TALENTS_V3.filter((entry) => entry.id === 'INF-COMMON-DAMAGE').map((entry) => entry.id),
     ])
     expect(summary?.damageEntries).toEqual([
       { sourceId: 'player-basic-attack', sourceName: '普通攻击', totalDamage: 144, maxHitDamage: 36 },
@@ -3981,6 +3991,11 @@ describe('game engine', () => {
 
     const failure = startRunSnapshot(current)
     failure.initialSkillDraft = undefined
+    failure.activeSkills = [{ skillId: 'fan-burst', level: 3, cooldownRemaining: 0 }]
+    failure.runTalentState.selectedTalentIds = ['run_common_01']
+    failure.inRunTalentIds = ['run_common_01']
+    failure.runTalentState.combatTalentV3!.finiteRanks = { BT001: 3 }
+    failure.runTalentState.combatTalentV3!.infiniteRanks = { 'INF-COMMON-HP': 5 }
     failure.player.hp = 0
     const failed = finishPlayerDeathAnimation(failure)
     expect(failed.runSettlementSummary).toMatchObject({
@@ -3989,6 +4004,14 @@ describe('game engine', () => {
       talentPointsEarned: failed.lastTalentPointRecord?.points,
     })
     expect(failed.runSettlementSummary?.carriedEquipmentCount).toBe(0)
+    expect(failed.runSettlementSummary?.displayEntries).toEqual([
+      expect.objectContaining({ sourceId: 'fan-burst', kind: 'active-skill', level: 3, order: 0 }),
+      expect.objectContaining({ sourceId: 'run_common_01', kind: 'run-talent', order: 1 }),
+      expect.objectContaining({ sourceId: 'BT001', nodeKind: 'finite', rank: 3, order: 2 }),
+      expect.objectContaining({ sourceId: 'INF-COMMON-HP', nodeKind: 'infinite', rank: 5, order: 3 }),
+    ])
+    expect(failed.runTalentState.combatTalentV3).toBeUndefined()
+    expect(failed.runSettlementSummary?.displayEntries[2]).toMatchObject({ sourceId: 'BT001', rank: 3 })
 
     const local = startLocalBattleTestSnapshot(current)
     local.player.hp = 0

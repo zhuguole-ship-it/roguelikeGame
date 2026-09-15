@@ -1,6 +1,10 @@
 import type { ReactNode } from 'react'
 
 import { ARCHER_CORE_SKILL_DEFINITION_MAP, getActiveSkillRuntimePresentation } from '../../game/archerSkillEvolution'
+import {
+  ARCHER_FINITE_COMBAT_TALENTS_V3,
+  ARCHER_INFINITE_COMBAT_TALENTS_V3,
+} from '../../game/archerTalentSystemV3'
 import type {
   ArcherCombatTalentV3PresentationItem,
   ArcherCombatTalentV3PresentationSnapshot,
@@ -90,6 +94,35 @@ export function ArcherTalentV3Emblem({ item, sizeClass = 'h-12 w-12' }: {
     </span>
   )
 }
+
+export function ArcherTalentV3SettlementIcon({ sourceId, nodeKind, name, rank, testId }: {
+  sourceId: string
+  nodeKind: 'finite' | 'infinite'
+  name: string
+  rank?: number
+  testId: string
+}) {
+  const definition = (nodeKind === 'finite' ? ARCHER_FINITE_COMBAT_TALENTS_V3 : ARCHER_INFINITE_COMBAT_TALENTS_V3)
+    .find((item) => item.id === sourceId)
+  if (!definition) {
+    return <SettlementTalentFallback name={name} rank={rank} testId={testId} />
+  }
+  return (
+    <span data-testid={testId} aria-label={`${name}${rank ? `，${nodeKind === 'infinite' ? `累计${rank}次` : `等级${rank}`}` : ''}`}>
+      <ArcherTalentV3Emblem item={{ ...definition, nodeKind }} />
+    </span>
+  )
+}
+
+const SettlementTalentFallback = ({ name, rank, testId }: { name: string; rank?: number; testId: string }) => (
+  <span
+    className="inline-flex h-12 w-12 shrink-0 items-center justify-center border-2 border-[#d7b86a] bg-[#211a0b] px-1 text-center font-pixel text-[8px] leading-tight text-[#f4d47a]"
+    data-testid={testId}
+    aria-label={`${name}${rank ? `，等级${rank}` : ''}`}
+  >
+    {rank ? `Lv.${rank}` : 'V3'}
+  </span>
+)
 
 const RouteIdentity = ({ item }: { item: Pick<ArcherCombatTalentV3PresentationItem, 'nodeKind' | 'archetype' | 'routeId' | 'tier'> }) => (
   <p className="font-pixel text-[9px] leading-relaxed tracking-[0.08em] text-[#9dd5ac]" data-testid="archer-talent-v3-identity">

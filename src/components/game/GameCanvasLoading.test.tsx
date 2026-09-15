@@ -109,7 +109,7 @@ describe('GameCanvas scene loading gate integration', () => {
     expect(screen.getByTestId('scene-loading-transition-mock').dataset.scene).toBe('home')
   })
 
-  it('keeps formal combat idle through loading and starts only after mark then complete', () => {
+  it('commits the target combat frame at fade start but keeps simulation blocked until fade completes', () => {
     const prepared = useGameStore.getState().prepareFormalCombatLaunch()
     expect(prepared.ok).toBe(true)
 
@@ -132,7 +132,7 @@ describe('GameCanvas scene loading gate integration', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'begin fade' }))
     expect(useGameStore.getState()).toMatchObject({
-      phase: 'idle',
+      phase: 'running',
       combatLaunchGate: { status: 'fading-out', simulationBlocked: true },
     })
 
@@ -165,7 +165,7 @@ describe('GameCanvas scene loading gate integration', () => {
     expect(setCombatLaunchRuntimePreparationStatusForTests(prepared.launchId!, 'ready')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'begin fade' }))
     expect(useGameStore.getState()).toMatchObject({
-      phase: 'idle',
+      phase: 'running',
       combatLaunchGate: { status: 'fading-out', simulationBlocked: true },
     })
   })

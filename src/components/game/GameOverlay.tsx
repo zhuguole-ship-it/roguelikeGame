@@ -3414,7 +3414,6 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
     return (
       <RunSettlementOverlay
         summary={runSettlementSummary}
-        combatTalentPresentation={combatTalentV3Presentation}
         onReturnToVillage={returnToVillage}
       />
     )
