@@ -329,6 +329,33 @@ describe('game store persistence', () => {
     })
   })
 
+  it('declines only skill reward pools through the Store action and preserves mandatory V3 combat-talent choices', () => {
+    const skillReward = createInitialSnapshot('paused')
+    skillReward.phaseBeforePause = 'running'
+    skillReward.pauseMenuOpen = false
+    skillReward.pendingSkillReward = buildPendingReward(skillReward)
+    const skillsBefore = structuredClone(skillReward.activeSkills)
+    useGameStore.setState(skillReward)
+
+    useGameStore.getState().declineSkillReward()
+    expect(useGameStore.getState()).toMatchObject({ phase: 'running', pendingSkillReward: null })
+    expect(useGameStore.getState().activeSkills).toEqual(skillsBefore)
+
+    const combatTalentReward = createInitialSnapshot('paused')
+    combatTalentReward.phaseBeforePause = 'running'
+    combatTalentReward.pauseMenuOpen = false
+    combatTalentReward.pendingSkillReward = buildPendingReward(combatTalentReward, 'run-talent')
+    const pendingBefore = structuredClone(combatTalentReward.pendingSkillReward)
+    useGameStore.setState(combatTalentReward)
+
+    useGameStore.getState().declineSkillReward()
+    expect(useGameStore.getState().pendingSkillReward).toEqual(pendingBefore)
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'paused',
+      message: '当前战斗天赋奖励必须选择 1 项',
+    })
+  })
+
   it('holds formal combat behind the runtime-only loading and fade gate, then commits exactly once', () => {
     const village = createInitialSnapshot('idle')
     village.selectedCampaign = 2

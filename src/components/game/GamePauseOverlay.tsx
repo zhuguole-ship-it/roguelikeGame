@@ -16,7 +16,7 @@ import {
   type RunTalentPresentationItem,
   type TalentEffect,
 } from '../../game/talents'
-import type { ActiveSkillInstance, CampaignActiveRewardPresentation, CampaignRewardPresentationSnapshot, EquipmentBonus, EquipmentItem, RunTalentTrajectoryBranch, SkillRewardBanType, SkillRewardChoice } from '../../game/types'
+import type { ActiveSkillInstance, CampaignActiveRewardPresentation, CampaignRewardPresentationSnapshot, EquipmentBonus, EquipmentItem, RewardPoolKind, RunTalentTrajectoryBranch, SkillRewardBanType, SkillRewardChoice } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
 import { CombatDamageLog } from './CombatDamageLog'
 import { RunTalentFormDetails, RunTalentFormPlaceholder } from './RunTalentFormPresentation'
@@ -67,6 +67,13 @@ const rewardBuildLabel = {
   ...SKILL_BUILD_LABELS,
   general: '通用',
 } as const
+
+const DECLINABLE_SKILL_REWARD_POOL_KINDS = new Set<RewardPoolKind>([
+  'skill',
+  'skill-evolution',
+  'fixed-skill',
+  'raid-skill',
+])
 
 const SKILL_REWARD_BAN_TYPE_LABEL: Record<SkillRewardBanType, string> = {
   'new-active': '新主动技能',
@@ -1129,6 +1136,7 @@ const RewardScreen = ({
   activeSkills,
   runTalentPresentationItems,
   onAccept,
+  onDeclineSkillReward,
   onEquipLoot,
   onLockLoot,
   onDeferLoot,
@@ -1142,6 +1150,7 @@ const RewardScreen = ({
   activeSkills: readonly ActiveSkillInstance[]
   runTalentPresentationItems: readonly RunTalentPresentationItem[]
   onAccept: (choiceId: string, trajectoryBranch?: RunTalentTrajectoryBranch) => void
+  onDeclineSkillReward: () => void
   onEquipLoot: (itemId: string) => void
   onLockLoot: (itemId: string) => void
   onDeferLoot: (itemId?: string) => void
@@ -1159,6 +1168,9 @@ const RewardScreen = ({
     : campaignReward?.candidates ?? pendingSkillReward?.choices ?? []
   const isCombatTalentV3Reward = visibleChoices.length > 0
     && visibleChoices.every((choice) => Boolean(choice.combatTalentV3))
+  const canDeclineSkillReward = pendingSkillReward !== null
+    && DECLINABLE_SKILL_REWARD_POOL_KINDS.has(pendingSkillReward.poolKind)
+    && !isCombatTalentV3Reward
   const rewardShellClass = showSkillOnly ? getRewardChoiceShellClass(visibleChoices.length) : ''
   const crystalCategoryLabel = campaignReward?.category === 'universal' ? '通用天赋' : '流派天赋'
   const rewardOverlayRef = useRef<HTMLDivElement | null>(null)
@@ -1229,7 +1241,26 @@ const RewardScreen = ({
               presentationItems={runTalentPresentationItems}
               onAccept={onAccept}
             />
-            <p className="text-center text-xs leading-relaxed text-[#9dd5ac]" data-testid="reward-choice-required-copy">固定三选一；选择后才会继续。</p>
+            <div className="flex w-full min-w-0 flex-col items-center gap-2" data-testid="reward-choice-actions">
+              <p
+                id="reward-choice-action-copy"
+                className="text-center text-xs leading-relaxed text-[#9dd5ac]"
+                data-testid="reward-choice-required-copy"
+              >
+                {canDeclineSkillReward ? '选择 1 项，或放弃本次技能奖励后继续。' : '固定三选一；选择后才会继续。'}
+              </p>
+              {canDeclineSkillReward ? (
+                <button
+                  type="button"
+                  className="w-full border-2 border-[#563b2b] bg-[#1c1410] px-4 py-3 font-pixel text-[9px] tracking-[0.12em] text-[#e8c9a7] transition-colors motion-reduce:transition-none hover:border-[#c98b52] hover:bg-[#2b1b12] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#f4d47a] sm:w-auto sm:min-w-48"
+                  onClick={onDeclineSkillReward}
+                  aria-describedby="reward-choice-action-copy"
+                  data-testid="decline-skill-reward-button"
+                >
+                  放弃技能奖励
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
@@ -1341,6 +1372,7 @@ export function GamePauseOverlay() {
   const forfeitRun = useGameStore((snapshot) => snapshot.forfeitRun)
   const forfeitInitialSkillDraft = useGameStore((snapshot) => snapshot.forfeitInitialSkillDraft)
   const acceptSkillReward = useGameStore((snapshot) => snapshot.acceptSkillReward)
+  const declineSkillReward = useGameStore((snapshot) => snapshot.declineSkillReward)
   const confirmLevelClear = useGameStore((snapshot) => snapshot.confirmLevelClear)
   const equipEquipment = useGameStore((snapshot) => snapshot.equipEquipment)
   const toggleEquipmentLock = useGameStore((snapshot) => snapshot.toggleEquipmentLock)
@@ -1395,6 +1427,7 @@ export function GamePauseOverlay() {
         activeSkills={state.activeSkills}
         runTalentPresentationItems={runTalentPresentationItems}
         onAccept={acceptSkillReward}
+        onDeclineSkillReward={declineSkillReward}
         onEquipLoot={(itemId) => {
           equipEquipment(itemId)
           dismissBossLoot(itemId)
@@ -1417,6 +1450,7 @@ export function GamePauseOverlay() {
         activeSkills={state.activeSkills}
         runTalentPresentationItems={runTalentPresentationItems}
         onAccept={acceptSkillReward}
+        onDeclineSkillReward={declineSkillReward}
         onEquipLoot={(itemId) => {
           equipEquipment(itemId)
           dismissBossLoot(itemId)

@@ -20560,8 +20560,13 @@ export const declineSkillRewardSnapshot = (current: GameSnapshot): GameSnapshot 
     return snapshot
   }
 
-  if (snapshot.pendingSkillReward?.mandatoryEvolutionFamilyId) {
-    snapshot.message = '请先为 Lv.4 技能选择一个进化分支'
+  const pending = snapshot.pendingSkillReward
+  if (!pending) {
+    return snapshot
+  }
+
+  if (!isSkillRewardPool(pending.poolKind)) {
+    snapshot.message = '当前战斗天赋奖励必须选择 1 项'
     return snapshot
   }
 

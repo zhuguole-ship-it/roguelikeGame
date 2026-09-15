@@ -67,6 +67,7 @@ describe('Archer talent V3 UI integration', () => {
     expect(screen.getByTestId('reward-choice-grid').getAttribute('aria-label')).toContain('3 项，仅可选择一项')
     expect(screen.queryByTestId('run-upgrade-reroll')).toBeNull()
     expect(screen.queryByRole('button', { name: '放弃奖励' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '放弃技能奖励' })).toBeNull()
     expect(screen.queryByText(/插入/)).toBeNull()
 
     fireEvent.click(screen.getAllByTestId('combat-talent-v3-reward-card')[0])

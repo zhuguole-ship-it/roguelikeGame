@@ -35,6 +35,7 @@ describe('InitialSkillDraftOverlay', () => {
       opening.candidates.map((candidate) => candidate.choiceId),
     )
     expect(screen.queryByRole('button', { name: /关闭|跳过|放弃|重掷|替换/ })).toBeNull()
+    expect(screen.queryByTestId('decline-skill-reward-button')).toBeNull()
     expect(screen.queryByTestId('reward-screen-overlay')).toBeNull()
     expect(screen.queryByTestId('run-upgrade-reroll')).toBeNull()
   })

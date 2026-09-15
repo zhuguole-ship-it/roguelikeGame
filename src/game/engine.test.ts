@@ -8357,6 +8357,11 @@ describe('game engine', () => {
   it('can decline profession reward choice', () => {
     const snapshot = createInitialSnapshot('running')
     snapshot.phase = 'level-clear'
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    snapshot.inRunRewardRerolls = 2
+    snapshot.runTalentState.rerollsRemaining = 3
+    snapshot.runTalentState.rerollsUsed = 1
+    snapshot.campaignRewardProgress.contractEchoSkillRewardsRemaining = 2
     snapshot.pendingSkillReward = {
       poolKind: 'skill',
       choices: [{
@@ -8377,6 +8382,149 @@ describe('game engine', () => {
     expect(next.level).toBe(2)
     expect(next.phase).toBe('running')
     expect(next.levelClearConfirmed).toBe(false)
+    expect(next.activeSkills).toEqual(snapshot.activeSkills)
+    expect(next.fixedPassiveLevel).toBe(snapshot.fixedPassiveLevel)
+    expect(next.discoveredSkillEvolutionIds).toEqual(snapshot.discoveredSkillEvolutionIds)
+    expect(next.inRunRewardRerolls).toBe(2)
+    expect(next.runTalentState).toMatchObject({ rerollsRemaining: 3, rerollsUsed: 1 })
+    expect(next.campaignRewardProgress.contractEchoSkillRewardsRemaining).toBe(2)
+  })
+
+  it('allows declining the whole legacy mandatory evolution reward without changing the skill or branch', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.phase = 'paused'
+    snapshot.phaseBeforePause = 'running'
+    snapshot.pauseMenuOpen = false
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 3, cooldownRemaining: 1.25 }]
+    snapshot.pendingSkillReward = {
+      ...buildPendingReward(snapshot),
+      mandatoryEvolutionFamilyId: 'pierce-arrow',
+    }
+    const beforeSkill = { ...snapshot.activeSkills[0] }
+
+    const next = declineSkillRewardSnapshot(snapshot)
+
+    expect(next.pendingSkillReward).toBeNull()
+    expect(next.phase).toBe('running')
+    expect(next.activeSkills).toEqual([beforeSkill])
+    expect(next.activeSkills[0].evolutionId).toBeUndefined()
+    expect(next.discoveredSkillEvolutionIds).toEqual(snapshot.discoveredSkillEvolutionIds)
+  })
+
+  it('allows declining a full-slot replacement prompt without replacing or removing any skill', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.phase = 'paused'
+    snapshot.phaseBeforePause = 'running'
+    snapshot.pauseMenuOpen = false
+    snapshot.activeSkills = [
+      { skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 2, cooldownRemaining: 0 },
+      { skillId: 'fan-burst', familyId: 'fan-burst', level: 2, cooldownRemaining: 0 },
+      { skillId: 'arrow-rain', familyId: 'arrow-rain', level: 2, cooldownRemaining: 0 },
+    ]
+    snapshot.pendingSkillReward = {
+      poolKind: 'skill',
+      source: 'elite',
+      choices: [{
+        choiceId: 'replacement-entry',
+        mode: 'new-active',
+        skillId: 'ricochet-feather',
+        title: '弹射箭羽',
+        description: '获得一个新主动技能。',
+        buildTag: 'pierce',
+        tacticalTags: ['弹射'],
+        levelText: '获得新技能',
+        tacticalText: '测试替换入口',
+      }],
+    }
+    const replacementPrompt = acceptSkillRewardSnapshot(snapshot, 'replacement-entry')
+    expect(replacementPrompt.pendingSkillReward?.replacementSkillId).toBe('ricochet-feather')
+
+    const declined = declineSkillRewardSnapshot(replacementPrompt)
+
+    expect(declined.pendingSkillReward).toBeNull()
+    expect(declined.phase).toBe('running')
+    expect(declined.activeSkills).toEqual(snapshot.activeSkills)
+    expect(declined.activeSkills.some((skill) => skill.skillId === 'ricochet-feather')).toBe(false)
+  })
+
+  it.each([
+    ['fixed-skill', 'fixed-skill'],
+    ['raid-skill', 'elite-raid'],
+  ] as const)('allows declining the %s skill source through the shared completion path', (poolKind, source) => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.phase = 'paused'
+    snapshot.phaseBeforePause = 'running'
+    snapshot.pauseMenuOpen = false
+    snapshot.pendingSkillReward = {
+      poolKind,
+      source,
+      campaignRewardNodeId: `${source}:test`,
+      campaignRewardSemantics: 'three-choice-skill',
+      choices: [{
+        choiceId: `${source}-choice`,
+        mode: 'upgrade-passive',
+        skillId: 'eagle-eye-focus',
+        title: '鹰眼专注',
+        description: '测试固定被动升级。',
+        buildTag: 'general',
+        tacticalTags: ['固定被动'],
+        levelText: '固定被动',
+        tacticalText: '测试奖励',
+      }],
+    }
+    const progressBefore = structuredClone(snapshot.campaignRewardProgress)
+
+    const next = declineSkillRewardSnapshot(snapshot)
+
+    expect(next.pendingSkillReward).toBeNull()
+    expect(next.phase).toBe('running')
+    expect(next.fixedPassiveLevel).toBe(snapshot.fixedPassiveLevel)
+    expect(next.campaignRewardProgress).toEqual(progressBefore)
+  })
+
+  it('continues the reward FIFO after declining a skill without selecting or rerolling anything', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.phase = 'paused'
+    snapshot.phaseBeforePause = 'running'
+    snapshot.pauseMenuOpen = false
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    snapshot.pendingSkillReward = buildPendingReward(snapshot)
+    snapshot.campaignRewardProgress.pendingCombatTalentAwards = 1
+    snapshot.inRunRewardRerolls = 2
+    snapshot.runTalentState.rerollsRemaining = 3
+    const activeSkillsBefore = structuredClone(snapshot.activeSkills)
+
+    const next = declineSkillRewardSnapshot(snapshot)
+
+    expect(next.pendingSkillReward).toMatchObject({
+      poolKind: 'crystal-talent',
+      source: 'crystal-talent',
+      campaignRewardSemantics: 'talent-choice',
+    })
+    expect(next.pendingSkillReward?.choices.every((choice) => Boolean(choice.combatTalentV3))).toBe(true)
+    expect(next.phase).toBe('paused')
+    expect(next.campaignRewardProgress.pendingCombatTalentAwards).toBe(0)
+    expect(next.activeSkills).toEqual(activeSkillsBefore)
+    expect(next.inRunRewardRerolls).toBe(2)
+    expect(next.runTalentState.rerollsRemaining).toBe(3)
+  })
+
+  it.each(['run-talent', 'crystal-talent'] as const)('defensively refuses to decline a %s V3 combat-talent reward', (poolKind) => {
+    const snapshot = createInitialSnapshot('paused')
+    snapshot.phaseBeforePause = 'running'
+    snapshot.pauseMenuOpen = false
+    snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
+    const reward = buildPendingReward(snapshot, 'run-talent')
+    snapshot.pendingSkillReward = { ...reward, poolKind, source: poolKind === 'crystal-talent' ? 'crystal-talent' : 'level-clear' }
+    const pendingBefore = structuredClone(snapshot.pendingSkillReward)
+    const talentStateBefore = structuredClone(snapshot.runTalentState.combatTalentV3)
+
+    const next = declineSkillRewardSnapshot(snapshot)
+
+    expect(next.pendingSkillReward).toEqual(pendingBefore)
+    expect(next.phase).toBe('paused')
+    expect(next.runTalentState.combatTalentV3).toEqual(talentStateBefore)
+    expect(next.message).toBe('当前战斗天赋奖励必须选择 1 项')
   })
 
   it('stops on elite reward screens and does not advance until a skill reward is selected', () => {

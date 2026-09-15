@@ -129,6 +129,92 @@ describe('GamePauseOverlay', () => {
     expect(grid.getAttribute('data-campaign-reward-choice-ids')).toBe(choices.map((choice) => choice.choiceId).join(' '))
     expect(screen.getAllByTestId('skill-reward-card')).toHaveLength(5)
     expect(screen.getByText('节点穿刺强化 5')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '放弃技能奖励' })).toBeTruthy()
+  })
+
+  it('keeps the ordinary skill reward decline action keyboard reachable and delegates completion to the Store', async () => {
+    const user = userEvent.setup()
+    const base = createInitialSnapshot('running')
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      pauseMenuOpen: false,
+      pendingSkillReward: {
+        poolKind: 'skill',
+        source: 'level-clear',
+        choices: [{
+          choiceId: 'ordinary-skill-choice',
+          mode: 'upgrade-active',
+          skillId: 'pierce-arrow',
+          familyId: 'pierce-arrow',
+          title: '穿刺箭强化',
+          description: '提升穿刺箭等级。',
+          buildTag: 'pierce',
+          tacticalTags: ['技能奖励'],
+          levelText: 'Lv.1 → Lv.2',
+          tacticalText: '普通技能奖励',
+        }],
+      },
+    })
+
+    render(<GamePauseOverlay />)
+
+    const card = screen.getByTestId('skill-reward-card')
+    const decline = screen.getByRole('button', { name: '放弃技能奖励' })
+    expect(decline.getAttribute('aria-describedby')).toBe('reward-choice-action-copy')
+    expect(screen.getByTestId('reward-choice-required-copy').textContent).toBe('选择 1 项，或放弃本次技能奖励后继续。')
+    expect(screen.queryByRole('button', { name: /放弃本局/ })).toBeNull()
+    card.focus()
+    await user.tab()
+    expect(document.activeElement).toBe(decline)
+
+    await user.click(decline)
+
+    expect(useGameStore.getState().pendingSkillReward).toBeNull()
+    expect(useGameStore.getState().phase).toBe('running')
+    expect(screen.queryByTestId('reward-screen-overlay')).toBeNull()
+    expect(screen.queryByTestId('game-over-settlement')).toBeNull()
+  })
+
+  it.each([
+    ['Lv.4 evolution', 'skill-evolution', undefined],
+    ['full-slot replacement', 'skill', 'pierce-arrow'],
+    ['fixed-node skill', 'fixed-skill', undefined],
+    ['elite-raid skill', 'raid-skill', undefined],
+  ] as const)('shows the decline action for a %s reward without changing its cards', (_label, poolKind, replacementSkillId) => {
+    const base = createInitialSnapshot('running')
+    const isEvolution = poolKind === 'skill-evolution'
+    useGameStore.setState({
+      ...base,
+      phase: 'paused',
+      pauseMenuOpen: false,
+      activeSkills: replacementSkillId
+        ? [{ skillId: 'hunter-net', familyId: 'hunter-net', level: 2, cooldownRemaining: 0 }]
+        : base.activeSkills,
+      pendingSkillReward: {
+        poolKind,
+        replacementSkillId,
+        source: poolKind === 'raid-skill' ? 'elite-raid' : poolKind === 'fixed-skill' ? 'fixed-skill' : 'level-clear',
+        choices: [{
+          choiceId: `${poolKind}-choice`,
+          mode: isEvolution ? 'upgrade-active' : 'new-active',
+          skillId: isEvolution ? 'pierce-arrow' : 'hunter-net',
+          familyId: isEvolution ? 'pierce-arrow' : 'hunter-net',
+          evolutionId: isEvolution ? 'wind-cut' : undefined,
+          title: isEvolution ? '疾风连矢' : '猎网箭',
+          description: isEvolution ? 'Lv.4 进化候选。' : '技能奖励候选。',
+          buildTag: isEvolution ? 'pierce' : 'control',
+          tacticalTags: ['技能奖励'],
+          levelText: isEvolution ? 'Lv.3 → Lv.4' : 'Lv.1',
+          tacticalText: isEvolution ? '进化选择' : '新增技能',
+        }],
+      },
+    })
+
+    render(<GamePauseOverlay />)
+
+    expect(screen.getAllByTestId('skill-reward-card')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: '放弃技能奖励' })).toBeTruthy()
   })
 
   it('does not expose retired sealing or elite reroll controls on a required reward choice', () => {
@@ -489,6 +575,7 @@ describe('GamePauseOverlay', () => {
     expect(screen.getByText('5秒内3个不同主动技能造成实伤后，第三个首次命中处小范围共鸣余波。')).toBeTruthy()
     expect(screen.queryByTestId('run-upgrade-reroll')).toBeNull()
     expect(screen.queryByTestId('skill-reward-card')).toBeNull()
+    expect(screen.queryByRole('button', { name: '放弃技能奖励' })).toBeNull()
   })
 
   it('explains a normal blue-crystal reroll as refreshing all three legal candidates', () => {
@@ -1223,6 +1310,7 @@ describe('GamePauseOverlay', () => {
     expect(screen.queryByText('Lv5 首领化')).toBeNull()
     expect(screen.getByText('等级 5 后，当前主力野兽获得首领光环。')).toBeTruthy()
     expect(screen.queryByText(/局内等级/)).toBeNull()
+    expect(screen.queryByRole('button', { name: '放弃技能奖励' })).toBeNull()
     expect(screen.queryByText('构筑节点')).toBeNull()
     expect(screen.queryByText('BEAST')).toBeNull()
     expect(screen.queryByText('局内 Lv.2+')).toBeNull()
