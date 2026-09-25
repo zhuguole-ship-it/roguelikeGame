@@ -15,6 +15,9 @@ import { GameCanvas } from './GameCanvas'
 import { getHellhoundImage2FrameUrls } from '../../game/hellhoundAssetFrames'
 import type { RunSettlementSummary } from '../../game/types'
 
+vi.mock('./HomeBackgroundMusic', () => ({ HomeBackgroundMusic: () => null }))
+vi.mock('./CombatBackgroundMusic', () => ({ CombatBackgroundMusic: () => null }))
+
 const createCanvasContext = () => ({
   setTransform: vi.fn(),
   clearRect: vi.fn(),
@@ -179,7 +182,7 @@ describe('GameCanvas', () => {
     render(<GameCanvas />)
 
     expect(screen.getByTestId('soul-crystal-direct-collection-feedback').getAttribute('data-trigger')).toBe('combat-entry')
-    expect(screen.getByTestId('soul-crystal-direct-collection-ring').getAttribute('data-effective-radius')).toBe('17.8000')
+    expect(screen.getByTestId('soul-crystal-direct-collection-ring').getAttribute('data-effective-radius')).toBe('53.4000')
   })
 
   it('keeps Tab as a no-op target legacy key while Q still casts active skills', () => {

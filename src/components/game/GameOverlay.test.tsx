@@ -44,6 +44,7 @@ import {
   CHARACTER_SELECTION_SELECT_LABEL_Y_DELTA,
   CHARACTER_SELECTION_STAGE_SIZE,
   GameOverlay,
+  formatSpecialBlueDetail,
 } from './GameOverlay'
 
 const defaultStartGame = useGameStore.getState().startGame
@@ -64,6 +65,14 @@ afterEach(() => {
 })
 
 describe('GameOverlay', () => {
+  it('keeps special-blue damage scoped to explicitly typed segments without a physical default', () => {
+    const detail = formatSpecialBlueDetail('fire', 12)
+    expect(detail).toContain('火')
+    expect(detail).toContain('仅对权威明确标注为该类型的伤害段生效')
+    expect(detail).toContain('未分类技能不默认生效')
+    expect(detail).not.toContain('默认物理')
+    expect(formatSpecialBlueDetail('water', 8)).toContain('当前弓箭手无对应技能')
+  })
   it('prioritizes the formal Boss legal-spawn search status over the generic floor objective and clears it after spawn', () => {
     const snapshot = createInitialSnapshot('running')
     useGameStore.setState({
@@ -198,6 +207,27 @@ describe('GameOverlay', () => {
     expect(settlement.style.backdropFilter).toBe('blur(6px)')
     expect(screen.queryByTestId('godot-village-background-video')).toBeNull()
     expect(screen.queryByTestId('village-compact-actions')).toBeNull()
+  })
+
+  it('exposes an independent music-volume slider in village settings', () => {
+    useGameStore.setState({
+      ...createInitialSnapshot('idle'),
+      audioSettings: { masterVolume: 80, musicVolume: 60, effectsVolume: 75, muted: false },
+    })
+    render(<GameOverlay />)
+
+    fireEvent.click(within(screen.getByTestId('village-compact-actions')).getByRole('button', { name: '设置' }))
+    const music = screen.getByRole('slider', { name: '音乐 60%' })
+    expect(music.getAttribute('value')).toBe('60')
+    fireEvent.change(music, { target: { value: '35' } })
+
+    expect(useGameStore.getState().audioSettings).toEqual({
+      masterVolume: 80,
+      musicVolume: 35,
+      effectsVolume: 75,
+      muted: false,
+    })
+    expect(screen.getByRole('slider', { name: '音乐 35%' }).getAttribute('value')).toBe('35')
   })
 
   it('shows the village menu and opens click-based village interactions', () => {
@@ -678,6 +708,11 @@ describe('GameOverlay', () => {
     act(() => vi.advanceTimersByTime(CHARACTER_DETAIL_TRANSITION_DURATION_MS))
     const detailDialog = screen.getByTestId('character-selection-dialog')
     const detailStage = screen.getByTestId('character-detail-stage')
+    expect(screen.getByTestId('character-detail-progression').textContent).toContain('当前等级进度')
+    expect(screen.getByTestId('character-detail-progression').textContent).toContain('基础')
+    expect(screen.getByTestId('character-detail-progression').textContent).toContain('装备固定')
+    expect(screen.getByTestId('character-detail-progression').textContent).toContain('最终')
+    expect(screen.getByTestId('character-detail-settlement-overflow').textContent).toContain('结算暂存装备')
     expect(detailDialog.getAttribute('aria-label')).toBe('弓箭手详情')
     expect(detailDialog.className).toContain('overflow-hidden')
     expect(detailDialog.className).not.toContain('overflow-y-auto')
@@ -1778,6 +1813,7 @@ describe('GameOverlay', () => {
       equippedItems: { weapon: legacyBow },
       equipmentMaterials: {
         ...base.equipmentMaterials,
+        ironScraps: 10,
         legacyEmber: 10,
         campaignSigil: 10,
         buildRune: 10,
@@ -1791,28 +1827,71 @@ describe('GameOverlay', () => {
     const beforeCard = screen.getByTestId('blacksmith-upgrade-slot-weapon')
     expect(beforeCard.textContent).toContain('QA 旧档传承弓 +0')
     expect(screen.getByTestId('blacksmith-upgrade-level-weapon').textContent).toContain('+0')
-    expect(screen.getByTestId('blacksmith-upgrade-score-weapon').textContent).toContain('评分 180 ->')
+    expect(screen.getByTestId('blacksmith-upgrade-score-weapon').textContent).toContain('评分 180')
     expect(screen.getByTestId('blacksmith-upgrade-bonus-weapon').textContent).toContain('攻击 +35')
     const beforeCost = screen.getByTestId('blacksmith-upgrade-cost-weapon').textContent ?? ''
     expect(beforeCost).toContain('成本：')
     expect(beforeCost).toContain('金币')
 
-    fireEvent.click(within(beforeCard).getByRole('button', { name: '强化' }))
+    fireEvent.click(within(beforeCard).getByRole('button', { name: /强化到 \+1/ }))
 
     const upgraded = useGameStore.getState().equippedItems.weapon!
     const afterCard = screen.getByTestId('blacksmith-upgrade-slot-weapon')
     expect(upgraded.upgradeLevel).toBe(1)
-    expect(upgraded.score).toBeGreaterThan(180)
-    expect(upgraded.bonus.attackDamage).toBeGreaterThan(35)
     expect(useGameStore.getState().currency).toBeLessThan(1000)
     expect(afterCard.textContent).toContain(`QA 旧档传承弓 +${upgraded.upgradeLevel}`)
-    expect(screen.getByTestId('blacksmith-upgrade-score-weapon').textContent).toContain(`评分 ${upgraded.score} ->`)
+    expect(screen.getByTestId('blacksmith-upgrade-score-weapon').textContent).toContain(`评分 ${upgraded.score}`)
     expect(screen.getByTestId('blacksmith-upgrade-bonus-weapon').textContent).toContain(`攻击 +${upgraded.bonus.attackDamage}`)
-    expect(screen.getByTestId('blacksmith-upgrade-next-weapon').textContent).toContain('下档变化')
+    expect(screen.getByTestId('blacksmith-upgrade-next-weapon').textContent).toContain('目标')
     const afterCost = screen.getByTestId('blacksmith-upgrade-cost-weapon').textContent ?? ''
     expect(afterCost).toContain('成本：')
     expect(afterCost).toContain('金币')
     expect(afterCost).not.toBe(beforeCost)
+  })
+
+  it('keeps unaffordable enhancement actionable and reports exact material/gold gaps without consuming resources', () => {
+    const base = createInitialSnapshot('idle')
+    const item = { id: 'qa-shortage-bow', slot: 'weapon' as const, rarity: 'legacy' as const, name: '缺口传承弓', affix: '死契', buildTag: 'pierce' as const, level: 20, score: 180, bonus: { attackDamage: 35, attackRange: 40 }, modifiers: [{ type: 'projectile-count' as const, amount: 1 }], upgradeLevel: 0 }
+    useGameStore.setState({ ...base, equipmentInventory: [item], equippedItems: { weapon: item }, equipmentMaterials: { ...base.equipmentMaterials, ironScraps: 0, legacyEmber: 0, campaignSigil: 0 }, currency: 0 })
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    const card = screen.getByTestId('blacksmith-upgrade-slot-weapon')
+    const button = within(card).getByRole('button', { name: /强化到 \+1/ })
+    expect(button.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(button)
+    expect(screen.getByTestId('blacksmith-upgrade-feedback-weapon').textContent).toContain('资源不足')
+    expect(screen.getByTestId('blacksmith-upgrade-feedback-weapon').textContent).toMatch(/铁屑 0\/4、金币 0\/86/)
+    expect(useGameStore.getState().currency).toBe(0)
+    expect(useGameStore.getState().equippedItems.weapon?.upgradeLevel).toBe(0)
+  })
+
+  it('separates material-only and gold-only shortages and clears feedback on close/reopen', () => {
+    const base = createInitialSnapshot('idle')
+    const item = { id: 'qa-shortage-split', slot: 'weapon' as const, rarity: 'legacy' as const, name: '分项缺口弓', affix: '死契', buildTag: 'pierce' as const, level: 20, score: 180, bonus: { attackDamage: 35, attackRange: 40 }, modifiers: [], upgradeLevel: 0 }
+    useGameStore.setState({ ...base, equipmentInventory: [item], equippedItems: { weapon: item }, equipmentMaterials: { ...base.equipmentMaterials, ironScraps: 0 }, currency: 9999 })
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    const card = screen.getByTestId('blacksmith-upgrade-slot-weapon')
+    expect(screen.getByTestId('blacksmith-upgrade-missing-weapon').textContent).toContain('铁屑 0/')
+    expect(screen.queryByTestId('blacksmith-upgrade-feedback-weapon')).toBeNull()
+    fireEvent.click(within(card).getByRole('button', { name: /强化到 \+1/ }))
+    expect(screen.getByTestId('blacksmith-upgrade-feedback-weapon').getAttribute('aria-live')).toBe('polite')
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    expect(screen.queryByTestId('blacksmith-upgrade-feedback-weapon')).toBeNull()
+    useGameStore.setState((state) => ({ ...state, equipmentMaterials: { ...state.equipmentMaterials, ironScraps: 99 }, currency: 0 }))
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    expect(screen.getByTestId('blacksmith-upgrade-missing-weapon').textContent).toContain('金币 0/')
+  })
+
+  it('shows rarity cap in the enhancement card and uses live aria feedback after a real attempt', () => {
+    const base = createInitialSnapshot('idle')
+    const item = { id: 'qa-cap-bow', slot: 'weapon' as const, rarity: 'common' as const, name: '制式弓', affix: '通用', buildTag: 'pierce' as const, level: 1, score: 10, bonus: { attackDamage: 1, attackRange: 10 }, modifiers: [], upgradeLevel: 13 }
+    useGameStore.setState({ ...base, equipmentInventory: [item], equippedItems: { weapon: item }, equipmentMaterials: { ...base.equipmentMaterials, ironScraps: 99 }, currency: 9999 })
+    render(<GameOverlay />)
+    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    expect(screen.getByTestId('blacksmith-upgrade-cap-weapon').textContent).toContain('强化上限')
   })
 
 

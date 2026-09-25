@@ -16,7 +16,7 @@ const makeRunningCrystalSnapshot = () => {
   snapshot.pickups = [{
     id: 'direct-collection-crystal',
     kind: 'soul-crystal',
-    position: { x: 450, y: 300 },
+    position: { x: 470, y: 300 },
     radius: 8,
     ttl: 30,
     expValue: 12,
@@ -28,7 +28,7 @@ const movePlayerIntoCrystalRange = () => {
   act(() => {
     useGameStore.setState((state) => ({
       ...state,
-      player: { ...state.player, position: { x: 434, y: 300 } },
+      player: { ...state.player, position: { x: 420, y: 300 } },
     }))
   })
 }
@@ -79,20 +79,20 @@ describe('SoulCrystalCollectionFeedback', () => {
     expect(presentationSpy).toHaveBeenCalled()
     expect(feedback.getAttribute('data-crystal-id')).toBe('direct-collection-crystal')
     expect(feedback.getAttribute('data-trigger')).toBe('combat-entry')
-    expect(feedback.getAttribute('data-effective-radius')).toBe('17.8000')
-    expect(feedback.getAttribute('data-base-radius')).toBe('17.8000')
+    expect(feedback.getAttribute('data-effective-radius')).toBe('53.4000')
+    expect(feedback.getAttribute('data-base-radius')).toBe('53.4000')
     expect(feedback.getAttribute('data-meta-rank')).toBe('0')
-    expect(feedback.getAttribute('data-meta-direct-radius')).toBe('17.8000')
+    expect(feedback.getAttribute('data-meta-direct-radius')).toBe('53.4000')
     expect(feedback.getAttribute('data-equipment-bonus')).toBe('0.0000')
-    expect(feedback.getAttribute('data-direct-radius-before-run-talent')).toBe('17.8000')
+    expect(feedback.getAttribute('data-direct-radius-before-run-talent')).toBe('53.4000')
     expect(feedback.getAttribute('data-run-talent-multiplier')).toBe('1.0000')
     expect(feedback.getAttribute('data-formula')).toBe('(metaDirectRadius + equipmentBonus) * runTalentMultiplier')
     expect(feedback.getAttribute('aria-live')).toBe('polite')
     expect(feedback.getAttribute('data-pulse-animation')).toBe('on')
     expect(feedback.textContent).toContain('蓝晶收集范围')
     const ring = screen.getByTestId('soul-crystal-direct-collection-ring')
-    expect(ring.getAttribute('data-effective-radius')).toBe('17.8000')
-    expect(ring.getAttribute('data-screen-radius-x')).toBe('17.8000')
+    expect(ring.getAttribute('data-effective-radius')).toBe('53.4000')
+    expect(ring.getAttribute('data-screen-radius-x')).toBe('53.4000')
     expect(ring.style.left).toBe('310px')
     expect(ring.style.top).toBe('270px')
     expect(ring.className).toContain('pointer-events-none')
@@ -162,7 +162,7 @@ describe('SoulCrystalCollectionFeedback', () => {
     expect(screen.getByTestId('soul-crystal-direct-collection-ring').className).not.toContain('animate-')
   })
 
-  it('renders the rank-three 96 radius directly from the authoritative effectiveRadius field', () => {
+  it('renders the rank-three 53.4 radius directly from the authoritative effectiveRadius field', () => {
     const snapshot = makeRunningCrystalSnapshot()
     snapshot.unlockedMetaTalentIds = ['meta_common_05']
     snapshot.metaTalentRanks = { meta_common_05: 3 }
@@ -170,12 +170,12 @@ describe('SoulCrystalCollectionFeedback', () => {
     render(<SoulCrystalCollectionFeedback canvasRef={makeCanvasRef()} cameraRef={cameraRef} />)
 
     const expectedRadius = SOUL_CRYSTAL_DIRECT_COLLECTION_META_RADII[3]
-    expect(expectedRadius).toBe(96)
+    expect(expectedRadius).toBe(53.4)
     const feedback = screen.getByTestId('soul-crystal-direct-collection-feedback')
-    expect(feedback.getAttribute('data-meta-rank')).toBe('3')
-    expect(feedback.getAttribute('data-meta-direct-radius')).toBe('96.0000')
-    expect(feedback.getAttribute('data-effective-radius')).toBe('96.0000')
-    expect(screen.getByTestId('soul-crystal-direct-collection-ring').getAttribute('data-screen-radius-x')).toBe('96.0000')
+    expect(feedback.getAttribute('data-meta-rank')).toBe('0')
+    expect(feedback.getAttribute('data-meta-direct-radius')).toBe('53.4000')
+    expect(feedback.getAttribute('data-effective-radius')).toBe('53.4000')
+    expect(screen.getByTestId('soul-crystal-direct-collection-ring').getAttribute('data-screen-radius-x')).toBe('53.4000')
   })
 
   it('maps world position through the canvas camera and keeps the status compact on narrow screens', () => {

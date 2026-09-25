@@ -31,10 +31,6 @@ import {
   getEquipmentTemplateCodexPresentation,
   getEquipmentReforgeCost,
   getEquipmentReforgeGoldCost,
-  getEquipmentUpgradeCost,
-  getEquipmentUpgradeGoldCost,
-  getEquipmentUpgradeLimit,
-  upgradeEquipmentItem,
 } from '../../game/equipment'
 import { MONSTER_FRAME_SPECS, drawMonsterGuideFrame, getMonsterSpriteAtlasForEnemy, type MonsterFrameAction } from '../../game/sprites'
 import { getMonsterDataCard } from '../../game/monsterDataCards'
@@ -72,6 +68,7 @@ import type {
   EndgameArchiveCandidateWeightPresentation,
   EquipmentDismantleCategory,
   EquipmentItem,
+  EquipmentEnhancementConfirmation,
   EquipmentRarity,
   EquipmentReforgeMode,
   EquipmentSetId,
@@ -79,6 +76,7 @@ import type {
   EquipmentSlot,
   ActiveSkillInstance,
   SkillBuildTag,
+  CharacterEquipmentProgressionPresentation,
 } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
 import { isDeveloperAssetPanelVisible } from './DeveloperAssetPanel'
@@ -1356,6 +1354,28 @@ const formatEquipmentModifier = (modifier: EquipmentSkillModifier) => {
   }
 }
 
+const EQUIPMENT_STAT_LABELS: Record<string, string> = {
+  strength: '力量', intelligence: '智力', endurance: '耐力', spirit: '精神', agility: '敏捷',
+  attackDamage: '攻击', maxHp: '生命', maxMana: '法力', maxStamina: '体力', hitChance: '命中',
+  attackSpeed: '攻速', skillHaste: '技能急速', moveSpeed: '移速', range: '射程', armor: '护甲',
+}
+const SPECIAL_BLUE_LABELS: Record<string, string> = {
+  physical: '物理', electric: '电', fire: '火', ice: '冰', water: '水', nature: '自然', wind: '风', light: '光',
+}
+export const formatSpecialBlueDetail = (type: string, percent: number) => `伤害类型：${SPECIAL_BLUE_LABELS[type] ?? type} · 增幅 +${percent}%（仅对权威明确标注为该类型的伤害段生效；未分类技能不默认生效）${type === 'water' ? '（当前弓箭手无对应技能，暂不生效）' : ''}`
+
+const formatEquipmentGrowth = (item: EquipmentItem) => [
+  `装备等级 Lv.${item.itemLevel ?? item.level}`,
+  `穿戴等级 Lv.${item.requiredCharacterLevel ?? 1}`,
+  `强化 +${item.upgradeLevel ?? 0}`,
+]
+
+const formatEquipmentAffixes = (item: EquipmentItem) => {
+  const inherent = (item.inherentStats ?? []).map((stat) => `${EQUIPMENT_STAT_LABELS[stat.id] ?? stat.id} +${stat.value}`)
+  const ordinary = (item.ordinaryAffixes ?? []).map((affix) => `${EQUIPMENT_STAT_LABELS[affix.id] ?? affix.id} +${affix.value}（${affix.quality === 'perfect' ? '完美' : affix.quality === 'high' ? '高' : '普通'}；${affix.effectiveForArcher ? '当前弓箭手有效' : '当前弓箭手无效'}）`)
+  return [...inherent, ...ordinary]
+}
+
 const getWarehouseEquipmentSetEffects = (item: EquipmentItem) => {
   const template = item.equipmentId ? getEquipmentTemplateCodexPresentation(item.equipmentId) : null
   if (!template) return null
@@ -1400,6 +1420,8 @@ const WarehouseEquipmentDetail = ({
   const setEffects = getWarehouseEquipmentSetEffects(item)
   const sources = template?.monsterSources.flatMap((source) => source.names) ?? []
   const displayName = beastContractDomain?.name ?? item.name
+  const growth = formatEquipmentGrowth(item)
+  const affixes = formatEquipmentAffixes(item)
 
   return (
     <div className="min-w-0 text-left" data-testid={testId}>
@@ -1409,6 +1431,12 @@ const WarehouseEquipmentDetail = ({
           <dt className="font-pixel text-[8px] tracking-[0.12em] text-[#9dd5ac]">属性</dt>
           <dd className="mt-1 text-[0.95rem] leading-tight text-[#dfe7d5]">{formatEquipmentBonus(item)}</dd>
         </div>
+        <div>
+          <dt className="font-pixel text-[8px] tracking-[0.12em] text-[#9dd5ac]">成长</dt>
+          <dd className="mt-1 grid gap-1 text-[0.95rem] leading-tight text-[#dfe7d5]">{growth.map((line) => <span key={line}>{line}</span>)}</dd>
+        </div>
+        {affixes.length > 0 ? <div><dt className="font-pixel text-[8px] tracking-[0.12em] text-[#9dd5ac]">词缀</dt><dd className="mt-1 grid gap-1 text-[0.95rem] leading-tight text-[#dfe7d5]">{affixes.map((line) => <span key={line}>{line}</span>)}</dd></div> : null}
+        {item.specialBlue ? <div><dt className="font-pixel text-[8px] tracking-[0.12em] text-[#9dd5ac]">特殊蓝</dt><dd className="mt-1 text-[0.95rem] leading-tight text-[#dfe7d5]">{formatSpecialBlueDetail(item.specialBlue.type, item.specialBlue.percent)}</dd></div> : null}
         {description.length > 0 ? (
           <div>
             <dt className="font-pixel text-[8px] tracking-[0.12em] text-[#9dd5ac]">说明</dt>
@@ -2099,10 +2127,12 @@ const characterDetailTransitionStyles = `
 
 const CharacterDetailStage = ({
   evolutionCatalog,
+  progression,
   isInteractive,
   onReturnToSelection,
 }: {
   evolutionCatalog: ArcherEvolutionGuideCatalog
+  progression: CharacterEquipmentProgressionPresentation
   isInteractive: boolean
   onReturnToSelection: () => void
 }) => {
@@ -2134,6 +2164,14 @@ const CharacterDetailStage = ({
         testId="character-detail-title"
         level={2}
       />
+      <section className="absolute left-[3%] top-[79%] z-10 max-w-[42%] text-[clamp(0.48rem,0.7cqw,1rem)] leading-relaxed text-[#dfe7d5] max-md:top-[61%] max-md:max-h-[27%] max-md:max-w-[94%] max-md:overflow-y-auto max-md:pr-2" data-testid="character-detail-progression">
+        <p className="font-pixel text-[#f4d47a]">角色 Lv.{progression.character.level} · {progression.character.nextLevelXp === null ? '已达当前等级上限' : `当前等级进度 ${progression.character.currentLevelXp} / ${progression.character.nextLevelXp}`}</p>
+        <p>总经验 {progression.character.totalXp}{progression.character.nextLevelXp === null ? ` · 溢出经验 ${progression.character.overflowXp}` : ''}</p>
+        <p data-testid="character-detail-stat-sources">五维（基础 / 装备固定 / 装备百分比 / 最终）：力量 {progression.character.baseStats.strength} / {progression.character.equipmentFlatStats.strength} / {(progression.character.equipmentPercentStats.strength * 100).toFixed(0)}% / {progression.character.finalStats.strength}；智力 {progression.character.baseStats.intelligence} / {progression.character.equipmentFlatStats.intelligence} / {(progression.character.equipmentPercentStats.intelligence * 100).toFixed(0)}% / {progression.character.finalStats.intelligence}；耐力 {progression.character.baseStats.endurance} / {progression.character.equipmentFlatStats.endurance} / {(progression.character.equipmentPercentStats.endurance * 100).toFixed(0)}% / {progression.character.finalStats.endurance}；精神 {progression.character.baseStats.spirit} / {progression.character.equipmentFlatStats.spirit} / {(progression.character.equipmentPercentStats.spirit * 100).toFixed(0)}% / {progression.character.finalStats.spirit}；敏捷 {progression.character.baseStats.agility} / {progression.character.equipmentFlatStats.agility} / {(progression.character.equipmentPercentStats.agility * 100).toFixed(0)}% / {progression.character.finalStats.agility}</p>
+        <p>生命上限 {Math.round(progression.character.maxHp)} · 体力上限 {Math.round(progression.character.maxStamina)} · 命中加成 {(progression.character.hitBonus * 100).toFixed(0)}% · 攻击速度加成 {(progression.character.attackSpeedBonus * 100).toFixed(0)}% · 技能急速 {(progression.character.skillHaste * 100).toFixed(0)}% · 护甲 {progression.character.armor}</p>
+        <p data-testid="character-detail-temporary-materials">局内材料：{Object.entries(progression.temporaryMaterials).filter(([, count]) => count > 0).map(([id, count]) => `${EQUIPMENT_MATERIAL_LABELS[id as keyof typeof EQUIPMENT_MATERIAL_LABELS] ?? id}×${count}`).join('、') || '暂无'}</p>
+        <div data-testid="character-detail-settlement-overflow">结算暂存装备：{progression.settlementOverflow.length > 0 ? progression.settlementOverflow.map((entry) => <span className="mr-2 inline-block" key={entry.item.id}>{entry.item.name} Lv.{entry.item.itemLevel ?? entry.item.level} +{entry.item.upgradeLevel ?? 0}（到期 {new Date(entry.expiresAt).toLocaleDateString()}；到期直接移除，不分解）</span>) : '暂无'}</div>
+      </section>
       <section
         className="absolute top-[14%] z-10 flex h-[64%] w-[34%] min-w-0 items-end justify-center"
         data-testid="character-detail-archer-preview"
@@ -2220,9 +2258,11 @@ const CharacterDetailStage = ({
 
 const CharacterDetailTransition = ({
   evolutionCatalog,
+  progression,
   onReturnToSelection,
 }: {
   evolutionCatalog: ArcherEvolutionGuideCatalog
+  progression: CharacterEquipmentProgressionPresentation
   onReturnToSelection: () => void
 }) => (
   <div
@@ -2232,13 +2272,14 @@ const CharacterDetailTransition = ({
     data-transition-selection-fade-end={String(CHARACTER_DETAIL_TRANSITION_SELECTION_FADE_END_MS)}
     data-transition-detail-fade-start={String(CHARACTER_DETAIL_TRANSITION_DETAIL_FADE_START_MS)}
   >
-    <CharacterDetailStage evolutionCatalog={evolutionCatalog} isInteractive={false} onReturnToSelection={onReturnToSelection} />
+    <CharacterDetailStage evolutionCatalog={evolutionCatalog} progression={progression} isInteractive={false} onReturnToSelection={onReturnToSelection} />
   </div>
 )
 
 const CharacterSelectionDialog = ({
   view,
   evolutionCatalog,
+  progression,
   onClose,
   onShowDetails,
   onTransitionComplete,
@@ -2246,6 +2287,7 @@ const CharacterSelectionDialog = ({
 }: {
   view: CharacterSelectionView
   evolutionCatalog: ArcherEvolutionGuideCatalog
+  progression: CharacterEquipmentProgressionPresentation
   onClose: () => void
   onShowDetails: () => void
   onTransitionComplete: () => void
@@ -2292,7 +2334,7 @@ const CharacterSelectionDialog = ({
     >
       <style>{characterDetailTransitionStyles}</style>
       {isDetailView ? (
-        <CharacterDetailStage evolutionCatalog={evolutionCatalog} isInteractive onReturnToSelection={onReturnToSelection} />
+        <CharacterDetailStage evolutionCatalog={evolutionCatalog} progression={progression} isInteractive onReturnToSelection={onReturnToSelection} />
       ) : (
         <div
           className={`relative mx-auto flex min-h-[34rem] w-full max-w-[1670px] flex-col items-center bg-[#030504] pb-12 pt-[calc(56.407vw+1rem)] [--character-selection-select-label-offset:clamp(2px,0.48vw,8px)] xl:block xl:min-h-0 xl:w-[min(100%,calc(177.3885dvh-56.76px))] xl:aspect-[1670/942] xl:bg-transparent xl:p-0 ${isTransitioning ? 'character-selection-stage--transitioning' : ''}`}
@@ -2392,6 +2434,7 @@ const CharacterSelectionDialog = ({
       {isTransitioning ? (
         <CharacterDetailTransition
           evolutionCatalog={evolutionCatalog}
+          progression={progression}
           onReturnToSelection={onReturnToSelection}
         />
       ) : null}
@@ -2419,6 +2462,9 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   const equipmentInventory = useGameStore((state) => state.equipmentInventory)
   const equippedItems = useGameStore((state) => state.equippedItems)
   const equipmentMaterials = useGameStore((state) => state.equipmentMaterials)
+  const getCharacterEquipmentProgressionPresentation = useGameStore((state) => state.getCharacterEquipmentProgressionPresentation)
+  const getEquipmentEnhancementPreview = useGameStore((state) => state.getEquipmentEnhancementPreview)
+  const enhanceEquipment = useGameStore((state) => state.enhanceEquipment)
   const selectedCampaign = useGameStore((state) => state.selectedCampaign)
   const selectedCampaignDifficulty = useGameStore((state) => state.selectedCampaignDifficulty)
   const unlockedCampaignDifficulties = useGameStore((state) => state.unlockedCampaignDifficulties)
@@ -2434,7 +2480,6 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   const equipEquipment = useGameStore((state) => state.equipEquipment)
   const unequipEquipment = useGameStore((state) => state.unequipEquipment)
   const batchDismantleEquipment = useGameStore((state) => state.batchDismantleEquipment)
-  const upgradeEquippedEquipment = useGameStore((state) => state.upgradeEquippedEquipment)
   const reforgeEquipment = useGameStore((state) => state.reforgeEquipment)
   const toggleEquipmentModifierLock = useGameStore((state) => state.toggleEquipmentModifierLock)
   const updateAudioSettings = useGameStore((state) => state.updateAudioSettings)
@@ -2498,6 +2543,10 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   const [villageBackgroundMedia, setVillageBackgroundMedia] = useState<VillageBackgroundMediaConfig>(defaultVillageBackgroundMedia)
   const [isCompactVillageViewport, setIsCompactVillageViewport] = useState(getIsCompactVillageViewport)
   const [equipmentResetFeedback, setEquipmentResetFeedback] = useState('')
+  const [enhancementConfirmation, setEnhancementConfirmation] = useState<EquipmentEnhancementConfirmation | null>(null)
+  const [standardEnhancementConfirmation, setStandardEnhancementConfirmation] = useState<EquipmentEnhancementConfirmation | null>(null)
+  const [enhancementFeedback, setEnhancementFeedback] = useState<Record<string, { equipmentId: string; message: string }>>({})
+  const [enhancementAttempted, setEnhancementAttempted] = useState<Record<string, boolean>>({})
   const [campaignLaunchFeedback, setCampaignLaunchFeedback] = useState('')
   const openVillageModal = (modal: VillageModalId) => {
     if (modal === 'campaign') {
@@ -2566,6 +2615,7 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   }, [onVillageModalVisibilityChange])
 
   if (phase === 'idle') {
+    const characterProgressionPresentation = getCharacterEquipmentProgressionPresentation()
     const canRenderEquipmentReset = isDeveloperAssetPanelVisible()
     const hasLockedModifierReforge = getMetaTalentRank('meta_endgame_01', metaTalentRanks, unlockedMetaTalentIds) >= 1
     const canResetMetaTalents = metaTalentPresentation.investedPoints > 0
@@ -2831,6 +2881,7 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
           <CharacterSelectionDialog
             view={characterSelectionView}
             evolutionCatalog={archerEvolutionGuideCatalog}
+            progression={characterProgressionPresentation}
             onClose={closeCharacterSelection}
             onShowDetails={beginCharacterDetailTransition}
             onTransitionComplete={completeCharacterDetailTransition}
@@ -2901,6 +2952,10 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
                 <label className="block text-xl text-[#dfe7d5]">
                   主音量 {audioSettings.masterVolume}%
                   <input className="mt-3 w-full accent-amber-300" type="range" min={0} max={100} value={audioSettings.masterVolume} onChange={(event) => updateAudioSettings({ masterVolume: Number(event.target.value) })} />
+                </label>
+                <label className="mt-5 block text-xl text-[#dfe7d5]">
+                  音乐 {audioSettings.musicVolume ?? 60}%
+                  <input className="mt-3 w-full accent-amber-300" type="range" min={0} max={100} value={audioSettings.musicVolume ?? 60} onChange={(event) => updateAudioSettings({ musicVolume: Number(event.target.value) })} />
                 </label>
                 <label className="mt-5 block text-xl text-[#dfe7d5]">
                   音效 {audioSettings.effectsVolume}%
@@ -3083,7 +3138,7 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
         ) : null}
 
         {villageModal === 'shop' ? (
-          <VillageModalShell title="铁匠铺" onClose={() => setVillageModal(null)}>
+              <VillageModalShell title="铁匠铺" onClose={() => { setEnhancementFeedback({}); setEnhancementAttempted({}); setVillageModal(null) }}>
             <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
               <SectionPanel eyebrow="" title="分解">
                 <div className="grid gap-4">
@@ -3119,12 +3174,20 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
                 <div className="grid gap-3">
                   {EQUIPMENT_SLOTS.map((slot) => {
                     const item = equippedItems[slot]
-                    const upgradeLimit = item ? getEquipmentUpgradeLimit(item) : 0
+                    const preview = item ? getEquipmentEnhancementPreview(item.id) : null
                     const upgradeLevel = item?.upgradeLevel ?? 0
-                    const canUpgrade = Boolean(item && upgradeLevel < upgradeLimit)
-                    const upgradePreview = item && canUpgrade ? upgradeEquipmentItem(item) : null
-                    const upgradeCost = item && canUpgrade ? getEquipmentUpgradeCost(item) : null
-                    const upgradeGoldCost = item && canUpgrade ? getEquipmentUpgradeGoldCost(item) : 0
+                    const failureLabel = preview?.failureResult === 'destroyed'
+                      ? '失败：永久破碎，不返还装备或材料'
+                      : preview?.failureResult === 'reset-to-one'
+                        ? `失败：强化等级回到 +${preview.failureLevel ?? 1}`
+                        : preview?.failureResult === 'downgrade'
+                          ? `失败：降至 +${preview.failureLevel ?? 1}`
+                          : '失败：不降级'
+                    const missing = preview ? Object.entries(preview.materialCost).flatMap(([id, required]) => {
+                      const owned = equipmentMaterials[id as keyof typeof equipmentMaterials] ?? 0
+                      return required > owned ? [`${EQUIPMENT_MATERIAL_LABELS[id as keyof typeof EQUIPMENT_MATERIAL_LABELS] ?? id} ${owned}/${required}`] : []
+                    }) : []
+                    const goldMissing = preview && preview.goldCost > currency ? [`金币 ${currency}/${preview.goldCost}`] : []
                     return (
                       <div key={`blacksmith-${slot}`} className="flex items-start justify-between gap-3 border-2 border-[#08100b] bg-[#101913] p-3" data-testid={`blacksmith-upgrade-slot-${slot}`}>
                         <div className="min-w-0 flex-1">
@@ -3134,23 +3197,47 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
                           </p>
                           {item ? (
                             <div className="mt-2 space-y-1 text-[0.9rem] leading-tight text-[#dfe7d5]">
-                              <p data-testid={`blacksmith-upgrade-level-${slot}`}>强化等级 +{upgradeLevel} / +{upgradeLimit}</p>
-                              <p data-testid={`blacksmith-upgrade-score-${slot}`}>评分 {item.score}{upgradePreview ? ` -> ${upgradePreview.score}` : ''}</p>
+                            <p data-testid={`blacksmith-upgrade-level-${slot}`}>强化等级 +{upgradeLevel}{preview ? ` / +${preview.maximumLevel}` : ''}</p>
+                              <p data-testid={`blacksmith-upgrade-item-level-${slot}`}>装备等级 Lv.{item.itemLevel ?? item.level} · 穿戴等级 Lv.{item.requiredCharacterLevel ?? 1}</p>
+                              <p data-testid={`blacksmith-upgrade-score-${slot}`}>评分 {item.score}</p>
                               <p data-testid={`blacksmith-upgrade-bonus-${slot}`}>属性：{formatEquipmentBonus(item)}</p>
-                              {upgradePreview ? (
-                                <p data-testid={`blacksmith-upgrade-next-${slot}`}>下档变化：{formatEquipmentBonusDiff(upgradePreview, item)}</p>
+                              {preview ? (
+                                <>
+                                  <p data-testid={`blacksmith-upgrade-next-${slot}`}>目标 +{preview.targetLevel} · 成功率 {(preview.successChance * 100).toFixed(0)}%</p>
+                                  <p data-testid={`blacksmith-upgrade-failure-${slot}`}>{failureLabel}</p>
+                                  <p data-testid={`blacksmith-upgrade-cost-${slot}`}>成本：{formatMaterialSummary(preview.materialCost)} · 金币 {preview.goldCost}G</p>
+                                  {missing.length + goldMissing.length > 0 ? <p className="text-red-200" data-testid={`blacksmith-upgrade-missing-${slot}`}>缺口：{[...missing, ...goldMissing].join('、')}</p> : null}
+                                  {enhancementAttempted[slot] && enhancementFeedback[slot]?.equipmentId === item.id ? <p className="text-red-200" aria-live="polite" data-testid={`blacksmith-upgrade-feedback-${slot}`}>{enhancementFeedback[slot].message}</p> : null}
+                                  {preview.blockedReason === 'rarity-cap' ? <p className="text-amber-200" data-testid={`blacksmith-upgrade-cap-${slot}`}>已达到该稀有度强化上限。</p> : null}
+                                </>
                               ) : (
-                                <p data-testid={`blacksmith-upgrade-next-${slot}`}>下档变化：已达上限</p>
+                                <p data-testid={`blacksmith-upgrade-next-${slot}`}>已达强化上限</p>
                               )}
-                              <p data-testid={`blacksmith-upgrade-cost-${slot}`}>
-                                成本：{upgradeCost ? `${formatMaterialSummary(upgradeCost)} · 金币 ${upgradeGoldCost}G` : '无'}
-                              </p>
                             </div>
                           ) : null}
                         </div>
-                        {item ? (
-                          <button className="pixel-button shrink-0 px-3 py-2 font-pixel text-[8px]" disabled={!canUpgrade} onClick={() => upgradeEquippedEquipment(slot)}>
-                            强化
+                        {item && preview ? (
+                          <button
+                            className={`pixel-button shrink-0 px-3 py-2 font-pixel text-[8px] ${preview.dangerous ? 'border-red-500 text-red-200' : ''}`}
+                            disabled={Boolean(preview.blockedReason === 'rarity-cap')}
+                            aria-label={`${item.name}强化到 +${preview.targetLevel}`}
+                            onClick={() => {
+                              if (!preview.affordable) {
+                                setEnhancementAttempted((current) => ({ ...current, [slot]: true }))
+                                setEnhancementFeedback((current) => ({ ...current, [slot]: { equipmentId: item.id, message: `资源不足：缺口 ${[...missing, ...goldMissing].join('、')}。` } }))
+                              } else if (preview.dangerous) {
+                                setEnhancementConfirmation({ equipmentId: preview.equipmentId, targetLevel: preview.targetLevel, acknowledgedPermanentDestruction: false })
+                              } else if (preview.targetLevel >= 6) {
+                                setStandardEnhancementConfirmation({ equipmentId: preview.equipmentId, targetLevel: preview.targetLevel, acknowledgedPermanentDestruction: false })
+                              } else {
+                                enhanceEquipment(item.id)
+                                setEnhancementAttempted((current) => ({ ...current, [slot]: true }))
+                                const result = useGameStore.getState().equippedItems[slot]
+                                setEnhancementFeedback((current) => ({ ...current, [slot]: { equipmentId: item.id, message: result?.upgradeLevel === preview.targetLevel ? '强化成功。' : result ? `强化失败：当前为 +${result.upgradeLevel ?? 0}。` : '强化失败：装备已永久破碎。' } }))
+                              }
+                            }}
+                          >
+                              {preview.dangerous ? '危险强化' : preview.targetLevel >= 6 ? '确认强化' : '强化'}
                           </button>
                         ) : null}
                       </div>
@@ -3225,6 +3312,46 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
             </div>
           </VillageModalShell>
         ) : null}
+
+        {standardEnhancementConfirmation ? (() => {
+          const item = [...equipmentInventory, ...Object.values(equippedItems).filter((entry): entry is EquipmentItem => Boolean(entry))].find((entry) => entry.id === standardEnhancementConfirmation.equipmentId)
+          const preview = item ? getEquipmentEnhancementPreview(item.id) : null
+          if (!item || !preview) return null
+          return <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-label="强化确认">
+            <div className="w-full max-w-lg border-4 border-amber-600 bg-[#162019] p-5 text-[#f4f0d7]">
+              <h3 className="font-pixel text-sm text-amber-200">强化确认 · +{preview.targetLevel}</h3>
+              <p className="mt-3 text-sm leading-relaxed">成功率 {(preview.successChance * 100).toFixed(0)}%；失败结果：{preview.failureResult === 'downgrade' ? `降至 +${preview.failureLevel ?? 1}` : preview.failureResult === 'reset-to-one' ? '回到 +1' : '不降级'}。</p>
+              <p className="mt-2 text-sm">消耗：{formatMaterialSummary(preview.materialCost)} · 金币 {preview.goldCost}G</p>
+              <div className="mt-5 flex justify-end gap-2"><button type="button" className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => setStandardEnhancementConfirmation(null)}>取消</button><button type="button" className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => { enhanceEquipment(item.id, standardEnhancementConfirmation); const result = useGameStore.getState().equippedItems[item.slot]; setEnhancementAttempted((current) => ({ ...current, [item.slot]: true })); setEnhancementFeedback((current) => ({ ...current, [item.slot]: { equipmentId: item.id, message: result?.upgradeLevel === preview.targetLevel ? '强化成功。' : result ? `强化失败：当前为 +${result.upgradeLevel ?? 0}。` : '强化失败：装备已永久破碎。' } })); setStandardEnhancementConfirmation(null) }}>确认强化</button></div>
+            </div>
+          </div>
+        })() : null}
+
+        {enhancementConfirmation ? (() => {
+          const dangerousItem = [...equipmentInventory, ...Object.values(equippedItems).filter((item): item is EquipmentItem => Boolean(item))]
+            .find((item) => item.id === enhancementConfirmation.equipmentId)
+          const dangerousPreview = dangerousItem ? getEquipmentEnhancementPreview(dangerousItem.id) : null
+          if (!dangerousItem || !dangerousPreview) return null
+          return (
+            <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" role="alertdialog" aria-modal="true" aria-label="永久破碎危险确认">
+              <div className="w-full max-w-lg border-4 border-red-700 bg-[#241014] p-5 text-red-100">
+                <h3 className="font-pixel text-sm text-red-200">永久破碎危险确认</h3>
+                <p className="mt-3 text-sm leading-relaxed">{dangerousItem.name} 将强化至 +{dangerousPreview.targetLevel}。失败结果：永久破碎，不返还装备或材料。</p>
+                <p className="mt-2 text-sm">成功率 {(dangerousPreview.successChance * 100).toFixed(0)}% · 本次确认绑定装备与目标等级。</p>
+                <div className="mt-5 flex flex-wrap justify-end gap-2">
+                  <button type="button" className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => setEnhancementConfirmation(null)}>取消</button>
+                  <button type="button" className="pixel-button border-red-500 px-4 py-3 font-pixel text-[10px] text-red-100" onClick={() => {
+                    enhanceEquipment(dangerousItem.id, { ...enhancementConfirmation, acknowledgedPermanentDestruction: true })
+                    const result = useGameStore.getState().equippedItems[dangerousItem.slot]
+                    setEnhancementAttempted((current) => ({ ...current, [dangerousItem.slot]: true }))
+                    setEnhancementFeedback((current) => ({ ...current, [dangerousItem.slot]: { equipmentId: dangerousItem.id, message: result ? `强化结果：当前为 +${result.upgradeLevel ?? 0}。` : '强化失败：装备已永久破碎。' } }))
+                    setEnhancementConfirmation(null)
+                  }}>确认永久破碎风险并强化</button>
+                </div>
+              </div>
+            </div>
+          )
+        })() : null}
 
         {reforgeItem && reforgeRequest && reforgeCost ? (
           <div className="pointer-events-auto fixed inset-0 z-40 flex items-start justify-center overflow-x-hidden overflow-y-auto bg-black/65 p-2 sm:p-4" role="dialog" aria-modal="true" aria-label={`${reforgeModeLabels[reforgeRequest.mode]}确认`}>

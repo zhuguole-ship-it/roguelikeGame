@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import type { PersistStorage } from 'zustand/middleware'
 
-import { playGameSound } from '../game/audio'
+import { playGameSound, syncArcherAttackSoundState } from '../game/audio'
 import type { GameSoundId } from '../game/audio'
 import {
   buildCombatLoadingDependencyDescriptor,
@@ -35,11 +35,14 @@ import {
   declineSkillRewardSnapshot,
   dismissBossLootSnapshot,
   dismantleEquipmentSnapshot,
+  enhanceEquipmentSnapshot,
   equipEquipmentSnapshot,
   exitLocalBattleTestSnapshot,
   forfeitInitialSkillDraftSnapshot,
   forfeitRunSnapshot,
   getInitialSkillDraftPresentation,
+  getCharacterEquipmentProgressionPresentationForSnapshot,
+  getEquipmentEnhancementPreviewForSnapshot,
   getLocalBattleTestSpawnOptions as getEngineLocalBattleTestSpawnOptions,
   getRunTalentCandidateContextForSnapshot,
   migrateLegacyWeaponsToEquipment,
@@ -108,6 +111,11 @@ import {
   migrateBeastContractDomainEquipmentItem,
 } from '../game/equipment'
 import {
+  createEmptyProgressionMaterials,
+  migrateEquipmentProgressionItem,
+  normalizeCharacterProgression,
+} from '../game/characterEquipmentProgression'
+import {
   TALENT_SCHEMA_VERSION,
   META_TALENT_NODES,
   META_TALENT_NODE_BY_ID,
@@ -132,7 +140,7 @@ import {
   type RunTalentCandidate,
   type RunTalentBuild,
 } from '../game/talents'
-import type { AudioSettings, CampaignDifficulty, DebugControlState, DevelopmentAcceptancePrepareResult, DevelopmentAcceptancePresentation, DevelopmentAcceptanceScenario, DevelopmentAcceptanceSessionKind, DevelopmentAcceptanceStartBlockReason, DevelopmentAcceptanceTarget, DevelopmentAcceptanceTargetConfigureResult, EquipmentDismantleCategory, EquipmentInventoryViewPreference, EquipmentItem, EquipmentReforgeMode, EquipmentSlot, GameSnapshot, InitialSkillDraftPresentation, InputState, LocalBattleTestApplyResult, LocalBattleTestMonsterConfig, LocalBattleTestSpawnOption, RunTalentTrajectoryBranch, SkillBuildTag, SkillRewardBanType, SkillRewardChoice, TalentPointLedgerEntry, Vector2, WeaponId } from '../game/types'
+import type { AudioSettings, CampaignDifficulty, CharacterEquipmentProgressionPresentation, DebugControlState, DevelopmentAcceptancePrepareResult, DevelopmentAcceptancePresentation, DevelopmentAcceptanceScenario, DevelopmentAcceptanceSessionKind, DevelopmentAcceptanceStartBlockReason, DevelopmentAcceptanceTarget, DevelopmentAcceptanceTargetConfigureResult, EquipmentDismantleCategory, EquipmentEnhancementConfirmation, EquipmentEnhancementPreview, EquipmentInventoryViewPreference, EquipmentItem, EquipmentMaterialId, EquipmentReforgeMode, EquipmentSlot, GameSnapshot, InitialSkillDraftPresentation, InputState, LocalBattleTestApplyResult, LocalBattleTestMonsterConfig, LocalBattleTestSpawnOption, RunTalentTrajectoryBranch, SkillBuildTag, SkillRewardBanType, SkillRewardChoice, TalentPointLedgerEntry, Vector2, WeaponId } from '../game/types'
 
 export type LocalHighRarityEquipmentResetResult = {
   ok: boolean
@@ -188,6 +196,9 @@ type GameStore = GameSnapshot & {
   toggleEquipmentLock: (itemId: string) => void
   dismantleEquipment: (itemId: string, confirmHighRarity?: boolean) => void
   batchDismantleEquipment: (category: EquipmentDismantleCategory) => void
+  getCharacterEquipmentProgressionPresentation: () => CharacterEquipmentProgressionPresentation
+  getEquipmentEnhancementPreview: (itemId: string) => EquipmentEnhancementPreview | null
+  enhanceEquipment: (itemId: string, confirmation?: EquipmentEnhancementConfirmation) => void
   upgradeEquippedEquipment: (slot: EquipmentSlot) => void
   reforgeEquipment: (itemId: string, mode?: EquipmentReforgeMode, preferredBuildTag?: SkillBuildTag) => void
   toggleEquipmentModifierLock: (itemId: string, modifierIndex: number) => void
@@ -212,7 +223,7 @@ type GameStore = GameSnapshot & {
 }
 
 export const GAME_SAVE_STORAGE_KEY = 'pixel-dungeon-hunter-save'
-export const GAME_SAVE_VERSION = 1
+export const GAME_SAVE_VERSION = 2
 
 type PersistedGameState = Pick<
   GameSnapshot,
@@ -244,6 +255,10 @@ type PersistedGameState = Pick<
   | 'discoveredHighRarityEquipmentIds'
   | 'discoveredSkillEvolutionIds'
   | 'equipmentMaterials'
+  | 'characterProgression'
+  | 'equipmentMaterialRemainders'
+  | 'equipmentSettlementOverflow'
+  | 'invalidEquipmentAffixPity'
   | 'metaTalentDismantleMaterialRemainders'
   | 'metaTalentEliteMaterialRemainders'
   | 'metaTalentRecordedEliteArchetypeIds'
@@ -307,6 +322,10 @@ export const extractPersistedGameState = (state: GameSnapshot): PersistedGameSta
   discoveredHighRarityEquipmentIds: clonePersistedValue(state.discoveredHighRarityEquipmentIds),
   discoveredSkillEvolutionIds: clonePersistedValue(state.discoveredSkillEvolutionIds),
   equipmentMaterials: clonePersistedValue(state.equipmentMaterials),
+  characterProgression: clonePersistedValue(state.characterProgression),
+  equipmentMaterialRemainders: clonePersistedValue(state.equipmentMaterialRemainders),
+  equipmentSettlementOverflow: clonePersistedValue(state.equipmentSettlementOverflow),
+  invalidEquipmentAffixPity: state.invalidEquipmentAffixPity,
   metaTalentDismantleMaterialRemainders: clonePersistedValue(state.metaTalentDismantleMaterialRemainders ?? {}),
   metaTalentEliteMaterialRemainders: clonePersistedValue(state.metaTalentEliteMaterialRemainders ?? {}),
   metaTalentRecordedEliteArchetypeIds: clonePersistedValue(state.metaTalentRecordedEliteArchetypeIds ?? []),
@@ -346,6 +365,10 @@ const createPersistedGameStateSignature = (state: GameSnapshot) => [
   serializeSignatureValue(state.equipmentInventoryViewPreference),
   serializeSignatureValue(state.discoveredHighRarityEquipmentIds),
   serializeSignatureValue(state.equipmentMaterials),
+  serializeSignatureValue(state.characterProgression),
+  serializeSignatureValue(state.equipmentMaterialRemainders),
+  serializeSignatureValue(state.equipmentSettlementOverflow),
+  state.invalidEquipmentAffixPity,
   serializeSignatureValue(state.metaTalentDismantleMaterialRemainders ?? {}),
   serializeSignatureValue(state.metaTalentEliteMaterialRemainders ?? {}),
   serializeSignatureValue(state.metaTalentRecordedEliteArchetypeIds ?? []),
@@ -630,6 +653,18 @@ const normalizePersistedMetaTalentIds = (...sources: unknown[]) => {
     .map((node) => node.id)
 }
 
+const normalizeProgressionMaterials = (value: unknown) => {
+  const normalized = createEmptyProgressionMaterials()
+  if (!isRecord(value)) return normalized
+  ;(Object.keys(normalized) as EquipmentMaterialId[]).forEach((id) => {
+    const amount = value[id]
+    normalized[id] = typeof amount === 'number' && Number.isFinite(amount)
+      ? Math.max(0, Math.floor(amount))
+      : 0
+  })
+  return normalized
+}
+
 export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot => {
   const persisted = sanitizePersistedState(persistedValue)
   const fallback = createInitialSnapshot('idle')
@@ -682,14 +717,25 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
   }
   const talentPointRecords = Array.isArray(persisted.talentPointRecords) ? clonePersistedValue(persisted.talentPointRecords).slice(0, 10) : fallback.talentPointRecords
   const migratedEquipmentInventory = Array.isArray(persisted.equipmentInventory)
-    ? clonePersistedValue(persisted.equipmentInventory).map(migrateBeastContractDomainEquipmentItem)
+    ? clonePersistedValue(persisted.equipmentInventory).map((item) => migrateEquipmentProgressionItem(migrateBeastContractDomainEquipmentItem(item)))
     : fallback.equipmentInventory
   const migratedEquippedItems = isRecord(persisted.equippedItems)
     ? Object.fromEntries(Object.entries(clonePersistedValue(persisted.equippedItems)).map(([slot, item]) => [
         slot,
-        isRecord(item) ? migrateBeastContractDomainEquipmentItem(item as EquipmentItem) : item,
+        isRecord(item) ? migrateEquipmentProgressionItem(migrateBeastContractDomainEquipmentItem(item as EquipmentItem)) : item,
       ])) as GameSnapshot['equippedItems']
     : fallback.equippedItems
+  const now = Date.now()
+  const equipmentSettlementOverflow = Array.isArray(persisted.equipmentSettlementOverflow)
+    ? clonePersistedValue(persisted.equipmentSettlementOverflow).flatMap((entry) => {
+        if (!isRecord(entry) || !isRecord(entry.item) || typeof entry.expiresAt !== 'number' || entry.expiresAt <= now) return []
+        return [{
+          item: migrateEquipmentProgressionItem(migrateBeastContractDomainEquipmentItem(entry.item as EquipmentItem)),
+          acquiredAt: typeof entry.acquiredAt === 'number' ? Math.max(0, entry.acquiredAt) : now,
+          expiresAt: entry.expiresAt,
+        }]
+      })
+    : []
   const restored: GameSnapshot = {
     ...fallback,
     currency: typeof persisted.currency === 'number' ? Math.max(0, persisted.currency) : fallback.currency,
@@ -756,9 +802,20 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
       persisted.equipmentInventoryViewPreference,
       fallback.equipmentInventoryViewPreference,
     ),
-    equipmentMaterials: isRecord(persisted.equipmentMaterials)
-      ? { ...fallback.equipmentMaterials, ...clonePersistedValue(persisted.equipmentMaterials) }
-      : fallback.equipmentMaterials,
+    equipmentMaterials: normalizeProgressionMaterials(persisted.equipmentMaterials),
+    characterProgression: normalizeCharacterProgression(
+      isRecord(persisted.characterProgression) ? persisted.characterProgression : undefined,
+    ),
+    temporaryEquipmentMaterials: createEmptyProgressionMaterials(),
+    equipmentMaterialRemainders: isRecord(persisted.equipmentMaterialRemainders)
+      ? Object.fromEntries(Object.entries(persisted.equipmentMaterialRemainders).filter(([, value]) => (
+          typeof value === 'number' && Number.isFinite(value) && value >= 0 && value < 1
+        )))
+      : {},
+    equipmentSettlementOverflow,
+    invalidEquipmentAffixPity: typeof persisted.invalidEquipmentAffixPity === 'number'
+      ? Math.max(0, Math.min(10, Math.trunc(persisted.invalidEquipmentAffixPity)))
+      : 0,
     metaTalentDismantleMaterialRemainders: isRecord(persisted.metaTalentDismantleMaterialRemainders)
       ? Object.fromEntries(Object.entries(persisted.metaTalentDismantleMaterialRemainders).filter(([, value]) => (
           typeof value === 'number' && Number.isFinite(value) && value >= 0 && value < 1
@@ -773,7 +830,13 @@ export const restorePersistedGameState = (persistedValue: unknown): GameSnapshot
       ? Array.from(new Set(persisted.metaTalentRecordedEliteArchetypeIds.filter((id): id is string => typeof id === 'string' && id.length > 0)))
       : [],
     audioSettings: isRecord(persisted.audioSettings)
-      ? { ...fallback.audioSettings, ...clonePersistedValue(persisted.audioSettings) }
+      ? {
+          ...fallback.audioSettings,
+          ...clonePersistedValue(persisted.audioSettings),
+          musicVolume: typeof persisted.audioSettings.musicVolume === 'number' && Number.isFinite(persisted.audioSettings.musicVolume)
+            ? Math.max(0, Math.min(100, persisted.audioSettings.musicVolume))
+            : 60,
+        }
       : fallback.audioSettings,
     selectedCampaign,
     phase: 'idle',
@@ -828,7 +891,13 @@ const createCombatLaunchTarget = (
   professionId: 'archer',
 })
 
+const canPlayPlayerArcherAttackSound = (state: GameSnapshot & { combatLaunchGate?: CombatLaunchGatePresentation }) => state.phase === 'running'
+  && !state.combatLaunchGate?.active
+  && !state.initialSkillDraft
+  && !state.pendingSkillReward
+
 const playSnapshotSound = (state: GameSnapshot, id: Parameters<typeof playGameSound>[0]) => {
+  if ((id === 'basic-attack' || id === 'skill-cast') && !canPlayPlayerArcherAttackSound(state)) return
   playGameSound(id, state.audioSettings)
 }
 
@@ -872,7 +941,7 @@ export const getSimulationSoundEvents = (previous: GameSnapshot, next: GameSnaps
 }
 
 const playSimulationSounds = (previous: GameSnapshot, next: GameSnapshot) => {
-  getSimulationSoundEvents(previous, next).forEach((id) => playSnapshotSound(previous, id))
+  getSimulationSoundEvents(previous, next).forEach((id) => playSnapshotSound(id === 'basic-attack' ? next : previous, id))
 }
 
 const createRunTalentContext = getRunTalentCandidateContextForSnapshot
@@ -1633,6 +1702,18 @@ export const useGameStore = create<GameStore>()(
           return batchDismantleEquipmentSnapshot(state, category)
         })
       },
+      getCharacterEquipmentProgressionPresentation: () => (
+        getCharacterEquipmentProgressionPresentationForSnapshot(get())
+      ),
+      getEquipmentEnhancementPreview: (itemId) => (
+        getEquipmentEnhancementPreviewForSnapshot(get(), itemId)
+      ),
+      enhanceEquipment: (itemId, confirmation) => {
+        set((state) => {
+          playSnapshotSound(state, 'button')
+          return enhanceEquipmentSnapshot(state, itemId, confirmation)
+        })
+      },
       upgradeEquippedEquipment: (slot) => {
         set((state) => {
           playSnapshotSound(state, 'button')
@@ -1888,6 +1969,7 @@ export const useGameStore = create<GameStore>()(
             ...state.audioSettings,
             ...settings,
             masterVolume: Math.max(0, Math.min(100, settings.masterVolume ?? state.audioSettings.masterVolume)),
+            musicVolume: Math.max(0, Math.min(100, settings.musicVolume ?? state.audioSettings.musicVolume)),
             effectsVolume: Math.max(0, Math.min(100, settings.effectsVolume ?? state.audioSettings.effectsVolume)),
           },
         }))
@@ -1909,8 +1991,8 @@ export const useGameStore = create<GameStore>()(
         set((state) => {
           if (state.combatLaunchGate.active) return state
           const next = triggerActiveSkillSnapshot(state, slotIndex)
-          if (next.activeSkills[slotIndex]?.cooldownRemaining !== state.activeSkills[slotIndex]?.cooldownRemaining) {
-            playSnapshotSound(state, 'skill-cast')
+          if ((next.activeSkills[slotIndex]?.castCount ?? 0) > (state.activeSkills[slotIndex]?.castCount ?? 0)) {
+            playSnapshotSound(next, 'skill-cast')
           }
           return next
         })
@@ -1936,6 +2018,12 @@ export const useGameStore = create<GameStore>()(
     },
   ),
 )
+
+const syncPlayerArcherAudio = (state: GameStore) => {
+  syncArcherAttackSoundState(canPlayPlayerArcherAttackSound(state), state.audioSettings)
+}
+syncPlayerArcherAudio(useGameStore.getState())
+useGameStore.subscribe(syncPlayerArcherAudio)
 
 type RoguelikeE2ESummary = {
   phase: GameSnapshot['phase']

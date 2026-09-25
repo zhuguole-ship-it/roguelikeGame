@@ -4,7 +4,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { ARCHER_FIXED_PASSIVE, SKILL_BUILD_LABELS } from '../../game/archerSkills'
 import { ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTION_MAP, getActiveSkillRuntimePresentation, getRuntimeSkillDefinitionById } from '../../game/archerSkillEvolution'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
-import { EQUIPMENT_RARITY_COLORS, EQUIPMENT_RARITY_LABELS, EQUIPMENT_SET_LABELS, EQUIPMENT_SLOT_LABELS, getEquipmentSetCounts } from '../../game/equipment'
+import { EQUIPMENT_MATERIAL_LABELS, EQUIPMENT_RARITY_COLORS, EQUIPMENT_RARITY_LABELS, EQUIPMENT_SET_LABELS, EQUIPMENT_SLOT_LABELS, getEquipmentSetCounts } from '../../game/equipment'
 import { getArcherCombatTalentV3SnapshotForGame, getArrowTurretPresentation, getCampaignRewardPresentationSnapshot, getRunTalentPresentationSnapshot } from '../../game/engine'
 import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
 import {
@@ -1397,6 +1397,7 @@ export function GamePauseOverlay() {
     .sort((a, b) => b.score - a.score))
   const runTalentPresentationItems = getRunTalentPresentationSnapshot(state)
   const campaignRewardSnapshot = getCampaignRewardPresentationSnapshot(state)
+  const progressionPresentation = state.getCharacterEquipmentProgressionPresentation()
   const combatTalentV3Presentation = getArcherCombatTalentV3SnapshotForGame(state)
   const pauseOverlayRef = useRef<HTMLDivElement | null>(null)
   const { highestLayer } = useCombatUiLayerState()
@@ -1521,6 +1522,13 @@ export function GamePauseOverlay() {
             </p>
           </section>
         ) : null}
+
+        <section className="mb-5 border-2 border-[#214c38] bg-[rgba(7,20,13,0.8)] px-4 py-3" aria-label="本局临时材料账本" data-testid="pause-temporary-material-ledger">
+          <p className="font-pixel text-[10px] tracking-[0.14em] text-[#9dd5ac]">本局临时材料</p>
+          <p className="mt-2 text-sm leading-relaxed text-[#dfe7d5]">
+            {Object.entries(progressionPresentation.temporaryMaterials).filter(([, count]) => count > 0).map(([id, count]) => `${EQUIPMENT_MATERIAL_LABELS[id as keyof typeof EQUIPMENT_MATERIAL_LABELS] ?? id}×${count}`).join('、') || '暂无'}
+          </p>
+        </section>
 
         <div
           className="mb-5 grid min-w-0 grid-cols-1 gap-5 md:grid-cols-2"

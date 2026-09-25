@@ -171,12 +171,17 @@ const EquipmentCodexDetailContent = ({
         <p className="min-w-0 break-words font-pixel text-xs leading-relaxed text-amber-200">{template.name}</p>
       </div>
       <dl className="mt-3 space-y-2 text-sm leading-relaxed text-[#dfe7d5]">
+        <div data-testid={`equipment-codex-growth-${template.templateId}`}>
+          <dt className="font-pixel text-[8px] tracking-[0.12em] text-[#9dd5ac]">装备成长</dt>
+          <dd className="mt-1">等级范围 Lv.{template.levelRange.min}–Lv.{template.levelRange.max}</dd>
+        </div>
         <div>
           <dt className="font-pixel text-[8px] tracking-[0.12em] text-[#9dd5ac]">属性</dt>
           <dd className="mt-1 space-y-1">
             {template.attributeRanges.map((attribute) => <span key={attribute.statId} className="block">{getCodexDisplayText(attribute.display)}</span>)}
           </dd>
         </div>
+        {template.coreAffixEffects.length > 0 ? <div data-testid={`equipment-codex-affixes-${template.templateId}`}><dt className="font-pixel text-[8px] tracking-[0.12em] text-[#9dd5ac]">词缀效果</dt><dd className="mt-1 space-y-1">{template.coreAffixEffects.map((effect) => <span key={effect.effectId} className="block">{getCodexDisplayText(effect.description)}</span>)}</dd></div> : null}
         {deathBloodIdentityCopy ? (
           <div data-testid={`equipment-codex-death-blood-identity-${template.templateId}`}>
             <dt className="font-pixel text-[8px] tracking-[0.12em] text-[#9dd5ac]">套装身份</dt>

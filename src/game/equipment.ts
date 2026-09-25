@@ -29,6 +29,17 @@ import type {
   WeaponId,
 } from './types'
 import { WEAPON_DEFINITION_MAP } from './weapons'
+import {
+  applyEquipmentProgressionToDrop,
+  createEmptyProgressionMaterials,
+  getEquipmentEffectMagnitudeScale,
+  getEquipmentEffectTriggerScale,
+  getEquipmentEnhancementCap,
+  getEquipmentEnhancementPreview,
+  getEquipmentSetEffectLevel,
+  migrateEquipmentProgressionItem,
+  resolveEquipmentEnhancement,
+} from './characterEquipmentProgression'
 
 export const EQUIPMENT_SLOTS: EquipmentSlot[] = [
   'weapon',
@@ -177,14 +188,21 @@ export const getDeathBloodEquipmentDefinition = (item?: EquipmentItem) => (
 export const getDeathBloodLoadoutSnapshot = (
   equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>,
 ): DeathBloodLoadoutSnapshot => {
-  const collections: Record<DeathBloodCollection, { core: string[]; relic: string[]; replacement?: string }> = {
-    death: { core: [], relic: [] },
-    blood: { core: [], relic: [] },
+  const collections: Record<DeathBloodCollection, { core: string[]; relic: string[]; coreItems: EquipmentItem[]; replacement?: string }> = {
+    death: { core: [], relic: [], coreItems: [] },
+    blood: { core: [], relic: [], coreItems: [] },
   }
+  const effectScalesByDefinitionId: Record<string, { itemLevel: number; magnitudeScale: number; triggerScale: number }> = {}
   Object.values(equippedItems).forEach((item) => {
     const definition = getDeathBloodEquipmentDefinition(item)
     if (!definition || definition.identity === 'excluded') return
     const target = collections[definition.collection]
+    const itemLevel = item?.itemLevel ?? item?.level ?? 1
+    effectScalesByDefinitionId[definition.definitionId] = {
+      itemLevel,
+      magnitudeScale: getEquipmentEffectMagnitudeScale(itemLevel),
+      triggerScale: getEquipmentEffectTriggerScale(itemLevel),
+    }
     if (definition.identity === 'relic') {
       target.relic.push(definition.definitionId)
       return
@@ -195,11 +213,13 @@ export const getDeathBloodLoadoutSnapshot = (
       target.replacement = definition.definitionId
     }
     target.core.push(definition.definitionId)
+    if (item) target.coreItems.push(item)
   })
   const resolve = (collection: DeathBloodCollection): DeathBloodCollectionLoadout => {
     const value = collections[collection]
     const uniqueCore = Array.from(new Set(value.core)).slice(0, DEATH_BLOOD_CORE_SLOTS.length)
     const uniqueRelic = Array.from(new Set(value.relic))
+    const effectLevel = getEquipmentSetEffectLevel(value.coreItems)
     return Object.freeze({
       collection,
       coreCount: uniqueCore.length,
@@ -208,9 +228,16 @@ export const getDeathBloodLoadoutSnapshot = (
       replacementWeaponDefinitionId: value.replacement,
       twoPieceActive: uniqueCore.length >= DEATH_BLOOD_COLLECTION_THRESHOLDS.twoPiece,
       fourPieceActive: uniqueCore.length >= DEATH_BLOOD_COLLECTION_THRESHOLDS.fourPiece,
+      effectLevel,
+      magnitudeScale: getEquipmentEffectMagnitudeScale(effectLevel),
+      triggerScale: getEquipmentEffectTriggerScale(effectLevel),
     })
   }
-  return Object.freeze({ death: resolve('death'), blood: resolve('blood') })
+  return Object.freeze({
+    death: resolve('death'),
+    blood: resolve('blood'),
+    effectScalesByDefinitionId: Object.freeze(effectScalesByDefinitionId),
+  })
 }
 
 export const BEAST_CONTRACT_DOMAIN_CORE_SLOTS: readonly EquipmentSlot[] = Object.freeze([
@@ -274,38 +301,54 @@ const freezeBeastContractDomainLoadout = (
   collection: BeastContractDomainCollection,
   coreIds: string[],
   relicIds: string[],
+  coreItems: EquipmentItem[],
   replacementWeaponDefinitionId?: string,
-): BeastContractDomainCollectionLoadout => Object.freeze({
-  collection,
-  coreCount: coreIds.length,
-  equippedCoreDefinitionIds: Object.freeze([...coreIds]),
-  equippedRelicDefinitionIds: Object.freeze([...relicIds]),
-  replacementWeaponDefinitionId,
-  twoPieceActive: coreIds.length >= 2,
-  threePieceActive: coreIds.length >= 3,
-  fivePieceActive: coreIds.length >= 5,
-})
+): BeastContractDomainCollectionLoadout => {
+  const effectLevel = getEquipmentSetEffectLevel(coreItems)
+  return Object.freeze({
+    collection,
+    coreCount: coreIds.length,
+    equippedCoreDefinitionIds: Object.freeze([...coreIds]),
+    equippedRelicDefinitionIds: Object.freeze([...relicIds]),
+    replacementWeaponDefinitionId,
+    twoPieceActive: coreIds.length >= 2,
+    threePieceActive: coreIds.length >= 3,
+    fivePieceActive: coreIds.length >= 5,
+    effectLevel,
+    magnitudeScale: getEquipmentEffectMagnitudeScale(effectLevel),
+    triggerScale: getEquipmentEffectTriggerScale(effectLevel),
+  })
+}
 
 /** The only count/activation source for both runtime and B2. */
 export const getBeastContractDomainLoadoutSnapshot = (
   equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>,
 ): BeastContractDomainLoadoutSnapshot => {
-  const entries: Record<BeastContractDomainCollection, { core: string[]; relic: string[]; replacement?: string }> = {
-    beast: { core: [], relic: [] }, domain: { core: [], relic: [] },
+  const entries: Record<BeastContractDomainCollection, { core: string[]; relic: string[]; coreItems: EquipmentItem[]; replacement?: string }> = {
+    beast: { core: [], relic: [], coreItems: [] }, domain: { core: [], relic: [], coreItems: [] },
   }
+  const effectScalesByDefinitionId: Record<string, { itemLevel: number; magnitudeScale: number; triggerScale: number }> = {}
   Object.values(equippedItems).forEach((item) => {
     const definition = getBeastContractDomainEquipmentDefinition(item)
     if (!definition || definition.slot !== item?.slot) return
     const target = entries[definition.collection]
+    const itemLevel = item?.itemLevel ?? item?.level ?? 1
+    effectScalesByDefinitionId[definition.definitionId] = {
+      itemLevel,
+      magnitudeScale: getEquipmentEffectMagnitudeScale(itemLevel),
+      triggerScale: getEquipmentEffectTriggerScale(itemLevel),
+    }
     if (definition.identity === 'relic') target.relic.push(definition.definitionId)
     else {
       target.core.push(definition.definitionId)
+      if (item) target.coreItems.push(item)
       if (definition.identity === 'boss-core-replacement') target.replacement = definition.definitionId
     }
   })
   return Object.freeze({
-    beast: freezeBeastContractDomainLoadout('beast', entries.beast.core, entries.beast.relic, entries.beast.replacement),
-    domain: freezeBeastContractDomainLoadout('domain', entries.domain.core, entries.domain.relic, entries.domain.replacement),
+    beast: freezeBeastContractDomainLoadout('beast', entries.beast.core, entries.beast.relic, entries.beast.coreItems, entries.beast.replacement),
+    domain: freezeBeastContractDomainLoadout('domain', entries.domain.core, entries.domain.relic, entries.domain.coreItems, entries.domain.replacement),
+    effectScalesByDefinitionId: Object.freeze(effectScalesByDefinitionId),
   })
 }
 
@@ -1095,39 +1138,14 @@ export const getBatchDismantleCandidates = (
 }
 
 export const getEquipmentUpgradeLimit = (item: EquipmentItem) => {
-  return Math.min(8, RARITY_SCORE[item.rarity] + Math.floor(Math.max(1, item.level) / 44) + 1)
+  return getEquipmentEnhancementCap(item.rarity)
 }
 
 export const getEquipmentUpgradeCost = (item: EquipmentItem): EquipmentMaterialInventory => {
-  const cost = createEmptyEquipmentMaterials()
-  const nextLevel = (item.upgradeLevel ?? 0) + 1
-  const rarityScore = RARITY_SCORE[item.rarity]
-  const base = Math.max(2, Math.round((item.level * 0.45 + item.score * 0.05 + rarityScore * 2) * nextLevel))
-
-  if (item.rarity === 'broken' || item.rarity === 'common') {
-    addMaterial(cost, 'ironScraps', base)
-    addMaterial(cost, 'contractAsh', Math.ceil(base / 2))
-  } else if (item.rarity === 'fine' || item.rarity === 'rare') {
-    addMaterial(cost, 'refinedIron', Math.ceil(base * 0.75))
-    addMaterial(cost, 'crystalDust', Math.ceil(base * 0.45))
-    if (item.rarity === 'rare') {
-      addMaterial(cost, 'buildShard', nextLevel)
-    }
-  } else if (item.rarity === 'epic') {
-    addMaterial(cost, 'buildRune', nextLevel)
-    addMaterial(cost, 'skillPage', Math.ceil(nextLevel / 2))
-    addMaterial(cost, 'crystalDust', base)
-  } else if (item.rarity === 'legacy') {
-    addMaterial(cost, 'legacyEmber', nextLevel)
-    addMaterial(cost, 'campaignSigil', Math.ceil(nextLevel / 2))
-    addMaterial(cost, 'buildRune', nextLevel)
-  } else {
-    addMaterial(cost, 'legendaryCore', Math.ceil(nextLevel / 2))
-    addMaterial(cost, 'legacyEmber', nextLevel + 1)
-    addMaterial(cost, 'skillPage', nextLevel)
-  }
-
-  return cost
+  return getEquipmentEnhancementPreview(item, {
+    currency: Number.MAX_SAFE_INTEGER,
+    materials: Object.fromEntries(Object.keys(createEmptyProgressionMaterials()).map((id) => [id, Number.MAX_SAFE_INTEGER])) as EquipmentMaterialInventory,
+  }).materialCost
 }
 
 /**
@@ -1147,40 +1165,14 @@ export const scaleEquipmentMaterialCost = (
 }
 
 export const getEquipmentUpgradeGoldCost = (item: EquipmentItem) => {
-  const rarityScore = RARITY_SCORE[item.rarity]
-  const nextLevel = (item.upgradeLevel ?? 0) + 1
-  return Math.max(6, Math.round((item.level * 0.55 + item.score * 0.08 + rarityScore * 4) * nextLevel))
-}
-
-const upgradeBonusValue = (key: keyof EquipmentBonus, value: number) => {
-  if (key === 'attackIntervalOffset') {
-    return Number((value * 1.04).toFixed(3))
-  }
-
-  if (Math.abs(value) < 1) {
-    return Number((value + Math.max(0.006, Math.abs(value) * 0.1)).toFixed(3))
-  }
-
-  return Math.round(value + Math.max(1, Math.abs(value) * 0.08))
+  return getEquipmentEnhancementPreview(item, {
+    currency: Number.MAX_SAFE_INTEGER,
+    materials: Object.fromEntries(Object.keys(createEmptyProgressionMaterials()).map((id) => [id, Number.MAX_SAFE_INTEGER])) as EquipmentMaterialInventory,
+  }).goldCost
 }
 
 export const upgradeEquipmentItem = (item: EquipmentItem): EquipmentItem => {
-  const nextUpgradeLevel = (item.upgradeLevel ?? 0) + 1
-  const bonus = { ...item.bonus }
-  ;(Object.keys(bonus) as Array<keyof EquipmentBonus>).forEach((key) => {
-    const value = bonus[key]
-    if (typeof value === 'number') {
-      bonus[key] = upgradeBonusValue(key, value) as never
-    }
-  })
-
-  return {
-    ...item,
-    score: item.score + Math.round(item.level * 0.8 + RARITY_SCORE[item.rarity] * 6 + nextUpgradeLevel * 4),
-    bonus,
-    upgradeLevel: nextUpgradeLevel,
-    isNew: false,
-  }
+  return resolveEquipmentEnhancement(item, true).item ?? migrateEquipmentProgressionItem(item)
 }
 
 const weightedPick = <T>(entries: Array<[T, number]>, roll = Math.random()) => {
@@ -2528,6 +2520,10 @@ export const createEquipmentDrop = (
     talentBuildWeightBonuses?: Partial<Record<SkillBuildTag, number>>
     talentLegacyWeaponWeightBonuses?: Partial<Record<SkillBuildTag, number>>
     candidateWeightRules?: readonly EquipmentCandidateWeightRule[]
+    /** Long-term character level owns the legal item-level band. */
+    playerLevel?: number
+    /** Persistent invalid-affix pity count before this legal drop. */
+    invalidAffixPityCount?: number
   } = {},
 ): EquipmentItem | null => {
   const rarity = options.forcedRarity ?? (options.forceDrop
@@ -2574,7 +2570,15 @@ export const createEquipmentDrop = (
         .map((entry) => [entry, entry.weight] as [typeof entry, number]),
     )
     if (candidate.kind === 'weapon') {
-      return createBossLegacyWeaponDrop(level, createId, options.preferredBuildTag, rarity, options)
+      return applyEquipmentProgressionToDrop(
+        createBossLegacyWeaponDrop(level, createId, options.preferredBuildTag, rarity, options),
+        {
+          playerLevel: options.playerLevel ?? Math.min(60, Math.max(1, level)),
+          source,
+          archerExclusive: true,
+          invalidAffixPityCount: options.invalidAffixPityCount,
+        },
+      )
     }
   }
 
@@ -2617,7 +2621,7 @@ export const createEquipmentDrop = (
   const baseBonus = createBonus(slot, rarity, buildTag, level)
   const score = Math.round((level * 2.4 + RARITY_SCORE[rarity] * 18) * getRollScoreMultiplier(rolls))
 
-  return migrateBeastContractDomainEquipmentItem({
+  return applyEquipmentProgressionToDrop(migrateBeastContractDomainEquipmentItem({
     id: `equipment-${createId()}`,
     equipmentId: highRarityCandidate?.equipmentId ?? standardCandidate?.equipmentId ?? `equipment-${rarity}-${slot}-${buildTag}-${affix}-${baseName}`,
     slot,
@@ -2640,6 +2644,11 @@ export const createEquipmentDrop = (
     upgradeLevel: 0,
     source: 'dungeon',
     rolls,
+  }), {
+    playerLevel: options.playerLevel ?? Math.min(60, Math.max(1, level)),
+    source,
+    archerExclusive: buildTag !== 'general',
+    invalidAffixPityCount: options.invalidAffixPityCount,
   })
 }
 

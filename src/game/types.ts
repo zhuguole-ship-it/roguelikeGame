@@ -195,11 +195,15 @@ export type DeathBloodCollectionLoadout = {
   replacementWeaponDefinitionId?: string
   twoPieceActive: boolean
   fourPieceActive: boolean
+  effectLevel?: number
+  magnitudeScale?: number
+  triggerScale?: number
 }
 /** Immutable, catalog-backed loadout result for runtime and presentation. */
 export type DeathBloodLoadoutSnapshot = {
   death: DeathBloodCollectionLoadout
   blood: DeathBloodCollectionLoadout
+  effectScalesByDefinitionId?: Readonly<Record<string, { itemLevel: number; magnitudeScale: number; triggerScale: number }>>
 }
 
 /** 2026-09-07 fixed Beast Contract / Contract Domain equipment directory. */
@@ -225,10 +229,14 @@ export type BeastContractDomainCollectionLoadout = {
   twoPieceActive: boolean
   threePieceActive: boolean
   fivePieceActive: boolean
+  effectLevel?: number
+  magnitudeScale?: number
+  triggerScale?: number
 }
 export type BeastContractDomainLoadoutSnapshot = {
   beast: BeastContractDomainCollectionLoadout
   domain: BeastContractDomainCollectionLoadout
+  effectScalesByDefinitionId?: Readonly<Record<string, { itemLevel: number; magnitudeScale: number; triggerScale: number }>>
 }
 export type BeastContractDomainEquipmentPresentation = BeastContractDomainEquipmentDefinition & {
   mutuallyExclusiveTemplateIds: readonly string[]
@@ -404,6 +412,7 @@ export type EndgameArchiveCandidateWeightPresentation = {
 
 export type AudioSettings = {
   masterVolume: number
+  musicVolume: number
   effectsVolume: number
   muted: boolean
 }
@@ -419,6 +428,100 @@ export type EquipmentMaterialId =
   | 'campaignSigil'
   | 'legendaryCore'
 export type EquipmentMaterialInventory = Record<EquipmentMaterialId, number>
+export type CharacterCoreStatId = 'strength' | 'intelligence' | 'endurance' | 'spirit' | 'agility'
+export type CharacterCoreStats = Record<CharacterCoreStatId, number>
+export type CharacterProgressionState = {
+  level: number
+  /** Total lifetime character XP. It remains uncapped after Lv.60. */
+  totalXp: number
+  /** XP earned after reaching Lv.60, retained for a future cap increase. */
+  overflowXp: number
+}
+export type EquipmentOrdinaryAffixId =
+  | CharacterCoreStatId
+  | `${CharacterCoreStatId}Percent`
+  | 'attackDamage'
+  | 'maxHp'
+  | 'maxMana'
+  | 'maxStamina'
+  | 'hpPercent'
+  | 'manaPercent'
+  | 'staminaPercent'
+  | 'hitChance'
+  | 'attackSpeed'
+  | 'skillHaste'
+  | 'moveSpeed'
+  | 'range'
+export type EquipmentOrdinaryAffix = {
+  id: EquipmentOrdinaryAffixId
+  value: number
+  qualityPercentile: number
+  quality: 'normal' | 'high' | 'perfect'
+  effectiveForArcher: boolean
+}
+export type EquipmentInherentStat = {
+  id: 'attackDamage' | 'attackRange' | 'armor' | 'maxHp' | 'moveSpeed'
+  value: number
+}
+export type SpecialBlueDamageType = 'physical' | 'electric' | 'fire' | 'ice' | 'water' | 'nature' | 'wind' | 'light'
+export type SpecialBlueEquipmentBonus = {
+  type: SpecialBlueDamageType
+  percent: number
+}
+export type EquipmentEnhancementRareBonus = {
+  level: number
+  stat: 'attackSpeed' | 'moveSpeed' | 'range'
+  value: number
+}
+export type EquipmentEnhancementConfirmation = {
+  equipmentId: string
+  targetLevel: number
+  acknowledgedPermanentDestruction: boolean
+}
+export type EquipmentOverflowEntry = {
+  item: EquipmentItem
+  acquiredAt: number
+  expiresAt: number
+}
+export type EquipmentEnhancementPreview = {
+  equipmentId: string
+  currentLevel: number
+  targetLevel: number
+  maximumLevel: number
+  successChance: number
+  failureResult: 'none' | 'downgrade' | 'reset-to-one' | 'destroyed'
+  failureLevel?: number
+  dangerous: boolean
+  goldCost: number
+  materialCost: EquipmentMaterialInventory
+  affordable: boolean
+  blockedReason?: string
+}
+export type CharacterEquipmentProgressionPresentation = {
+  character: {
+    level: number
+    totalXp: number
+    overflowXp: number
+    currentLevelXp: number
+    nextLevelXp: number | null
+    baseStats: CharacterCoreStats
+    equipmentFlatStats: CharacterCoreStats
+    equipmentPercentStats: CharacterCoreStats
+    finalStats: CharacterCoreStats
+    maxHp: number
+    maxStamina: number
+    flatAttackDamage: number
+    moveSpeed: number
+    range: number
+    hitBonus: number
+    attackSpeedBonus: number
+    skillHaste: number
+    armor: number
+  }
+  temporaryMaterials: EquipmentMaterialInventory
+  settlementOverflow: readonly EquipmentOverflowEntry[]
+  invalidAffixPityCount: number
+}
 export type EquipmentDismantleCategory = 'low-rarity' | 'low-score-rare' | 'off-build-rare'
 export type EquipmentReforgeMode = 'secondary' | 'boss-legacy'
 /** Persisted UI-only preference. Core treats filterId as an opaque, bounded identifier. */
@@ -633,6 +736,10 @@ export type EquipmentItem = {
   buildTag: SkillBuildTag | 'general'
   setId?: EquipmentSetId
   level: number
+  /** Authoritative equipment level. `level` remains a migration/display alias. */
+  itemLevel?: number
+  /** Explicit equip gate assigned to newly generated progression equipment. Legacy items omit it. */
+  requiredCharacterLevel?: number
   score: number
   bonus: EquipmentBonus
   modifiers: EquipmentSkillModifier[]
@@ -641,6 +748,13 @@ export type EquipmentItem = {
   acquiredLevel?: number
   isNew?: boolean
   upgradeLevel?: number
+  /** Drop-time values used by enhancement; never recomputed from an upgraded value. */
+  originalEnhanceableStats?: Partial<Record<'attackDamage' | 'maxHp' | 'armor' | 'attackSpeed' | 'moveSpeed' | 'range', number>>
+  inherentStats?: EquipmentInherentStat[]
+  ordinaryAffixes?: EquipmentOrdinaryAffix[]
+  specialBlue?: SpecialBlueEquipmentBonus
+  enhancementRareBonuses?: EquipmentEnhancementRareBonus[]
+  enhancementAttemptNonce?: number
   bossLegacyReforged?: boolean
   source?: 'dungeon' | 'blacksmith' | 'system'
   rolls?: {
@@ -846,6 +960,8 @@ export type Enemy = {
   id: string
   kind: EnemyKind
   grantsEliteReward: boolean
+  /** False for summons, split children, and other anti-farm auxiliary entities. */
+  materialDropEligible?: boolean
   /** An independent 25% campaign raid. It never consumes the fixed elite lane. */
   campaignRewardSource?: 'elite-raid'
   position: Vector2
@@ -2156,6 +2272,15 @@ export type GameSnapshot = {
   equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>
   equipmentInventoryViewPreference: EquipmentInventoryViewPreference
   equipmentMaterials: EquipmentMaterialInventory
+  characterProgression: CharacterProgressionState
+  /** Run-only material earnings; settled exactly once on a legal run result. */
+  temporaryEquipmentMaterials: EquipmentMaterialInventory
+  /** Persistent deterministic fractional bonuses, keyed by source and material. */
+  equipmentMaterialRemainders: Record<string, number>
+  /** Success overflow storage; entries expire after seven natural days. */
+  equipmentSettlementOverflow: EquipmentOverflowEntry[]
+  /** Count toward the next legal rare-or-higher valid perfect-affix guarantee. */
+  invalidEquipmentAffixPity: number
   /** Persistent per-material fractions earned by FT007 dismantle bonuses. */
   metaTalentDismantleMaterialRemainders?: Partial<Record<EquipmentMaterialId, number>>
   /** Persistent per-material fractions earned by FT010 elite-drop bonuses. */
@@ -2163,10 +2288,6 @@ export type GameSnapshot = {
   /** Persistent unique elite archetypes already rewarded by FT010 rank 5. */
   metaTalentRecordedEliteArchetypeIds?: string[]
   pendingBossLoot: EquipmentItem[]
-  lastAutoDismantleSummary?: {
-    count: number
-    materials: EquipmentMaterialInventory
-  }
   lastLevelSettlement?: {
     absorbedCrystals: number
     absorbedExp: number

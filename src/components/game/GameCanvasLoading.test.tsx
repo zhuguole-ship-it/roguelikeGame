@@ -12,6 +12,15 @@ import * as gameRender from '../../game/render'
 import { useGameStore } from '../../store/useGameStore'
 import { GameCanvas } from './GameCanvas'
 
+vi.mock('./HomeBackgroundMusic', () => ({
+  HomeBackgroundMusic: ({ scene }: { scene: string }) => <output data-testid="home-background-music" data-scene={scene} />,
+}))
+vi.mock('./CombatBackgroundMusic', () => ({
+  CombatBackgroundMusic: ({ mode, bossAppeared }: { mode: string; bossAppeared: boolean }) => (
+    <output data-testid="combat-background-music" data-mode={mode} data-boss-appeared={bossAppeared} />
+  ),
+}))
+
 vi.mock('./SceneLoadingTransition', () => ({
   SceneLoadingTransition: ({
     manifest,
@@ -101,10 +110,15 @@ describe('GameCanvas scene loading gate integration', () => {
     const firstHomeGate = screen.getByTestId('scene-loading-transition-mock')
     expect(firstHomeGate.dataset.scene).toBe('home')
     expect(firstHomeGate.dataset.manifestKey).toBe('home-scene-assets')
+    expect(firstHomeGate.dataset.resourceKeys).toContain('home.music.redemption')
+    expect(screen.getByTestId('home-background-music').dataset.scene).toBe('away')
+    expect(screen.getByTestId('combat-background-music').dataset.mode).toBe('inactive')
     fireEvent.click(screen.getByRole('button', { name: 'finish fade' }))
     expect(screen.queryByTestId('scene-loading-transition-mock')).toBeNull()
+    expect(screen.getByTestId('home-background-music').dataset.scene).toBe('home')
 
     act(() => useGameStore.setState({ phase: 'running' }))
+    expect(screen.getByTestId('home-background-music').dataset.scene).toBe('away')
     act(() => useGameStore.setState({ phase: 'idle' }))
     expect(screen.getByTestId('scene-loading-transition-mock').dataset.scene).toBe('home')
   })
@@ -117,6 +131,10 @@ describe('GameCanvas scene loading gate integration', () => {
 
     const combatGate = screen.getByTestId('scene-loading-transition-mock')
     expect(combatGate.dataset.scene).toBe('combat')
+    expect(screen.getByTestId('home-background-music').dataset.scene).toBe('combat-loading')
+    expect(screen.getByTestId('combat-background-music').dataset.mode).toBe('loading')
+    expect(combatGate.dataset.resourceKeys).toContain('combat-music.normal-battle-1')
+    expect(combatGate.dataset.resourceKeys).toContain('combat-music.boss-battle-2')
     expect(combatGate.dataset.resourceKeys).toContain('transition.background')
     expect(combatGate.dataset.runtimeStatus).toBe('ready')
     expect(combatGate.dataset.runtimeTerrainReady).toBe('true')
@@ -142,6 +160,19 @@ describe('GameCanvas scene loading gate integration', () => {
       combatLaunchGate: { status: 'idle', active: false },
     })
     expect(screen.queryByTestId('scene-loading-transition-mock')).toBeNull()
+    const music = screen.getByTestId('combat-background-music')
+    for (const round of [1, 2, 3]) {
+      const draft = useGameStore.getState().getInitialSkillDraftPresentation()
+      expect(draft).toMatchObject({ active: true, currentRound: round })
+      expect(music.dataset.mode).toBe('draft')
+      act(() => {
+        useGameStore.getState().selectInitialSkillDraftCandidate(draft.candidates[0].choiceId)
+      })
+    }
+    expect(useGameStore.getState().initialSkillDraft).toBeUndefined()
+    expect(music.dataset.mode).toBe('active')
+    act(() => useGameStore.setState({ phase: 'paused', pauseMenuOpen: false }))
+    expect(music.dataset.mode).toBe('active') // Ordinary intermediate rewards keep playing.
   })
 
   it('passes the A1 runtime preparation getter and refuses fade while that barrier is retrying', () => {
@@ -222,5 +253,35 @@ describe('GameCanvas scene loading gate integration', () => {
     render(<GameCanvas />)
     expect(screen.queryByTestId('scene-loading-transition-mock')).toBeNull()
     expect(screen.getByLabelText('游戏画布')).toBeTruthy()
+    expect(screen.getByTestId('home-background-music').dataset.scene).toBe('home')
+    expect(screen.getByTestId('combat-background-music').dataset.mode).toBe('inactive')
+  })
+
+  it('uses real Boss presence rather than boss-arena/searching and preserves the signal through death', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = 22
+    snapshot.battlefield.mode = 'boss-arena'
+    snapshot.battlefield.bossSpawnState = 'searching'
+    useGameStore.setState(snapshot)
+    render(<GameCanvas />)
+
+    const music = screen.getByTestId('combat-background-music')
+    expect(music.dataset.mode).toBe('active')
+    expect(music.dataset.bossAppeared).toBe('false')
+    act(() => useGameStore.setState({ battlefield: { ...useGameStore.getState().battlefield, bossSpawnState: 'spawned' } }))
+    expect(music.dataset.bossAppeared).toBe('false')
+    act(() => useGameStore.setState({ enemies: [{ kind: 'boss' } as (typeof snapshot.enemies)[number]] }))
+    expect(music.dataset.bossAppeared).toBe('true')
+    act(() => useGameStore.setState({ enemies: [], bossDefeatedThisLevel: true, phase: 'level-clear' }))
+    expect(music.dataset.bossAppeared).toBe('true')
+    expect(music.dataset.mode).toBe('active')
+    act(() => useGameStore.setState({ phase: 'paused', pauseMenuOpen: false }))
+    expect(music.dataset.mode).toBe('active') // Intermediate reward, not a player pause.
+    act(() => useGameStore.setState({ phase: 'paused', pauseMenuOpen: true }))
+    expect(music.dataset.mode).toBe('paused')
+    act(() => useGameStore.setState({ phase: 'level-clear', pauseMenuOpen: false }))
+    expect(music.dataset.mode).toBe('active')
+    act(() => useGameStore.setState({ phase: 'game-over' }))
+    expect(music.dataset.mode).toBe('settled')
   })
 })

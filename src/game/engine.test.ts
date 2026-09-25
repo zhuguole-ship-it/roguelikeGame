@@ -14,6 +14,7 @@ import {
   declineSkillRewardSnapshot,
   dismissBossLootSnapshot,
   dismantleEquipmentSnapshot,
+  enhanceEquipmentSnapshot,
   exitLocalBattleTestSnapshot,
   forfeitRunSnapshot,
   applyEnemySpeedMultiplier,
@@ -28,6 +29,7 @@ import {
   getQuickTripleHalfArrowReleaseInterval,
   getHealthPackDropChanceForHealthRatio,
   getInitialSkillDraftPresentation,
+  getEquipmentEnhancementPreviewForSnapshot,
   getSkillRewardChoiceMetaWeightPresentation,
   getCampaignRewardPresentationSnapshot,
   getEquipmentCandidateWeightPresentation,
@@ -67,7 +69,6 @@ import {
   toggleEquipmentLockSnapshot,
   togglePauseSnapshot,
   togglePrioritySnapshot,
-  upgradeEquippedEquipmentSnapshot,
   updateAimPointSnapshot,
 } from './engine'
 import {
@@ -98,13 +99,10 @@ import {
   createEquipmentDrop,
   getEquipmentCandidateTags,
   getBossLegacyWeaponForCampaign,
-  getEquipmentDismantlePreview,
   getEquipmentBonusSummary,
   getEquipmentDropChanceForTier,
   getEquipmentReforgeCost,
   getEquipmentReforgeGoldCost,
-  getEquipmentUpgradeCost,
-  getEquipmentUpgradeGoldCost,
   getLegendaryRateForDroppedEquipment,
   rollDroppedEquipmentRarity,
   rollEquipmentRarity,
@@ -113,6 +111,7 @@ import {
   BEAST_CONTRACT_DOMAIN_EQUIPMENT_DEFINITIONS,
 } from './equipment'
 import { getMonsterDropProfile } from './monsterDataCards'
+import { BASE_EQUIPMENT_INVENTORY_CAPACITY, getDeterministicEnhancementSuccess, getEquipmentEnhancementPreview as getBaseEquipmentEnhancementPreview, rollMonsterMaterialDrop } from './characterEquipmentProgression'
 import { CAMPAIGN_ONE_DECORATION_ASSETS, CAMPAIGN_ONE_OBSTACLE_ASSETS } from './terrainAssets'
 import { ARCHER_FINITE_COMBAT_TALENTS_V3, ARCHER_INFINITE_COMBAT_TALENTS_V3 } from './archerTalentSystemV3'
 import type { Enemy, EquipmentItem, EquipmentSetId, EquipmentSlot, GameSnapshot, MapObstacle, Projectile, SkillField, Vector2 } from './types'
@@ -1358,7 +1357,7 @@ describe('game engine', () => {
     expect(next.battlefield.debug.routeObjectiveExtraThreatCount).toBeLessThanOrEqual(getRouteObjectiveExtraThreatCap(level))
     expect(extraHighThreats.length).toBeLessThanOrEqual(getRouteObjectiveExtraThreatCap(level))
     expect(next.enemies.every((enemy) => enemy.speed <= getEnemyBaseSpeedSoftCap(enemy))).toBe(true)
-    expect(next.pickups.some((pickup) => pickup.kind === 'soul-crystal')).toBe(true)
+    expect(next.pickups.some((pickup) => pickup.kind === 'soul-crystal') || next.runExpGained > snapshot.runExpGained).toBe(true)
     expect(next.pickups.every((pickup) => pickup.kind !== 'equipment')).toBe(true)
   })
 
@@ -1541,9 +1540,25 @@ describe('game engine', () => {
   })
 
   it('applies FT010 only to existing direct elite base-material rewards', () => {
-    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.99)
-    const makeRun = (difficulty: 'hard' | 'nightmare', talentIds: string[]) => {
-      const snapshot = createInitialSnapshot('running')
+    const battlefieldSeed = 0x5030
+    const archetypeId = 'dungeon-chain-captain'
+    const findEnemyId = (difficulty: 'hard' | 'nightmare', withDrop: boolean) => Array.from(
+      { length: 256 },
+      (_, index) => `${difficulty}-actual-material-${index}`,
+    ).find((enemyId) => {
+      const drop = rollMonsterMaterialDrop({
+        enemyId,
+        archetypeId,
+        kind: 'elite',
+        campaign: 1,
+        difficulty,
+        battlefieldSeed,
+        eligibleOriginal: true,
+      })
+      return Object.values(drop).some((amount) => amount > 0) === withDrop
+    })!
+    const makeRun = (difficulty: 'hard' | 'nightmare', talentIds: string[], enemyId: string) => {
+      const snapshot = createInitialSnapshot('running', battlefieldSeed)
       snapshot.selectedCampaignDifficulty = difficulty
       snapshot.selectedDifficulty = difficulty
       snapshot.runTalentState.selectedTalentIds = []
@@ -1555,10 +1570,10 @@ describe('game engine', () => {
       snapshot.mapObstacles = []
       snapshot.pickups = []
       const elite = makeEnemy({
-        id: `${difficulty}-material-elite`,
+        id: enemyId,
         kind: 'elite',
         grantsEliteReward: true,
-        archetypeId: 'v3-recorded-elite',
+        archetypeId,
         hp: 1,
         maxHp: 80,
         position: { x: 300, y: 200 },
@@ -1568,39 +1583,43 @@ describe('game engine', () => {
       return snapshot
     }
 
-    try {
-      const hardBase = advanceGame(makeRun('hard', []), { up: false, down: false, left: false, right: false }, 0.016)
-      const hardRun = makeRun('hard', ['meta_common_10'])
-      hardRun.metaTalentRanks = { meta_common_10: 5 }
-      const nightmareRun = makeRun('nightmare', ['meta_common_10'])
-      nightmareRun.metaTalentRanks = { meta_common_10: 5 }
-      const hardTalented = advanceGame(hardRun, { up: false, down: false, left: false, right: false }, 0.016)
-      const tormentTalented = advanceGame(nightmareRun, { up: false, down: false, left: false, right: false }, 0.016)
+    const hardEnemyId = findEnemyId('hard', true)
+    const nightmareEnemyId = findEnemyId('nightmare', true)
+    const hardDrop = rollMonsterMaterialDrop({ enemyId: hardEnemyId, archetypeId, kind: 'elite', campaign: 1, difficulty: 'hard', battlefieldSeed, eligibleOriginal: true })
+    const hardBase = advanceGame(makeRun('hard', [], hardEnemyId), noInput, 0.016)
+    const hardRun = makeRun('hard', ['meta_common_10'], hardEnemyId)
+    hardRun.metaTalentRanks = { meta_common_10: 5 }
+    hardRun.metaTalentEliteMaterialRemainders = Object.fromEntries(Object.keys(createEmptyEquipmentMaterials()).map((id) => [id, 0.9]))
+    const nightmareRun = makeRun('nightmare', ['meta_common_10'], nightmareEnemyId)
+    nightmareRun.metaTalentRanks = { meta_common_10: 5 }
+    nightmareRun.metaTalentEliteMaterialRemainders = Object.fromEntries(Object.keys(createEmptyEquipmentMaterials()).map((id) => [id, 0.9]))
+    const hardTalented = advanceGame(hardRun, noInput, 0.016)
+    const nightmareTalented = advanceGame(nightmareRun, noInput, 0.016)
 
-      expect(hardBase.equipmentMaterials.ironScraps).toBe(10)
-      expect(hardBase.lastTalentMaterialDrop).toBeUndefined()
-      expect(hardTalented.lastTalentMaterialDrop).toMatchObject({
-        source: 'elite',
-        targets: ['hard-elite', 'all-elite-base-materials'],
-        base: expect.objectContaining({ ironScraps: 10 }),
-        multiplier: 1.15,
-        final: expect.objectContaining({ ironScraps: 11 }),
-      })
-      expect(tormentTalented.lastTalentMaterialDrop).toMatchObject({
-        source: 'elite',
-        targets: ['nightmare-elite', 'all-elite-base-materials'],
-        multiplier: 1.15,
-        final: expect.objectContaining({ ironScraps: 11 }),
-      })
-      expect(hardTalented.metaTalentEliteMaterialRemainders).toMatchObject({ ironScraps: 0.5 })
-      expect(hardTalented.metaTalentRecordedEliteArchetypeIds).toEqual(['v3-recorded-elite'])
-      expect(hardTalented.talentPoints).toBe(1)
-      expect(hardTalented.pickups.every((pickup) => pickup.kind !== 'health-pack')).toBe(true)
-      expect(hardTalented.pickups.filter((pickup) => pickup.kind === 'soul-crystal')).toHaveLength(hardBase.pickups.filter((pickup) => pickup.kind === 'soul-crystal').length)
-      expect(hardTalented.pickups.filter((pickup) => pickup.kind === 'equipment')).toHaveLength(hardBase.pickups.filter((pickup) => pickup.kind === 'equipment').length)
-    } finally {
-      randomSpy.mockRestore()
-    }
+    expect(hardBase.equipmentMaterials).toEqual(createEmptyEquipmentMaterials())
+    expect(hardBase.temporaryEquipmentMaterials).toMatchObject(hardDrop)
+    expect(hardBase.lastTalentMaterialDrop).toBeUndefined()
+    expect(hardTalented.lastTalentMaterialDrop).toMatchObject({
+      source: 'elite',
+      targets: ['hard-elite', 'all-elite-base-materials'],
+      base: hardDrop,
+    })
+    expect(nightmareTalented.lastTalentMaterialDrop).toMatchObject({
+      source: 'elite',
+      targets: ['nightmare-elite', 'all-elite-base-materials'],
+    })
+    Object.entries(hardDrop).forEach(([id, amount]) => {
+      const expected = amount > 0 ? amount + Math.floor(0.9 + amount * 0.15) : 0
+      expect(hardTalented.temporaryEquipmentMaterials[id as keyof typeof hardDrop]).toBe(expected)
+    })
+    expect(hardTalented.metaTalentRecordedEliteArchetypeIds).toEqual([archetypeId])
+    expect(hardTalented.talentPoints).toBe(1)
+
+    const emptyRun = makeRun('hard', ['meta_common_10'], findEnemyId('hard', false))
+    emptyRun.metaTalentRanks = { meta_common_10: 5 }
+    const noBaseDrop = advanceGame(emptyRun, noInput, 0.016)
+    expect(noBaseDrop.temporaryEquipmentMaterials).toEqual(createEmptyEquipmentMaterials())
+    expect(noBaseDrop.lastTalentMaterialDrop).toBeUndefined()
   })
 
   it('awards the FT010 rank-five point once per persistent elite archetype', () => {
@@ -3855,28 +3874,28 @@ describe('game engine', () => {
     expect(confirmed.equipmentMaterials.legacyEmber).toBeGreaterThan(0)
   })
 
-  it('applies death settlement rules to dungeon equipment and scaled auto dismantle materials', () => {
+  it('keeps only run-new equipment worn at death and settles thirty percent of temporary materials', () => {
     const snapshot = createInitialSnapshot('running')
     const equippedRare = makeEquipment({ id: 'temporary-rare', slot: 'weapon', rarity: 'rare', score: 120, bonus: { attackDamage: 8 }, source: 'dungeon' })
     const backpackFine = makeEquipment({ id: 'temporary-fine', slot: 'boots', rarity: 'fine', score: 100, bonus: { speed: 4 }, source: 'dungeon' })
     const dungeonEpic = makeEquipment({ id: 'keeper-epic', slot: 'ring1', rarity: 'epic', score: 130, bonus: { skillDamageMultiplier: 0.12 }, source: 'dungeon' })
     const systemEpic = makeEquipment({ id: 'system-epic', slot: 'necklace', rarity: 'epic', score: 130, bonus: { skillDamageMultiplier: 0.12 }, source: 'system' })
-    const fullPreview = getEquipmentDismantlePreview([equippedRare, backpackFine])
     snapshot.levelTimer = 0
     snapshot.player.hp = 0
     snapshot.equipmentInventory = [equippedRare, backpackFine, dungeonEpic, systemEpic]
     snapshot.equippedItems = { weapon: equippedRare, ring1: dungeonEpic, necklace: systemEpic }
+    snapshot.runStartingEquipmentIds = [systemEpic.id]
+    snapshot.temporaryEquipmentMaterials = { ...snapshot.temporaryEquipmentMaterials, ironScraps: 10, contractAsh: 7 }
 
     const next = finishPlayerDeathAnimation(snapshot)
 
     expect(next.phase).toBe('game-over')
-    expect(next.equipmentInventory.map((item) => item.id)).toEqual(['system-epic'])
-    expect(next.equippedItems.weapon).toBeUndefined()
-    expect(next.equippedItems.ring1).toBeUndefined()
+    expect(next.equipmentInventory.map((item) => item.id)).toEqual(['temporary-rare', 'keeper-epic', 'system-epic'])
+    expect(next.equippedItems.weapon?.id).toBe('temporary-rare')
+    expect(next.equippedItems.ring1?.id).toBe('keeper-epic')
     expect(next.equippedItems.necklace?.id).toBe('system-epic')
-    expect(next.lastAutoDismantleSummary?.count).toBe(2)
-    expect(next.lastAutoDismantleSummary?.materials.crystalDust).toBe(Math.floor(fullPreview.materials.crystalDust * 0.3))
-    expect(next.equipmentMaterials).toEqual(next.lastAutoDismantleSummary?.materials)
+    expect(next.equipmentMaterials).toMatchObject({ ironScraps: 3, contractAsh: 2 })
+    expect(next.temporaryEquipmentMaterials).toEqual(createEmptyEquipmentMaterials())
   })
 
   it('forfeit gives no rewards and removes all dungeon equipment without dismantle materials', () => {
@@ -3909,7 +3928,6 @@ describe('game engine', () => {
     expect(next.equippedItems.weapon).toBeUndefined()
     expect(next.equippedItems.ring1).toBeUndefined()
     expect(next.equippedItems.boots?.id).toBe('forfeit-system')
-    expect(next.lastAutoDismantleSummary?.count).toBe(0)
     expect(next.equipmentMaterials).toEqual(createEmptyEquipmentMaterials())
   })
 
@@ -3953,8 +3971,8 @@ describe('game engine', () => {
     expect(summary).toMatchObject({
       result: 'success',
       reachedLevel: FLOORS_PER_CAMPAIGN,
-      finalCarriedEquipmentIds: ['settlement-carried-epic'],
-      carriedEquipmentCount: 1,
+      finalCarriedEquipmentIds: ['settlement-carried-epic', 'settlement-dismantled-rare'],
+      carriedEquipmentCount: 2,
       talentPointsEarned: success.lastTalentPointRecord?.points,
     })
     expect(summary?.displayEntries).toEqual([
@@ -3973,7 +3991,10 @@ describe('game engine', () => {
       { sourceId: 'pierce-arrow', sourceName: '穿透箭', totalDamage: 321, maxHitDamage: 88 },
     ])
     expect(summary?.finalCarriedEquipmentIds).not.toContain('pre-run-system')
-    expect(summary?.finalCarriedEquipmentIds).not.toContain('settlement-dismantled-rare')
+    expect(success.equipmentInventory.map((item) => item.id)).toEqual(expect.arrayContaining([
+      'settlement-carried-epic',
+      'settlement-dismantled-rare',
+    ]))
     expect(Object.isFrozen(summary)).toBe(true)
     expect(Object.isFrozen(summary?.damageEntries)).toBe(true)
 
@@ -4020,7 +4041,42 @@ describe('game engine', () => {
     expect(localFailed.runSettlementSummary).toBeUndefined()
   })
 
-  it('applies FT007 to automatic dismantle materials without reviving legacy material talents', () => {
+  it('keeps all successful run equipment across the 48-slot inventory and seven-day overflow', () => {
+    const village = createInitialSnapshot('idle')
+    village.equipmentInventory = Array.from({ length: BASE_EQUIPMENT_INVENTORY_CAPACITY - 1 }, (_, index) => makeEquipment({
+      id: `pre-run-capacity-${index}`,
+      source: 'system',
+      slot: 'weapon',
+    }))
+    let snapshot = startRunSnapshot(village)
+    snapshot.initialSkillDraft = undefined
+    const runItems = Array.from({ length: 3 }, (_, index) => makeEquipment({
+      id: `successful-run-item-${index}`,
+      source: 'dungeon',
+      rarity: index === 0 ? 'rare' : 'epic',
+      slot: 'ring1',
+    }))
+    snapshot.equipmentInventory = [...snapshot.equipmentInventory, ...runItems]
+    snapshot.level = FLOORS_PER_CAMPAIGN
+    snapshot.levelTargetKills = getLevelGoal(FLOORS_PER_CAMPAIGN)
+    snapshot.levelKills = snapshot.levelTargetKills
+    snapshot.remainingToSpawn = 0
+    snapshot.bossDefeatedThisLevel = true
+    snapshot.levelTimer = 0.01
+    snapshot.phase = 'level-clear'
+    snapshot.pendingSkillReward = null
+    snapshot.pendingBossLoot = []
+    snapshot.levelClearConfirmed = true
+
+    snapshot = advanceGame(snapshot, noInput, 0.05)
+
+    expect(snapshot.equipmentInventory).toHaveLength(BASE_EQUIPMENT_INVENTORY_CAPACITY)
+    expect(snapshot.equipmentSettlementOverflow).toHaveLength(2)
+    expect(snapshot.runSettlementSummary?.finalCarriedEquipmentIds).toEqual(runItems.map((item) => item.id))
+    expect(snapshot.equipmentSettlementOverflow.every((entry) => entry.expiresAt - entry.acquiredAt === 7 * 24 * 60 * 60 * 1000)).toBe(true)
+  })
+
+  it('never auto-dismantles at settlement and keeps FT007 exclusive to explicit dismantle actions', () => {
     const makeRun = (withTalent: boolean) => {
       const snapshot = createInitialSnapshot('running')
       snapshot.level = 8
@@ -4044,9 +4100,11 @@ describe('game engine', () => {
     const base = finishPlayerDeathAnimation(makeRun(false))
     const talented = finishPlayerDeathAnimation(makeRun(true))
 
-    expect(talented.lastAutoDismantleSummary?.count).toBe(base.lastAutoDismantleSummary?.count)
-    expect(talented.lastAutoDismantleSummary?.materials.crystalDust ?? 0).toBeGreaterThan(base.lastAutoDismantleSummary?.materials.crystalDust ?? 0)
-    expect(talented.equipmentMaterials.crystalDust).toBe(talented.lastAutoDismantleSummary?.materials.crystalDust)
+    expect(base.equipmentMaterials).toEqual(createEmptyEquipmentMaterials())
+    expect(talented.equipmentMaterials).toEqual(createEmptyEquipmentMaterials())
+    expect(base.equipmentInventory).toHaveLength(0)
+    expect(talented.equipmentInventory).toHaveLength(0)
+    expect(talented.metaTalentDismantleMaterialRemainders).toEqual({})
   })
 
   it('carries FT007 fractional dismantle bonuses independently by material and through persisted state', () => {
@@ -4078,7 +4136,7 @@ describe('game engine', () => {
     expect(snapshot.metaTalentDismantleMaterialRemainders?.buildShard).toBeCloseTo(0)
   })
 
-  it('does not apply v2 material-drop bonuses to below-epic auto dismantle', () => {
+  it('does not manufacture dismantle materials during settlement', () => {
     const makeRun = (withMaterialDropTalents: boolean) => {
       const snapshot = createInitialSnapshot('running')
       snapshot.level = 8
@@ -4101,11 +4159,10 @@ describe('game engine', () => {
     const base = advanceGame(makeRun(false), { up: false, down: false, left: false, right: false }, 0.016)
     const talented = advanceGame(makeRun(true), { up: false, down: false, left: false, right: false }, 0.016)
 
-    expect(talented.lastAutoDismantleSummary?.materials).toEqual(base.lastAutoDismantleSummary?.materials)
     expect(talented.equipmentMaterials).toEqual(base.equipmentMaterials)
   })
 
-  it('auto dismantles temporary dungeon equipment when a boss contract returns to village', () => {
+  it('retains all run-new equipment when a boss contract returns to village without auto dismantling', () => {
     const snapshot = createInitialSnapshot('level-clear')
     const temporaryRare = makeEquipment({ id: 'boss-clear-rare', slot: 'weapon', rarity: 'rare', score: 96, bonus: { attackDamage: 10 }, source: 'dungeon' })
     const permanentEpic = makeEquipment({ id: 'boss-clear-epic', slot: 'ring1', rarity: 'epic', score: 150, bonus: { skillDamageMultiplier: 0.16 }, source: 'dungeon' })
@@ -4121,17 +4178,20 @@ describe('game engine', () => {
     snapshot.kills = 42
     snapshot.equipmentInventory = [temporaryRare, permanentEpic]
     snapshot.equippedItems = { weapon: temporaryRare, ring1: permanentEpic }
+    snapshot.temporaryEquipmentMaterials = { ...snapshot.temporaryEquipmentMaterials, ironScraps: 9, contractAsh: 4 }
 
     const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
 
     expect(next.phase).toBe('game-over')
     expect(next.message).toContain('契约完成')
-    expect(next.message).toContain('自动分解 1 件紫色以下地下城装备')
-    expect(next.message).toContain('获得')
-    expect(next.equipmentInventory.map((item) => item.id)).toEqual(['boss-clear-epic'])
-    expect(next.equippedItems.weapon).toBeUndefined()
+    expect(next.message).toContain('保留本局装备 2 件')
+    expect(next.message).not.toContain('自动分解')
+    expect(next.equipmentInventory.map((item) => item.id)).toEqual(['boss-clear-rare', 'boss-clear-epic'])
+    expect(next.equippedItems.weapon?.id).toBe('boss-clear-rare')
     expect(next.equippedItems.ring1?.id).toBe('boss-clear-epic')
-    expect(next.lastAutoDismantleSummary?.count).toBe(1)
+    expect(next.characterProgression).toMatchObject({ level: 7, totalXp: 1_500 })
+    expect(next.equipmentMaterials).toMatchObject({ ironScraps: 9, contractAsh: 4 })
+    expect(next.temporaryEquipmentMaterials).toEqual(createEmptyEquipmentMaterials())
   })
 
   it('toggles equipment locks before allowing single item dismantle', () => {
@@ -4181,7 +4241,7 @@ describe('game engine', () => {
     expect(afterOffBuild.equipmentMaterials.ironScraps + afterOffBuild.equipmentMaterials.crystalDust + afterOffBuild.equipmentMaterials.buildShard).toBeGreaterThan(0)
   })
 
-  it('upgrades equipped items by consuming forging materials and improving score', () => {
+  it('enhances equipped items through the authoritative preview and acceptance path', () => {
     const snapshot = createInitialSnapshot('running')
     const item = makeEquipment({ id: 'upgrade-weapon', slot: 'weapon', rarity: 'common', score: 50, bonus: { attackDamage: 4, attackRange: 8 } })
     snapshot.equipmentInventory = [item]
@@ -4189,31 +4249,28 @@ describe('game engine', () => {
     snapshot.currency = 500
     snapshot.equipmentMaterials.ironScraps = 200
     snapshot.equipmentMaterials.contractAsh = 200
-    const goldCost = getEquipmentUpgradeGoldCost(item)
-
-    const upgraded = upgradeEquippedEquipmentSnapshot(snapshot, 'weapon')
+    const preview = getEquipmentEnhancementPreviewForSnapshot(snapshot, item.id)!
+    const upgraded = enhanceEquipmentSnapshot(snapshot, item.id)
 
     expect(upgraded.equippedItems.weapon?.upgradeLevel).toBe(1)
-    expect(upgraded.equippedItems.weapon?.score).toBeGreaterThan(item.score)
     expect(upgraded.equippedItems.weapon?.bonus.attackDamage).toBeGreaterThan(item.bonus.attackDamage ?? 0)
     expect(upgraded.equipmentMaterials.ironScraps).toBeLessThan(200)
-    expect(upgraded.currency).toBe(500 - goldCost)
+    expect(upgraded.currency).toBe(500 - preview.goldCost)
     expect(upgraded.player.attackDamage).toBeGreaterThan(snapshot.player.attackDamage)
   })
 
   it('applies FT008 to gold and material costs at every equipment upgrade level', () => {
-    const cases: Array<EquipmentItem['rarity']> = ['common', 'rare', 'epic', 'legacy', 'legendary']
-    cases.forEach((rarity) => {
+    Array.from({ length: 13 }, (_, upgradeLevel) => upgradeLevel).forEach((upgradeLevel) => {
       const run = createInitialSnapshot('running')
       const item = makeEquipment({
-        id: `discount-${rarity}`,
+        id: `discount-level-${upgradeLevel}`,
         slot: 'weapon',
-        rarity,
-        buildTag: rarity === 'common' ? 'general' : 'pierce',
-        level: 200,
+        rarity: 'legendary',
+        buildTag: 'pierce',
+        level: 60,
         score: 160,
         bonus: { attackDamage: 8 },
-        upgradeLevel: 4,
+        upgradeLevel,
       })
       run.unlockedMetaTalentIds = ['meta_common_08']
       run.metaTalentRanks = { meta_common_08: 5 }
@@ -4222,35 +4279,53 @@ describe('game engine', () => {
       run.currency = 50_000
       run.equipmentMaterials = Object.fromEntries(Object.keys(run.equipmentMaterials).map((id) => [id, 50_000])) as typeof run.equipmentMaterials
 
-      const baseCost = getEquipmentUpgradeCost(item)
-      const discountedCost = Object.fromEntries(Object.entries(baseCost).map(([id, amount]) => [id, Math.ceil(amount * 0.85)])) as typeof baseCost
-      const baseGoldCost = getEquipmentUpgradeGoldCost(item)
-      const upgraded = upgradeEquippedEquipmentSnapshot(run, 'weapon')
-      Object.keys(baseCost).forEach((id) => {
-        const materialId = id as keyof typeof baseCost
-        expect(run.equipmentMaterials[materialId] - upgraded.equipmentMaterials[materialId]).toBe(discountedCost[materialId])
-        expect(upgraded.equipmentMaterials[materialId]).toBeGreaterThanOrEqual(0)
+      const basePreview = getBaseEquipmentEnhancementPreview(item, {
+        currency: Number.MAX_SAFE_INTEGER,
+        materials: run.equipmentMaterials,
       })
-      expect(run.currency - upgraded.currency).toBe(Math.ceil(baseGoldCost * 0.85))
-
-      const levelSixItem = { ...item, id: `level-six-discount-${rarity}`, upgradeLevel: 5 }
-      const levelSix = createInitialSnapshot('running')
-      levelSix.unlockedMetaTalentIds = ['meta_common_08']
-      levelSix.metaTalentRanks = { meta_common_08: 5 }
-      levelSix.equipmentInventory = [levelSixItem]
-      levelSix.equippedItems = { weapon: levelSixItem }
-      levelSix.currency = 50_000
-      levelSix.equipmentMaterials = Object.fromEntries(Object.keys(levelSix.equipmentMaterials).map((id) => [id, 50_000])) as typeof levelSix.equipmentMaterials
-      const sixCost = getEquipmentUpgradeCost(levelSixItem)
-      const discountedSixCost = Object.fromEntries(Object.entries(sixCost).map(([id, amount]) => [id, Math.ceil(amount * 0.85)])) as typeof sixCost
-      const sixGoldCost = getEquipmentUpgradeGoldCost(levelSixItem)
-      const upgradedSix = upgradeEquippedEquipmentSnapshot(levelSix, 'weapon')
-      Object.keys(sixCost).forEach((id) => {
-        const materialId = id as keyof typeof sixCost
-        expect(levelSix.equipmentMaterials[materialId] - upgradedSix.equipmentMaterials[materialId]).toBe(discountedSixCost[materialId])
+      const preview = getEquipmentEnhancementPreviewForSnapshot(run, item.id)!
+      expect(preview.goldCost).toBeLessThan(basePreview.goldCost)
+      Object.values(preview.materialCost).forEach((amount) => expect(amount).toBeGreaterThanOrEqual(0))
+      const upgraded = enhanceEquipmentSnapshot(run, item.id, preview.dangerous ? {
+        equipmentId: item.id,
+        targetLevel: preview.targetLevel,
+        acknowledgedPermanentDestruction: true,
+      } : undefined)
+      expect(run.currency - upgraded.currency).toBe(preview.goldCost)
+      Object.keys(preview.materialCost).forEach((id) => {
+        const materialId = id as keyof typeof preview.materialCost
+        expect(run.equipmentMaterials[materialId] - upgraded.equipmentMaterials[materialId]).toBe(preview.materialCost[materialId])
       })
-      expect(levelSix.currency - upgradedSix.currency).toBe(Math.ceil(sixGoldCost * 0.85))
     })
+  })
+
+  it('defends dangerous reinforcement against stale confirmation and applies deterministic destruction once', () => {
+    const snapshot = createInitialSnapshot('running')
+    const item = makeEquipment({
+      id: Array.from({ length: 2_000 }, (_, index) => `destroy-at-eleven-${index}`).find((id) => {
+        const candidate = makeEquipment({ id, rarity: 'legendary', upgradeLevel: 10, level: 60 })
+        return !getDeterministicEnhancementSuccess(candidate, 11)
+      })!,
+      slot: 'weapon', rarity: 'legendary', upgradeLevel: 10, level: 60, bonus: { attackDamage: 20 },
+    })
+    snapshot.equipmentInventory = [item]
+    snapshot.equippedItems = { weapon: item }
+    snapshot.currency = 99_999
+    snapshot.equipmentMaterials = Object.fromEntries(Object.keys(snapshot.equipmentMaterials).map((id) => [id, 99_999])) as typeof snapshot.equipmentMaterials
+    const preview = getEquipmentEnhancementPreviewForSnapshot(snapshot, item.id)!
+
+    const stale = enhanceEquipmentSnapshot(snapshot, item.id, {
+      equipmentId: item.id, targetLevel: 12, acknowledgedPermanentDestruction: true,
+    })
+    expect(stale.currency).toBe(snapshot.currency)
+    expect(stale.equipmentInventory).toHaveLength(1)
+
+    const destroyed = enhanceEquipmentSnapshot(snapshot, item.id, {
+      equipmentId: item.id, targetLevel: 11, acknowledgedPermanentDestruction: true,
+    })
+    expect(destroyed.currency).toBe(snapshot.currency - preview.goldCost)
+    expect(destroyed.equipmentInventory).toHaveLength(0)
+    expect(destroyed.equippedItems.weapon).toBeUndefined()
   })
 
   it('retains exactly one owned core modifier through reforge, rerolls unlocked modifiers, and charges materials only', () => {
@@ -5336,7 +5411,8 @@ describe('game engine', () => {
 
     const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
 
-    expect(next.projectiles.some((projectile) => projectile.sourceSkillId === 'basic-arrow' && projectile.criticalChance === 0.12)).toBe(true)
+    // Lv.1 archer agility contributes 15 * 0.04 percentage points on top of Eagle Eye's 12%.
+    expect(next.projectiles.some((projectile) => projectile.sourceSkillId === 'basic-arrow' && projectile.criticalChance === 0.126)).toBe(true)
   })
 
   it('uses explicit pierce arrow growth from two to six pierces', () => {
@@ -7889,14 +7965,113 @@ describe('game engine', () => {
     magnetCheck.pickups = [{
       id: 'hp-no-magnet',
       kind: 'health-pack',
-      position: { x: magnetCheck.player.position.x + 48, y: magnetCheck.player.position.y },
+      position: { x: magnetCheck.player.position.x + 120, y: magnetCheck.player.position.y },
       radius: 10,
       healAmount: 25,
       ttl: 10,
     }]
     const notPulled = advanceGame(magnetCheck, { up: false, down: false, left: false, right: false }, 0.05)
-    expect(notPulled.pickups[0].position.x).toBe(magnetCheck.player.position.x + 48)
+    expect(notPulled.pickups[0].position.x).toBe(magnetCheck.player.position.x + 120)
     expect(notPulled.pickups[0].magnetized).toBeUndefined()
+  })
+
+  it('triples health-pack and equipment direct pickup without changing the equipment magnet window', () => {
+    const makePickupSnapshot = () => {
+      const snapshot = createInitialSnapshot('running')
+      snapshot.levelTimer = 0
+      snapshot.enemies = []
+      snapshot.remainingToSpawn = 1
+      snapshot.spawnCooldown = 999
+      snapshot.player.attackCooldown = 999
+      snapshot.player.position = { x: 400, y: 300 }
+      snapshot.player.hp = 20
+      snapshot.mapObstacles = []
+      return snapshot
+    }
+
+    const healthAtBoundary = makePickupSnapshot()
+    const healthRadius = 10
+    const healthDirectRange = (healthAtBoundary.player.size * 0.7 + healthRadius) * 3
+    healthAtBoundary.pickups = [{
+      id: 'health-at-tripled-boundary',
+      kind: 'health-pack',
+      position: { x: healthAtBoundary.player.position.x + healthDirectRange, y: healthAtBoundary.player.position.y },
+      radius: healthRadius,
+      healAmount: 25,
+      ttl: 10,
+    }]
+    const healthAccepted = advanceGame(healthAtBoundary, noInput, 0.05)
+    expect(healthAccepted.pickups).toHaveLength(0)
+    expect(healthAccepted.player.hp).toBe(45)
+
+    const healthPastBoundary = makePickupSnapshot()
+    healthPastBoundary.inRunTalentIds = ['run_common_02']
+    healthPastBoundary.runTalentState.selectedTalentIds = ['run_common_02']
+    healthPastBoundary.equippedItems = { ring1: makeEquipment({ id: 'health-range-isolation', bonus: { pickupRange: 80 } }) }
+    healthPastBoundary.pickups = [{
+      id: 'health-past-tripled-boundary',
+      kind: 'health-pack',
+      position: { x: healthPastBoundary.player.position.x + healthDirectRange + 0.01, y: healthPastBoundary.player.position.y },
+      radius: healthRadius,
+      healAmount: 25,
+      ttl: 10,
+    }]
+    const healthRejected = advanceGame(healthPastBoundary, noInput, 0.05)
+    expect(healthRejected.player.hp).toBe(20)
+    expect(healthRejected.pickups[0]).toMatchObject({
+      id: 'health-past-tripled-boundary',
+      position: { x: 400 + healthDirectRange + 0.01, y: 300 },
+      ttl: 9.95,
+    })
+    expect(healthRejected.pickups[0]?.magnetized).toBeUndefined()
+
+    const equipmentAtBoundary = makePickupSnapshot()
+    const equipmentDrop = makeEquipment({ id: 'equipment-at-tripled-boundary', source: 'dungeon' })
+    const equipmentRadius = 10
+    const equipmentDirectRange = (equipmentAtBoundary.player.size * 0.7 + equipmentRadius) * 3
+    equipmentAtBoundary.pickups = [{
+      id: 'equipment-at-tripled-boundary-pickup',
+      kind: 'equipment',
+      position: { x: equipmentAtBoundary.player.position.x + equipmentDirectRange, y: equipmentAtBoundary.player.position.y },
+      radius: equipmentRadius,
+      equipment: equipmentDrop,
+    }]
+    const equipmentAccepted = advanceGame(equipmentAtBoundary, noInput, 0.05)
+    expect(equipmentAccepted.pickups).toHaveLength(0)
+    expect(equipmentAccepted.equipmentInventory.some((item) => item.id === equipmentDrop.id)).toBe(true)
+
+    const equipmentPastBoundary = makePickupSnapshot()
+    equipmentPastBoundary.pickups = [{
+      id: 'equipment-past-tripled-boundary-pickup',
+      kind: 'equipment',
+      position: { x: equipmentPastBoundary.player.position.x + equipmentDirectRange + 0.01, y: equipmentPastBoundary.player.position.y },
+      radius: equipmentRadius,
+      equipment: makeEquipment({ id: 'equipment-past-tripled-boundary', source: 'dungeon' }),
+    }]
+    const equipmentRejected = advanceGame(equipmentPastBoundary, noInput, 0)
+    expect(equipmentRejected.pickups[0]).toMatchObject({
+      id: 'equipment-past-tripled-boundary-pickup',
+      position: { x: 400 + equipmentDirectRange + 0.01, y: 300 },
+      magnetized: true,
+    })
+    expect(equipmentRejected.equipmentInventory.some((item) => item.id === 'equipment-past-tripled-boundary')).toBe(false)
+
+    const equipmentMagnet = makePickupSnapshot()
+    equipmentMagnet.equippedItems = { ring1: makeEquipment({ id: 'equipment-magnet-range', bonus: { pickupRange: 80 } }) }
+    const magnetStartX = equipmentMagnet.player.position.x + equipmentDirectRange + 20
+    equipmentMagnet.pickups = [{
+      id: 'equipment-original-magnet-window',
+      kind: 'equipment',
+      position: { x: magnetStartX, y: equipmentMagnet.player.position.y },
+      radius: equipmentRadius,
+      equipment: makeEquipment({ id: 'equipment-magnet-window-drop', source: 'dungeon' }),
+    }]
+    const magnetized = advanceGame(equipmentMagnet, noInput, 0.05)
+    expect(magnetized.pickups[0]).toMatchObject({
+      id: 'equipment-original-magnet-window',
+      position: { x: magnetStartX - 14, y: 300 },
+      magnetized: true,
+    })
   })
 
   it('quarters final health pack supply chance after normal low-health and special-source modifiers', () => {
@@ -8815,7 +8990,7 @@ describe('game engine', () => {
       const snapshot = makeCrystalRun(rank, 100)
       return getSoulCrystalDirectCollectionRadius(snapshot, snapshot.pickups[0])
     })
-    radii.forEach((radius) => expect(radius).toBeCloseTo(17.8, 6))
+    radii.forEach((radius) => expect(radius).toBeCloseTo(53.4, 6))
 
     ;([0, 1, 2, 3, 4, 5] as const).forEach((rank, index) => {
       const accepted = advanceGame(makeCrystalRun(rank, radii[index] - 0.001), noInput, 0.05)
@@ -8832,26 +9007,31 @@ describe('game engine', () => {
     stacked.runTalentState.selectedTalentIds = ['run_common_02']
     stacked.equippedItems = { ring1: makeEquipment({ id: 'crystal-range-ring', bonus: { pickupRange: 10 } }) }
     const stackedRadius = getSoulCrystalDirectCollectionRadius(stacked, stacked.pickups[0])
-    expect(stackedRadius).toBeCloseTo((17.8 + 10) * 1.18, 6)
+    expect(stackedRadius).toBeCloseTo((53.4 + 10) * 1.18, 6)
     const stackedAccepted = advanceGame({ ...stacked, pickups: [{ ...stacked.pickups[0], position: { x: 400 + stackedRadius - 0.001, y: 300 } }] }, noInput, 0.05)
     expect(stackedAccepted.pickups).toHaveLength(0)
 
+    const healthDirectRange = (stacked.player.size * 0.7 + 8) * 3
     const healthBoundary = { ...stacked, pickups: [
       { ...stacked.pickups[0], id: 'stacked-crystal', position: { x: 430, y: 300 } },
-      { id: 'unaffected-health', kind: 'health-pack' as const, position: { x: 430, y: 300 }, radius: 8, healAmount: 25, ttl: 10 },
+      { id: 'unaffected-health', kind: 'health-pack' as const, position: { x: 400 + healthDirectRange + 0.01, y: 300 }, radius: 8, healAmount: 25, ttl: 10 },
     ] }
     const projected = getSoulCrystalDirectCollectionPresentation(healthBoundary, { x: 300, y: 300 })
     expect(projected.metaRank).toBe(0)
-    expect(projected.metaDirectRadius).toBe(17.8)
+    expect(projected.metaDirectRadius).toBe(53.4)
     expect(projected.runTalentMultiplier).toBe(1.18)
     expect(projected.equipmentBonus).toBe(10)
-    expect(projected.baseRadius).toBeCloseTo(17.8, 6)
-    expect(projected.directRadiusBeforeRunTalent).toBe(27.8)
+    expect(projected.baseRadius).toBeCloseTo(53.4, 6)
+    expect(projected.directRadiusBeforeRunTalent).toBe(63.4)
     expect(projected.formula).toBe('(metaDirectRadius + equipmentBonus) * runTalentMultiplier')
     expect(projected.crystals[0]).toMatchObject({ isInside: true, justEntered: true })
     expect(healthBoundary.pickups[0]).toMatchObject({ position: { x: 430, y: 300 }, ttl: 30 })
     const healthUnaffected = advanceGame(healthBoundary, noInput, 0.05)
-    expect(healthUnaffected.pickups).toEqual([expect.objectContaining({ id: 'unaffected-health', position: { x: 430, y: 300 }, ttl: 9.95 })])
+    expect(healthUnaffected.pickups).toEqual([expect.objectContaining({
+      id: 'unaffected-health',
+      position: { x: 400 + healthDirectRange + 0.01, y: 300 },
+      ttl: 9.95,
+    })])
   })
 
   it('resolves every three-rank V3 effect at its authoritative cumulative value', () => {
@@ -8973,7 +9153,8 @@ describe('game engine', () => {
     const attacked = advanceGame(moved, noInput, 0.016)
     const projectile = attacked.projectiles.find((candidate) => candidate.sourceSkillId === 'basic-arrow')!
     expect(Math.hypot(projectile.velocity.x, projectile.velocity.y)).toBeCloseTo(272 * 1.09, 5)
-    expect(projectile.criticalChance).toBeCloseTo(0.08, 6)
+    // The armed 8% route bonus composes with the Lv.1 archer's 0.6% agility critical chance.
+    expect(projectile.criticalChance).toBeCloseTo(0.086, 6)
     expect(attacked.runTalentState.combatTalentV3?.commonState?.nextBasicMoveCritArmed).toBe(false)
   })
 

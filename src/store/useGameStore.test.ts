@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ARCHER_CORE_SKILL_IDS } from '../game/archerSkillEvolution'
-import { resetGameSoundRuntimeForTests, setGameSoundNowProviderForTests, setGameSoundTestPlayer } from '../game/audio'
+import { playGameSound, resetGameSoundRuntimeForTests, setGameSoundNowProviderForTests, setGameSoundTestPlayer } from '../game/audio'
 import { createIdleCombatLaunchGate } from '../game/combatLoading'
 import {
   getCombatLaunchRuntimePreparation,
@@ -740,6 +740,27 @@ describe('game store persistence', () => {
       equipped.id,
       replacement.id,
     ]))
+
+    const levelGated = {
+      ...replacement,
+      id: 'explicit-level-gated-chest',
+      itemLevel: 8,
+      requiredCharacterLevel: 8,
+    }
+    useGameStore.setState((state) => ({
+      ...state,
+      equipmentInventory: [...state.equipmentInventory, levelGated],
+    }))
+    useGameStore.getState().equipEquipment(levelGated.id)
+    expect(useGameStore.getState().equippedItems.chest).toBeUndefined()
+    expect(useGameStore.getState().message).toContain('需要角色等级 Lv.8')
+
+    useGameStore.setState((state) => ({
+      ...state,
+      characterProgression: { level: 8, totalXp: state.characterProgression.totalXp, overflowXp: 0 },
+    }))
+    useGameStore.getState().equipEquipment(levelGated.id)
+    expect(useGameStore.getState().equippedItems.chest?.id).toBe(levelGated.id)
   })
 
   it('hydrates legacy Beast Contract and Contract Domain equipment through the fixed V2 directory', () => {
@@ -844,6 +865,29 @@ describe('game store persistence', () => {
     expect(state.equipmentMaterials.crystalDust).toBe(7)
     expect(state.enemies).toHaveLength(0)
     expect(state.projectiles).toHaveLength(0)
+  })
+
+  it('migrates legacy audio settings to 60% music and persists clamped music changes', async () => {
+    localStorage.setItem(GAME_SAVE_STORAGE_KEY, JSON.stringify({
+      state: { audioSettings: { masterVolume: 70, effectsVolume: 25, muted: false } },
+      version: 0,
+    }))
+
+    await useGameStore.persist.rehydrate()
+    expect(useGameStore.getState().audioSettings).toEqual({
+      masterVolume: 70,
+      musicVolume: 60,
+      effectsVolume: 25,
+      muted: false,
+    })
+
+    useGameStore.getState().updateAudioSettings({ musicVolume: 125 })
+    expect(useGameStore.getState().audioSettings.musicVolume).toBe(100)
+    useGameStore.getState().updateAudioSettings({ musicVolume: -20 })
+    expect(useGameStore.getState().audioSettings.musicVolume).toBe(0)
+    const saved = JSON.parse(localStorage.getItem(GAME_SAVE_STORAGE_KEY)!)
+    expect(saved.state.audioSettings.musicVolume).toBe(0)
+    expect(saved.state.audioSettings.effectsVolume).toBe(25)
   })
 
   it('skips localStorage writes for runtime-only combat ticks while preserving progression saves', () => {
@@ -1671,6 +1715,54 @@ describe('game store persistence', () => {
   })
 })
 
+describe('character equipment progression store contract', () => {
+  it('persists permanent progression, migrates legacy equipment, and drops the run-only material ledger', () => {
+    const snapshot = createInitialSnapshot('idle')
+    const legacyItem = makeEquipment()
+    snapshot.characterProgression = { level: 60, totalXp: 193_240, overflowXp: 1_000 }
+    snapshot.equipmentInventory = [legacyItem]
+    snapshot.equippedItems = { weapon: legacyItem }
+    snapshot.temporaryEquipmentMaterials.ironScraps = 12
+    snapshot.equipmentMaterialRemainders = { ironScraps: .4 }
+    snapshot.invalidEquipmentAffixPity = 7
+    snapshot.equipmentSettlementOverflow = [{ item: legacyItem, acquiredAt: Date.now(), expiresAt: Date.now() + 10_000 }]
+
+    const persisted = extractPersistedGameState(snapshot)
+    expect(persisted).not.toHaveProperty('temporaryEquipmentMaterials')
+    const restored = restorePersistedGameState(persisted)
+
+    expect(restored.characterProgression).toEqual(snapshot.characterProgression)
+    expect(restored.temporaryEquipmentMaterials.ironScraps).toBe(0)
+    expect(restored.equipmentMaterialRemainders).toEqual({ ironScraps: .4 })
+    expect(restored.invalidEquipmentAffixPity).toBe(7)
+    expect(restored.equipmentInventory[0]).toMatchObject({ itemLevel: 8, enhancementAttemptNonce: 0 })
+    expect(restored.equipmentSettlementOverflow).toHaveLength(1)
+  })
+
+  it('exposes one read model plus preview/action and independently rejects stale dangerous confirmation', () => {
+    const snapshot = createInitialSnapshot('idle')
+    const item = { ...makeEquipment(), id: 'store-dangerous-item', rarity: 'legendary' as const, level: 60, upgradeLevel: 10 }
+    snapshot.equipmentInventory = [item]
+    snapshot.equippedItems = { weapon: item }
+    snapshot.currency = 99_999
+    snapshot.equipmentMaterials = Object.fromEntries(Object.keys(snapshot.equipmentMaterials).map((id) => [id, 99_999])) as typeof snapshot.equipmentMaterials
+    useGameStore.setState(snapshot)
+
+    const presentation = useGameStore.getState().getCharacterEquipmentProgressionPresentation()
+    const preview = useGameStore.getState().getEquipmentEnhancementPreview(item.id)!
+    expect(presentation.character.level).toBe(1)
+    expect(preview).toMatchObject({ equipmentId: item.id, targetLevel: 11, dangerous: true, affordable: true })
+
+    useGameStore.getState().enhanceEquipment(item.id, {
+      equipmentId: item.id,
+      targetLevel: 12,
+      acknowledgedPermanentDestruction: true,
+    })
+    expect(useGameStore.getState().currency).toBe(99_999)
+    expect(useGameStore.getState().equipmentInventory).toHaveLength(1)
+  })
+})
+
 describe('game store audio events', () => {
   const makeEnemy = (overrides: Partial<Enemy> = {}): Enemy => ({
     id: overrides.id ?? 'audio-enemy',
@@ -1731,23 +1823,74 @@ describe('game store audio events', () => {
       return now
     })
     setGameSoundTestPlayer(player)
-    useGameStore.setState({ ...createInitialSnapshot('idle'), audioSettings: { masterVolume: 50, effectsVolume: 40, muted: false } })
+    useGameStore.setState({ ...createInitialSnapshot('idle'), audioSettings: { masterVolume: 50, musicVolume: 60, effectsVolume: 40, muted: false } })
 
     useGameStore.getState().startGame()
     expect(player).toHaveBeenCalledWith('button', 0.2)
 
     useGameStore.setState({
       ...createInitialSnapshot('running'),
-      audioSettings: { masterVolume: 50, effectsVolume: 40, muted: false },
+      audioSettings: { masterVolume: 50, musicVolume: 60, effectsVolume: 40, muted: false },
       activeSkills: [{ skillId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }],
     })
     useGameStore.getState().triggerActiveSkill(0)
     expect(player).toHaveBeenCalledWith('skill-cast', 0.2)
 
     player.mockClear()
-    useGameStore.setState({ ...useGameStore.getState(), audioSettings: { masterVolume: 80, effectsVolume: 75, muted: true } })
+    useGameStore.setState({ ...useGameStore.getState(), audioSettings: { masterVolume: 80, musicVolume: 60, effectsVolume: 75, muted: true } })
     useGameStore.getState().togglePause()
     expect(player).not.toHaveBeenCalled()
+  })
+
+  it('plays once for a successful manual pursuit cast, but not failed attempts or generated follow-ups', () => {
+    const player = vi.fn()
+    setGameSoundTestPlayer(player)
+    const snapshot = createInitialSnapshot('running')
+    snapshot.activeSkills = [{ skillId: 'spiral-break', familyId: 'spiral-break', level: 1, cooldownRemaining: 0 }]
+    useGameStore.setState(snapshot)
+
+    useGameStore.getState().triggerActiveSkill(0)
+    expect(useGameStore.getState().activeSkills[0].castCount).toBe(1)
+    expect(player.mock.calls.filter(([id]) => id === 'skill-cast')).toHaveLength(1)
+    useGameStore.getState().triggerActiveSkill(0) // The flight is still active.
+    expect(player.mock.calls.filter(([id]) => id === 'skill-cast')).toHaveLength(1)
+
+    const previous = createInitialSnapshot('running')
+    const generated = {
+      ...previous,
+      projectiles: [makeProjectile({ sourceSkillId: 'spiral-break' })],
+      beastCompanions: [{ id: 'generated-beast' } as (typeof previous.beastCompanions)[number]],
+    }
+    expect(getSimulationSoundEvents(previous, generated)).not.toContain('basic-attack')
+    expect(getSimulationSoundEvents(previous, generated)).not.toContain('skill-cast')
+  })
+
+  it('maps every non-interactive combat state to an archer-sound creation block without replay on return', () => {
+    const player = vi.fn()
+    setGameSoundTestPlayer(player)
+    const settings = { masterVolume: 80, musicVolume: 0, effectsVolume: 50, muted: false }
+    const running = createInitialSnapshot('running')
+    useGameStore.setState({ ...running, audioSettings: settings })
+    expect(playGameSound('basic-attack', settings)).toBe(true)
+    expect(player).toHaveBeenCalledTimes(1)
+
+    const blockedStates = [
+      { phase: 'paused' as const, pauseMenuOpen: true },
+      { phase: 'running' as const, initialSkillDraft: {} as NonNullable<typeof running.initialSkillDraft> },
+      { phase: 'running' as const, pendingSkillReward: {} as NonNullable<typeof running.pendingSkillReward> },
+      { phase: 'level-clear' as const, pendingBossLoot: [makeEquipment()] },
+      { phase: 'game-over' as const },
+      { phase: 'idle' as const },
+    ]
+    for (const patch of blockedStates) {
+      useGameStore.setState({ ...running, ...patch, audioSettings: settings })
+      expect(playGameSound('skill-cast', settings)).toBe(false)
+      expect(player).toHaveBeenCalledTimes(1)
+    }
+    useGameStore.setState({ ...running, audioSettings: settings })
+    expect(player).toHaveBeenCalledTimes(1) // Resuming never replays a discarded sound.
+    expect(playGameSound('basic-attack', settings)).toBe(true)
+    expect(player).toHaveBeenCalledTimes(2)
   })
 
   it('plays pickup, hit, death, and boss entry sounds from simulation ticks', () => {
@@ -1785,7 +1928,7 @@ describe('game store audio events', () => {
       spawnCooldown: 999,
       levelTimer: 0,
       mapObstacles: [],
-      audioSettings: { masterVolume: 60, effectsVolume: 50, muted: false },
+      audioSettings: { masterVolume: 60, musicVolume: 60, effectsVolume: 50, muted: false },
     })
 
     useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })
@@ -1805,7 +1948,7 @@ describe('game store audio events', () => {
       position: { x: attackRun.player.position.x + 60, y: attackRun.player.position.y },
       lastPosition: { x: attackRun.player.position.x + 60, y: attackRun.player.position.y },
     })]
-    attackRun.audioSettings = { masterVolume: 60, effectsVolume: 50, muted: false }
+    attackRun.audioSettings = { masterVolume: 60, musicVolume: 60, effectsVolume: 50, muted: false }
     useGameStore.setState(attackRun)
 
     useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })
@@ -1842,7 +1985,7 @@ describe('game store audio events', () => {
     bossRun.levelTimer = 0
     bossRun.enemies = []
     bossRun.mapObstacles = []
-    bossRun.audioSettings = { masterVolume: 60, effectsVolume: 50, muted: false }
+    bossRun.audioSettings = { masterVolume: 60, musicVolume: 60, effectsVolume: 50, muted: false }
     useGameStore.setState(bossRun)
 
     useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })
@@ -1868,7 +2011,7 @@ describe('game store audio events', () => {
       remainingToSpawn: 1,
       spawnCooldown: 999,
       mapObstacles: [],
-      audioSettings: { masterVolume: 60, effectsVolume: 50, muted: false },
+      audioSettings: { masterVolume: 60, musicVolume: 60, effectsVolume: 50, muted: false },
     })
 
     useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })

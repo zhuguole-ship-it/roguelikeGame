@@ -15,8 +15,10 @@ import { DeveloperAssetPanel, isDeveloperAssetPanelVisible } from './DeveloperAs
 import { DevelopmentAcceptancePanel } from './DevelopmentAcceptancePanel'
 import { FirstDungeonChunkObservabilityPanel } from './FirstDungeonChunkObservabilityPanel'
 import { CombatDamageLog } from './CombatDamageLog'
+import { CombatBackgroundMusic } from './CombatBackgroundMusic'
 import { CombatMinimap } from './CombatMinimap'
 import { GameOverlay } from './GameOverlay'
+import { HomeBackgroundMusic } from './HomeBackgroundMusic'
 import { InitialSkillDraftOverlay } from './InitialSkillDraftOverlay'
 import { GamePauseOverlay } from './GamePauseOverlay'
 import { GameStatusBar } from './GameStatusBar'
@@ -163,6 +165,11 @@ export function GameCanvas({ enableSceneLoading = import.meta.env.MODE !== 'test
   const [isVillageModalOpen, setVillageModalOpen] = useState(false)
   const tick = useGameStore((state) => state.tick)
   const phase = useGameStore((state) => state.phase)
+  const pauseMenuOpen = useGameStore((state) => state.pauseMenuOpen)
+  const audioSettings = useGameStore((state) => state.audioSettings)
+  const bossSpawnState = useGameStore((state) => state.battlefield.bossSpawnState)
+  const bossOnField = useGameStore((state) => state.enemies.some((enemy) => enemy.kind === 'boss'))
+  const bossDefeatedThisLevel = useGameStore((state) => state.bossDefeatedThisLevel)
   const combatLaunchGate = useGameStore((state) => state.combatLaunchGate)
   const prepareLocalBattleTestCombatLaunch = useGameStore((state) => state.prepareLocalBattleTestCombatLaunch)
   const markCombatLaunchFadeStarted = useGameStore((state) => state.markCombatLaunchFadeStarted)
@@ -403,6 +410,15 @@ export function GameCanvas({ enableSceneLoading = import.meta.env.MODE !== 'test
         aria-label="游戏画布"
       />
       <SoulCrystalCollectionFeedback canvasRef={canvasRef} cameraRef={cameraRef} />
+      <HomeBackgroundMusic
+        scene={combatLaunchGate.active ? 'combat-loading' : phase === 'idle' && (!enableSceneLoading || !shouldShowHomeLoading) ? 'home' : 'away'}
+        settings={audioSettings}
+      />
+      <CombatBackgroundMusic
+        mode={combatLaunchGate.active ? 'loading' : phase === 'idle' ? 'inactive' : phase === 'game-over' ? 'settled' : initialSkillDraftState ? 'draft' : phase === 'paused' && pauseMenuOpen ? 'paused' : 'active'}
+        bossAppeared={(bossSpawnState === 'spawned' && bossOnField) || bossDefeatedThisLevel === true}
+        settings={audioSettings}
+      />
       <GameStatusBar />
       <CombatMinimap />
       <GameOverlay onVillageModalVisibilityChange={setVillageModalOpen} />

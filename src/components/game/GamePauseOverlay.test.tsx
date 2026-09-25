@@ -60,6 +60,9 @@ describe('GamePauseOverlay', () => {
     render(<GamePauseOverlay />)
 
     expect(screen.getByText('已装备')).toBeTruthy()
+    expect(screen.getByTestId('pause-temporary-material-ledger').textContent).toContain('本局临时材料')
+    expect(screen.getByTestId('pause-temporary-material-ledger').textContent).toContain('暂无')
+    expect(screen.getByTestId('pause-temporary-material-ledger').textContent).not.toContain('ironScraps')
     expect(screen.getByText(/武器：死契处刑长弓/)).toBeTruthy()
     const detailColumns = screen.getByTestId('pause-detail-columns')
     expect(detailColumns.className).toContain('grid-cols-1')

@@ -23,7 +23,6 @@ import {
   PLAYER_ACTIVE_SKILL_SLOTS,
   PLAYER_BASE_ATTACK_INTERVAL,
   PLAYER_BASE_DAMAGE,
-  PLAYER_BASE_MAX_HP,
   PLAYER_BASE_SPEED,
   PLAYER_HURT_COOLDOWN,
   PLAYER_MIN_ATTACK_INTERVAL,
@@ -96,9 +95,7 @@ import {
   getEquipmentDismantlePreview,
   getEquipmentRelevance,
   getUnlockedEquipmentSlots,
-  getEquipmentUpgradeCost,
   scaleEquipmentMaterialCost,
-  getEquipmentUpgradeLimit,
   getEquipmentBonusSummary,
   getDeathBloodLoadoutSnapshot,
   getDeathBloodEquipmentDefinition,
@@ -111,11 +108,28 @@ import {
   reforgeEquipmentItem,
   spendEquipmentMaterials,
   toggleEquipmentModifierLock,
-  upgradeEquipmentItem,
-  getEquipmentUpgradeGoldCost,
   getEquipmentDropChanceForTier,
   canReforgeEquipmentItem,
 } from './equipment'
+import {
+  BASE_EQUIPMENT_INVENTORY_CAPACITY,
+  EQUIPMENT_SETTLEMENT_OVERFLOW_TTL_MS,
+  addCharacterExperience,
+  applySpecialBlueDamageBonuses,
+  createEmptyProgressionMaterials,
+  getCharacterEquipmentProgressionPresentation,
+  getCharacterSettlementExperience,
+  getDeterministicEnhancementSuccess,
+  getEquipmentEnhancementPreview,
+  getNextInvalidAffixPityCount,
+  isValidEnhancementConfirmation,
+  mergeProgressionMaterials,
+  migrateEquipmentProgressionItem,
+  normalizeCharacterProgression,
+  resolveEquipmentEnhancement,
+  rollMonsterMaterialDrop,
+  settleTemporaryEquipmentMaterials,
+} from './characterEquipmentProgression'
 import { WEAPON_DEFINITION_MAP } from './weapons'
 import {
   CAMPAIGN_DIFFICULTY_LABELS,
@@ -189,6 +203,8 @@ import type {
   Enemy,
   EnemyKind,
   EquipmentItem,
+  EquipmentEnhancementConfirmation,
+  CharacterEquipmentProgressionPresentation,
   EquipmentDismantleCategory,
   EquipmentCandidateTag,
   EquipmentCandidateRewardSource,
@@ -528,10 +544,10 @@ const getEnemySkillVisualAnchor = (
 const REWARD_CHOICE_COUNT = 3
 const CRYSTAL_PICKUP_BASE_RANGE = 64
 const SOUL_CRYSTAL_DIRECT_PICKUP_BODY_FACTOR = 0.7
+const DEFAULT_DIRECT_PICKUP_RANGE_MULTIPLIER = 3
 const OFFSCREEN_PROJECTILE_CLEANUP_DISTANCE = INFINITE_ENEMY_RECYCLE_DISTANCE * 1.15
 const OFFSCREEN_LOW_VALUE_PICKUP_CLEANUP_DISTANCE = INFINITE_ENEMY_RECYCLE_DISTANCE * 1.35
 const CONTRACT_BOON_INTERVAL = 5
-const EQUIPMENT_INVENTORY_LIMIT = 48
 const BEAST_DEFEND_RADIUS = 280
 const BEAST_REVIVE_DELAY = 4.2
 const BEAST_FOLLOW_DISTANCE = 54
@@ -2100,20 +2116,30 @@ const getDerivedPlayerStats = (
   fixedPassiveLevel: number,
   equippedWeaponId: WeaponId | null,
   equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>> = {},
+  characterProgression = normalizeCharacterProgression(),
 ) => {
   const passive = getFixedPassive(fixedPassiveLevel)
   const weaponBonus = getWeaponBonus(equippedWeaponId)
   const equipmentBonus = getEquipmentBonusSummary(equippedItems)
+  const progression = getCharacterEquipmentProgressionPresentation({
+    characterProgression,
+    equippedItems,
+    temporaryMaterials: createEmptyProgressionMaterials(),
+    settlementOverflow: [],
+    invalidAffixPityCount: 0,
+  }).character
 
   return {
-    maxHp: PLAYER_BASE_MAX_HP + skillAllocations.vitality * VITALITY_HP_BONUS + equipmentBonus.maxHp,
-    speed: PLAYER_BASE_SPEED + skillAllocations.agility * AGILITY_SPEED_BONUS + (weaponBonus.speed ?? 0) + equipmentBonus.speed,
-    attackDamage: PLAYER_BASE_DAMAGE + skillAllocations.power * POWER_DAMAGE_BONUS + (weaponBonus.attackDamage ?? 0) + equipmentBonus.attackDamage,
+    maxHp: progression.maxHp + skillAllocations.vitality * VITALITY_HP_BONUS + equipmentBonus.maxHp,
+    speed: PLAYER_BASE_SPEED + skillAllocations.agility * AGILITY_SPEED_BONUS + (weaponBonus.speed ?? 0) + equipmentBonus.speed + progression.moveSpeed,
+    attackDamage: (PLAYER_BASE_DAMAGE + skillAllocations.power * POWER_DAMAGE_BONUS + (weaponBonus.attackDamage ?? 0) + equipmentBonus.attackDamage + progression.flatAttackDamage)
+      * (1 + progression.finalStats.agility * 0.0025),
     attackInterval: Math.max(
       PLAYER_MIN_ATTACK_INTERVAL,
-      PLAYER_BASE_ATTACK_INTERVAL - skillAllocations.haste * HASTE_INTERVAL_REDUCTION + (weaponBonus.attackIntervalOffset ?? 0) + equipmentBonus.attackIntervalOffset,
+      (PLAYER_BASE_ATTACK_INTERVAL - skillAllocations.haste * HASTE_INTERVAL_REDUCTION + (weaponBonus.attackIntervalOffset ?? 0) + equipmentBonus.attackIntervalOffset)
+        / (1 + progression.attackSpeedBonus),
     ),
-    attackRange: passive.attackRange + (weaponBonus.attackRange ?? 0) + equipmentBonus.attackRange,
+    attackRange: passive.attackRange + (weaponBonus.attackRange ?? 0) + equipmentBonus.attackRange + progression.range,
     attackPierce: passive.bonusPierce + (weaponBonus.attackPierce ?? 0) + equipmentBonus.attackPierce,
   }
 }
@@ -2125,8 +2151,9 @@ const createPlayer = (
   equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>> = {},
   hpOverride?: number,
   position: Vector2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 },
+  characterProgression = normalizeCharacterProgression(),
 ) => {
-  const derived = getDerivedPlayerStats(skillAllocations, fixedPassiveLevel, equippedWeaponId, equippedItems)
+  const derived = getDerivedPlayerStats(skillAllocations, fixedPassiveLevel, equippedWeaponId, equippedItems, characterProgression)
   const currentHp = hpOverride === undefined ? derived.maxHp : Math.min(hpOverride, derived.maxHp)
 
   return {
@@ -2414,16 +2441,20 @@ const createBaseSnapshot = (phase: GamePhase, battlefieldSeed?: number): GameSna
     equippedItems: initialEquippedItems,
     equipmentInventoryViewPreference: { filterId: 'all', viewMode: 'list' },
     equipmentMaterials: createEmptyEquipmentMaterials(),
+    characterProgression: normalizeCharacterProgression(),
+    temporaryEquipmentMaterials: createEmptyProgressionMaterials(),
+    equipmentMaterialRemainders: {},
+    equipmentSettlementOverflow: [],
+    invalidEquipmentAffixPity: 0,
     metaTalentDismantleMaterialRemainders: {},
     metaTalentEliteMaterialRemainders: {},
     metaTalentRecordedEliteArchetypeIds: [],
     pendingBossLoot: [],
-    lastAutoDismantleSummary: undefined,
     lastLevelSettlement: undefined,
     equipmentSetCounters: {},
     beastContractDomainState: createBeastContractDomainRuntimeState(),
     selectedCampaign: 1,
-    audioSettings: { masterVolume: 80, effectsVolume: 75, muted: false },
+    audioSettings: { masterVolume: 80, musicVolume: 60, effectsVolume: 75, muted: false },
     level,
     contractLevel: 1,
     exp: 0,
@@ -2626,7 +2657,10 @@ const MAX_BLEED_STACKS = 3
 
 const hasEagleEyeCritical = (snapshot: GameSnapshot) => snapshot.fixedPassiveLevel >= 5
 
-const getPlayerArrowCriticalChance = (snapshot: GameSnapshot) => hasEagleEyeCritical(snapshot) ? EAGLE_EYE_CRIT_CHANCE : 0
+const getPlayerArrowCriticalChance = (snapshot: GameSnapshot) => {
+  const agilityCriticalChance = getCharacterEquipmentProgressionPresentationForSnapshot(snapshot).character.finalStats.agility * 0.0004
+  return Math.min(0.75, (hasEagleEyeCritical(snapshot) ? EAGLE_EYE_CRIT_CHANCE : 0) + agilityCriticalChance)
+}
 
 const isEliteOrBoss = (enemy: Enemy) => enemy.kind === 'elite' || enemy.kind === 'boss'
 
@@ -3390,6 +3424,13 @@ const damageEnemy = (
   }
 
   appliedDamage *= getDungeonWardenDamageTakenMultiplier(enemy)
+  if (isPlayerControlledDamage(attribution)) {
+    appliedDamage = applySpecialBlueDamageBonuses(
+      Object.values(snapshot.equippedItems).filter((item): item is EquipmentItem => Boolean(item?.specialBlue)).slice(0, 2),
+      attribution.sourceId,
+      appliedDamage,
+    )
+  }
   const beforeHp = enemy.hp
   enemy.hp -= appliedDamage
   enemy.lastTalentHitDamage = appliedDamage
@@ -4321,6 +4362,11 @@ const cloneEquipmentItem = (item: EquipmentItem): EquipmentItem => ({
   bonus: { ...item.bonus },
   modifiers: item.modifiers.map((modifier) => ({ ...modifier })),
   lockedModifierIndexes: [...(item.lockedModifierIndexes ?? [])],
+  inherentStats: item.inherentStats?.map((stat) => ({ ...stat })),
+  ordinaryAffixes: item.ordinaryAffixes?.map((affix) => ({ ...affix })),
+  specialBlue: item.specialBlue ? { ...item.specialBlue } : undefined,
+  originalEnhanceableStats: item.originalEnhanceableStats ? { ...item.originalEnhanceableStats } : undefined,
+  enhancementRareBonuses: item.enhancementRareBonuses?.map((bonus) => ({ ...bonus })),
 })
 
 const clearEquipmentNewFlags = (items: EquipmentItem[]) => items.map((item) => ({
@@ -4416,7 +4462,6 @@ const addEquipmentToInventory = (snapshot: GameSnapshot, item: EquipmentItem, op
     ...snapshot.equipmentInventory.filter((candidate) => candidate.id !== copy.id).map(cloneEquipmentItem),
   ]
     .sort((a, b) => b.score - a.score)
-    .slice(0, EQUIPMENT_INVENTORY_LIMIT)
 
   const current = snapshot.equippedItems[copy.slot]
   if (autoEquip && isEquipmentUpgrade(current, copy)) {
@@ -4483,6 +4528,18 @@ const hasBeastContractDomainPiece = (
   const item = snapshot.equippedItems[slot]
   const definition = getBeastContractDomainEquipmentDefinition(item)
   return definition?.collection === collection && definition.slot === slot
+}
+
+const getBeastContractDomainPieceEffectScale = (
+  snapshot: GameSnapshot,
+  collection: 'beast' | 'domain',
+  slot: EquipmentSlot,
+  kind: 'magnitudeScale' | 'triggerScale',
+) => {
+  const item = snapshot.equippedItems[slot]
+  const definition = getBeastContractDomainEquipmentDefinition(item)
+  if (definition?.collection !== collection || definition.slot !== slot) return 1
+  return getBeastContractDomainLoadout(snapshot).effectScalesByDefinitionId?.[definition.definitionId]?.[kind] ?? 1
 }
 
 const getLivingBeastKinds = (snapshot: GameSnapshot) => Array.from(new Set(
@@ -4755,11 +4812,12 @@ const getBeastContractDamageMultiplier = (snapshot: GameSnapshot) => {
   const loadout = getBeastContractDomainLoadout(snapshot).beast
   const state = getBeastContractDomainState(snapshot).beast
   const livingKinds = getLivingBeastKinds(snapshot).length
+  const effectScale = loadout.magnitudeScale ?? 1
   let multiplier = 1
-  if (hasBeastContractDomainPiece(snapshot, 'beast', 'weapon')) multiplier *= 1.12
-  if (hasBeastContractDomainPiece(snapshot, 'beast', 'shoulders')) multiplier *= 1 + Math.min(6, livingKinds) * 0.02
-  if (loadout.twoPieceActive) multiplier *= 1.2 * (1 + Math.min(6, livingKinds) * 0.04)
-  if (loadout.fivePieceActive && state.domainRemaining > 0) multiplier *= 1.5
+  if (hasBeastContractDomainPiece(snapshot, 'beast', 'weapon')) multiplier *= 1 + 0.12 * getBeastContractDomainPieceEffectScale(snapshot, 'beast', 'weapon', 'magnitudeScale')
+  if (hasBeastContractDomainPiece(snapshot, 'beast', 'shoulders')) multiplier *= 1 + Math.min(6, livingKinds) * 0.02 * getBeastContractDomainPieceEffectScale(snapshot, 'beast', 'shoulders', 'magnitudeScale')
+  if (loadout.twoPieceActive) multiplier *= (1 + 0.2 * effectScale) * (1 + Math.min(6, livingKinds) * 0.04 * effectScale)
+  if (loadout.fivePieceActive && state.domainRemaining > 0) multiplier *= 1 + 0.5 * effectScale
   if (state.rageRemaining > 0) multiplier *= 1.2
   return multiplier
 }
@@ -4767,14 +4825,15 @@ const getBeastContractDamageMultiplier = (snapshot: GameSnapshot) => {
 const getBeastContractAttackSpeedMultiplier = (snapshot: GameSnapshot, beast?: BeastCompanion) => {
   const loadout = getBeastContractDomainLoadout(snapshot).beast
   const state = getBeastContractDomainState(snapshot).beast
+  const effectScale = loadout.magnitudeScale ?? 1
   let bonus = 0
-  if (hasBeastContractDomainPiece(snapshot, 'beast', 'helmet')) bonus += 0.08
-  if (hasBeastContractDomainPiece(snapshot, 'beast', 'hands')) bonus += 0.1
-  if (hasBeastContractDomainPiece(snapshot, 'beast', 'wrists') && !loadout.threePieceActive) bonus += 0.08
-  if (loadout.twoPieceActive) bonus += 0.15
-  if (loadout.fivePieceActive && state.domainRemaining > 0) bonus += 0.4
-  if (loadout.fivePieceActive && state.domainRemaining > 0 && beast?.evolutionId === 'fury-war-bear') bonus += 0.2
-  if (loadout.fivePieceActive && state.domainRemaining > 0 && beast?.evolutionId === 'venom-serpent-nest') bonus += 0.2
+  if (hasBeastContractDomainPiece(snapshot, 'beast', 'helmet')) bonus += 0.08 * getBeastContractDomainPieceEffectScale(snapshot, 'beast', 'helmet', 'magnitudeScale')
+  if (hasBeastContractDomainPiece(snapshot, 'beast', 'hands')) bonus += 0.1 * getBeastContractDomainPieceEffectScale(snapshot, 'beast', 'hands', 'magnitudeScale')
+  if (hasBeastContractDomainPiece(snapshot, 'beast', 'wrists') && !loadout.threePieceActive) bonus += 0.08 * getBeastContractDomainPieceEffectScale(snapshot, 'beast', 'wrists', 'magnitudeScale')
+  if (loadout.twoPieceActive) bonus += 0.15 * effectScale
+  if (loadout.fivePieceActive && state.domainRemaining > 0) bonus += 0.4 * effectScale
+  if (loadout.fivePieceActive && state.domainRemaining > 0 && beast?.evolutionId === 'fury-war-bear') bonus += 0.2 * effectScale
+  if (loadout.fivePieceActive && state.domainRemaining > 0 && beast?.evolutionId === 'venom-serpent-nest') bonus += 0.2 * effectScale
   if (state.rageRemaining > 0) bonus += 0.15
   bonus += getArcherCombatTalentV3BeastAttackSpeedBonus(snapshot, beast)
   return 1 + bonus
@@ -4784,7 +4843,7 @@ const getBeastContractMovementMultiplier = (snapshot: GameSnapshot) => {
   const state = getBeastContractDomainState(snapshot).beast
   const loadout = getBeastContractDomainLoadout(snapshot).beast
   const summonLayers = Math.min(3, state.summonHasteRemaining.filter((remaining) => remaining > 0).length)
-  return (1 + summonLayers * 0.05) * (loadout.fivePieceActive && state.domainRemaining > 0 ? 1.2 : 1)
+  return (1 + summonLayers * 0.05) * (loadout.fivePieceActive && state.domainRemaining > 0 ? 1 + 0.2 * (loadout.magnitudeScale ?? 1) : 1)
 }
 
 const getContractDomainMovementMultiplier = (snapshot: GameSnapshot) => {
@@ -4798,13 +4857,13 @@ const getBeastPlayerBasicAttackIntervalMultiplier = (snapshot: GameSnapshot) => 
   const loadout = getBeastContractDomainLoadout(snapshot).beast
   const state = getBeastContractDomainState(snapshot).beast
   let speedBonus = 0
-  if (loadout.fivePieceActive && state.domainRemaining > 0) speedBonus += 0.25
+  if (loadout.fivePieceActive && state.domainRemaining > 0) speedBonus += 0.25 * (loadout.magnitudeScale ?? 1)
   return 1 / (1 + speedBonus)
 }
 
 const getBeastPlayerBasicDamageMultiplier = (snapshot: GameSnapshot) => {
   const loadout = getBeastContractDomainLoadout(snapshot).beast
-  return loadout.twoPieceActive ? 1 + Math.min(6, getLivingBeastKinds(snapshot).length) * 0.04 : 1
+  return loadout.twoPieceActive ? 1 + Math.min(6, getLivingBeastKinds(snapshot).length) * 0.04 * (loadout.magnitudeScale ?? 1) : 1
 }
 
 const registerBeastContractSummon = (snapshot: GameSnapshot, kind: BeastKind, skillId: string) => {
@@ -5065,6 +5124,18 @@ const hasDeathBloodPiece = (
   return definition?.collection === collection && definition.slot === slot && definition.identity !== 'excluded'
 }
 
+const getDeathBloodPieceEffectScale = (
+  snapshot: GameSnapshot,
+  collection: 'death' | 'blood',
+  slot: EquipmentSlot,
+  kind: 'magnitudeScale' | 'triggerScale',
+) => {
+  const item = snapshot.equippedItems[slot]
+  const definition = getDeathBloodEquipmentDefinition(item)
+  if (definition?.collection !== collection || definition.slot !== slot || definition.identity === 'excluded') return 1
+  return getDeathBloodLoadout(snapshot).effectScalesByDefinitionId?.[definition.definitionId]?.[kind] ?? 1
+}
+
 const getDeathBloodState = (snapshot: GameSnapshot) => {
   const state = getTalentCombatState(snapshot)
   state.deathBlood = state.deathBlood ?? { targets: {}, bloodFeatherPoints: 0 }
@@ -5147,7 +5218,7 @@ const applyDeathContractHit = (
   }
   if (hasDeathBloodPiece(snapshot, 'death', 'chest') && isNewFamily && target.distinctFamilyIds.length >= 2 && !target.chestShieldGranted) {
     target.chestShieldGranted = true
-    grantDeathBloodShield(snapshot, snapshot.player.maxHp * 0.12, 4)
+    grantDeathBloodShield(snapshot, snapshot.player.maxHp * 0.12 * getDeathBloodPieceEffectScale(snapshot, 'death', 'chest', 'magnitudeScale'), 4)
   }
   target.comboRemaining = timeout
   target.lastFamilyId = familyId
@@ -5156,7 +5227,7 @@ const applyDeathContractHit = (
     target.executionConsumed = false
     snapshot.floatingTexts.push(createFloatingText(enemy.position, '破甲', '#fbbf24'))
     if (hasDeathBloodPiece(snapshot, 'death', 'ring1')) {
-      snapshot.player.hp = Math.min(snapshot.player.maxHp, snapshot.player.hp + snapshot.player.maxHp * 0.1)
+      snapshot.player.hp = Math.min(snapshot.player.maxHp, snapshot.player.hp + snapshot.player.maxHp * 0.1 * getDeathBloodPieceEffectScale(snapshot, 'death', 'ring1', 'magnitudeScale'))
       snapshot.activeSkills.forEach((skill) => {
         if (getRuntimeSkillDefinitionById(skill.skillId)?.buildTag === 'pierce') skill.cooldownRemaining *= 0.85
       })
@@ -5164,7 +5235,7 @@ const applyDeathContractHit = (
   }
   if (hasDeathBloodPiece(snapshot, 'death', 'necklace') && target.brokenRemaining > 0 && target.brokenRemaining <= 10 && !target.necklaceShieldGranted) {
     target.necklaceShieldGranted = true
-    grantDeathBloodShield(snapshot, snapshot.player.maxHp * 0.15, 3)
+    grantDeathBloodShield(snapshot, snapshot.player.maxHp * 0.15 * getDeathBloodPieceEffectScale(snapshot, 'death', 'necklace', 'magnitudeScale'), 3)
   }
 }
 
@@ -5173,7 +5244,7 @@ const getDeathContractDamageMultiplier = (snapshot: GameSnapshot, enemy: Enemy, 
   if (!loadout.twoPieceActive || !isPierceProjectile(projectile)) return 1
   const state = getDeathBloodState(snapshot).targets?.[enemy.id]
   const heavyHornBonus = state?.heavyHornDamageBonusArmed ? 1.3 : 1
-  return ((state?.brokenRemaining ?? 0) > 0 ? 1.6 : 1) * heavyHornBonus
+  return ((state?.brokenRemaining ?? 0) > 0 ? 1 + 0.6 * (loadout.magnitudeScale ?? 1) : 1) * heavyHornBonus
 }
 
 const consumeDeathContractExecution = (
@@ -5189,7 +5260,7 @@ const consumeDeathContractExecution = (
   // the four-piece execution: eligibility is frozen from before this impact.
   if (!loadout.fourPieceActive || !isPierceProjectile(projectile) || !state || !wasBrokenBeforeImpact || state.executionConsumed) return
   state.executionConsumed = true
-  const executeDamage = Math.max(0, enemy.maxHp * 0.25)
+  const executeDamage = Math.max(0, enemy.maxHp * 0.25 * (loadout.magnitudeScale ?? 1))
   const lastFamilyId = state.lastFamilyId
   state.armorPoints = 12
   state.distinctFamilyIds = []
@@ -5387,7 +5458,8 @@ const resolveBloodfeatherFinalDirectKill = (snapshot: GameSnapshot, enemy: Enemy
     const dashRangeMultiplier = state.bloodFullDashArmed ? 1.25 : 1
     const radius = 72 * rangeMultiplier * dashRangeMultiplier
     state.bloodSyncRemainsCreated = 0
-    triggerBloodfeatherSetExplosion(snapshot, enemy.position, context.actualDamage * 2.5, radius, 'bloodfeather-set-explosion', {
+    const setDamage = context.actualDamage * 2.5 * (loadout.magnitudeScale ?? 1)
+    triggerBloodfeatherSetExplosion(snapshot, enemy.position, setDamage, radius, 'bloodfeather-set-explosion', {
       syncRemains: hasDeathBloodPiece(snapshot, 'blood', 'hands'),
       allowRemainEcho: hasDeathBloodPiece(snapshot, 'blood', 'ring2'),
     })
@@ -5398,7 +5470,7 @@ const resolveBloodfeatherFinalDirectKill = (snapshot: GameSnapshot, enemy: Enemy
         .filter((candidate): candidate is Enemy => Boolean(candidate))
         .map((candidate) => candidate.position)
       synchronizedOrigins.push(...(snapshot.bloodfeatherRemains ?? []).map((remains) => remains.position))
-      synchronizedOrigins.forEach((origin) => triggerBloodfeatherSetExplosion(snapshot, origin, context.actualDamage * 2.5, radius, 'bloodfeather-sync-remains', {
+      synchronizedOrigins.forEach((origin) => triggerBloodfeatherSetExplosion(snapshot, origin, setDamage, radius, 'bloodfeather-sync-remains', {
           syncRemains: true,
           allowRemainEcho: hasDeathBloodPiece(snapshot, 'blood', 'ring2'),
       }))
@@ -5406,12 +5478,12 @@ const resolveBloodfeatherFinalDirectKill = (snapshot: GameSnapshot, enemy: Enemy
     // Four-piece propagation is one deterministic nearest-target chain. Indirect
     // damage never creates a final direct-kill context, so it cannot recharge.
     if (loadout.fourPieceActive) {
-      triggerBloodfeatherChain(snapshot, enemy.position, context.actualDamage * 2.5, radius)
+      triggerBloodfeatherChain(snapshot, enemy.position, setDamage, radius)
     }
     state.bloodFullDashArmed = false
   }
   if (hasDeathBloodPiece(snapshot, 'blood', 'chest') && (state.bloodFeatherPoints ?? 0) >= 20 && (state.bloodChestHealTimes ?? []).length < 2) {
-    snapshot.player.hp = Math.min(snapshot.player.maxHp, snapshot.player.hp + snapshot.player.maxHp * 0.03)
+    snapshot.player.hp = Math.min(snapshot.player.maxHp, snapshot.player.hp + snapshot.player.maxHp * 0.03 * getDeathBloodPieceEffectScale(snapshot, 'blood', 'chest', 'magnitudeScale'))
     state.bloodChestHealTimes = [...(state.bloodChestHealTimes ?? []), snapshot.elapsedTime]
   }
 }
@@ -5500,6 +5572,8 @@ const claimFirstHardBossEpic = (snapshot: GameSnapshot, drops: EquipmentItem[], 
 
 const getMetaEquipmentDropCreationOptions = (snapshot: GameSnapshot) => ({
   autoLockLegacyLegendary: hasMetaTalentEffect(snapshot, 'mechanic', 'new-legacy-legendary-auto-lock'),
+  playerLevel: snapshot.characterProgression.level,
+  invalidAffixPityCount: snapshot.invalidEquipmentAffixPity,
 })
 
 const getBossExtraEquipmentProtectionState = (snapshot: GameSnapshot) => {
@@ -7005,16 +7079,14 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
   ),
   equipmentInventoryViewPreference: { ...snapshot.equipmentInventoryViewPreference },
   equipmentMaterials: { ...snapshot.equipmentMaterials },
+  characterProgression: { ...snapshot.characterProgression },
+  temporaryEquipmentMaterials: { ...snapshot.temporaryEquipmentMaterials },
+  equipmentMaterialRemainders: { ...snapshot.equipmentMaterialRemainders },
+  equipmentSettlementOverflow: snapshot.equipmentSettlementOverflow.map((entry) => ({ ...entry, item: cloneEquipmentItem(entry.item) })),
   metaTalentDismantleMaterialRemainders: { ...(snapshot.metaTalentDismantleMaterialRemainders ?? {}) },
   metaTalentEliteMaterialRemainders: { ...(snapshot.metaTalentEliteMaterialRemainders ?? {}) },
   metaTalentRecordedEliteArchetypeIds: [...(snapshot.metaTalentRecordedEliteArchetypeIds ?? [])],
   pendingBossLoot: snapshot.pendingBossLoot.map(cloneEquipmentItem),
-  lastAutoDismantleSummary: snapshot.lastAutoDismantleSummary
-    ? {
-        count: snapshot.lastAutoDismantleSummary.count,
-        materials: { ...snapshot.lastAutoDismantleSummary.materials },
-      }
-    : undefined,
   lastLevelSettlement: snapshot.lastLevelSettlement
     ? {
         ...snapshot.lastLevelSettlement,
@@ -8157,7 +8229,7 @@ const createField = (
       * (giantCrystalField?.values.damageMultiplier ?? 1)
       * (domainWeapon ? 1.12 : 1)
       * (isContractField && hasBeastContractDomainPiece(snapshot, 'domain', 'wrists') && !domainLoadout.twoPieceActive ? 1.08 : 1)
-      * (celestialActive ? 1.3 : 1)
+      * (celestialActive ? 1 + 0.3 * (domainLoadout.magnitudeScale ?? 1) : 1)
       * (controlTalent?.damageMultiplier ?? 1),
     tickInterval: config.tickInterval,
     tickCooldown: 0,
@@ -10921,41 +10993,53 @@ const grantEliteTalentMaterialReward = (snapshot: GameSnapshot, enemy: Enemy) =>
     snapshot.talentPoints += 1
     snapshot.floatingTexts.push(createFloatingText(enemy.position, '精英记录 +1 天赋点', '#facc15'))
   }
-  const targets = getEliteTalentMaterialTargets(snapshot)
-  if (targets.length === 0) {
-    return
-  }
-  const materials = createEmptyEquipmentMaterials()
-  materials.ironScraps = 10
-  const v3BonusPercent = Math.max(0, getMetaTalentRuntimeEffectValue(
-    snapshot,
-    'material-drop',
-    'all-elite-base-materials',
-  ))
-  const existingFinal = scaleTalentMaterialReward(snapshot, 'elite', materials, targets)
-  if (v3BonusPercent > 0) {
-    const adjusted = createEmptyEquipmentMaterials()
+}
+
+const grantEquipmentProgressionMaterialDrop = (snapshot: GameSnapshot, enemy: Enemy) => {
+  const isElite = enemy.kind === 'elite' || enemy.grantsEliteReward
+  const targets = [
+    ...(isElite ? getEliteTalentMaterialTargets(snapshot) : []),
+    ...(getCampaignIndex(snapshot.level) === 7 ? ['campaign-7' as const] : []),
+  ]
+  const baseMaterials = rollMonsterMaterialDrop({
+    enemyId: enemy.id,
+    archetypeId: enemy.archetypeId ?? '',
+    kind: enemy.kind === 'boss' ? 'boss' : isElite ? 'elite' : 'normal',
+    campaign: getCampaignIndex(snapshot.level),
+    difficulty: getSnapshotDifficulty(snapshot),
+    battlefieldSeed: snapshot.battlefield.seed,
+    eligibleOriginal: enemy.materialDropEligible !== false,
+  })
+  if ((Object.keys(baseMaterials) as Array<keyof typeof baseMaterials>).every((id) => baseMaterials[id] <= 0)) return
+
+  const legacyMultiplier = getTalentMaterialDropMultiplier(snapshot, targets)
+  let finalMaterials = scaleTalentMaterialReward(snapshot, isElite ? 'elite' : 'route-objective', baseMaterials, targets)
+  const eliteBonusPercent = isElite
+    ? Math.max(0, getMetaTalentRuntimeEffectValue(snapshot, 'material-drop', 'all-elite-base-materials'))
+    : 0
+  if (eliteBonusPercent > 0) {
     const remainders = { ...(snapshot.metaTalentEliteMaterialRemainders ?? {}) }
+    const adjusted = { ...finalMaterials }
     ;(Object.keys(adjusted) as Array<keyof typeof adjusted>).forEach((id) => {
-      const base = Math.max(0, existingFinal[id] ?? 0)
+      const base = Math.max(0, finalMaterials[id] ?? 0)
       if (base <= 0) return
-      const accumulated = Math.max(0, remainders[id] ?? 0) + base * v3BonusPercent / 100
-      const whole = Math.floor(accumulated + Number.EPSILON)
-      adjusted[id] = base + whole
-      remainders[id] = Math.max(0, Math.min(0.999999, accumulated - whole))
+      const accumulatedBonus = Math.max(0, remainders[id] ?? 0) + base * eliteBonusPercent / 100
+      const wholeBonus = Math.floor(accumulatedBonus + Number.EPSILON)
+      adjusted[id] = base + wholeBonus
+      remainders[id] = Math.max(0, Math.min(0.999999, accumulatedBonus - wholeBonus))
     })
     snapshot.metaTalentEliteMaterialRemainders = remainders
+    finalMaterials = adjusted
     snapshot.lastTalentMaterialDrop = {
       source: 'elite',
       targets: [...targets, 'all-elite-base-materials'],
-      base: { ...materials },
-      multiplier: 1 + v3BonusPercent / 100,
-      final: { ...adjusted },
+      base: { ...baseMaterials },
+      multiplier: legacyMultiplier * (1 + eliteBonusPercent / 100),
+      final: { ...finalMaterials },
     }
-    snapshot.equipmentMaterials = mergeEquipmentMaterials(snapshot.equipmentMaterials, adjusted)
-    return
   }
-  snapshot.equipmentMaterials = mergeEquipmentMaterials(snapshot.equipmentMaterials, existingFinal)
+  snapshot.temporaryEquipmentMaterials = mergeProgressionMaterials(snapshot.temporaryEquipmentMaterials, finalMaterials)
+  snapshot.floatingTexts.push(createFloatingText(enemy.position, `材料 ${formatEquipmentMaterials(finalMaterials)}`, '#fde68a'))
 }
 
 type TalentCastContext = {
@@ -11870,7 +11954,7 @@ const consumeRouteObjectiveSkillBoost = (snapshot: GameSnapshot) => {
 
 const applyDerivedPlayerStats = (snapshot: GameSnapshot, healDifference = true) => {
   const previousMaxHp = snapshot.player.maxHp
-  const derived = getDerivedPlayerStats(snapshot.skillAllocations, snapshot.fixedPassiveLevel, snapshot.equippedWeaponId, snapshot.equippedItems)
+  const derived = getDerivedPlayerStats(snapshot.skillAllocations, snapshot.fixedPassiveLevel, snapshot.equippedWeaponId, snapshot.equippedItems, snapshot.characterProgression)
   const v3 = getArcherCombatTalentV3ModifierSnapshot(
     normalizeArcherCombatTalentV3RuntimeState(snapshot.runTalentState.combatTalentV3),
   )
@@ -12820,7 +12904,7 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     } : createBeastContractDomainRuntimeState(),
     message: `${getLevelIntroMessage(nextLevel, targetKills)}，准备时间 ${DUNGEON_ENTRY_GRACE.toFixed(1)} 秒`,
     player: {
-      ...createPlayer(previous.skillAllocations, previous.fixedPassiveLevel, previous.equippedWeaponId, previous.equippedItems, healedHp, startPosition),
+      ...createPlayer(previous.skillAllocations, previous.fixedPassiveLevel, previous.equippedWeaponId, previous.equippedItems, healedHp, startPosition, previous.characterProgression),
       hurtCooldown: DUNGEON_ENTRY_GRACE,
     },
   }
@@ -13846,6 +13930,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
         }, Math.floor((enemy.affixCooldown ?? 0) * 10))
         if (position) {
           const minion = createEnemy(snapshot.level, kind, position, undefined, undefined, difficulty)
+          minion.materialDropEligible = false
           minion.hp = Math.max(8, Math.round(minion.hp * 0.55))
           minion.maxHp = minion.hp
           snapshot.enemies.push(minion)
@@ -15238,6 +15323,7 @@ const trySummonBossGuard = (snapshot: GameSnapshot, boss: Enemy, phase: BossPhas
   }
   const guard = createEnemy(snapshot.level, kind, position, undefined, 'guard', difficulty)
   guard.role = 'guard'
+  guard.materialDropEligible = false
   guard.hp = Math.max(10, Math.round(guard.hp * 0.78))
   guard.maxHp = guard.hp
   snapshot.enemies.push(guard)
@@ -16221,6 +16307,7 @@ const processPendingSplitterChildSpawns = (snapshot: GameSnapshot, delta: number
     child.displayName = '裂变软泥'
     child.campaignIndex = spawn.campaignIndex
     child.c1SlimeVariantParentSize = spawn.parentSize
+    child.materialDropEligible = false
     snapshot.enemies.push(child)
   })
   snapshot.pendingSplitterChildSpawns = remaining
@@ -16262,6 +16349,7 @@ const processPendingEliteSplitChildSpawns = (snapshot: GameSnapshot, delta: numb
     child.maxHp = spawn.hp
     child.size = spawn.size
     child.campaignIndex = spawn.campaignIndex
+    child.materialDropEligible = false
     snapshot.enemies.push(child)
   })
   snapshot.pendingEliteSplitChildSpawns = remaining
@@ -16712,6 +16800,7 @@ const resolvePlayerProjectiles = (snapshot: GameSnapshot, delta: number) => {
     if (localBattleTest) {
       snapshot.message = `本地战斗测试：${enemy.displayName ?? getEnemyKindLabel(enemy.kind)} 已被击败，未产生收益`
     } else {
+      grantEquipmentProgressionMaterialDrop(snapshot, enemy)
       const crystalDropValues = getCrystalDropValues(enemy)
       if ((enemy.grantsEliteReward || enemy.kind === 'elite') && getEquipmentSetCount(snapshot, 'blue-crystal-contract') >= 6) {
         crystalDropValues.push(26)
@@ -16943,8 +17032,8 @@ const getContractDomainDamageMultiplier = (snapshot: GameSnapshot, enemy: Enemy)
   const loadout = getBeastContractDomainLoadout(snapshot).domain
   if (!loadout.threePieceActive) return 1
   const distinct = new Set(getContractFieldsAt(snapshot, enemy.position).map(normalizeContractDomainSkillId)).size
-  if (distinct >= 3) return enemy.kind === 'boss' ? 1.3 : 1.5
-  if (distinct >= 2) return hasBeastContractDomainPiece(snapshot, 'domain', 'legs') ? 1.35 : 1.25
+  if (distinct >= 3) return 1 + (enemy.kind === 'boss' ? 0.3 : 0.5) * (loadout.magnitudeScale ?? 1)
+  if (distinct >= 2) return 1 + (hasBeastContractDomainPiece(snapshot, 'domain', 'legs') ? 0.35 : 0.25) * (loadout.magnitudeScale ?? 1)
   return 1
 }
 
@@ -17041,7 +17130,8 @@ const checkContractDomainCombinations = (snapshot: GameSnapshot) => {
       if (!state.countedResonanceKeys.includes(key)) {
         state.countedResonanceKeys.push(key)
         if (pair.every((field) => field.canGenerateSetProgress !== false && !field.isSetGenerated)) {
-          const echoRingReady = hasBeastContractDomainPiece(snapshot, 'domain', 'ring1') && state.ringEchoCooldown <= 0 && Math.random() < 0.2
+          const echoRingChance = Math.min(1, 0.2 * getBeastContractDomainPieceEffectScale(snapshot, 'domain', 'ring1', 'triggerScale'))
+          const echoRingReady = hasBeastContractDomainPiece(snapshot, 'domain', 'ring1') && state.ringEchoCooldown <= 0 && Math.random() < echoRingChance
           if (echoRingReady) {
             state.energy = Math.min(20, state.energy + 3)
             state.ringEchoCooldown = 2
@@ -17812,7 +17902,7 @@ const resolvePickups = (snapshot: GameSnapshot, delta: number) => {
     const equipmentBonus = getSnapshotEquipmentBonus(snapshot)
     const directPickupRange = pickup.kind === 'soul-crystal'
       ? getSoulCrystalDirectCollectionRadius(snapshot, pickup)
-      : snapshot.player.size * SOUL_CRYSTAL_DIRECT_PICKUP_BODY_FACTOR + pickup.radius
+      : (snapshot.player.size * SOUL_CRYSTAL_DIRECT_PICKUP_BODY_FACTOR + pickup.radius) * DEFAULT_DIRECT_PICKUP_RANGE_MULTIPLIER
     const gap = distance(snapshot.player.position, pickup.position)
     const isKeyEquipment = pickup.kind === 'equipment' &&
       pickup.equipment &&
@@ -17885,7 +17975,7 @@ const resolvePickups = (snapshot: GameSnapshot, delta: number) => {
  * Equipment contributes a flat distance and run_common_02 is the sole
  * multiplier. V3 FT006 modifies experience only and never collection range.
  */
-export const SOUL_CRYSTAL_DIRECT_COLLECTION_META_RADII = [17.8, 17.8, 17.8, 17.8] as const
+export const SOUL_CRYSTAL_DIRECT_COLLECTION_META_RADII = [53.4, 53.4, 53.4, 53.4] as const
 
 const getSoulCrystalDirectCollectionMetaRank = (
   snapshot: Pick<GameSnapshot, 'unlockedMetaTalentIds' | 'metaTalentRanks'>,
@@ -17974,12 +18064,11 @@ const collectLevelSettlement = (snapshot: GameSnapshot) => {
     }
   })
 
-  const autoDismantlePreview = getTemporaryEquipmentPreview(snapshot)
   snapshot.lastLevelSettlement = {
     absorbedCrystals,
     absorbedExp,
-    autoDismantlePreviewCount: autoDismantlePreview.count,
-    autoDismantlePreviewMaterials: { ...autoDismantlePreview.materials },
+    autoDismantlePreviewCount: 0,
+    autoDismantlePreviewMaterials: createEmptyEquipmentMaterials(),
     rewardKind: getLevelRewardKind(snapshot.level),
   }
 
@@ -17999,7 +18088,7 @@ const enterLevelClear = (snapshot: GameSnapshot) => {
   }
   const absorbedText = settlement.absorbedCrystals > 0 ? `，场上保留 ${settlement.absorbedCrystals} 个蓝晶` : ''
   if (settlement.rewardKind === 'light') {
-    snapshot.message = `契约裂隙已稳定，第 ${snapshot.level} 层轻结算${absorbedText}，紫色以下装备离开战斗将自动分解 ${settlement.autoDismantlePreviewCount} 件`
+    snapshot.message = `契约裂隙已稳定，第 ${snapshot.level} 层轻结算${absorbedText}`
   } else if (settlement.rewardKind === 'prelude') {
     snapshot.message = `Boss 前置层肃清${absorbedText}，请选择 1 项短期补给或构筑强化`
   } else if (settlement.rewardKind === 'boss') {
@@ -18931,6 +19020,13 @@ const preserveMetaProgress = (baseSnapshot: GameSnapshot, previous: GameSnapshot
   baseSnapshot.equipmentInventory = clearEquipmentNewFlags(migrated.equipmentInventory)
   baseSnapshot.equippedItems = clearEquippedNewFlags(migrated.equippedItems)
   baseSnapshot.equipmentMaterials = { ...migrated.equipmentMaterials }
+  baseSnapshot.characterProgression = normalizeCharacterProgression(migrated.characterProgression)
+  baseSnapshot.temporaryEquipmentMaterials = createEmptyProgressionMaterials()
+  baseSnapshot.equipmentMaterialRemainders = { ...(migrated.equipmentMaterialRemainders ?? {}) }
+  baseSnapshot.equipmentSettlementOverflow = (migrated.equipmentSettlementOverflow ?? [])
+    .filter((entry) => entry.expiresAt > Date.now())
+    .map((entry) => ({ ...entry, item: migrateEquipmentProgressionItem(entry.item) }))
+  baseSnapshot.invalidEquipmentAffixPity = Math.max(0, Math.min(10, Math.trunc(migrated.invalidEquipmentAffixPity ?? 0)))
   baseSnapshot.metaTalentDismantleMaterialRemainders = { ...(migrated.metaTalentDismantleMaterialRemainders ?? {}) }
   baseSnapshot.metaTalentEliteMaterialRemainders = { ...(migrated.metaTalentEliteMaterialRemainders ?? {}) }
   baseSnapshot.metaTalentRecordedEliteArchetypeIds = [...(migrated.metaTalentRecordedEliteArchetypeIds ?? [])]
@@ -18941,6 +19037,7 @@ const preserveMetaProgress = (baseSnapshot: GameSnapshot, previous: GameSnapshot
     baseSnapshot.equippedItems,
     undefined,
     baseSnapshot.player.position,
+    baseSnapshot.characterProgression,
   )
   return baseSnapshot
 }
@@ -19095,6 +19192,7 @@ const freezeRunSettlementSummary = (summary: RunSettlementSummary): RunSettlemen
 const getRunStartingEquipmentIds = (snapshot: GameSnapshot) => Array.from(new Set([
   ...snapshot.equipmentInventory.map((item) => item.id),
   ...Object.values(snapshot.equippedItems).flatMap((item) => item ? [item.id] : []),
+  ...snapshot.equipmentSettlementOverflow.map((entry) => entry.item.id),
 ]))
 
 const createRunSettlementDisplayEntries = (snapshot: GameSnapshot): RunSettlementDisplayEntry[] => {
@@ -19158,6 +19256,7 @@ const createRunSettlementSummary = (
   const finalCarriedEquipmentIds = Array.from(new Set([
     ...snapshot.equipmentInventory,
     ...Object.values(snapshot.equippedItems).flatMap((item) => item ? [item] : []),
+    ...snapshot.equipmentSettlementOverflow.map((entry) => entry.item),
   ]
     .filter((item) => item.source === 'dungeon' && !startingEquipmentIds.has(item.id))
     .map((item) => item.id)))
@@ -19295,7 +19394,23 @@ const finalizeTalentPointSettlement = (
 }
 
 const finishRunToVillage = (snapshot: GameSnapshot, options: { earnedGold: number; message: string; source: 'death' | 'forfeit' | 'campaign-clear' }) => {
-  const autoDismantle = resolveSettlementDungeonEquipment(snapshot, options.source)
+  const campaign = getCampaignIndex(snapshot.level)
+  const difficulty = normalizeCampaignDifficulty(snapshot.selectedCampaignDifficulty ?? snapshot.selectedDifficulty)
+  const firstClear = options.source === 'campaign-clear'
+    && !isCampaignDifficultyCompleted(snapshot.completedCampaignDifficulties, campaign, difficulty)
+  const settlementResult = options.source === 'campaign-clear' ? 'success' : options.source
+  const characterXp = getCharacterSettlementExperience({
+    campaign,
+    difficulty,
+    result: settlementResult,
+    reachedFloor: getCampaignFloor(snapshot.level),
+    firstClear,
+  })
+  const settledMaterials = settleTemporaryEquipmentMaterials(snapshot.temporaryEquipmentMaterials, settlementResult)
+  const equipmentSettlement = resolveSettlementDungeonEquipment(snapshot, options.source)
+  snapshot.characterProgression = addCharacterExperience(snapshot.characterProgression, characterXp)
+  snapshot.equipmentMaterials = mergeProgressionMaterials(snapshot.equipmentMaterials, settledMaterials)
+  snapshot.temporaryEquipmentMaterials = createEmptyProgressionMaterials()
   const talentRecord = finalizeTalentPointSettlement(snapshot, options.source)
   snapshot.runSettlementSummary = createRunSettlementSummary(
     snapshot,
@@ -19317,7 +19432,7 @@ const finishRunToVillage = (snapshot: GameSnapshot, options: { earnedGold: numbe
     snapshot.bestLevel = Math.max(snapshot.bestLevel, snapshot.level)
     recordRunResult(snapshot, earnedGold)
   }
-  snapshot.player = createPlayer(snapshot.skillAllocations, snapshot.fixedPassiveLevel, snapshot.equippedWeaponId, snapshot.equippedItems, undefined, VILLAGE_POINTS.campfire)
+  snapshot.player = createPlayer(snapshot.skillAllocations, snapshot.fixedPassiveLevel, snapshot.equippedWeaponId, snapshot.equippedItems, undefined, VILLAGE_POINTS.campfire, snapshot.characterProgression)
   snapshot.battlefield = createBattlefieldState('village', snapshot.level, snapshot.player.position, snapshot.battlefield.seed)
   snapshot.mapObstacles = createVillageObstacles()
   snapshot.mapDecorations = []
@@ -19358,10 +19473,19 @@ const finishRunToVillage = (snapshot: GameSnapshot, options: { earnedGold: numbe
   snapshot.inRunRewardRerolls = 1
   snapshot.inRunRewardHistory = { noMainBuildStreak: 0, lastOfferedChoiceIds: [] }
   snapshot.levelTimer = 0
-  const dismantleText = autoDismantle.count > 0 ? `，自动分解 ${autoDismantle.count} 件紫色以下地下城装备，获得 ${formatEquipmentMaterials(autoDismantle.materials)}` : ''
+  const xpText = characterXp > 0 ? `，角色经验 +${characterXp}` : ''
+  const materialText = Object.values(settledMaterials).some((amount) => amount > 0)
+    ? `，材料入库 ${formatEquipmentMaterials(settledMaterials)}`
+    : ''
+  const equipmentText = equipmentSettlement.retainedCount > 0
+    ? `，保留本局装备 ${equipmentSettlement.retainedCount} 件`
+    : ''
+  const overflowText = equipmentSettlement.overflowCount > 0
+    ? `，${equipmentSettlement.overflowCount} 件转入 7 天溢出保管`
+    : ''
   const talentText = talentRecord && talentRecord.points > 0 ? `，结算天赋点 +${talentRecord.points}` : ''
   const settlementBonusText = earnedGold > options.earnedGold ? `，结算清算额外金币 +${earnedGold - options.earnedGold}` : ''
-  snapshot.message = `${options.message}${settlementBonusText}${talentText}${dismantleText}`
+  snapshot.message = `${options.message}${settlementBonusText}${xpText}${materialText}${equipmentText}${overflowText}${talentText}`
 }
 
 const finishBossLevelToVillage = (snapshot: GameSnapshot) => {
@@ -19543,6 +19667,7 @@ const preserveCurrentCombatBuildForLocalTest = (target: GameSnapshot, current: G
     target.equippedItems,
     undefined,
     target.player.position,
+    target.characterProgression,
   )
 }
 
@@ -19855,6 +19980,21 @@ export const equipEquipmentSnapshot = (current: GameSnapshot, itemId: string): G
     return snapshot
   }
 
+  if (item.requiredCharacterLevel !== undefined && item.requiredCharacterLevel > snapshot.characterProgression.level) {
+    snapshot.message = `${item.name} 需要角色等级 Lv.${item.requiredCharacterLevel} 才能穿戴`
+    return snapshot
+  }
+
+  if (item.specialBlue) {
+    const equippedSpecialBlue = Object.values(snapshot.equippedItems)
+      .filter((equipped): equipped is EquipmentItem => Boolean(equipped?.specialBlue && equipped.id !== item.id))
+    const replacingSpecialBlue = Boolean(snapshot.equippedItems[item.slot]?.specialBlue)
+    if (equippedSpecialBlue.length >= 2 && !replacingSpecialBlue) {
+      snapshot.message = '特殊蓝装最多同时装备 2 件'
+      return snapshot
+    }
+  }
+
   equipEquipmentItem(snapshot, item)
   const relevance = getEquipmentRelevance(item, getEquipmentRelevanceContext(snapshot))
   snapshot.message = `已装备 ${item.name}（${getEquipmentItemLabel(item)}）${relevance.isBuildRelevant ? '，契合当前构筑' : ''}`
@@ -19971,112 +20111,73 @@ const addDismantledMaterials = (snapshot: GameSnapshot, items: EquipmentItem[]) 
   snapshot.message = `分解 ${preview.count} 件装备：${formatEquipmentMaterials(materials)}`
 }
 
-const isBelowEpicDungeonEquipment = (item: EquipmentItem) => {
-  return ['broken', 'common', 'fine', 'rare'].includes(item.rarity) && (item.source ?? 'dungeon') === 'dungeon'
-}
-
-const isExplicitDungeonEquipment = (item: EquipmentItem) => item.source === 'dungeon'
-
-const isHighRarityDungeonEquipment = (item: EquipmentItem) => {
-  return ['epic', 'legacy', 'legendary'].includes(item.rarity) && isExplicitDungeonEquipment(item)
-}
-
-const getTemporaryEquipment = (snapshot: GameSnapshot) => {
-  const byId = new Map<string, EquipmentItem>()
-  snapshot.equipmentInventory.forEach((item) => {
-    if (isBelowEpicDungeonEquipment(item)) {
-      byId.set(item.id, item)
-    }
-  })
-  Object.values(snapshot.equippedItems).forEach((item) => {
-    if (item && isBelowEpicDungeonEquipment(item)) {
-      byId.set(item.id, item)
-    }
-  })
-  return Array.from(byId.values())
-}
-
-const scaleEquipmentMaterialRewards = (
-  materials: ReturnType<typeof createEmptyEquipmentMaterials>,
-  multiplier: number,
-) => {
-  const scaled = createEmptyEquipmentMaterials()
-  ;(Object.keys(scaled) as Array<keyof typeof scaled>).forEach((id) => {
-    scaled[id] = Math.max(0, Math.floor((materials[id] ?? 0) * multiplier))
-  })
-  return scaled
-}
-
-const getTemporaryEquipmentPreview = (snapshot: GameSnapshot) => {
-  const preview = getEquipmentDismantlePreview(getTemporaryEquipment(snapshot))
-  return {
-    ...preview,
-    materials: applyMetaTalentDismantleMaterialBonus(snapshot, preview.materials, false),
-  }
-}
-
-const autoDismantleTemporaryEquipment = (snapshot: GameSnapshot, settlementMaterialMultiplier = 1) => {
-  const temporary = getTemporaryEquipment(snapshot)
-  const rawPreview = getEquipmentDismantlePreview(temporary)
-  const talentAdjustedMaterials = applyMetaTalentDismantleMaterialBonus(snapshot, rawPreview.materials, true)
-  const preview = {
-    ...rawPreview,
-    materials: scaleEquipmentMaterialRewards(talentAdjustedMaterials, settlementMaterialMultiplier),
-  }
-  if (preview.count <= 0) {
-    snapshot.lastAutoDismantleSummary = {
-      count: 0,
-      materials: createEmptyEquipmentMaterials(),
-    }
-    return preview
-  }
-
-  const temporaryIds = new Set(temporary.map((item) => item.id))
-  snapshot.equipmentMaterials = mergeEquipmentMaterials(snapshot.equipmentMaterials, preview.materials)
-  snapshot.equipmentInventory = snapshot.equipmentInventory.filter((item) => !temporaryIds.has(item.id)).map(cloneEquipmentItem)
-  snapshot.equippedItems = Object.fromEntries(
-    Object.entries(snapshot.equippedItems).map(([slot, item]) => [slot, item && temporaryIds.has(item.id) ? undefined : item]),
-  ) as Partial<Record<EquipmentSlot, EquipmentItem>>
-  applyDerivedPlayerStats(snapshot)
-  snapshot.lastAutoDismantleSummary = {
-    count: preview.count,
-    materials: { ...preview.materials },
-  }
-  return preview
-}
-
-const discardDungeonEquipment = (snapshot: GameSnapshot, shouldDiscard: (item: EquipmentItem) => boolean) => {
-  snapshot.equipmentInventory = snapshot.equipmentInventory
-    .filter((item) => !shouldDiscard(item))
-    .map(cloneEquipmentItem)
-  snapshot.equippedItems = Object.fromEntries(
-    Object.entries(snapshot.equippedItems).map(([slot, item]) => [slot, item && shouldDiscard(item) ? undefined : item]),
-  ) as Partial<Record<EquipmentSlot, EquipmentItem>>
-  snapshot.pendingBossLoot = snapshot.pendingBossLoot
-    .filter((item) => !shouldDiscard(item))
-    .map(cloneEquipmentItem)
-  applyDerivedPlayerStats(snapshot)
-}
-
 const resolveSettlementDungeonEquipment = (
   snapshot: GameSnapshot,
   source: 'death' | 'forfeit' | 'campaign-clear',
 ) => {
-  if (source === 'forfeit') {
-    discardDungeonEquipment(snapshot, isExplicitDungeonEquipment)
-    snapshot.lastAutoDismantleSummary = {
-      count: 0,
-      materials: createEmptyEquipmentMaterials(),
+  const recordedStartingIds = snapshot.runStartingEquipmentIds ?? []
+  // Real runs record every pre-run item. Migrated snapshots can lack that
+  // ledger, so preserve explicit non-dungeon system items rather than treating
+  // them as loot from the current run.
+  const startingIds = new Set(recordedStartingIds.length > 0
+    ? recordedStartingIds
+    : [...snapshot.equipmentInventory, ...Object.values(snapshot.equippedItems).flatMap((item) => item ? [item] : [])]
+      .filter((item) => item.source !== 'dungeon')
+      .map((item) => item.id))
+  const equippedAtSettlementIds = new Set(Object.values(snapshot.equippedItems).flatMap((item) => item ? [item.id] : []))
+  const allById = new Map<string, EquipmentItem>()
+  ;[...snapshot.equipmentInventory, ...Object.values(snapshot.equippedItems).flatMap((item) => item ? [item] : []), ...snapshot.pendingBossLoot]
+    .forEach((item) => allById.set(item.id, migrateEquipmentProgressionItem(item)))
+  const newIds = new Set(Array.from(allById.keys()).filter((id) => !startingIds.has(id)))
+  const keepNewIds = new Set(source === 'campaign-clear'
+    ? newIds
+    : source === 'death'
+      ? Array.from(newIds).filter((id) => equippedAtSettlementIds.has(id))
+      : [])
+  snapshot.equipmentInventory = snapshot.equipmentInventory
+    .filter((item) => !newIds.has(item.id) || keepNewIds.has(item.id))
+    .map((item) => migrateEquipmentProgressionItem(item))
+  snapshot.equippedItems = Object.fromEntries(Object.entries(snapshot.equippedItems).map(([slot, item]) => [
+    slot,
+    item && (!newIds.has(item.id) || keepNewIds.has(item.id)) ? migrateEquipmentProgressionItem(item) : undefined,
+  ])) as Partial<Record<EquipmentSlot, EquipmentItem>>
+  Object.values(snapshot.equippedItems).forEach((item) => {
+    if (item && keepNewIds.has(item.id) && !snapshot.equipmentInventory.some((candidate) => candidate.id === item.id)) {
+      snapshot.equipmentInventory.push(cloneEquipmentItem(item))
     }
-    return snapshot.lastAutoDismantleSummary
+  })
+  snapshot.pendingBossLoot = []
+
+  let overflowCount = 0
+  if (source === 'campaign-clear' && snapshot.equipmentInventory.length > BASE_EQUIPMENT_INVENTORY_CAPACITY) {
+    const protectedIds = new Set([
+      ...startingIds,
+      ...Object.values(snapshot.equippedItems).flatMap((item) => item ? [item.id] : []),
+    ])
+    const keep: EquipmentItem[] = []
+    const overflow: EquipmentItem[] = []
+    snapshot.equipmentInventory.forEach((item) => {
+      if (keep.length < BASE_EQUIPMENT_INVENTORY_CAPACITY || protectedIds.has(item.id)) keep.push(item)
+      else overflow.push(item)
+    })
+    const now = Date.now()
+    snapshot.equipmentInventory = keep
+    snapshot.equipmentSettlementOverflow = [
+      ...snapshot.equipmentSettlementOverflow.filter((entry) => entry.expiresAt > now),
+      ...overflow.map((item) => ({ item: cloneEquipmentItem(item), acquiredAt: now, expiresAt: now + EQUIPMENT_SETTLEMENT_OVERFLOW_TTL_MS })),
+    ]
+    overflowCount = overflow.length
   }
 
-  if (source === 'death') {
-    discardDungeonEquipment(snapshot, isHighRarityDungeonEquipment)
-    return autoDismantleTemporaryEquipment(snapshot, FAILURE_REWARD_MULTIPLIER)
-  }
-
-  return autoDismantleTemporaryEquipment(snapshot)
+  const retainedNew = [
+    ...snapshot.equipmentInventory,
+    ...snapshot.equipmentSettlementOverflow.map((entry) => entry.item),
+  ].filter((item) => keepNewIds.has(item.id))
+  retainedNew.forEach((item) => {
+    snapshot.invalidEquipmentAffixPity = getNextInvalidAffixPityCount(snapshot.invalidEquipmentAffixPity, item)
+  })
+  applyDerivedPlayerStats(snapshot)
+  return { retainedCount: retainedNew.length, overflowCount }
 }
 
 export const dismantleEquipmentSnapshot = (
@@ -20125,51 +20226,110 @@ export const batchDismantleEquipmentSnapshot = (
   return snapshot
 }
 
-export const upgradeEquippedEquipmentSnapshot = (current: GameSnapshot, slot: EquipmentSlot): GameSnapshot => {
+const findEquipmentItemById = (snapshot: GameSnapshot, itemId: string) => (
+  snapshot.equipmentInventory.find((item) => item.id === itemId)
+  ?? Object.values(snapshot.equippedItems).find((item) => item?.id === itemId)
+  ?? snapshot.pendingBossLoot.find((item) => item.id === itemId)
+  ?? snapshot.equipmentSettlementOverflow.find((entry) => entry.item.id === itemId)?.item
+)
+
+export const getCharacterEquipmentProgressionPresentationForSnapshot = (
+  snapshot: GameSnapshot,
+): CharacterEquipmentProgressionPresentation => getCharacterEquipmentProgressionPresentation({
+  characterProgression: snapshot.characterProgression,
+  equippedItems: snapshot.equippedItems,
+  temporaryMaterials: snapshot.temporaryEquipmentMaterials,
+  settlementOverflow: snapshot.equipmentSettlementOverflow,
+  invalidAffixPityCount: snapshot.invalidEquipmentAffixPity,
+})
+
+const getEquipmentEnhancementDiscountPercent = (snapshot: GameSnapshot) => Math.max(0, getMetaTalentRuntimeEffectValue(
+  snapshot,
+  'upgrade-discount',
+  'all-equipment-upgrade-costs',
+))
+
+export const getEquipmentEnhancementPreviewForSnapshot = (
+  snapshot: GameSnapshot,
+  itemId: string,
+) => {
+  const item = findEquipmentItemById(snapshot, itemId)
+  if (!item) return null
+  return getEquipmentEnhancementPreview(item, {
+    currency: snapshot.currency,
+    materials: snapshot.equipmentMaterials,
+    discountPercent: getEquipmentEnhancementDiscountPercent(snapshot),
+  })
+}
+
+const removeEquipmentEverywhere = (snapshot: GameSnapshot, itemId: string) => {
+  snapshot.equipmentInventory = snapshot.equipmentInventory.filter((item) => item.id !== itemId)
+  snapshot.equippedItems = Object.fromEntries(Object.entries(snapshot.equippedItems).map(([slot, item]) => [
+    slot,
+    item?.id === itemId ? undefined : item,
+  ])) as Partial<Record<EquipmentSlot, EquipmentItem>>
+  snapshot.pendingBossLoot = snapshot.pendingBossLoot.filter((item) => item.id !== itemId)
+  snapshot.equipmentSettlementOverflow = snapshot.equipmentSettlementOverflow.filter((entry) => entry.item.id !== itemId)
+}
+
+export const enhanceEquipmentSnapshot = (
+  current: GameSnapshot,
+  itemId: string,
+  confirmation?: EquipmentEnhancementConfirmation,
+): GameSnapshot => {
   const snapshot = cloneSnapshot(current)
-  const item = snapshot.equippedItems[slot]
+  const item = findEquipmentItemById(snapshot, itemId)
 
   if (!item) {
+    snapshot.message = '装备不存在或已被处理'
+    return snapshot
+  }
+
+  const preview = getEquipmentEnhancementPreview(item, {
+    currency: snapshot.currency,
+    materials: snapshot.equipmentMaterials,
+    discountPercent: getEquipmentEnhancementDiscountPercent(snapshot),
+  })
+  if (preview.blockedReason === 'rarity-cap') {
+    snapshot.message = `${item.name} 已达到当前稀有度强化上限`
+    return snapshot
+  }
+  if (!preview.affordable) {
+    snapshot.message = `强化资源不足：${formatEquipmentMaterials(preview.materialCost)}，${preview.goldCost}G`
+    return snapshot
+  }
+  if (!isValidEnhancementConfirmation(preview, confirmation)) {
+    snapshot.message = `+${preview.targetLevel} 强化失败将永久损毁装备，需要确认`
+    return snapshot
+  }
+
+  snapshot.currency -= preview.goldCost
+  snapshot.equipmentMaterials = spendEquipmentMaterials(snapshot.equipmentMaterials, preview.materialCost)
+  const success = getDeterministicEnhancementSuccess(item, preview.targetLevel)
+  const result = resolveEquipmentEnhancement(item, success)
+  if (!result.item) {
+    removeEquipmentEverywhere(snapshot, item.id)
+    applyDerivedPlayerStats(snapshot)
+    snapshot.message = `${item.name} 强化 +${preview.targetLevel} 失败，装备已损毁`
+    return snapshot
+  }
+  replaceEquipmentEverywhere(snapshot, item.id, result.item)
+  applyDerivedPlayerStats(snapshot)
+  const outcome = success
+    ? `成功至 +${result.item.upgradeLevel ?? 0}${result.rareBonusAdded ? '，获得稀有属性加成' : ''}`
+    : `失败，强化等级变为 +${result.item.upgradeLevel ?? 0}`
+  snapshot.message = `${result.item.name} 强化${outcome}，消耗 ${formatEquipmentMaterials(preview.materialCost)}，${preview.goldCost}G`
+  return snapshot
+}
+
+export const upgradeEquippedEquipmentSnapshot = (current: GameSnapshot, slot: EquipmentSlot): GameSnapshot => {
+  const item = current.equippedItems[slot]
+  if (!item) {
+    const snapshot = cloneSnapshot(current)
     snapshot.message = `${EQUIPMENT_SLOT_LABELS[slot]} 尚未装备`
     return snapshot
   }
-
-  if ((item.upgradeLevel ?? 0) >= getEquipmentUpgradeLimit(item)) {
-    snapshot.message = `${item.name} 已达到当前强化上限`
-    return snapshot
-  }
-
-  const baseCost = getEquipmentUpgradeCost(item)
-  const upgradeDiscountPercent = Math.max(0, getMetaTalentRuntimeEffectValue(
-    snapshot,
-    'upgrade-discount',
-    'all-equipment-upgrade-costs',
-  ))
-  const upgradeCostMultiplier = Math.max(0.5, 1 - upgradeDiscountPercent / 100)
-  const cost = upgradeDiscountPercent > 0
-    ? Object.fromEntries(Object.entries(baseCost).map(([id, amount]) => [id, Math.ceil(amount * upgradeCostMultiplier)])) as typeof baseCost
-    : baseCost
-  const baseGoldCost = getEquipmentUpgradeGoldCost(item)
-  const goldCost = upgradeDiscountPercent > 0 ? Math.ceil(baseGoldCost * upgradeCostMultiplier) : baseGoldCost
-  if (!canAffordEquipmentMaterials(snapshot.equipmentMaterials, cost)) {
-    snapshot.message = `材料不足，强化需要 ${formatEquipmentMaterials(cost)}`
-    return snapshot
-  }
-  if (snapshot.currency < goldCost) {
-    snapshot.message = `金币不足，强化手续费需要 ${goldCost}G`
-    return snapshot
-  }
-
-  const upgraded = upgradeEquipmentItem(item)
-  snapshot.currency -= goldCost
-  snapshot.equipmentMaterials = spendEquipmentMaterials(snapshot.equipmentMaterials, cost)
-  snapshot.equippedItems[slot] = upgraded
-  snapshot.equipmentInventory = snapshot.equipmentInventory.map((candidate) => (
-    candidate.id === item.id ? cloneEquipmentItem(upgraded) : candidate
-  )).sort((a, b) => b.score - a.score)
-  applyDerivedPlayerStats(snapshot)
-  snapshot.message = `强化 ${upgraded.name} 至 +${upgraded.upgradeLevel ?? 0}，消耗 ${formatEquipmentMaterials(cost)}，手续费 ${goldCost}G`
-  return snapshot
+  return enhanceEquipmentSnapshot(current, item.id)
 }
 
 const replaceEquipmentEverywhere = (snapshot: GameSnapshot, itemId: string, item: EquipmentItem) => {

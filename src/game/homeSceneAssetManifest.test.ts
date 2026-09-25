@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  HOME_BACKGROUND_MUSIC_URL,
   HOME_COMBAT_LOADING_ASSETS,
   HOME_SCENE_ASSET_MANIFEST_V1,
   HOME_SCENE_DIRECT_DEPENDENCY_AUDIT,
@@ -17,7 +18,12 @@ import { ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTIONS } from './archerSkillEvolut
 import { getArcherSkillIconAssetPath } from './archerSkillIcons'
 import { buildCombatSceneAssetDependencyDescriptor } from './combatLoading'
 import { getMetaTalentIconPresentation } from './metaTalentIcons'
-import { dedupeSceneAssetResources, getSceneAssetCacheKey } from './sceneAssetLoading'
+import {
+  clearSceneAssetCacheForTests,
+  dedupeSceneAssetResources,
+  getSceneAssetCacheKey,
+  loadSceneAssetManifest,
+} from './sceneAssetLoading'
 import {
   getSharedSceneAssetContentVersionForUrl,
   SHARED_SCENE_ASSET_CONTENT_VERSIONS,
@@ -62,7 +68,81 @@ const publicFileForUrl = (url: string) => {
   return resolve(publicRoot, relative.replace(/^\//, ''))
 }
 
+afterEach(() => {
+  clearSceneAssetCacheForTests()
+  vi.unstubAllGlobals()
+})
+
 describe('HOME_SCENE_ASSET_MANIFEST_V1', () => {
+  it('gates the home scene on the project-local 150-second Vorbis music resource', () => {
+    const resource = HOME_SCENE_ASSET_MANIFEST_V1.resources.find((entry) => entry.key === 'home.music.redemption')
+    expect(resource).toMatchObject({
+      key: 'home.music.redemption',
+      domain: 'home-audio',
+      kind: 'audio',
+      url: HOME_BACKGROUND_MUSIC_URL,
+    })
+    const baseUrl = (import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')
+    expect(resource?.url).toBe(`${baseUrl}assets/audio/home-v1/redemption.ogg`)
+    const bytes = readFileSync(publicFileForUrl(resource!.url!))
+    expect(sha256(bytes)).toBe('ab9416d567bd90b0aea61e17bfd80f05a65ed2b0576f93df58bbd8a65063967a')
+    expect(resource?.version).toBe(sha256(bytes))
+    expect(bytes.toString('ascii', 0, 4)).toBe('OggS')
+    expect(bytes.includes(Buffer.from('vorbis'))).toBe(true)
+
+    let offset = 0
+    let lastGranule = 0n
+    while (offset < bytes.length) {
+      expect(bytes.toString('ascii', offset, offset + 4)).toBe('OggS')
+      const segmentCount = bytes[offset + 26]
+      let payloadLength = 0
+      for (let index = 0; index < segmentCount; index += 1) payloadLength += bytes[offset + 27 + index]
+      const granule = bytes.readBigUInt64LE(offset + 6)
+      if (granule !== 0xffffffffffffffffn) lastGranule = granule
+      offset += 27 + segmentCount + payloadLength
+    }
+    expect(offset).toBe(bytes.length)
+    expect(Number(lastGranule) / 48000).toBe(150)
+  })
+
+  it('keeps the home load gate pending until the music actually reaches canplay', async () => {
+    const music = HOME_SCENE_ASSET_MANIFEST_V1.resources.find((entry) => entry.key === 'home.music.redemption')!
+    const instances: MockLoadingAudio[] = []
+    class MockLoadingAudio extends EventTarget {
+      preload = ''
+      src = ''
+      load = vi.fn()
+      removeAttribute = vi.fn()
+      constructor() {
+        super()
+        instances.push(this)
+      }
+    }
+    vi.stubGlobal('Audio', MockLoadingAudio)
+    const progress: number[] = []
+    let complete = false
+    const pending = loadSceneAssetManifest({
+      key: 'home-music-gate',
+      version: HOME_SCENE_ASSET_MANIFEST_V1.version,
+      scene: 'home',
+      resources: [music],
+    }, { onSnapshot: (snapshot) => progress.push(snapshot.progressPercent) })
+    void pending.then(() => { complete = true })
+
+    await Promise.resolve()
+    expect(instances).toHaveLength(1)
+    expect(instances[0].preload).toBe('auto')
+    expect(instances[0].src).toContain('redemption.ogg')
+    expect(instances[0].load).toHaveBeenCalledOnce()
+    expect(complete).toBe(false)
+    expect(progress.at(-1)).toBeLessThan(100)
+
+    instances[0].dispatchEvent(new Event('canplay'))
+    await pending
+    expect(complete).toBe(true)
+    expect(progress.at(-1)).toBe(100)
+  })
+
   it('preserves the three approved source files byte-for-byte with exact dimensions and alpha', () => {
     const expected = [
       ['background', readJpegMetadata],

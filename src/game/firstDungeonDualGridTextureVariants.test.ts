@@ -121,28 +121,31 @@ describe('FIRST_DUNGEON_DUAL_GRID_TEXTURE_VARIANTS_V1', () => {
     }
   })
 
-  it('loads the exact 512px RGBA review atlases and preserves audited source provenance', () => {
-    const reviewDirectory = projectPath('drafts/first-dungeon-dual-grid-4x4-review-v1')
-    const audit = JSON.parse(readFileSync(resolve(reviewDirectory, 'audit-report.json'), 'utf8'))
+  it('loads the exact reviewed 512px RGBA atlases and preserves source provenance', () => {
+    const expected = {
+      stone: {
+        atlasSha256: '6e88e39cc269159290198dd217c5b9db0ffa52770d93cfa4b6a4f52f7695c305',
+        sourceSha256: '8f4bb3c4a3b86155f758a904edc9fb312529a40c62aa67b1cb53c5a0fc84b710',
+      },
+      moss: {
+        atlasSha256: '119a600a5bea535ac2b04d0bf6ffc257c05e474ba6692a18257c9fb15fafa000',
+        sourceSha256: '472b8f0d4dae7dd891e263220a3d5c7243edea3ce987c8b992109d2737244cb0',
+      },
+    } as const
     for (const role of ['stone', 'moss'] as const) {
       const atlas = FIRST_DUNGEON_DUAL_GRID_TEXTURE_VARIANTS_V1[role]
       const decoded = decodeRgbaPng(assetPathForUrl(atlas.publicUrl))
-      const review = readFileSync(resolve(reviewDirectory, `${role}-working-512-nearest.png`))
 
       expect([decoded.width, decoded.height]).toEqual([512, 512])
-      expect(sha256(decoded.png)).toBe(atlas.sha256)
-      expect(decoded.png.equals(review)).toBe(true)
-      expect(audit.audits[role].source).toMatchObject({
-        path: atlas.source.projectPath,
-        sha256: atlas.source.sha256,
-        size: [atlas.source.width, atlas.source.height],
-        mode: 'RGBA',
-      })
-      expect(audit.audits[role].workingCanvas).toMatchObject({
-        path: `${role}-working-512-nearest.png`,
-        sha256: atlas.sha256,
-        size: [512, 512],
-        nativePixelAtlas: false,
+      expect(sha256(decoded.png)).toBe(expected[role].atlasSha256)
+      expect(atlas.sha256).toBe(expected[role].atlasSha256)
+      expect(atlas.source.sha256).toBe(expected[role].sourceSha256)
+      expect(atlas.source).toMatchObject({
+        projectPath: `public/assets/terrain/campaign-1/stone-moss-v1/${role === 'stone' ? 'stone-brick-repeatable.png' : 'moss-repeatable.png'}`,
+        width: 1024,
+        height: 1024,
+        derivation: 'nearest-neighbor-full-source-1024-to-512',
+        workingPixelToSourcePixelRatio: 2,
       })
       expect(decoded.pixels.every((channel, index) => index % 4 !== 3 || channel === 255)).toBe(true)
     }

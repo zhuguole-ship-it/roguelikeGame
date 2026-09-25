@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { ARCHER_CORE_SKILL_IDS, ARCHER_SKILL_EVOLUTIONS } from './archerSkillEvolution'
@@ -134,6 +137,14 @@ describe('combat loading contract', () => {
       'combat-audio.archer-basic-attack',
     ]))
     expect(keys.some((key) => key.includes('vampire-thrall'))).toBe(false)
+    const archerAudio = manifestInput.resources.find((resource) => resource.key === 'combat-audio.archer-basic-attack')
+    const wavHash = createHash('sha256').update(readFileSync(resolve(process.cwd(), 'public/assets/audio/archer-basic-attack.wav'))).digest('hex')
+    expect(archerAudio).toMatchObject({
+      domain: 'combat-audio',
+      kind: 'audio',
+      version: wavHash,
+      url: `${import.meta.env.BASE_URL}assets/audio/archer-basic-attack.wav`,
+    })
     expect(manifestInput.resources.filter((resource) => resource.domain === 'enemy-actions').length).toBeGreaterThan(0)
     expect(manifestInput.resources.filter((resource) => resource.domain === 'player-actions').length).toBeGreaterThan(0)
     expect(manifestInput.resources.every((resource) => (

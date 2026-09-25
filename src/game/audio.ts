@@ -45,6 +45,40 @@ const SOUND_ASSET_PATHS: Partial<Record<GameSoundId, string>> = {
   'skill-cast': 'assets/audio/archer-basic-attack.wav',
 }
 const audioAssetCache = new Map<string, HTMLAudioElement>()
+const MAX_ARCHER_ATTACK_SOUND_INSTANCES = 4
+const activeArcherAttackSounds = new Map<HTMLAudioElement, () => void>()
+let archerAttackSoundAllowed = false
+
+const isArcherAttackSound = (id: GameSoundId) => id === 'basic-attack' || id === 'skill-cast'
+
+const releaseArcherAttackSound = (audio: HTMLAudioElement, stop: boolean) => {
+  const onEnded = activeArcherAttackSounds.get(audio)
+  if (!onEnded) return
+  audio.removeEventListener('ended', onEnded)
+  activeArcherAttackSounds.delete(audio)
+  if (stop) {
+    audio.pause()
+    audio.currentTime = 0
+  }
+}
+
+export const stopArcherAttackSoundInstances = () => {
+  for (const audio of [...activeArcherAttackSounds.keys()]) releaseArcherAttackSound(audio, true)
+}
+
+/** The store supplies its existing combat/reward state; audio never derives combat eligibility. */
+export const syncArcherAttackSoundState = (
+  allowed: boolean,
+  settings: Pick<AudioSettings, 'masterVolume' | 'effectsVolume' | 'muted'>,
+) => {
+  const volume = Math.max(0, Math.min(1, (settings.masterVolume / 100) * (settings.effectsVolume / 100)))
+  archerAttackSoundAllowed = allowed && !settings.muted && volume > 0
+  if (!archerAttackSoundAllowed) {
+    stopArcherAttackSoundInstances()
+    return
+  }
+  for (const audio of activeArcherAttackSounds.keys()) audio.volume = volume
+}
 
 const SOUND_THROTTLE_MS: Partial<Record<GameSoundId, number>> = {
   button: 35,
@@ -83,6 +117,8 @@ export const resetGameSoundRuntimeForTests = () => {
   Object.keys(lastPlayedAt).forEach((key) => {
     delete lastPlayedAt[key as GameSoundId]
   })
+  stopArcherAttackSoundInstances()
+  archerAttackSoundAllowed = false
   audioAssetCache.clear()
   testPlayer = null
   setGameSoundNowProviderForTests(null)
@@ -121,9 +157,34 @@ const playAudioAsset = (path: string, volume: number) => {
   return true
 }
 
-export const playGameSound = (id: GameSoundId, settings: AudioSettings) => {
+const playArcherAttackAsset = (path: string, volume: number) => {
+  if (!archerAttackSoundAllowed || typeof Audio === 'undefined') return false
+  const url = getPublicAssetUrl(path)
+  if (!audioAssetCache.has(url)) {
+    const template = new Audio(url)
+    template.preload = 'auto'
+    audioAssetCache.set(url, template)
+  }
+  const audio = audioAssetCache.get(url)!.cloneNode(true) as HTMLAudioElement
+  if (activeArcherAttackSounds.size >= MAX_ARCHER_ATTACK_SOUND_INSTANCES) {
+    releaseArcherAttackSound(activeArcherAttackSounds.keys().next().value!, true)
+  }
+  const onEnded = () => releaseArcherAttackSound(audio, false)
+  activeArcherAttackSounds.set(audio, onEnded)
+  audio.addEventListener('ended', onEnded)
+  audio.volume = volume
+  try {
+    void Promise.resolve(audio.play()).catch(() => releaseArcherAttackSound(audio, true))
+  } catch {
+    releaseArcherAttackSound(audio, true)
+    return false
+  }
+  return true
+}
+
+export const playGameSound = (id: GameSoundId, settings: Pick<AudioSettings, 'masterVolume' | 'effectsVolume' | 'muted'>) => {
   const volume = Math.max(0, Math.min(1, (settings.masterVolume / 100) * (settings.effectsVolume / 100)))
-  if (settings.muted || volume <= 0) {
+  if (settings.muted || volume <= 0 || (isArcherAttackSound(id) && !archerAttackSoundAllowed)) {
     return false
   }
 
@@ -137,6 +198,7 @@ export const playGameSound = (id: GameSoundId, settings: AudioSettings) => {
   }
 
   const assetPath = SOUND_ASSET_PATHS[id]
+  if (assetPath && isArcherAttackSound(id)) return playArcherAttackAsset(assetPath, volume)
   if (assetPath && playAudioAsset(assetPath, volume)) {
     return true
   }

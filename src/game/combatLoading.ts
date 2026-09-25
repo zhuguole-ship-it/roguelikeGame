@@ -4,6 +4,7 @@ import { PLAYER_ARCHER_ACTIONS, getPlayerArcherRuntimeAssetUrls } from './archer
 import { developerAssetEntities } from './assetManifest'
 import { CAMPAIGN_MONSTER_THEMES } from './campaignMonsters'
 import { COMBAT_HUD_V2_RUNTIME_ASSETS, getCombatHudV2AssetUrl } from './combatHudAssets'
+import { COMBAT_BACKGROUND_MUSIC_ASSETS } from './combatBackgroundMusicAssets'
 import { FLOORS_PER_CAMPAIGN, getCampaignFloor, isBossLevel } from './config'
 import { FIRST_DUNGEON_GODOT_TERRAIN_PUBLIC_ASSETS } from './firstDungeonGodotTerrain'
 import { HOME_COMBAT_LOADING_ASSETS } from './homeSceneAssetManifest'
@@ -220,9 +221,16 @@ export const getCombatAssetResources = (descriptor: CombatLoadingDependencyDescr
       key: 'combat-audio.archer-basic-attack',
       domain: 'combat-audio',
       kind: 'audio' as const,
-      version: COMBAT_LOADING_CONTRACT_VERSION,
+      version: 'f045e9340801e6cff02e2ce5cbbe31aab40febb83e303d5031ccd98e3ecfd537',
       url: publicAssetUrl('assets/audio/archer-basic-attack.wav'),
     }),
+    ...Object.values(COMBAT_BACKGROUND_MUSIC_ASSETS).map((asset) => Object.freeze({
+      key: asset.key,
+      domain: 'combat-music',
+      kind: 'audio' as const,
+      version: asset.sha256,
+      url: asset.publicUrl,
+    })),
     Object.freeze({ key: 'combat-font.pixel', domain: 'combat-fonts', kind: 'font' as const, version: 'google-font-v1', fontFamily: 'Press Start 2P' }),
     Object.freeze({ key: 'combat-font.body', domain: 'combat-fonts', kind: 'font' as const, version: 'google-font-v1', fontFamily: 'VT323' }),
   ]

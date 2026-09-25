@@ -11,6 +11,8 @@ const baseUrl = (import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')
 const encodeAssetPath = (path: string) => path.split('/').map(encodeURIComponent).join('/')
 const publicUrl = (path: string) => `${baseUrl}${encodeAssetPath(path.replace(/^\/+/, ''))}`
 
+export const HOME_BACKGROUND_MUSIC_URL = publicUrl('assets/audio/home-v1/redemption.ogg')
+
 export const HOME_COMBAT_LOADING_ASSET_BASE_PATH = 'assets/ui/home-combat-loading-v1'
 
 export const HOME_COMBAT_LOADING_ASSETS = Object.freeze({
@@ -109,6 +111,13 @@ export const HOME_SCENE_ASSET_MANIFEST_V1: SceneAssetManifest = Object.freeze({
   version: 'home-scene-assets-v1',
   scene: 'home',
   resources: Object.freeze([
+    {
+      key: 'home.music.redemption',
+      domain: 'home-audio',
+      kind: 'audio' as const,
+      version: 'ab9416d567bd90b0aea61e17bfd80f05a65ed2b0576f93df58bbd8a65063967a',
+      url: HOME_BACKGROUND_MUSIC_URL,
+    },
     imageResource('transition.background', 'transition', HOME_COMBAT_LOADING_ASSETS.background.path, HOME_COMBAT_LOADING_ASSETS.background.sha256),
     imageResource('transition.title', 'transition', HOME_COMBAT_LOADING_ASSETS.title.path, HOME_COMBAT_LOADING_ASSETS.title.sha256),
     imageResource('transition.final', 'transition', HOME_COMBAT_LOADING_ASSETS.final.path, HOME_COMBAT_LOADING_ASSETS.final.sha256),
