@@ -4967,6 +4967,15 @@ describe('game engine', () => {
       isCritical: false,
       mergeKey: 'player:player:basic-arrow:log-target:normal',
     })
+    expect(merged.enemyHitEvents).toEqual([
+      expect.objectContaining({
+        kind: 'enemy-hit', eventId: 'enemy-hit-1', sequence: 1, sourceId: 'basic-arrow', targetId: 'log-target', actualDamage: 12, fatal: false,
+      }),
+      expect.objectContaining({
+        kind: 'enemy-hit', eventId: 'enemy-hit-2', sequence: 2, sourceId: 'basic-arrow', targetId: 'log-target', actualDamage: 8, fatal: false,
+      }),
+    ])
+    expect(merged.enemyHitEventSequence).toBe(2)
     expect(merged.runSettlementDamageStats).toEqual([{
       sourceId: 'player-basic-attack',
       sourceName: '普通攻击',
@@ -4982,6 +4991,8 @@ describe('game engine', () => {
     const separated = advanceGame(afterMergeWindow, { up: false, down: false, left: false, right: false }, 0.016)
     expect(separated.combatDamageLog).toHaveLength(2)
     expect(separated.combatDamageLog[1]?.damage).toBe(5)
+    expect(separated.enemyHitEvents.map((event) => event.sequence)).toEqual([1, 2, 3])
+    expect(new Set(separated.enemyHitEvents.map((event) => event.eventId)).size).toBe(3)
     expect(separated.runSettlementDamageStats).toEqual([{
       sourceId: 'player-basic-attack',
       sourceName: '普通攻击',
@@ -5001,6 +5012,12 @@ describe('game engine', () => {
       makeProjectile({ id: 'basic-alias-projectile', sourceSkillId: 'player-projectile', position: { x: 220, y: 240 }, velocity: { x: 0, y: 0 }, damage: 9 }),
     ]
     const basicAliasesAfter = advanceGame(basicAliases, noInput, 0.016)
+    expect(basicAliasesAfter.enemyHitEvents.map((event) => event.targetId)).toEqual([
+      'basic-alias-arrow',
+      'basic-alias-attack',
+      'basic-alias-projectile',
+    ])
+    expect(basicAliasesAfter.enemyHitEvents.map((event) => event.sequence)).toEqual([1, 2, 3])
     expect(basicAliasesAfter.runSettlementDamageStats).toEqual([{
       sourceId: 'player-basic-attack',
       sourceName: '普通攻击',
@@ -5012,6 +5029,9 @@ describe('game engine', () => {
     activeSkill.enemies = [makeEnemy({ id: 'active-skill-target', position: { x: 220, y: 200 }, hp: 100, maxHp: 100 })]
     activeSkill.projectiles = [makeProjectile({ id: 'active-skill-arrow', sourceSkillId: 'pierce-arrow', position: { x: 220, y: 200 }, velocity: { x: 0, y: 0 }, damage: 14 })]
     const activeSkillAfter = advanceGame(activeSkill, noInput, 0.016)
+    expect(activeSkillAfter.enemyHitEvents).toEqual([
+      expect.objectContaining({ sourceId: 'pierce-arrow', targetId: 'active-skill-target', actualDamage: 14 }),
+    ])
     expect(activeSkillAfter.runSettlementDamageStats).toEqual([{
       sourceId: 'pierce-arrow',
       sourceName: ARCHER_ACTIVE_SKILL_MAP['pierce-arrow'].name,
@@ -5079,6 +5099,17 @@ describe('game engine', () => {
     overkill.projectiles = [makeProjectile({ id: 'overkill-arrow', sourceSkillId: 'basic-arrow', position: { x: 220, y: 200 }, velocity: { x: 0, y: 0 }, damage: 50 })]
     const overkillAfter = advanceGame(overkill, { up: false, down: false, left: false, right: false }, 0.016)
     expect(overkillAfter.combatDamageLog[0]).toMatchObject({ targetId: 'overkill-target', damage: 7 })
+    expect(overkillAfter.kills).toBe(1)
+    expect(overkillAfter.enemyHitEvents).toEqual([
+      expect.objectContaining({ sourceId: 'basic-arrow', targetId: 'overkill-target', actualDamage: 7, fatal: true }),
+    ])
+
+    const zeroDamage = createLogSnapshot()
+    zeroDamage.enemies = [makeEnemy({ id: 'zero-damage-target', position: { x: 220, y: 200 }, hp: 100, maxHp: 100 })]
+    zeroDamage.projectiles = [makeProjectile({ id: 'zero-damage-arrow', sourceSkillId: 'basic-arrow', position: { x: 220, y: 200 }, velocity: { x: 0, y: 0 }, damage: 0 })]
+    const zeroDamageAfter = advanceGame(zeroDamage, noInput, 0.016)
+    expect(zeroDamageAfter.enemies[0].hp).toBe(100)
+    expect(zeroDamageAfter.enemyHitEvents).toEqual([])
 
     const melee = createLogSnapshot()
     melee.enemies = [makeEnemy({
@@ -5125,6 +5156,9 @@ describe('game engine', () => {
     const dotAfter = advanceGame(dotHit, { up: false, down: false, left: false, right: false }, 0.2)
     expect(dotAfter.combatDamageLog).toEqual(expect.arrayContaining([expect.objectContaining({
       side: 'player', sourceId: 'run_blood_02', sourceName: '流血箭簇', targetId: 'dot-target', damage: expect.any(Number),
+    })]))
+    expect(dotAfter.enemyHitEvents).toEqual(expect.arrayContaining([expect.objectContaining({
+      sourceId: 'run_blood_02', targetId: 'dot-target', actualDamage: expect.any(Number), fatal: false,
     })]))
     expect(dotAfter.runSettlementDamageStats).toEqual(expect.arrayContaining([expect.objectContaining({
       sourceId: 'run_blood_02', sourceName: '流血箭簇', totalDamage: expect.any(Number), maxHitDamage: expect.any(Number),
@@ -5205,10 +5239,15 @@ describe('game engine', () => {
     }])
 
     expect(startRunSnapshot(separated).combatDamageLog).toEqual([])
+    expect(startRunSnapshot(separated).enemyHitEvents).toEqual([])
     expect(restartRunSnapshot(separated).combatDamageLog).toEqual([])
+    expect(restartRunSnapshot(separated).enemyHitEvents).toEqual([])
     expect(returnToVillageSnapshot(separated).combatDamageLog).toEqual([])
+    expect(returnToVillageSnapshot(separated).enemyHitEvents).toEqual([])
     expect(startLocalBattleTestSnapshot(separated).combatDamageLog).toEqual([])
+    expect(startLocalBattleTestSnapshot(separated).enemyHitEvents).toEqual([])
     expect(exitLocalBattleTestSnapshot(startLocalBattleTestSnapshot(separated)).combatDamageLog).toEqual([])
+    expect(exitLocalBattleTestSnapshot(startLocalBattleTestSnapshot(separated)).enemyHitEvents).toEqual([])
   })
 
   it('aggregates actual ordinary-arrow variants for formal settlement without merging skills or talents', () => {
@@ -6873,6 +6912,11 @@ describe('game engine', () => {
     const next = advanceGame(snapshot, noInput, 0.05)
 
     expect(next.enemies[0].hp).toBeLessThan(100)
+    expect(next.enemyHitEvents).toEqual([
+      expect.objectContaining({
+        kind: 'enemy-hit', sourceId: 'starfire-fall', targetId: 'field-target', actualDamage: 12, fatal: false,
+      }),
+    ])
     expect(next.skillEvolutionEffectEvents).toEqual(expect.arrayContaining([
       expect.objectContaining({
         familyId: 'venom-vine',
@@ -13658,6 +13702,8 @@ describe('game engine', () => {
     expect(next.beastCompanions[0].durationTimer).toBeGreaterThan(9_000)
     expect(next.combatDamageLog.some((event) => event.sourceId === 'beast-hunt-attack')).toBe(true)
     expect(next.combatDamageLog.some((event) => event.sourceId === 'beast-contract-stampede')).toBe(true)
+    expect(next.enemyHitEvents.some((event) => event.sourceId === 'beast-hunt-attack')).toBe(true)
+    expect(next.enemyHitEvents.some((event) => event.sourceId === 'beast-contract-stampede')).toBe(true)
   })
 
   it('uses current owned beast skill level for domain autos and Lv1 when that family is absent', () => {
@@ -13686,6 +13732,9 @@ describe('game engine', () => {
     expect(currentLevelDamage).toBeGreaterThan(fallbackDamage)
     expect(levelOneFallback.beastCompanions).toHaveLength(0)
     expect(levelOneFallback.combatDamageLog.some((event) => event.sourceId === 'beast-domain-auto')).toBe(true)
+    expect(levelOneFallback.enemyHitEvents).toEqual([
+      expect.objectContaining({ sourceId: 'beast-domain-auto', targetId: 'domain-target', fatal: false }),
+    ])
   })
 
   it('routes commanded beast damage through direct marks and applies the hunt-ring damage modifier', () => {

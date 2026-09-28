@@ -98,7 +98,7 @@ describe('game audio', () => {
     })
   })
 
-  it('ships the controlled mono 22.05kHz PCM WAV at the unchanged project path', () => {
+  it('preserves the approved new three-second clip as compact mono 22.05kHz PCM at the same path', () => {
     const wav = readFileSync(resolve(process.cwd(), 'public/assets/audio/archer-basic-attack.wav'))
     expect(wav.toString('ascii', 0, 4)).toBe('RIFF')
     expect(wav.toString('ascii', 8, 16)).toBe('WAVEfmt ')
@@ -106,9 +106,11 @@ describe('game audio', () => {
     expect(wav.readUInt16LE(22)).toBe(1)
     expect(wav.readUInt32LE(24)).toBe(22050)
     expect(wav.readUInt16LE(34)).toBe(16)
-    expect(wav.readUInt32LE(40)).toBe(5184 * 2)
+    expect(wav.readUInt32LE(40)).toBe(66150 * 2)
+    expect(wav.length).toBe(132344)
+    expect(wav.readUInt32LE(40) / wav.readUInt16LE(32) / wav.readUInt32LE(24)).toBe(3)
     expect(wav.subarray(44).some((sampleByte) => sampleByte !== 0)).toBe(true)
-    expect(createHash('sha256').update(wav).digest('hex')).toBe('f045e9340801e6cff02e2ce5cbbe31aab40febb83e303d5031ccd98e3ecfd537')
+    expect(createHash('sha256').update(wav).digest('hex')).toBe('a4d28819c7316c61b763978a21916bf1fcc2b069f544196fac6b395cc2aba82b')
   })
 
   it('caps overlapping archer sounds at four, evicts the oldest, and removes ended clones', () => {

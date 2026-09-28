@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ARCHER_CORE_SKILL_IDS } from '../game/archerSkillEvolution'
 import { playGameSound, resetGameSoundRuntimeForTests, setGameSoundNowProviderForTests, setGameSoundTestPlayer } from '../game/audio'
@@ -22,6 +22,11 @@ import {
   shouldInstallLocalE2EHarness,
   useGameStore,
 } from './useGameStore'
+
+beforeEach(() => {
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
+})
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -203,12 +208,33 @@ describe('game store persistence', () => {
       effectStrength: 0,
       sourceSkillId: 'test',
     }]
+    running.enemyHitEventSequence = 41
+    running.enemyHitEvents = [{
+      kind: 'enemy-hit',
+      eventId: 'enemy-hit-41',
+      sequence: 41,
+      occurredAt: 2.5,
+      attackerId: 'player',
+      sourceId: 'test',
+      sourceName: '测试命中',
+      targetId: 'combat-enemy',
+      targetName: '测试敌人',
+      targetKind: 'melee',
+      targetPosition: { x: 320, y: 200 },
+      actualDamage: 1,
+      fatal: false,
+    }]
 
     const persisted = {
       ...extractPersistedGameState(running),
       unsealedEquipmentSlots: ['weapon', 'chest', 'boots', 'ring1', 'helmet'],
     }
     const restored = restorePersistedGameState(persisted)
+
+    expect(persisted).not.toHaveProperty('enemyHitEventSequence')
+    expect(persisted).not.toHaveProperty('enemyHitEvents')
+    expect(restored.enemyHitEventSequence).toBe(0)
+    expect(restored.enemyHitEvents).toEqual([])
 
     expect(restored.phase).toBe('idle')
     expect(restored.currency).toBe(321)
@@ -1842,6 +1868,52 @@ describe('game store audio events', () => {
     expect(player).not.toHaveBeenCalled()
   })
 
+  it('plays the new functional upgrade cue only on successful unlock/rank increases, not failure/reset/restore', () => {
+    const player = vi.fn()
+    setGameSoundTestPlayer(player)
+    useGameStore.setState({
+      ...createInitialSnapshot('idle'), talentPoints: 9,
+      unlockedTalentIds: ['meta_common_01'], unlockedMetaTalentIds: ['meta_common_01'],
+      metaTalentRanks: { meta_common_01: 1 },
+    })
+    useGameStore.getState().unlockMetaTalent('meta_common_02')
+    useGameStore.getState().unlockMetaTalent('meta_common_02')
+    useGameStore.getState().unlockMetaTalent('meta_common_02') // Already at cap.
+    expect(player.mock.calls.filter(([id]) => id === 'functional-talent-upgrade')).toHaveLength(2)
+    expect(player.mock.calls.filter(([id]) => id === 'reward-confirm')).toHaveLength(0)
+    useGameStore.setState(restorePersistedGameState(extractPersistedGameState(useGameStore.getState())))
+    useGameStore.getState().resetMetaTalentTree()
+    useGameStore.setState({ talentPoints: 0 })
+    useGameStore.getState().unlockMetaTalent('meta_common_01')
+    expect(player.mock.calls.filter(([id]) => id === 'functional-talent-upgrade')).toHaveLength(2)
+  })
+
+  it('suppresses generic Boss audio only for a mapped real spawn, preserving other Boss cues', () => {
+    const previous = createInitialSnapshot('running')
+    const next = { ...previous, enemies: [{ id: 'warden', kind: 'boss', archetypeId: 'dungeon-warden' } as Enemy] }
+    expect(getSimulationSoundEvents(previous, next)).not.toContain('boss-entry')
+    expect(getSimulationSoundEvents(previous, { ...next, enemies: [{ ...next.enemies[0], archetypeId: 'other-boss' }] })).toContain('boss-entry')
+  })
+
+  it('a real successful manual control cast draws once; automatic live fields never synthesize a draw', () => {
+    const player = vi.fn()
+    setGameSoundTestPlayer(player)
+    const snapshot = createInitialSnapshot('running')
+    snapshot.activeSkills = [{ skillId: 'arrow-rain', familyId: 'arrow-rain', level: 1, cooldownRemaining: 0 }]
+    useGameStore.setState(snapshot)
+    useGameStore.getState().triggerActiveSkill(0)
+    expect(useGameStore.getState().skillFields.some((field) => field.sourceSkillFamilyId === 'arrow-rain')).toBe(true)
+    expect(player.mock.calls.filter(([id]) => id === 'skill-cast')).toHaveLength(1)
+    useGameStore.getState().triggerActiveSkill(0)
+    expect(player.mock.calls.filter(([id]) => id === 'skill-cast')).toHaveLength(1)
+    const fields = useGameStore.getState().skillFields
+    useGameStore.setState({ skillFields: [...fields, { ...fields[0], id: 'auto-field', fieldSource: 'set-energy', isSetGenerated: true }] })
+    expect(player.mock.calls.filter(([id]) => id === 'skill-cast')).toHaveLength(1)
+    useGameStore.setState({ activeSkills: [{ ...useGameStore.getState().activeSkills[0], cooldownRemaining: 0 }] })
+    useGameStore.getState().triggerActiveSkill(0)
+    expect(player.mock.calls.filter(([id]) => id === 'skill-cast')).toHaveLength(2)
+  })
+
   it('plays once for a successful manual pursuit cast, but not failed attempts or generated follow-ups', () => {
     const player = vi.fn()
     setGameSoundTestPlayer(player)
@@ -1893,7 +1965,31 @@ describe('game store audio events', () => {
     expect(player).toHaveBeenCalledTimes(2)
   })
 
-  it('plays pickup, hit, death, and boss entry sounds from simulation ticks', () => {
+  it('plays a real fatal hit and the existing death cue together, without HP-delta hit inference', () => {
+    const player = vi.fn()
+    setGameSoundTestPlayer(player)
+    const snapshot = createInitialSnapshot('running')
+    const targetPosition = { x: snapshot.player.position.x + 60, y: snapshot.player.position.y }
+    snapshot.player.attackCooldown = 999
+    snapshot.levelTargetKills = 999
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 1
+    snapshot.spawnCooldown = 999
+    snapshot.mapObstacles = []
+    snapshot.enemies = [makeEnemy({ hp: 1, position: targetPosition })]
+    snapshot.projectiles = [makeProjectile({ position: targetPosition, velocity: { x: 0, y: 0 } })]
+    useGameStore.setState(snapshot)
+    useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })
+    expect(useGameStore.getState().enemyHitEvents).toHaveLength(1)
+    expect(useGameStore.getState().enemyHitEvents[0]).toMatchObject({ fatal: true, actualDamage: 1 })
+    expect(player.mock.calls.filter(([id]) => id === 'enemy-hit')).toHaveLength(1)
+    expect(player.mock.calls.filter(([id]) => id === 'enemy-death')).toHaveLength(1)
+    expect(player.mock.calls.some(([id]) => id === 'basic-hit' || id === 'skill-hit')).toBe(false)
+    useGameStore.setState({ audioSettings: { ...snapshot.audioSettings } })
+    expect(player.mock.calls.filter(([id]) => id === 'enemy-hit')).toHaveLength(1)
+  })
+
+  it('plays pickup, death, and boss entry sounds from simulation ticks', () => {
     const player = vi.fn()
     let now = 0
     setGameSoundNowProviderForTests(() => {
@@ -1963,8 +2059,10 @@ describe('game store audio events', () => {
     combatNext.kills = combatPrevious.kills + 1
 
     expect(getSimulationSoundEvents(combatPrevious, combatNext)).toEqual(
-      expect.arrayContaining(['enemy-death', 'skill-hit']),
+      expect.arrayContaining(['enemy-death']),
     )
+    expect(getSimulationSoundEvents(combatPrevious, combatNext)).not.toContain('skill-hit')
+    expect(getSimulationSoundEvents(combatPrevious, combatNext)).not.toContain('basic-hit')
 
     const basicHitPrevious = createInitialSnapshot('running')
     basicHitPrevious.enemies = [makeEnemy({ id: 'audio-basic-hit-target', hp: 10, maxHp: 10 })]
@@ -1972,9 +2070,7 @@ describe('game store audio events', () => {
     const basicHitNext = createInitialSnapshot('running')
     basicHitNext.enemies = [{ ...basicHitPrevious.enemies[0], hp: 4 }]
 
-    expect(getSimulationSoundEvents(basicHitPrevious, basicHitNext)).not.toEqual(
-      expect.arrayContaining(['skill-hit', 'basic-hit']),
-    )
+    expect(getSimulationSoundEvents(basicHitPrevious, basicHitNext)).toEqual([])
 
     player.mockClear()
     const bossRun = createInitialSnapshot('running')
@@ -1989,7 +2085,8 @@ describe('game store audio events', () => {
     useGameStore.setState(bossRun)
 
     useGameStore.getState().tick(0.016, { up: false, down: false, left: false, right: false })
-    expect(player).toHaveBeenCalledWith('boss-entry', 0.3)
+    expect(player).toHaveBeenCalledWith('skeleton-entry', 0.3)
+    expect(player).not.toHaveBeenCalledWith('boss-entry', 0.3)
   })
 
   it('plays equipment drop sounds when combat creates a new equipment pickup', () => {

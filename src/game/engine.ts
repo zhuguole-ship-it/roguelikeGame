@@ -289,6 +289,7 @@ import { randomBetween, sample } from '../utils/random'
 const createId = () => Math.random().toString(16).slice(2)
 const COMBAT_DAMAGE_LOG_MERGE_WINDOW = 0.5
 const COMBAT_DAMAGE_LOG_CAPACITY = 120
+const ENEMY_HIT_EVENT_CAPACITY = 512
 const RESONANCE_ECHO_WINDOW_SECONDS = 5
 const RESONANCE_ECHO_RADIUS = 42
 const PIERCE_ARMOR_ECHO_RADIUS = 200
@@ -2480,6 +2481,8 @@ const createBaseSnapshot = (phase: GamePhase, battlefieldSeed?: number): GameSna
     skillAllocations,
   contractBoons: createEmptyContractBoons(),
   combatDamageLog: [],
+  enemyHitEventSequence: 0,
+  enemyHitEvents: [],
   runStartingEquipmentIds: [],
   runSettlementDamageStats: [],
   runSettlementSummary: undefined,
@@ -3102,6 +3105,39 @@ const recordCombatDamage = (
   }
 }
 
+const recordEnemyHitEvent = (
+  snapshot: GameSnapshot,
+  enemy: Enemy,
+  attribution: CombatDamageAttribution,
+  actualDamage: number,
+  fatal: boolean,
+) => {
+  if (actualDamage <= 0) return
+
+  const sequence = (snapshot.enemyHitEventSequence ?? 0) + 1
+  const events = snapshot.enemyHitEvents ?? []
+  snapshot.enemyHitEventSequence = sequence
+  events.push({
+    kind: 'enemy-hit',
+    eventId: `enemy-hit-${sequence}`,
+    sequence,
+    occurredAt: snapshot.elapsedTime,
+    attackerId: attribution.attackerId,
+    sourceId: attribution.sourceId,
+    sourceName: attribution.sourceName,
+    targetId: enemy.id,
+    targetName: getEnemyDisplayName(enemy),
+    targetKind: enemy.kind,
+    targetPosition: { ...enemy.position },
+    actualDamage,
+    fatal,
+  })
+  if (events.length > ENEMY_HIT_EVENT_CAPACITY) {
+    events.splice(0, events.length - ENEMY_HIT_EVENT_CAPACITY)
+  }
+  snapshot.enemyHitEvents = events
+}
+
 const recordRunSettlementDamage = (
   snapshot: GameSnapshot,
   attribution: CombatDamageAttribution,
@@ -3439,7 +3475,9 @@ const damageEnemy = (
   }
   tryTriggerDungeonWardenRage(snapshot, enemy, appliedDamage)
   const actualDamage = Math.max(0, beforeHp - Math.max(0, enemy.hp))
-  recordCombatTalentV3DamageOutcome(snapshot, enemy, attribution, actualDamage, beforeHp > 0 && enemy.hp <= 0)
+  const fatal = beforeHp > 0 && enemy.hp <= 0
+  recordEnemyHitEvent(snapshot, enemy, attribution, actualDamage, fatal)
+  recordCombatTalentV3DamageOutcome(snapshot, enemy, attribution, actualDamage, fatal)
   recordCombatDamage(snapshot, attribution, enemy.id, getEnemyDisplayName(enemy), actualDamage, resolvedCritical)
   recordRunSettlementDamage(snapshot, attribution, actualDamage)
   triggerCommonRunTalentDamageReactions(snapshot, enemy, attribution, actualDamage)
@@ -7250,6 +7288,11 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
       }
     : {},
   combatDamageLog: snapshot.combatDamageLog.map((event) => ({ ...event })),
+  enemyHitEventSequence: snapshot.enemyHitEventSequence ?? 0,
+  enemyHitEvents: (snapshot.enemyHitEvents ?? []).map((event) => ({
+    ...event,
+    targetPosition: { ...event.targetPosition },
+  })),
   runStartingEquipmentIds: [...(snapshot.runStartingEquipmentIds ?? [])],
   runSettlementDamageStats: (snapshot.runSettlementDamageStats ?? []).map((stat) => ({ ...stat })),
   runSettlementSummary: snapshot.runSettlementSummary
@@ -12827,6 +12870,11 @@ const createLevelState = (previous: GameSnapshot, nextLevel: number): GameSnapsh
     skillAllocations: { ...previous.skillAllocations },
     contractBoons: { ...previous.contractBoons },
     combatDamageLog: previous.combatDamageLog.map((event) => ({ ...event })),
+    enemyHitEventSequence: previous.enemyHitEventSequence ?? 0,
+    enemyHitEvents: (previous.enemyHitEvents ?? []).map((event) => ({
+      ...event,
+      targetPosition: { ...event.targetPosition },
+    })),
     runStartingEquipmentIds: [...(previous.runStartingEquipmentIds ?? [])],
     runSettlementDamageStats: (previous.runSettlementDamageStats ?? []).map((stat) => ({ ...stat })),
     runSettlementSummary: undefined,
@@ -19456,6 +19504,8 @@ const finishRunToVillage = (snapshot: GameSnapshot, options: { earnedGold: numbe
   snapshot.inRunTalentIds = []
   snapshot.talentCombatState = {}
   snapshot.combatDamageLog = []
+  snapshot.enemyHitEventSequence = 0
+  snapshot.enemyHitEvents = []
   snapshot.runStartingEquipmentIds = []
   snapshot.runSettlementDamageStats = []
   snapshot.campaignRewardProgress = createCampaignRewardProgress(getSnapshotDifficulty(snapshot))
@@ -19731,6 +19781,8 @@ export const prepareDevelopmentAcceptanceTargetSnapshot = (
   prepared.floatingTexts = []
   prepared.spiralBreakFlights = []
   prepared.combatDamageLog = []
+  prepared.enemyHitEventSequence = 0
+  prepared.enemyHitEvents = []
   prepared.runSettlementDamageStats = []
   prepared.runSettlementSummary = undefined
   prepared.levelKills = 0

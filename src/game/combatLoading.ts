@@ -5,6 +5,8 @@ import { developerAssetEntities } from './assetManifest'
 import { CAMPAIGN_MONSTER_THEMES } from './campaignMonsters'
 import { COMBAT_HUD_V2_RUNTIME_ASSETS, getCombatHudV2AssetUrl } from './combatHudAssets'
 import { COMBAT_BACKGROUND_MUSIC_ASSETS } from './combatBackgroundMusicAssets'
+import { ENEMY_HIT_AUDIO_ASSET } from './enemyHitAudioAsset'
+import { getSpawnAudioResources, SEVEN_CUE_AUDIO_ASSETS } from './sevenCueAudioAssets'
 import { FLOORS_PER_CAMPAIGN, getCampaignFloor, isBossLevel } from './config'
 import { FIRST_DUNGEON_GODOT_TERRAIN_PUBLIC_ASSETS } from './firstDungeonGodotTerrain'
 import { HOME_COMBAT_LOADING_ASSETS } from './homeSceneAssetManifest'
@@ -221,9 +223,13 @@ export const getCombatAssetResources = (descriptor: CombatLoadingDependencyDescr
       key: 'combat-audio.archer-basic-attack',
       domain: 'combat-audio',
       kind: 'audio' as const,
-      version: 'f045e9340801e6cff02e2ce5cbbe31aab40febb83e303d5031ccd98e3ecfd537',
+      version: 'a4d28819c7316c61b763978a21916bf1fcc2b069f544196fac6b395cc2aba82b',
       url: publicAssetUrl('assets/audio/archer-basic-attack.wav'),
     }),
+    ENEMY_HIT_AUDIO_ASSET,
+    SEVEN_CUE_AUDIO_ASSETS.button,
+    SEVEN_CUE_AUDIO_ASSETS['area-control-loop'],
+    ...getSpawnAudioResources([...enemyIds, ...(descriptor.target.campaign === 1 ? ['corrosive-slime'] : [])]),
     ...Object.values(COMBAT_BACKGROUND_MUSIC_ASSETS).map((asset) => Object.freeze({
       key: asset.key,
       domain: 'combat-music',

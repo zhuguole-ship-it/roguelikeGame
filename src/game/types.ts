@@ -1247,6 +1247,26 @@ export type CombatDamageLogEvent = {
   mergeKey: string
 }
 
+/**
+ * One finalized monster life-loss settlement. Unlike the HUD damage log, this
+ * stream is never merged, so event consumers can react exactly once per hit.
+ */
+export type EnemyHitEvent = {
+  kind: 'enemy-hit'
+  eventId: string
+  sequence: number
+  occurredAt: number
+  attackerId: string
+  sourceId: string
+  sourceName: string
+  targetId: string
+  targetName: string
+  targetKind: EnemyKind
+  targetPosition: Vector2
+  actualDamage: number
+  fatal: boolean
+}
+
 /** A UI-ready item that was actually owned by the player during this run. */
 export type RunSettlementDisplayEntry = RunSettlementUiDisplayEntry & {
   order: number
@@ -2374,6 +2394,9 @@ export type GameSnapshot = {
   skillEvolutionEffectEvents: SkillEvolutionEffectEvent[]
   floatingTexts: FloatingText[]
   combatDamageLog: CombatDamageLogEvent[]
+  /** Runtime-only monotonically ordered monster-hit event stream. */
+  enemyHitEventSequence: number
+  enemyHitEvents: EnemyHitEvent[]
   /** Formal-run baseline; used only to exclude pre-run inventory from settlement rewards. */
   runStartingEquipmentIds?: string[]
   /** Internal, uncapped aggregation which is frozen into runSettlementSummary at formal exit. */

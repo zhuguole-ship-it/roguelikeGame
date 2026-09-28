@@ -1,4 +1,8 @@
 import type { AudioSettings } from './types'
+import { ENEMY_HIT_AUDIO_ASSET } from './enemyHitAudioAsset'
+import { getVersionedSceneAssetUrl } from './sceneAssetLoading'
+import type { SceneAssetResource } from './sceneAssetLoading'
+import { SEVEN_CUE_AUDIO_ASSETS, type SpawnSoundId } from './sevenCueAudioAssets'
 
 export type GameSoundId =
   | 'button'
@@ -11,8 +15,11 @@ export type GameSoundId =
   | 'skill-hit'
   | 'basic-hit'
   | 'enemy-death'
+  | 'enemy-hit'
   | 'level-settle'
   | 'reward-confirm'
+  | 'functional-talent-upgrade'
+  | SpawnSoundId
 
 type SoundPlayer = (id: GameSoundId, volume: number) => void
 
@@ -36,8 +43,14 @@ const SOUND_FREQUENCIES: Record<GameSoundId, [number, number]> = {
   'skill-hit': [260, 390],
   'basic-hit': [180, 260],
   'enemy-death': [140, 220],
+  'enemy-hit': [260, 390],
   'level-settle': [392, 588],
   'reward-confirm': [660, 880],
+  'functional-talent-upgrade': [660, 880],
+  'hellhound-entry': [88, 176],
+  'skeleton-entry': [88, 176],
+  'slime-entry': [88, 176],
+  'chain-entry': [88, 176],
 }
 
 const SOUND_ASSET_PATHS: Partial<Record<GameSoundId, string>> = {
@@ -48,14 +61,108 @@ const audioAssetCache = new Map<string, HTMLAudioElement>()
 const MAX_ARCHER_ATTACK_SOUND_INSTANCES = 4
 const activeArcherAttackSounds = new Map<HTMLAudioElement, () => void>()
 let archerAttackSoundAllowed = false
+const MAX_ENEMY_HIT_SOUND_INSTANCES = 12
+const activeEnemyHitSounds = new Map<HTMLAudioElement, () => void>()
+let enemyHitSoundAllowed = false
+const activeUiSounds = new Map<HTMLAudioElement, () => void>()
+const activeSpawnSounds = new Map<HTMLAudioElement, () => void>()
+let spawnSoundAllowed = false
+let buttonActivationInProgress = false
+const controlArcherFields = new Map<HTMLAudioElement, readonly string[]>()
+const pausedControlArcher = new Set<HTMLAudioElement>()
+const handleArcherPlaybackFailure = (audio: HTMLAudioElement, error: unknown) => {
+  // pause() can reject an in-flight play() promise; it is not a failed retained clip.
+  if (pausedControlArcher.has(audio) && error instanceof DOMException && error.name === 'AbortError') return
+  releaseArcherAttackSound(audio, true)
+}
+export const setGameButtonActivationInProgress = (value: boolean) => { buttonActivationInProgress = value }
+
+/** Shares the versioned template cache, not a separate resource loader. */
+export const createGameAudioAssetInstance = (resource: SceneAssetResource): HTMLAudioElement | null => {
+  if (typeof Audio === 'undefined') return null
+  const url = getVersionedSceneAssetUrl(resource)
+  if (!audioAssetCache.has(url)) {
+    const template = new Audio(url)
+    template.preload = 'auto'
+    audioAssetCache.set(url, template)
+  }
+  return audioAssetCache.get(url)!.cloneNode(true) as HTMLAudioElement
+}
+const releasePooledSound = (pool: Map<HTMLAudioElement, () => void>, audio: HTMLAudioElement, stop: boolean) => {
+  const cleanup = pool.get(audio)
+  if (!cleanup) return
+  cleanup()
+  pool.delete(audio)
+  if (stop) { audio.pause(); audio.currentTime = 0 }
+}
+const stopPool = (pool: Map<HTMLAudioElement, () => void>) => {
+  for (const audio of [...pool.keys()]) releasePooledSound(pool, audio, true)
+}
+export const stopUiSoundInstances = () => stopPool(activeUiSounds)
+export const stopSpawnSoundInstances = () => stopPool(activeSpawnSounds)
+const effectsVolume = (settings: Pick<AudioSettings, 'masterVolume' | 'effectsVolume' | 'muted'>) => (
+  settings.muted ? 0 : Math.max(0, Math.min(1, settings.masterVolume / 100 * settings.effectsVolume / 100))
+)
+export const syncUiSoundVolume = (settings: AudioSettings) => {
+  if (!effectsVolume(settings)) stopUiSoundInstances()
+  else for (const audio of activeUiSounds.keys()) audio.volume = effectsVolume(settings)
+}
+export const syncSpawnSoundState = (allowed: boolean, settings: AudioSettings) => {
+  spawnSoundAllowed = allowed && effectsVolume(settings) > 0
+  if (!spawnSoundAllowed) stopSpawnSoundInstances()
+  else for (const audio of activeSpawnSounds.keys()) audio.volume = effectsVolume(settings)
+}
+const playPooledSound = (resource: SceneAssetResource, pool: Map<HTMLAudioElement, () => void>, limit: number, volume: number) => {
+  const audio = createGameAudioAssetInstance(resource)
+  if (!audio) return false
+  if (pool.size >= limit) releasePooledSound(pool, pool.keys().next().value!, true)
+  const ended = () => releasePooledSound(pool, audio, false)
+  const error = () => {
+    releasePooledSound(pool, audio, true)
+    audioAssetCache.delete(getVersionedSceneAssetUrl(resource))
+  }
+  pool.set(audio, () => { audio.removeEventListener('ended', ended); audio.removeEventListener('error', error) })
+  audio.addEventListener('ended', ended)
+  audio.addEventListener('error', error)
+  audio.volume = volume
+  try { void Promise.resolve(audio.play()).catch(error) } catch { error(); return false }
+  return true
+}
+
+const releaseEnemyHitSound = (audio: HTMLAudioElement, stop: boolean) => {
+  const cleanup = activeEnemyHitSounds.get(audio)
+  if (!cleanup) return
+  cleanup()
+  activeEnemyHitSounds.delete(audio)
+  if (stop) {
+    audio.pause()
+    audio.currentTime = 0
+  }
+}
+
+export const stopEnemyHitSoundInstances = () => {
+  for (const audio of [...activeEnemyHitSounds.keys()]) releaseEnemyHitSound(audio, true)
+}
+
+export const syncEnemyHitSoundState = (
+  allowed: boolean,
+  settings: Pick<AudioSettings, 'masterVolume' | 'effectsVolume' | 'muted'>,
+) => {
+  const volume = Math.max(0, Math.min(1, settings.masterVolume / 100 * settings.effectsVolume / 100))
+  enemyHitSoundAllowed = allowed && !settings.muted && volume > 0
+  if (!enemyHitSoundAllowed) stopEnemyHitSoundInstances()
+  else for (const audio of activeEnemyHitSounds.keys()) audio.volume = volume
+}
 
 const isArcherAttackSound = (id: GameSoundId) => id === 'basic-attack' || id === 'skill-cast'
 
 const releaseArcherAttackSound = (audio: HTMLAudioElement, stop: boolean) => {
-  const onEnded = activeArcherAttackSounds.get(audio)
-  if (!onEnded) return
-  audio.removeEventListener('ended', onEnded)
+  const cleanup = activeArcherAttackSounds.get(audio)
+  if (!cleanup) return
+  cleanup()
   activeArcherAttackSounds.delete(audio)
+  controlArcherFields.delete(audio)
+  pausedControlArcher.delete(audio)
   if (stop) {
     audio.pause()
     audio.currentTime = 0
@@ -66,6 +173,21 @@ export const stopArcherAttackSoundInstances = () => {
   for (const audio of [...activeArcherAttackSounds.keys()]) releaseArcherAttackSound(audio, true)
 }
 
+/** Local exception: only draw clips tied to still-live control fields may resume. */
+export const syncControlArcherAttackSounds = (
+  validFieldIds: ReadonlySet<string>, paused: boolean, settings: AudioSettings,
+) => {
+  for (const [audio, fieldIds] of controlArcherFields) {
+    if (!fieldIds.some((id) => validFieldIds.has(id))) { releaseArcherAttackSound(audio, true); continue }
+    audio.volume = effectsVolume(settings)
+    if (paused && !pausedControlArcher.has(audio)) { audio.pause(); pausedControlArcher.add(audio) }
+    else if (!paused && pausedControlArcher.delete(audio)) {
+      try { void Promise.resolve(audio.play()).catch((error) => handleArcherPlaybackFailure(audio, error)) }
+      catch { releaseArcherAttackSound(audio, true) }
+    }
+  }
+}
+
 /** The store supplies its existing combat/reward state; audio never derives combat eligibility. */
 export const syncArcherAttackSoundState = (
   allowed: boolean,
@@ -74,14 +196,15 @@ export const syncArcherAttackSoundState = (
   const volume = Math.max(0, Math.min(1, (settings.masterVolume / 100) * (settings.effectsVolume / 100)))
   archerAttackSoundAllowed = allowed && !settings.muted && volume > 0
   if (!archerAttackSoundAllowed) {
-    stopArcherAttackSoundInstances()
+    for (const audio of [...activeArcherAttackSounds.keys()]) {
+      if (!controlArcherFields.has(audio)) releaseArcherAttackSound(audio, true)
+    }
     return
   }
   for (const audio of activeArcherAttackSounds.keys()) audio.volume = volume
 }
 
 const SOUND_THROTTLE_MS: Partial<Record<GameSoundId, number>> = {
-  button: 35,
   'crystal-pickup': 90,
   'equipment-drop': 120,
   'equipment-pickup': 90,
@@ -118,6 +241,12 @@ export const resetGameSoundRuntimeForTests = () => {
     delete lastPlayedAt[key as GameSoundId]
   })
   stopArcherAttackSoundInstances()
+  stopEnemyHitSoundInstances()
+  stopUiSoundInstances()
+  stopSpawnSoundInstances()
+  spawnSoundAllowed = false
+  buttonActivationInProgress = false
+  enemyHitSoundAllowed = false
   archerAttackSoundAllowed = false
   audioAssetCache.clear()
   testPlayer = null
@@ -157,7 +286,7 @@ const playAudioAsset = (path: string, volume: number) => {
   return true
 }
 
-const playArcherAttackAsset = (path: string, volume: number) => {
+const playArcherAttackAsset = (path: string, volume: number, controlFieldIds?: readonly string[]) => {
   if (!archerAttackSoundAllowed || typeof Audio === 'undefined') return false
   const url = getPublicAssetUrl(path)
   if (!audioAssetCache.has(url)) {
@@ -170,11 +299,17 @@ const playArcherAttackAsset = (path: string, volume: number) => {
     releaseArcherAttackSound(activeArcherAttackSounds.keys().next().value!, true)
   }
   const onEnded = () => releaseArcherAttackSound(audio, false)
-  activeArcherAttackSounds.set(audio, onEnded)
+  const onError = () => releaseArcherAttackSound(audio, true)
+  activeArcherAttackSounds.set(audio, () => {
+    audio.removeEventListener('ended', onEnded)
+    audio.removeEventListener('error', onError)
+  })
+  if (controlFieldIds?.length) controlArcherFields.set(audio, controlFieldIds)
   audio.addEventListener('ended', onEnded)
+  audio.addEventListener('error', onError)
   audio.volume = volume
   try {
-    void Promise.resolve(audio.play()).catch(() => releaseArcherAttackSound(audio, true))
+    void Promise.resolve(audio.play()).catch((error) => handleArcherPlaybackFailure(audio, error))
   } catch {
     releaseArcherAttackSound(audio, true)
     return false
@@ -182,23 +317,71 @@ const playArcherAttackAsset = (path: string, volume: number) => {
   return true
 }
 
-export const playGameSound = (id: GameSoundId, settings: Pick<AudioSettings, 'masterVolume' | 'effectsVolume' | 'muted'>) => {
+const playEnemyHitAsset = (volume: number) => {
+  if (!enemyHitSoundAllowed || typeof Audio === 'undefined') return false
+  const url = getVersionedSceneAssetUrl(ENEMY_HIT_AUDIO_ASSET)
+  if (!audioAssetCache.has(url)) {
+    const template = new Audio(url)
+    template.preload = 'auto'
+    audioAssetCache.set(url, template)
+  }
+  const audio = audioAssetCache.get(url)!.cloneNode(true) as HTMLAudioElement
+  if (activeEnemyHitSounds.size >= MAX_ENEMY_HIT_SOUND_INSTANCES) {
+    releaseEnemyHitSound(activeEnemyHitSounds.keys().next().value!, true)
+  }
+  const onEnded = () => releaseEnemyHitSound(audio, false)
+  const onError = () => {
+    releaseEnemyHitSound(audio, true)
+    audioAssetCache.delete(url) // A later real event can retry a failed resource.
+  }
+  activeEnemyHitSounds.set(audio, () => {
+    audio.removeEventListener('ended', onEnded)
+    audio.removeEventListener('error', onError)
+  })
+  audio.addEventListener('ended', onEnded)
+  audio.addEventListener('error', onError)
+  audio.volume = volume
+  try {
+    void Promise.resolve(audio.play()).catch(() => releaseEnemyHitSound(audio, true))
+  } catch {
+    releaseEnemyHitSound(audio, true)
+    return false
+  }
+  return true
+}
+
+export const playGameSound = (
+  id: GameSoundId,
+  settings: Pick<AudioSettings, 'masterVolume' | 'effectsVolume' | 'muted'>,
+  options?: { domActivation?: boolean; controlFieldIds?: readonly string[] },
+) => {
+  if (id === 'button' && buttonActivationInProgress && !options?.domActivation) return false
+  if (typeof document !== 'undefined' && document.hidden) return false
   const volume = Math.max(0, Math.min(1, (settings.masterVolume / 100) * (settings.effectsVolume / 100)))
-  if (settings.muted || volume <= 0 || (isArcherAttackSound(id) && !archerAttackSoundAllowed)) {
+  if (settings.muted || volume <= 0 || (isArcherAttackSound(id) && !archerAttackSoundAllowed) || (id === 'enemy-hit' && !enemyHitSoundAllowed)) {
     return false
   }
 
   if (!shouldPlaySound(id)) {
     return false
   }
+  if (id.endsWith('-entry') && id !== 'boss-entry' && !spawnSoundAllowed) return false
 
   if (testPlayer) {
     testPlayer(id, volume)
     return true
   }
 
+  if (id === 'enemy-hit') return playEnemyHitAsset(volume)
+  if (id === 'button' || id === 'functional-talent-upgrade') {
+    return playPooledSound(SEVEN_CUE_AUDIO_ASSETS[id], activeUiSounds, 4, volume)
+  }
+  if (id !== 'boss-entry' && id.endsWith('-entry')) {
+    return playPooledSound(SEVEN_CUE_AUDIO_ASSETS[id as SpawnSoundId], activeSpawnSounds, 12, volume)
+  }
+
   const assetPath = SOUND_ASSET_PATHS[id]
-  if (assetPath && isArcherAttackSound(id)) return playArcherAttackAsset(assetPath, volume)
+  if (assetPath && isArcherAttackSound(id)) return playArcherAttackAsset(assetPath, volume, options?.controlFieldIds)
   if (assetPath && playAudioAsset(assetPath, volume)) {
     return true
   }
@@ -230,3 +413,5 @@ export const playGameSound = (id: GameSoundId, settings: Pick<AudioSettings, 'ma
   oscillator.stop(now + duration + 0.02)
   return true
 }
+
+import.meta.hot?.dispose(resetGameSoundRuntimeForTests)

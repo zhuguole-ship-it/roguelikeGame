@@ -2,8 +2,11 @@ import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import type { PersistStorage } from 'zustand/middleware'
 
-import { playGameSound, syncArcherAttackSoundState } from '../game/audio'
+import { playGameSound } from '../game/audio'
 import type { GameSoundId } from '../game/audio'
+import { attachEnemyHitAudio } from '../game/enemyHitAudio'
+import { attachSevenCueWorldAudio, getManualControlDrawFieldIds } from '../game/sevenCueWorldAudio'
+import { getEnemySpawnSoundId } from '../game/sevenCueAudioAssets'
 import {
   buildCombatLoadingDependencyDescriptor,
   createIdleCombatLaunchGate,
@@ -903,8 +906,6 @@ const playSnapshotSound = (state: GameSnapshot, id: Parameters<typeof playGameSo
 
 const countEquipmentPickups = (state: GameSnapshot) => state.pickups.filter((pickup) => pickup.kind === 'equipment').length
 
-const enemyHpTotal = (state: GameSnapshot) => state.enemies.reduce((sum, enemy) => sum + Math.max(0, enemy.hp), 0)
-
 export const getSimulationSoundEvents = (previous: GameSnapshot, next: GameSnapshot): GameSoundId[] => {
   const events: GameSoundId[] = []
   if (next.lastBasicAttackId && next.lastBasicAttackId !== previous.lastBasicAttackId) {
@@ -922,17 +923,8 @@ export const getSimulationSoundEvents = (previous: GameSnapshot, next: GameSnaps
   if (next.kills > previous.kills) {
     events.push('enemy-death')
   }
-  if (!previous.enemies.some((enemy) => enemy.kind === 'boss') && next.enemies.some((enemy) => enemy.kind === 'boss')) {
+  if (!previous.enemies.some((enemy) => enemy.kind === 'boss') && next.enemies.some((enemy) => enemy.kind === 'boss' && !getEnemySpawnSoundId(enemy.archetypeId))) {
     events.push('boss-entry')
-  }
-  if (enemyHpTotal(next) < enemyHpTotal(previous)) {
-    const hasSkillProjectile = previous.projectiles.some((projectile) => projectile.sourceSkillId && projectile.sourceSkillId !== 'basic-arrow')
-    const hasBasicProjectile = previous.projectiles.some((projectile) => projectile.sourceSkillId === 'basic-arrow')
-    if (hasSkillProjectile) {
-      events.push('skill-hit')
-    } else if (!hasBasicProjectile) {
-      events.push('basic-hit')
-    }
   }
   if (previous.phase === 'running' && next.phase === 'level-clear') {
     events.push('level-settle')
@@ -1760,7 +1752,7 @@ export const useGameStore = create<GameStore>()(
           if (!result.ok) {
             return { ...state, message: result.reason }
           }
-          playSnapshotSound(state, 'reward-confirm')
+          playSnapshotSound(state, 'functional-talent-upgrade')
           const record = {
             id: `meta-talent-${Date.now()}-${result.node.id}`,
             talentId: result.node.id,
@@ -1992,7 +1984,10 @@ export const useGameStore = create<GameStore>()(
           if (state.combatLaunchGate.active) return state
           const next = triggerActiveSkillSnapshot(state, slotIndex)
           if ((next.activeSkills[slotIndex]?.castCount ?? 0) > (state.activeSkills[slotIndex]?.castCount ?? 0)) {
-            playSnapshotSound(next, 'skill-cast')
+            if (canPlayPlayerArcherAttackSound(next)) {
+              const controlFieldIds = getManualControlDrawFieldIds(state, next, slotIndex)
+              playGameSound('skill-cast', next.audioSettings, { controlFieldIds })
+            }
           }
           return next
         })
@@ -2019,11 +2014,10 @@ export const useGameStore = create<GameStore>()(
   ),
 )
 
-const syncPlayerArcherAudio = (state: GameStore) => {
-  syncArcherAttackSoundState(canPlayPlayerArcherAttackSound(state), state.audioSettings)
-}
-syncPlayerArcherAudio(useGameStore.getState())
-useGameStore.subscribe(syncPlayerArcherAudio)
+const detachSevenCueWorldAudio = attachSevenCueWorldAudio({ getSnapshot: useGameStore.getState, subscribe: useGameStore.subscribe })
+import.meta.hot?.dispose(detachSevenCueWorldAudio)
+const detachEnemyHitAudio = attachEnemyHitAudio({ getSnapshot: useGameStore.getState, subscribe: useGameStore.subscribe })
+import.meta.hot?.dispose(detachEnemyHitAudio)
 
 type RoguelikeE2ESummary = {
   phase: GameSnapshot['phase']

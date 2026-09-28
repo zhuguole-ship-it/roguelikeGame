@@ -135,6 +135,7 @@ describe('combat loading contract', () => {
       'transition.title',
       'transition.final',
       'combat-audio.archer-basic-attack',
+      'combat-audio.enemy-hit',
     ]))
     expect(keys.some((key) => key.includes('vampire-thrall'))).toBe(false)
     const archerAudio = manifestInput.resources.find((resource) => resource.key === 'combat-audio.archer-basic-attack')
@@ -144,6 +145,11 @@ describe('combat loading contract', () => {
       kind: 'audio',
       version: wavHash,
       url: `${import.meta.env.BASE_URL}assets/audio/archer-basic-attack.wav`,
+    })
+    expect(manifestInput.resources.find((resource) => resource.key === 'combat-audio.enemy-hit')).toMatchObject({
+      kind: 'audio', domain: 'combat-audio',
+      url: `${import.meta.env.BASE_URL}assets/audio/enemy-hit.wav`,
+      version: createHash('sha256').update(readFileSync(resolve(process.cwd(), 'public/assets/audio/enemy-hit.wav'))).digest('hex'),
     })
     expect(manifestInput.resources.filter((resource) => resource.domain === 'enemy-actions').length).toBeGreaterThan(0)
     expect(manifestInput.resources.filter((resource) => resource.domain === 'player-actions').length).toBeGreaterThan(0)

@@ -1,4 +1,5 @@
 import { developerAssetEntities } from './assetManifest'
+import { SEVEN_CUE_AUDIO_ASSETS } from './sevenCueAudioAssets'
 import { ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTIONS } from './archerSkillEvolution'
 import { getArcherSkillIconAssetPath } from './archerSkillIcons'
 import { getPlayerArcherFrameUrls } from './archerAssetFrames'
@@ -111,6 +112,8 @@ export const HOME_SCENE_ASSET_MANIFEST_V1: SceneAssetManifest = Object.freeze({
   version: 'home-scene-assets-v1',
   scene: 'home',
   resources: Object.freeze([
+    SEVEN_CUE_AUDIO_ASSETS.button,
+    SEVEN_CUE_AUDIO_ASSETS['functional-talent-upgrade'],
     {
       key: 'home.music.redemption',
       domain: 'home-audio',
