@@ -2,14 +2,17 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { inflateSync } from 'node:zlib'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   FIRST_DUNGEON_DUAL_GRID_TEXTURE_VARIANTS_V1,
   getFirstDungeonTextureVariantSourceRect,
 } from './firstDungeonDualGridTextureVariants'
 
 const projectPath = (...parts: string[]) => resolve(process.cwd(), ...parts)
-const assetPathForUrl = (url: string) => projectPath('public', url.replace(/^\//, ''))
+const assetPathForUrl = (url: string) => {
+  expect(url.startsWith(import.meta.env.BASE_URL)).toBe(true)
+  return projectPath('public', url.slice(import.meta.env.BASE_URL.length))
+}
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 
 const decodeRgbaPng = (path: string) => {
@@ -113,7 +116,7 @@ describe('FIRST_DUNGEON_DUAL_GRID_TEXTURE_VARIANTS_V1', () => {
     })
     for (const role of ['stone', 'moss'] as const) {
       expect(json[role]).toMatchObject({
-        publicUrl: runtime[role].publicUrl,
+        publicUrl: `/${runtime[role].publicUrl.slice(import.meta.env.BASE_URL.length)}`,
         sha256: runtime[role].sha256,
         variantSaltId: runtime[role].variantSaltId,
         source: runtime[role].source,
@@ -161,6 +164,68 @@ describe('FIRST_DUNGEON_DUAL_GRID_TEXTURE_VARIANTS_V1', () => {
     }
     expect(manifest.semantics.indicesAreTransitionMasks).toBe(false)
     expect(manifest.semantics.dualGridGeometryOwner).toBe('A1')
+  })
+
+  it('resolves both atlas resources under the deployed application base', async () => {
+    vi.stubEnv('BASE_URL', '/roguelikeGame/')
+    vi.resetModules()
+    try {
+      const { FIRST_DUNGEON_DUAL_GRID_TEXTURE_VARIANTS_V1: deployed } = await import(
+        './firstDungeonDualGridTextureVariants'
+      )
+      for (const role of ['stone', 'moss'] as const) {
+        expect(deployed[role].publicUrl).toBe(
+          `/roguelikeGame/assets/terrain/campaign-1/dual-grid-texture-variants-v1/${role}-variants-4x4-512.png`,
+        )
+        expect(sha256(readFileSync(assetPathForUrl(deployed[role].publicUrl)))).toBe(deployed[role].sha256)
+      }
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+  })
+
+  it('keeps the entire configuration and returned source rects immutable', () => {
+    const assertFrozen = (value: unknown): void => {
+      if (value === null || typeof value !== 'object') return
+      expect(Object.isFrozen(value)).toBe(true)
+      Object.values(value).forEach(assertFrozen)
+    }
+    assertFrozen(FIRST_DUNGEON_DUAL_GRID_TEXTURE_VARIANTS_V1)
+    for (let index = 0; index < 16; index += 1) {
+      assertFrozen(getFirstDungeonTextureVariantSourceRect(index))
+    }
+  })
+
+  it('preserves source rects and pixel identity regardless of variant request order', () => {
+    const order = [15, 0, 9, 2, 14, 4, 7, 11, 1, 13, 3, 8, 12, 6, 10, 5, 15, 0]
+    for (const invalid of [NaN, Infinity, -Infinity]) {
+      expect(getFirstDungeonTextureVariantSourceRect(invalid)).toBeNull()
+    }
+    for (const role of ['stone', 'moss'] as const) {
+      const decoded = decodeRgbaPng(assetPathForUrl(
+        FIRST_DUNGEON_DUAL_GRID_TEXTURE_VARIANTS_V1[role].publicUrl,
+      ))
+      const original = Buffer.from(decoded.pixels)
+      const readVariant = (index: number) => {
+        const rect = getFirstDungeonTextureVariantSourceRect(index)
+        if (!rect) throw new Error('Expected a valid source rect')
+        const rows = Array.from({ length: rect.height }, (_, row) => {
+          const offset = ((rect.y + row) * decoded.width + rect.x) * 4
+          return decoded.pixels.subarray(offset, offset + rect.width * 4)
+        })
+        return sha256(Buffer.concat(rows))
+      }
+      const hashes = Array.from({ length: 16 }, (_, index) => readVariant(index))
+      expect(new Set(hashes).size).toBe(16)
+      for (const index of order) {
+        expect(getFirstDungeonTextureVariantSourceRect(index)).toEqual({
+          x: (index % 4) * 128, y: Math.floor(index / 4) * 128, width: 128, height: 128,
+        })
+        expect(readVariant(index)).toBe(hashes[index])
+      }
+      expect(decoded.pixels.equals(original)).toBe(true)
+    }
   })
 
   it('defines stable row-major source rects that reconstruct each atlas exactly', () => {

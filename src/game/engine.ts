@@ -7578,6 +7578,7 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
     arrowTurret: field.arrowTurret
       ? {
           ...field.arrowTurret,
+          horizontalFacing: field.arrowTurret.horizontalFacing ?? 'right',
           inheritedEffect: field.arrowTurret.inheritedEffect
             ? { ...field.arrowTurret.inheritedEffect }
             : undefined,
@@ -7586,6 +7587,7 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
     arrowScreenTower: field.arrowScreenTower
       ? {
           ...field.arrowScreenTower,
+          horizontalFacing: field.arrowScreenTower.horizontalFacing ?? 'right',
           inheritedEffect: field.arrowScreenTower.inheritedEffect
             ? { ...field.arrowScreenTower.inheritedEffect }
             : undefined,
@@ -9586,6 +9588,8 @@ const fireArrowTurret = (snapshot: GameSnapshot, field: SkillField, target: Enem
   const tower = field.arrowTurret
   if (!tower) return
   const direction = getArrowTurretCastDirection(field, target)
+  if (target.position.x < field.position.x) tower.horizontalFacing = 'left'
+  else if (target.position.x > field.position.x) tower.horizontalFacing = 'right'
   const { config, count, trajectory, bloodRain, bloodSpear } = getArrowTurretProjectileConfig(snapshot, field)
   tower.totalFanAngleDegrees = trajectory.totalFanAngleDegrees ?? 60
   tower.targetId = target.id
@@ -9730,6 +9734,7 @@ const deployArrowTurretGroup = (
       groupId,
       groupCreatedAt,
       variant,
+      horizontalFacing: 'right',
       hp: maxHp,
       maxHp,
       attackInterval: interval,
@@ -9753,6 +9758,7 @@ const deployArrowTurretGroup = (
       groupId,
       groupCreatedAt,
       variant,
+      horizontalFacing: 'right',
       hp: maxHp,
       maxHp,
       attackInterval: interval,
@@ -10073,6 +10079,7 @@ const getArrowTurretPresentationItem = (field: SkillField, tower: ArrowTurretRun
     groupId: tower.groupId,
     groupCreatedAt: tower.groupCreatedAt,
     variant: tower.variant,
+    horizontalFacing: tower.horizontalFacing ?? 'right',
     hp: tower.hp,
     maxHp: tower.maxHp,
     attackInterval: tower.attackInterval,

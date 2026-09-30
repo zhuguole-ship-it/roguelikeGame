@@ -272,6 +272,8 @@ export function ArcherCombatTalentV3CompactSummary({ presentation, placement }: 
   presentation: ArcherCombatTalentV3PresentationSnapshot
   placement: 'hud' | 'pause' | 'settlement'
 }) {
+  if (placement === 'hud') return null
+
   const selectedInfiniteItems = presentation.infiniteCatalog.filter((item) => item.currentRank > 0)
   const selectedInfiniteSummary = selectedInfiniteItems.map((item) => `${item.name}×${item.currentRank}`).join(' / ')
   const content = (
@@ -282,18 +284,6 @@ export function ArcherCombatTalentV3CompactSummary({ presentation, placement }: 
       <span>无限成长：{presentation.totalInfiniteSelections}</span>
     </>
   )
-
-  if (placement === 'hud') {
-    return (
-      <section
-        aria-label={`战斗天赋，主流派${presentation.main ? ARCHER_TALENT_V3_ARCHETYPE_LABELS[presentation.main.archetype] : '未选择'}，副流派${presentation.secondary ? ARCHER_TALENT_V3_ARCHETYPE_LABELS[presentation.secondary.archetype] : '未选择'}，无限成长${presentation.totalInfiniteSelections}次${selectedInfiniteSummary ? `，已选${selectedInfiniteSummary}` : ''}`}
-        className="pointer-events-none absolute left-2 top-[4.25rem] flex max-w-[min(15rem,calc(100vw-1rem))] flex-col gap-0.5 border border-[rgba(244,212,122,0.42)] bg-[rgba(7,12,9,0.78)] px-2 py-1.5 font-pixel text-[7px] leading-relaxed text-[#f4f0d7] sm:left-3 sm:top-[5rem] sm:text-[8px] lg:left-4"
-        data-testid="combat-talent-v3-hud"
-      >
-        {content}
-      </section>
-    )
-  }
 
   return (
     <section

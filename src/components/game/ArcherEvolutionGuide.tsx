@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
 import { ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTION_MAP } from '../../game/archerSkillEvolution'
 import { getHomeSceneSkillIconResource } from '../../game/homeSceneAssetManifest'
+import { getArrowTurretAssetForDisplayId, getArrowTurretIconFitClass } from '../../game/arrowTurretAssets'
 import type { SceneAssetResource } from '../../game/sceneAssetLoading'
 import type { SkillBuildTag } from '../../game/types'
 import { SceneAssetImage } from './SceneAssetImage'
@@ -68,6 +69,10 @@ const getEvolutionTrajectoryPreview = (evolutionId: string) => {
  * Adapts A1's single skill-evolution contract to this read-only guide view.
  * No family, evolution, discovery or combat value is authored here.
  */
+export const getArcherEvolutionGuideIconResource = (evolutionId: string, behaviorSkillId?: string) => (
+  getHomeSceneSkillIconResource(getArrowTurretAssetForDisplayId(evolutionId) ? evolutionId : behaviorSkillId ?? evolutionId)
+)
+
 export const createArcherEvolutionGuideCatalog = (discoveredEvolutionIds: readonly string[]): ArcherEvolutionGuideCatalog => ({
   discoveredEvolutionIds,
   families: ARCHER_CORE_SKILLS.map((coreSkill) => {
@@ -88,7 +93,7 @@ export const createArcherEvolutionGuideCatalog = (discoveredEvolutionIds: readon
           // continue to reuse their existing mapped skill icon.
           iconResource: evolution?.visualKind === 'beast'
             ? undefined
-            : getHomeSceneSkillIconResource(evolution?.behaviorSkillId ?? evolutionId),
+            : getArcherEvolutionGuideIconResource(evolutionId, evolution?.behaviorSkillId),
           level4Description: getSpiralBreakPresentationDescription(
             evolutionId,
             evolution?.description ?? coreSkill.description,
@@ -157,7 +162,7 @@ const EvolutionGuideIcon = ({
     <SceneAssetImage
       resource={evolution.iconResource}
       alt=""
-      className={`block shrink-0 border-2 object-cover [image-rendering:pixelated] ${compact ? 'h-full w-full' : 'h-14 w-14'} ${discovered ? 'border-[#9dd5ac]' : 'border-slate-600 grayscale opacity-60'}`}
+      className={`block shrink-0 border-2 ${getArrowTurretIconFitClass(evolution.evolutionId)} [image-rendering:pixelated] ${compact ? 'h-full w-full' : 'h-14 w-14'} ${discovered ? 'border-[#9dd5ac]' : 'border-slate-600 grayscale opacity-60'}`}
       data-testid={`${testIdPrefix}-image-${evolution.evolutionId}`}
     />
   ) : <EvolutionNamePlaceholderIcon name={evolution.name} discovered={discovered} compact={compact} />
@@ -255,7 +260,7 @@ export const ArcherEvolutionGuide = ({ catalog }: { catalog: ArcherEvolutionGuid
               <section key={family.familyId} className="border-2 border-[#08100b] bg-[#0b100d] p-3" data-testid={`archer-evolution-guide-family-${family.familyId}`}>
                 <div className="flex min-w-0 items-center gap-3">
                   {family.iconResource ? (
-                    <SceneAssetImage resource={family.iconResource} alt="" className="h-12 w-12 shrink-0 border-2 border-[#9dd5ac] object-cover [image-rendering:pixelated]" data-testid={`archer-evolution-guide-core-image-${family.familyId}`} />
+                    <SceneAssetImage resource={family.iconResource} alt="" className={`h-12 w-12 shrink-0 border-2 border-[#9dd5ac] ${getArrowTurretIconFitClass(family.familyId)} [image-rendering:pixelated]`} data-testid={`archer-evolution-guide-core-image-${family.familyId}`} />
                   ) : (
                     <span
                       aria-hidden="true"
@@ -328,7 +333,7 @@ export const ArcherEvolutionDetailSkillGrid = ({ catalog }: { catalog: ArcherEvo
         <section key={family.familyId} className="min-w-0 border border-[rgba(157,213,172,0.28)] bg-[#08100b]/75 p-[clamp(0.2rem,0.32cqw,0.55rem)]" data-testid={`character-detail-evolution-family-${family.familyId}`}>
           <div className="flex min-w-0 items-center gap-[clamp(0.25rem,0.45cqw,0.7rem)]">
             {family.iconResource ? (
-              <SceneAssetImage resource={family.iconResource} alt="" className="h-[clamp(1rem,1.9cqw,3.5rem)] w-[clamp(1rem,1.9cqw,3.5rem)] shrink-0 border border-[#9dd5ac] object-cover [image-rendering:pixelated]" />
+              <SceneAssetImage resource={family.iconResource} alt="" className={`h-[clamp(1rem,1.9cqw,3.5rem)] w-[clamp(1rem,1.9cqw,3.5rem)] shrink-0 border border-[#9dd5ac] ${getArrowTurretIconFitClass(family.familyId)} [image-rendering:pixelated]`} />
             ) : (
               <span
                 aria-hidden="true"

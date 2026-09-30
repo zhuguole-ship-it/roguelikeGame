@@ -13006,6 +13006,114 @@ describe('game engine', () => {
     expect(advanced.projectiles.filter((projectile) => projectile.sourceSkillId === 'arrow-turret')).toHaveLength(baseCount + 3)
   })
 
+  const createFacingTowerSnapshot = (level = 1, evolutionId?: 'feather-resonance' | 'bait-bastion') => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.levelTimer = 0
+    snapshot.remainingToSpawn = 1
+    snapshot.spawnCooldown = 999
+    snapshot.battlefield.mode = 'boss-arena'
+    snapshot.battlefield.bossArenaRadius = 2000
+    snapshot.battlefield.activeChunks = []
+    snapshot.mapObstacles = []
+    snapshot.player.attackCooldown = 999
+    snapshot.player.position = { x: 1200, y: 1200 }
+    snapshot.aimPoint = { x: 1400, y: 1200 }
+    snapshot.activeSkills = [{ skillId: 'arrow-turret', familyId: 'arrow-turret', level, evolutionId, cooldownRemaining: 0 }]
+    return triggerActiveSkillSnapshot(snapshot, 0)
+  }
+
+  it.each([
+    [1, undefined], [2, undefined], [3, undefined],
+    [4, 'feather-resonance'], [5, 'feather-resonance'],
+    [4, 'bait-bastion'], [5, 'bait-bastion'],
+  ] as const)('defaults Lv%s %s towers to right and retains facing without a shot', (level, evolutionId) => {
+    const deployed = createFacingTowerSnapshot(level, evolutionId)
+    expect(getArrowTurretPresentation(deployed).every((tower) => tower.horizontalFacing === 'right')).toBe(true)
+    expect(deployed.projectiles).toEqual([])
+    deployed.skillFields.forEach((field) => { field.arrowTurret!.horizontalFacing = 'left' })
+    const idle = advanceGame(deployed, noInput, 0.016)
+    expect(getArrowTurretPresentation(idle).every((tower) => tower.horizontalFacing === 'left')).toBe(true)
+    expect(idle.projectiles).toEqual([])
+  })
+
+  it('updates tower facing only on real horizontal shots and retains it for vertical, waiting, and invalid targets', () => {
+    let current = createFacingTowerSnapshot()
+    const towerPosition = { ...current.skillFields[0].position }
+    current.player.position = { x: 100, y: 100 }
+    const shoot = (offset: Vector2, facing: 'left' | 'right') => {
+      current.projectiles = []
+      current.skillFields[0].arrowTurret!.attackCooldown = 0
+      current.enemies = [makeEnemy({
+        id: 'facing-target', position: { x: towerPosition.x + offset.x, y: towerPosition.y + offset.y },
+        hp: 10000, maxHp: 10000, speed: 0, attackCooldown: 999, behaviorCooldown: 999,
+      })]
+      const previous = current
+      const previousFacing = previous.skillFields[0].arrowTurret!.horizontalFacing
+      current = advanceGame(current, noInput, 0.016)
+      const tower = getArrowTurretPresentation(current)[0]
+      expect(tower.horizontalFacing).toBe(facing)
+      expect(previous.skillFields[0].arrowTurret!.horizontalFacing).toBe(previousFacing)
+      expect(current.skillFields[0].arrowTurret).not.toBe(previous.skillFields[0].arrowTurret)
+      const arrows = current.projectiles.filter((arrow) => arrow.attackerId === tower.id)
+      expect(arrows).toHaveLength(ARCHER_CORE_SKILL_DEFINITION_MAP['fan-burst'].levels[0].projectileCount)
+      expect(arrows.every((arrow) => arrow.damage > 0 && arrow.origin?.x === towerPosition.x && arrow.origin?.y === towerPosition.y)).toBe(true)
+      const direction = normalize(offset)
+      const volleyDirection = normalize(arrows.reduce((sum, arrow) => ({ x: sum.x + arrow.velocity.x, y: sum.y + arrow.velocity.y }), { x: 0, y: 0 }))
+      expect(volleyDirection.x).toBeCloseTo(direction.x, 8)
+      expect(volleyDirection.y).toBeCloseTo(direction.y, 8)
+      expect(arrows.every((arrow) => arrow.formDirection?.x === direction.x && arrow.formDirection?.y === direction.y)).toBe(true)
+      expect(tower.attackCooldown).toBe(tower.attackInterval)
+    }
+    shoot({ x: -180, y: 0 }, 'left')
+    shoot({ x: 0, y: -180 }, 'left')
+    shoot({ x: 180, y: 0 }, 'right')
+    shoot({ x: 0, y: 180 }, 'right')
+
+    current.enemies[0].position = { x: towerPosition.x - 180, y: towerPosition.y }
+    const waiting = advanceGame(current, noInput, 0.016)
+    expect(getArrowTurretPresentation(waiting)[0].horizontalFacing).toBe('right')
+    expect(waiting.skillFields[0].arrowTurret!.attackCooldown).toBeLessThan(current.skillFields[0].arrowTurret!.attackCooldown)
+    waiting.projectiles = []
+    waiting.skillFields[0].arrowTurret!.attackCooldown = 0
+    waiting.enemies[0].hp = 0
+    const invalid = advanceGame(waiting, noInput, 0.016)
+    expect(getArrowTurretPresentation(invalid)[0]).toMatchObject({ horizontalFacing: 'right', targetId: undefined })
+    expect(invalid.projectiles).toEqual([])
+
+    const target = makeEnemy({ id: 'facing-hit-target', position: { x: towerPosition.x - 180, y: towerPosition.y }, hp: 10000, maxHp: 10000, speed: 0, attackCooldown: 999, behaviorCooldown: 999 })
+    invalid.enemies = [target]
+    let hit = advanceGame(invalid, noInput, 0.016)
+    for (let tick = 0; tick < 60 && hit.enemies[0].hp === target.hp; tick += 1) hit = advanceGame(hit, noInput, 0.016)
+    expect(hit.enemies[0].hp).toBeLessThan(target.hp)
+    expect(hit.enemyHitEvents.some((event) => event.targetId === target.id && event.sourceId === 'arrow-turret')).toBe(true)
+  })
+
+  it('keeps multiple tower facings independent through clone and detached presentation', () => {
+    const deployed = createFacingTowerSnapshot(4, 'feather-resonance')
+    const [leftTower, rightTower] = deployed.skillFields
+    leftTower.position = { x: 300, y: 400 }
+    rightTower.position = { x: 700, y: 400 }
+    deployed.enemies = [makeEnemy({ id: 'shared-facing-target', position: { x: 500, y: 400 }, hp: 10000, maxHp: 10000, speed: 0, attackCooldown: 999, behaviorCooldown: 999 })]
+    const fired = advanceGame(deployed, noInput, 0.016)
+    expect(getArrowTurretPresentation(fired).map((tower) => tower.horizontalFacing)).toEqual(['right', 'left'])
+    expect(getArrowTurretPresentation(deployed).map((tower) => tower.horizontalFacing)).toEqual(['right', 'right'])
+    const presentation = getArrowTurretPresentation(fired)
+    presentation[0].horizontalFacing = 'left'
+    presentation[0].position.x = -999
+    expect(fired.skillFields[0].arrowTurret!.horizontalFacing).toBe('right')
+    expect(fired.skillFields[0].position.x).toBe(300)
+    fired.enemies = []
+    fired.projectiles = []
+    const clonedIdle = advanceGame(fired, noInput, 0.016)
+    expect(getArrowTurretPresentation(clonedIdle).map((tower) => tower.horizontalFacing)).toEqual(['right', 'left'])
+    expect(clonedIdle.skillFields[1].arrowTurret).not.toBe(fired.skillFields[1].arrowTurret)
+    const legacy = createFacingTowerSnapshot()
+    delete legacy.skillFields[0].arrowTurret!.horizontalFacing
+    expect(getArrowTurretPresentation(legacy)[0].horizontalFacing).toBe('right')
+    expect(legacy.skillFields[0].arrowTurret!.horizontalFacing).toBeUndefined()
+    expect(advanceGame(legacy, noInput, 0.016).skillFields[0].arrowTurret!.horizontalFacing).toBe('right')
+  })
+
   it('deploys independent arrow-turrets through the shared fan, resonance, and taunt runtime contracts', () => {
     const createTowerSnapshot = (level: number, evolutionId?: 'feather-resonance' | 'bait-bastion') => {
       const snapshot = createInitialSnapshot('running')

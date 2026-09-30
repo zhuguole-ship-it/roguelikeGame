@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ARROW_TURRET_ASSETS, getArrowTurretImageResource } from './arrowTurretAssets'
 
 import {
   SCENE_ASSET_RETRY_DELAYS_MS,
@@ -29,7 +30,7 @@ const manifest = (resources: readonly SceneAssetResource[]): SceneAssetManifest 
   resources,
 })
 
-const installImageRuntime = (options: { failDecodeAttempts?: number } = {}) => {
+const installImageRuntime = (options: { failDecodeAttempts?: number; width?: number; height?: number } = {}) => {
   let objectUrlSequence = 0
   let imageSequence = 0
   let remainingDecodeFailures = options.failDecodeAttempts ?? 0
@@ -60,8 +61,8 @@ const installImageRuntime = (options: { failDecodeAttempts?: number } = {}) => {
     set src(value: string) {
       this.value = value
       this.complete = true
-      this.naturalWidth = 64
-      this.naturalHeight = 32
+      this.naturalWidth = options.width ?? 64
+      this.naturalHeight = options.height ?? 32
       queueMicrotask(() => this.onload?.())
     }
 
@@ -87,6 +88,29 @@ afterEach(() => {
 })
 
 describe('scene asset loading', () => {
+  it.each(Object.values(ARROW_TURRET_ASSETS))('keeps $variant gated after decode failure, retries and shares the decoded body/icon cache', async (asset) => {
+    const runtime = installImageRuntime({ failDecodeAttempts: 2, width: 1254, height: 1254 })
+    const home = getArrowTurretImageResource(asset.variant)
+    const combat = getArrowTurretImageResource(asset.variant, 'player-skill-fx')
+    await expect(acquireSceneAssetImage(home)).rejects.toThrow('decode failed')
+    expect(getReadySceneAssetImage(home)).toBeUndefined()
+    const waits: number[] = []
+    const result = await loadSceneAssetManifest(manifest([home, combat]), {
+      wait: async (delay: number) => { waits.push(delay); expect(getReadySceneAssetImage(home)).toBeUndefined() },
+    })
+    expect(result).toMatchObject({ total: 1, ready: 1, progressPercent: 100, status: 'ready' })
+    expect(await acquireSceneAssetImage(combat)).toBe(getReadySceneAssetImage(home))
+    expect(runtime.fetchMock).toHaveBeenCalledTimes(3)
+    expect(runtime.fetchMock).toHaveBeenLastCalledWith(expect.stringContaining(asset.sha256), expect.anything())
+    expect(waits).toEqual([1000])
+  })
+
+  it('does not permit a wrong-size tower PNG to become drawable', async () => {
+    installImageRuntime()
+    const item = getArrowTurretImageResource('base')
+    await expect(acquireSceneAssetImage(item)).rejects.toThrow('invalid image dimensions')
+    expect(getReadySceneAssetImage(item)).toBeUndefined()
+  })
   it('deduplicates the same physical versioned asset without inflating progress', async () => {
     const sharedA = resource('shared-a', '/assets/shared.png')
     const sharedB = resource('shared-b', '/assets/shared.png')
@@ -191,6 +215,19 @@ describe('scene asset loading', () => {
     })
     expect(handleA.drawable).toBe(handleA.image)
     expect(getReadySceneAssetImage(sharedA)).toBe(handleA)
+  })
+
+  it('does not mark a decoded image ready when its declared dimensions fail, and can retry without stale cache', async () => {
+    const runtime = installImageRuntime()
+    const validate = vi.fn().mockReturnValueOnce(false).mockReturnValue(true)
+    const item = { ...resource('exact-home-image'), validate }
+    await expect(acquireSceneAssetImage(item)).rejects.toThrow('invalid image dimensions')
+    expect(getReadySceneAssetImage(item)).toBeUndefined()
+    expect(runtime.revokeObjectURL).toHaveBeenCalledWith('blob:scene-asset-1')
+    const ready = await acquireSceneAssetImage(item)
+    expect(ready.state).toBe('ready')
+    expect(validate).toHaveBeenCalledTimes(2)
+    expect(runtime.fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('evicts and revokes the retained object URL when the logical asset version changes', async () => {

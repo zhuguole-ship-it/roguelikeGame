@@ -10,6 +10,8 @@ import {
   FIRST_DUNGEON_GODOT_TERRAIN_TILE_HEIGHT,
   FIRST_DUNGEON_GODOT_TERRAIN_TILE_WIDTH,
   getFirstDungeonGodotTerrainVisualLevel,
+  getFirstDungeonGodotTerrainContract,
+  getFirstDungeonGodotTerrainCoverageSummary,
   getFirstDungeonStoneTileState,
   getFirstDungeonStoneWorldTileCoordinate,
   shouldUseFirstDungeonGodotTerrain,
@@ -104,9 +106,7 @@ describe('first dungeon three-original terrain', () => {
     const levelOne = statesAtLevel(1)
 
     expect(levelOne.some((state) => state.stains.length > 0)).toBe(true)
-    expect(statesAtLevel(2)).toEqual(levelOne)
-    expect(statesAtLevel(21)).toEqual(levelOne)
-    expect(statesAtLevel(22)).toEqual(levelOne)
+    for (let level = 1; level <= 22; level += 1) expect(statesAtLevel(level)).toEqual(levelOne)
     expect(coordinates.map(({ x, y }) => getFirstDungeonStoneTileState(seed + 1, x, y, 1, 22))).not.toEqual(levelOne)
     expect(getFirstDungeonGodotTerrainVisualLevel(1, 1)).toBe(0)
     expect(getFirstDungeonGodotTerrainVisualLevel(1, 22)).toBe(0)
@@ -152,6 +152,39 @@ describe('first dungeon three-original terrain', () => {
     expect(observation?.reuseAndDraw.reuseCount).toBeGreaterThan(0)
     expect(new Set(observation?.reuseAndDraw.draws.flatMap((drawState) => drawState.visibleChunkKeys)).size).toBe(1)
     expect(observation?.readyBitmaps.filter(({ chunkX, chunkY }) => chunkX === -2 && chunkY === 4)).toHaveLength(1)
+    expect(observation?.readyBitmaps.every(({ level }) => level === 0)).toBe(true)
+    expect(observation?.macroCoverage.samples.every(({ level }) => level === 0)).toBe(true)
+  })
+
+  it('reuses the fully prepared viewport without any build work on every campaign-one floor', () => {
+    const factory = surfaceFactory()
+    const renderer = new FirstDungeonGodotTerrainRenderer({
+      createSurface: factory.createSurface,
+      resources: Array.from({ length: 3 }, () => ({} as CanvasImageSource)),
+      buildCellsPerFrame: 256,
+      buildTimeBudgetMs: 100,
+      clock: () => 0,
+      observabilityEnabled: true,
+    })
+    const camera = { x: -137, y: 511 }
+    const draw = (level: number) => {
+      const frame = viewportContext(1920, 1080)
+      expect(renderer.drawWithStatus(frame as unknown as CanvasRenderingContext2D, 77, camera, 1, level)).toBe('drawn')
+      return frame.drawImage.mock.calls.map(([surface]) => surface)
+    }
+    const first = draw(1)
+    const diagnostics = renderer.getDiagnostics()
+    expect(diagnostics.queuedChunkCount).toBe(0)
+    const surfaces = factory.surfaces.length
+    for (let level = 2; level <= 22; level += 1) {
+      expect(draw(level)).toEqual(first)
+      expect(renderer.getDiagnostics()).toEqual(diagnostics)
+      expect(factory.surfaces).toHaveLength(surfaces)
+    }
+    const range = { startX: -2, startY: -1, endX: 2, endY: 1 }
+    const summary = (level: number) => getFirstDungeonGodotTerrainCoverageSummary(getFirstDungeonGodotTerrainContract(), 77, range, 1, level)
+    expect(summary(22)).toEqual(summary(1))
+    expect(summary(22).level).toBe(0)
   })
 
   it('selects all three originals without flip or brightness state and keeps deterministic tile-local stains', () => {

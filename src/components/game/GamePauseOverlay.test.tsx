@@ -1085,7 +1085,13 @@ describe('GamePauseOverlay', () => {
     expect(screen.getByRole('button', { name: /诱敌战垒/ }).textContent).toContain('双塔嘲讽普通怪并可进入狂暴。')
     expect(screen.getByTestId('arrow-turret-reward-level5-turret-resonance-choice').textContent).toContain('Lv.5：共鸣效果提高 25%')
     expect(screen.getByTestId('arrow-turret-reward-level5-turret-taunt-choice').textContent).toContain('Lv.5：生命、范围与狂暴窗口强化')
-    expect(screen.getByTestId('reward-choice-icon-placeholder-turret-resonance-choice').textContent).toContain('百羽共鸣')
+    for (const [choiceId, displayId] of [['turret-resonance-choice', 'feather-resonance'], ['turret-taunt-choice', 'bait-bastion']]) {
+      const icon = screen.getByTestId(`reward-choice-icon-${choiceId}`)
+      expect(icon.getAttribute('data-scene-asset-logical-url')).toBe(getArcherSkillIconAssetUrl(displayId))
+      expect(icon.getAttribute('src')).toBeNull() // not ready in jsdom; no lazy logical-URL request
+      expect(icon.className).toContain('object-contain')
+      expect(screen.queryByTestId(`reward-choice-icon-placeholder-${choiceId}`)).toBeNull()
+    }
     expect(screen.queryByText('月碎连矢')).toBeNull()
     expect(screen.queryByText('炽阳扫射')).toBeNull()
   })

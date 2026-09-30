@@ -1,5 +1,7 @@
 import type { CSSProperties, KeyboardEvent, ReactNode } from 'react'
 import { useLayoutEffect, useRef } from 'react'
+import { getArrowTurretIconFitClass } from '../../game/arrowTurretAssets'
+import { ArcherSkillIconImage } from './ArcherSkillIconImage'
 
 export const SKILL_CHOICE_CARD_CONTRACT = 'active-skill-choice-v1'
 
@@ -182,10 +184,10 @@ export function SkillChoiceCard({
         </div>
       ) : iconUrl ? (
         <div className={SKILL_CHOICE_ICON_SHELL_CLASS} data-testid={`reward-choice-icon-shell-${choiceId}`}>
-          <img
+          <ArcherSkillIconImage
             src={iconUrl}
             alt=""
-            className="block h-full w-full object-cover [image-rendering:pixelated]"
+            className={`block h-full w-full ${getArrowTurretIconFitClass(iconUrl)} [image-rendering:pixelated]`}
             data-testid={`reward-choice-icon-${choiceId}`}
           />
         </div>

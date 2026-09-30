@@ -396,7 +396,7 @@ export class FirstDungeonGodotTerrainRenderer {
       key,
       seed: seed >>> 0,
       campaign,
-      level,
+      level: getFirstDungeonGodotTerrainVisualLevel(campaign, level),
       chunkX,
       chunkY,
       ready: false,

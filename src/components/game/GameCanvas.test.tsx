@@ -12,6 +12,7 @@ import {
 } from '../../game/runtimeAssetOverrides'
 import { useGameStore } from '../../store/useGameStore'
 import { GameCanvas } from './GameCanvas'
+import { getForestHomepageMenuLayout } from './ForestHomepage'
 import { getHellhoundImage2FrameUrls } from '../../game/hellhoundAssetFrames'
 import type { RunSettlementSummary } from '../../game/types'
 
@@ -155,7 +156,7 @@ describe('GameCanvas', () => {
     expect(combat.height).toBe(1280)
   })
 
-  it('mounts the direct-collection radius ring inside the real canvas combat layer', () => {
+  it('does not mount the combat-entry collection ring or hint in the real canvas combat layer', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 660,
       height: 640,
@@ -181,8 +182,9 @@ describe('GameCanvas', () => {
 
     render(<GameCanvas />)
 
-    expect(screen.getByTestId('soul-crystal-direct-collection-feedback').getAttribute('data-trigger')).toBe('combat-entry')
-    expect(screen.getByTestId('soul-crystal-direct-collection-ring').getAttribute('data-effective-radius')).toBe('53.4000')
+    expect(screen.queryByTestId('soul-crystal-direct-collection-feedback')).toBeNull()
+    expect(screen.queryByTestId('soul-crystal-direct-collection-ring')).toBeNull()
+    expect(useGameStore.getState().pickups).toEqual(snapshot.pickups)
   })
 
   it('keeps Tab as a no-op target legacy key while Q still casts active skills', () => {
@@ -330,7 +332,7 @@ describe('GameCanvas', () => {
     expect(screen.getByLabelText('游戏画布')).toBeTruthy()
     expect(screen.getByTestId('game-over-settlement').getAttribute('data-settlement-background')).toBe('frozen-battle-frame-glass')
     expect(screen.queryByTestId('godot-village-background-poster')).toBeNull()
-    expect(screen.queryByTestId('village-compact-actions')).toBeNull()
+    expect(screen.queryByTestId('forest-home-menu')).toBeNull()
     expect(screen.queryByTestId('local-test-controls')).toBeNull()
   })
 
@@ -438,7 +440,43 @@ describe('GameCanvas', () => {
     }
   })
 
-  it('unmounts development controls while a compact village modal is open', () => {
+  it.each([[390, 844], [1440, 900], [1920, 1080], [768, 1024], [1280, 600]])('reserves a separate left-side development region at %dx%d without moving the seven home actions', (width, height) => {
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(width)
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(height)
+    useGameStore.setState({ ...createInitialSnapshot('idle'), mapObstacles: [] })
+    render(<GameCanvas />)
+
+    const controls = screen.getByTestId('local-test-controls')
+    expect(controls.getAttribute('data-placement')).toBe('homepage-left')
+    expect(controls.className).toContain('left-4 top-4 w-[min(10rem,calc(50vw-2rem))]')
+    expect(controls.className).not.toContain('right-4')
+    const menu = getForestHomepageMenuLayout(width, height)
+    expect(16 + Math.min(160, width / 2 - 32)).toBeLessThan(width - menu.right - menu.width)
+    expect(screen.getByTestId('forest-home-menu').style.right).toBe(`${menu.right}px`)
+    expect(within(screen.getByTestId('forest-home-menu')).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      '开始游戏', '角色选择', '物品仓库', '强化分解', '猎人之家', '公告信息', '游戏设置',
+    ])
+    fireEvent.click(screen.getByRole('button', { name: /^开始游戏$/ }))
+    expect(screen.getByTestId('campaign-modal-shell')).toBeTruthy()
+    expect(screen.queryByRole('dialog', { name: '本地战斗测试' })).toBeNull()
+    expect(screen.queryByTestId('local-test-controls')).toBeNull()
+  })
+
+  it('retains the existing combat developer placement and local battle action after leaving home', () => {
+    useGameStore.setState({ ...createInitialSnapshot('idle'), mapObstacles: [] })
+    render(<GameCanvas />)
+    fireEvent.click(screen.getByTestId('local-battle-entry'))
+    expect(screen.getByRole('dialog', { name: '本地战斗测试' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^关闭$/ }))
+    act(() => useGameStore.setState({ phase: 'running' }))
+    const controls = screen.getByTestId('local-test-controls')
+    expect(controls.getAttribute('data-placement')).toBe('combat-right')
+    expect(controls.className).toContain('right-4')
+    expect(controls.className).toContain('top-[8.75rem] sm:top-[9.75rem] md:top-[11.75rem]')
+    expect(controls.className).not.toContain('left-4')
+  })
+
+  it('unmounts development controls while a village modal is open', () => {
     const mediaQuery = {
       matches: true,
       addEventListener: vi.fn(),
@@ -450,7 +488,7 @@ describe('GameCanvas', () => {
     render(<GameCanvas />)
 
     expect(screen.getByTestId('local-test-controls')).toBeTruthy()
-    fireEvent.click(within(screen.getByTestId('village-compact-actions')).getByRole('button', { name: '传送门' }))
+    fireEvent.click(within(screen.getByTestId('forest-home-menu')).getByRole('button', { name: '开始游戏' }))
 
     expect(screen.getByTestId('campaign-modal-shell')).toBeTruthy()
     expect(screen.queryByTestId('local-test-controls')).toBeNull()
@@ -458,7 +496,7 @@ describe('GameCanvas', () => {
     expect(screen.queryByTestId('local-battle-entry')).toBeNull()
   })
 
-  it('hides test and local battle entries on a GitHub Pages host', () => {
+  it.each(['idle', 'running'] as const)('hides test and local battle entries on a GitHub Pages host in %s', (phase) => {
     const browserWindow = window
     vi.stubGlobal('window', new Proxy(browserWindow, {
       get(target, property, receiver) {
@@ -470,7 +508,7 @@ describe('GameCanvas', () => {
       },
     }))
     useGameStore.setState({
-      ...createInitialSnapshot('running'),
+      ...createInitialSnapshot(phase),
       mapObstacles: [],
     })
 
@@ -482,10 +520,10 @@ describe('GameCanvas', () => {
     expect(screen.queryByTestId('first-dungeon-chunk-observability-entry')).toBeNull()
   })
 
-  it('hides the level-jump entry in production even if a test fixture marks the contract available', () => {
+  it.each(['idle', 'running'] as const)('hides every developer entry in production %s even if a fixture marks the contract available', (phase) => {
     vi.stubEnv('PROD', true)
     useGameStore.setState({
-      ...createInitialSnapshot('running'),
+      ...createInitialSnapshot(phase),
       mapObstacles: [],
       developmentAcceptance: { available: true, active: false, canStart: true },
     })

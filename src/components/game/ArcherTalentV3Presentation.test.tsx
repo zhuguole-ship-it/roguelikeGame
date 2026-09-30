@@ -87,7 +87,9 @@ describe('ArcherTalentV3Presentation', () => {
     snapshot.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
     const presentation = getArcherCombatTalentV3SnapshotForGame(snapshot)
 
-    render(<ArcherCombatTalentV3CompactSummary presentation={presentation} placement="pause" />)
+    const view = render(<ArcherCombatTalentV3CompactSummary presentation={presentation} placement="hud" />)
+    expect(view.container.textContent).toBe('')
+    view.rerender(<ArcherCombatTalentV3CompactSummary presentation={presentation} placement="pause" />)
 
     const summary = screen.getByTestId('combat-talent-v3-pause-summary')
     expect(summary.textContent).toContain('主流派：穿透猎杀 / 贯穿破甲')

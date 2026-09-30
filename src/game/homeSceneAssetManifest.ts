@@ -2,11 +2,13 @@ import { developerAssetEntities } from './assetManifest'
 import { SEVEN_CUE_AUDIO_ASSETS } from './sevenCueAudioAssets'
 import { ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTIONS } from './archerSkillEvolution'
 import { getArcherSkillIconAssetPath } from './archerSkillIcons'
+import { getArrowTurretAssetForDisplayId, getArrowTurretImageResource } from './arrowTurretAssets'
 import { getPlayerArcherFrameUrls } from './archerAssetFrames'
 import { getMetaTalentIconAssetPath } from './metaTalentIcons'
 import { META_TALENT_NODES } from './talents'
 import type { SceneAssetManifest, SceneAssetResource } from './sceneAssetLoading'
 import { getSharedSceneAssetContentVersionForUrl } from './sharedSceneAssetContentVersions'
+import { HOMEPAGE_FOREST_BACKGROUND, HOMEPAGE_FOREST_MENU_FRAME } from './homepageForestAssets'
 
 const baseUrl = (import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')
 const encodeAssetPath = (path: string) => path.split('/').map(encodeURIComponent).join('/')
@@ -44,14 +46,13 @@ export const HOME_COMBAT_LOADING_ASSETS = Object.freeze({
 } as const)
 
 export const HOME_SCENE_DIRECT_DEPENDENCY_AUDIT = Object.freeze([
-  { module: 'hunter-home', label: '猎手之家', domains: ['meta-talent-icons', 'skill-icons'] },
-  { module: 'blacksmith', label: '铁匠铺', domains: ['fonts', 'home-config'] },
-  { module: 'guide', label: '告示牌', domains: ['skill-icons', 'monster-guide'] },
-  { module: 'portal', label: '传送门', domains: ['fonts', 'home-config'] },
+  { module: 'hunter-home', label: '猎人之家', domains: ['meta-talent-icons', 'skill-icons'] },
+  { module: 'blacksmith', label: '强化分解', domains: ['fonts', 'home-forest'] },
+  { module: 'guide', label: '公告信息', domains: ['skill-icons', 'monster-guide'] },
   { module: 'character-selection', label: '角色选择', domains: ['character-selection', 'player-preview'] },
-  { module: 'inventory', label: '物品仓库', domains: ['fonts', 'home-config'] },
-  { module: 'settings', label: '设置', domains: ['fonts', 'home-config'] },
-  { module: 'start-game', label: '开始游戏', domains: ['fonts', 'home-config'] },
+  { module: 'inventory', label: '物品仓库', domains: ['fonts', 'home-forest'] },
+  { module: 'settings', label: '游戏设置', domains: ['fonts', 'home-forest'] },
+  { module: 'start-game', label: '开始游戏', domains: ['fonts', 'home-forest'] },
 ] as const)
 
 const imageResource = (
@@ -77,7 +78,10 @@ skillIconIds.forEach((skillId) => {
   const path = getArcherSkillIconAssetPath(skillId)
   if (!path) return
   const existing = skillIconResourceByPath.get(path)
-  const resource = existing ?? imageResource(`skill-icon.${skillId}`, 'skill-icons', path)
+  const turretAsset = getArrowTurretAssetForDisplayId(skillId)
+  const resource = existing ?? (turretAsset
+    ? getArrowTurretImageResource(turretAsset.variant)
+    : imageResource(`skill-icon.${skillId}`, 'skill-icons', path))
   skillIconResourceByPath.set(path, resource)
   skillIconResourceById.set(skillId, resource)
 })
@@ -109,7 +113,7 @@ const monsterGuideUrls = Array.from(new Set([
 
 export const HOME_SCENE_ASSET_MANIFEST_V1: SceneAssetManifest = Object.freeze({
   key: 'home-scene-assets',
-  version: 'home-scene-assets-v1',
+  version: 'home-scene-assets-forest-v1',
   scene: 'home',
   resources: Object.freeze([
     SEVEN_CUE_AUDIO_ASSETS.button,
@@ -132,22 +136,8 @@ export const HOME_SCENE_ASSET_MANIFEST_V1: SceneAssetManifest = Object.freeze({
       url: publicUrl(HOME_COMBAT_LOADING_ASSETS.manifest.path),
       validate: (payload: unknown) => Boolean(payload && typeof payload === 'object' && (payload as { schemaVersion?: unknown }).schemaVersion === 'home-combat-loading-transition-assets-v1'),
     },
-    {
-      key: 'home.config',
-      domain: 'home-config',
-      kind: 'json' as const,
-      version: 'godot-home-layout-v1',
-      url: publicUrl('assets/godot-ui/main-menu-layout.json'),
-      validate: (payload: unknown) => Boolean(payload && typeof payload === 'object' && Array.isArray((payload as { clickAreas?: unknown }).clickAreas)),
-    },
-    {
-      key: 'home.background-video',
-      domain: 'home-config',
-      kind: 'video' as const,
-      version: 'godot-home-video-v1',
-      url: publicUrl('assets/godot-ui/pixel_contract_hunter_start_screen_960x640.webm'),
-    },
-    imageResource('home.background-poster', 'home-config', 'assets/godot-ui/pixel_contract_hunter_start_screen_960x640_poster.png'),
+    HOMEPAGE_FOREST_BACKGROUND,
+    HOMEPAGE_FOREST_MENU_FRAME,
     imageResource('character.selection-background', 'character-selection', 'assets/ui/character-selection/character-selection-background.png'),
     imageResource('character.detail-button', 'character-selection', 'assets/ui/character-selection/character-detail-button-transparent.png'),
     imageResource('character.detail-background', 'character-selection', 'assets/ui/character-selection/archer-detail-background.png'),

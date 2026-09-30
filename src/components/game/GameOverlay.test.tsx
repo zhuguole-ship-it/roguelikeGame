@@ -181,7 +181,7 @@ describe('GameOverlay', () => {
     expect(settlement.className).not.toContain('bg-[#030504]')
     expect(settlement.style.backdropFilter).toBe('blur(6px)')
     expect(screen.queryByTestId('godot-village-background-video')).toBeNull()
-    expect(screen.queryByTestId('village-compact-actions')).toBeNull()
+    expect(screen.queryByTestId('forest-home-menu')).toBeNull()
     expect(screen.queryByTestId('local-battle-failed')).toBeNull()
   })
 
@@ -206,7 +206,7 @@ describe('GameOverlay', () => {
     expect(settlement.className).not.toContain('bg-[#030504]')
     expect(settlement.style.backdropFilter).toBe('blur(6px)')
     expect(screen.queryByTestId('godot-village-background-video')).toBeNull()
-    expect(screen.queryByTestId('village-compact-actions')).toBeNull()
+    expect(screen.queryByTestId('forest-home-menu')).toBeNull()
   })
 
   it('exposes an independent music-volume slider in village settings', () => {
@@ -216,7 +216,7 @@ describe('GameOverlay', () => {
     })
     render(<GameOverlay />)
 
-    fireEvent.click(within(screen.getByTestId('village-compact-actions')).getByRole('button', { name: '设置' }))
+    fireEvent.click(within(screen.getByTestId('forest-home-menu')).getByRole('button', { name: '游戏设置' }))
     const music = screen.getByRole('slider', { name: '音乐 60%' })
     expect(music.getAttribute('value')).toBe('60')
     fireEvent.change(music, { target: { value: '35' } })
@@ -235,23 +235,19 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    const defaultBackgroundVideo = screen.getByTestId('godot-village-background-video')
-    expect(defaultBackgroundVideo.getAttribute('src')).toContain('assets/godot-ui/pixel_contract_hunter_start_screen_960x640.webm')
-    expect(defaultBackgroundVideo.getAttribute('poster')).toContain('assets/godot-ui/pixel_contract_hunter_start_screen_960x640_poster.png')
-    expect(defaultBackgroundVideo.getAttribute('src')).not.toContain('assets/village-main-menu-concept-image2.png')
-    expect(defaultBackgroundVideo.getAttribute('poster')).not.toContain('assets/village-main-menu-concept-image2.png')
+    expect(screen.getByTestId('forest-home-background').getAttribute('data-scene-asset-logical-url')).toContain('ui/homepage-forest-v1/background.png')
+    expect(document.querySelector('video')).toBeNull()
 
-    const compactActions = screen.getByTestId('village-compact-actions')
-    expect(compactActions.className).toContain('grid-cols-2')
-    expect(compactActions.className).toContain('sm:grid-cols-4')
-    expect(compactActions.className).toContain('lg:hidden')
+    const compactActions = screen.getByTestId('forest-home-menu')
+    expect(compactActions.className).not.toMatch(/grid|hidden|overflow/)
+    expect(within(compactActions).getAllByRole('button')).toHaveLength(7)
     expect(within(compactActions).getByRole('button', { name: '开始游戏' })).toBeTruthy()
     expect(within(compactActions).getByRole('button', { name: '角色选择' })).toBeTruthy()
     expect(within(compactActions).getByRole('button', { name: '物品仓库' })).toBeTruthy()
-    expect(within(compactActions).getByRole('button', { name: '设置' })).toBeTruthy()
-    expect(within(compactActions).getByRole('button', { name: '猎手之家' })).toBeTruthy()
+    expect(within(compactActions).getByRole('button', { name: '游戏设置' })).toBeTruthy()
+    expect(within(compactActions).getByRole('button', { name: '猎人之家' })).toBeTruthy()
 
-    fireEvent.click(within(compactActions).getByRole('button', { name: '传送门' }))
+    fireEvent.click(within(compactActions).getByRole('button', { name: '开始游戏' }))
     expect(screen.getByTestId('campaign-modal-shell').className).toContain('h-[min(92vh,760px)]')
     expect(screen.getByTestId('campaign-modal-shell-backdrop').className).toContain('overflow-y-auto')
     expect(screen.getByTestId('campaign-modal-shell-backdrop').className).toContain('overflow-x-hidden')
@@ -281,15 +277,15 @@ describe('GameOverlay', () => {
     expect(screen.getByTestId('inventory-modal-shell').className).toContain('h-[min(92vh,760px)]')
     expect(screen.getByTestId('inventory-modal-header').className).toContain('shrink-0')
     expect(screen.getByTestId('inventory-modal-header').className).toContain('bg-[#101913]')
-    expect(within(screen.getByTestId('inventory-modal-header')).getByText('仓库')).toBeTruthy()
+    expect(within(screen.getByTestId('inventory-modal-header')).getByText('物品仓库')).toBeTruthy()
     expect(within(screen.getByTestId('inventory-modal-header')).getByRole('button', { name: '关闭' })).toBeTruthy()
     expect(screen.getByTestId('inventory-modal-scroll').className).toContain('overflow-hidden')
     expect(screen.getByTestId('inventory-modal-scroll').className).toContain('flex-1')
     fireEvent.click(within(screen.getByTestId('inventory-modal-header')).getByRole('button', { name: '关闭' }))
     expect(screen.queryByTestId('inventory-modal-shell')).toBeNull()
 
-    fireEvent.click(within(compactActions).getByRole('button', { name: '告示牌' }))
-    expect(screen.getByText('图鉴')).toBeTruthy()
+    fireEvent.click(within(compactActions).getByRole('button', { name: '公告信息' }))
+    expect(within(screen.getByTestId('guide-modal-shell')).getByText('公告信息')).toBeTruthy()
     expect(screen.getByTestId('guide-modal-shell').className).toContain('h-[min(92vh,760px)]')
     expect(screen.getByTestId('guide-modal-scroll').className).toContain('overflow-y-auto')
     expect(screen.getByRole('button', { name: '关闭' }).className).toContain('text-sm')
@@ -321,9 +317,12 @@ describe('GameOverlay', () => {
     const evolutionGuide = screen.getByTestId('archer-evolution-guide')
     expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-build-"]')).toHaveLength(4)
     expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-family-"]')).toHaveLength(21)
-    expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-core-image-"]')).toHaveLength(20)
+    expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-core-image-"]')).toHaveLength(21)
     expect(screen.getByTestId('archer-evolution-guide-core-image-pierce-arrow').getAttribute('data-scene-asset-logical-url')).toBe(getArcherSkillIconAssetUrl('pierce-arrow'))
-    expect(screen.getByTestId('archer-evolution-guide-core-placeholder-arrow-turret').textContent).toContain('箭幕哨塔')
+    expect(screen.queryByTestId('archer-evolution-guide-core-placeholder-arrow-turret')).toBeNull()
+    const turretCoreImage = screen.getByTestId('archer-evolution-guide-core-image-arrow-turret')
+    expect(turretCoreImage.getAttribute('data-scene-asset-logical-url')).toBe(getArcherSkillIconAssetUrl('arrow-turret'))
+    expect(turretCoreImage.className).toContain('object-contain')
     expect(screen.getByTestId('archer-evolution-guide-discovered-wind-cut')).toBeTruthy()
     expect(evolutionGuide.querySelectorAll('[data-testid^="archer-evolution-guide-undiscovered-"]')).toHaveLength(41)
     expect(evolutionGuide.querySelector('[data-testid="archer-evolution-guide-family-heavy-snipe"]')).toBeNull()
@@ -372,7 +371,7 @@ describe('GameOverlay', () => {
     fireEvent.click(screen.getByRole('button', { name: '关闭' }))
     expect(screen.queryByText('图鉴')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    fireEvent.click(screen.getByRole('button', { name: '强化分解' }))
     expect(screen.getAllByText('分解').length).toBeGreaterThan(0)
     expect(screen.getAllByText('强化').length).toBeGreaterThan(0)
     expect(screen.getAllByText('重铸').length).toBeGreaterThan(0)
@@ -383,7 +382,7 @@ describe('GameOverlay', () => {
     expect(screen.queryByRole('button', { name: '购买' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: '关闭' }))
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
     expect(screen.getByText('历史冒险')).toBeTruthy()
     expect(screen.queryByText('当前猎人')).toBeNull()
     expect(screen.queryByText('当前成长')).toBeNull()
@@ -534,7 +533,7 @@ describe('GameOverlay', () => {
     useGameStore.setState(snapshot)
 
     render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
     fireEvent.click(screen.getByRole('tab', { name: '战斗天赋' }))
 
     const catalog = screen.getByTestId('hunter-home-combat-talent-v3-catalog')
@@ -554,7 +553,7 @@ describe('GameOverlay', () => {
     render(<GameOverlay />)
 
     const openCharacterSelection = () => {
-      fireEvent.click(within(screen.getByTestId('village-compact-actions')).getByRole('button', { name: '角色选择' }))
+      fireEvent.click(within(screen.getByTestId('forest-home-menu')).getByRole('button', { name: '角色选择' }))
     }
 
     openCharacterSelection()
@@ -890,7 +889,7 @@ describe('GameOverlay', () => {
     useGameStore.setState({ ...createInitialSnapshot('idle'), discoveredSkillEvolutionIds: ['wind-cut'] })
     render(<GameOverlay />)
 
-    fireEvent.click(within(screen.getByTestId('village-compact-actions')).getByRole('button', { name: '角色选择' }))
+    fireEvent.click(within(screen.getByTestId('forest-home-menu')).getByRole('button', { name: '角色选择' }))
     const detailButton = screen.getByTestId('character-selection-detail-button')
     fireEvent.click(detailButton)
     fireEvent.click(detailButton)
@@ -929,7 +928,7 @@ describe('GameOverlay', () => {
     useGameStore.setState({ ...createInitialSnapshot('idle'), discoveredSkillEvolutionIds: ['wind-cut'] })
     render(<GameOverlay />)
 
-    fireEvent.click(within(screen.getByTestId('village-compact-actions')).getByRole('button', { name: '角色选择' }))
+    fireEvent.click(within(screen.getByTestId('forest-home-menu')).getByRole('button', { name: '角色选择' }))
     fireEvent.click(screen.getByTestId('character-selection-detail-button'))
 
     expect(screen.queryByTestId('character-detail-transition')).toBeNull()
@@ -952,7 +951,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
 
     expect(screen.getByTestId('hunter-home-meta-unlocked-count').textContent).toBe('1/84')
     expect(screen.getByTestId('meta-talent-node-meta_common_01').getAttribute('data-state')).toBe('unlocked')
@@ -980,7 +979,7 @@ describe('GameOverlay', () => {
     })
 
     const { unmount } = render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
 
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_campaign_01'))
     const campaignOneWeight = screen.getByTestId('meta-talent-candidate-weight-meta_campaign_01-meta_campaign_01:death-pierce-normal')
@@ -1002,7 +1001,7 @@ describe('GameOverlay', () => {
       metaTalentRanks: { meta_common_01: 1 },
     })
     render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_campaign_02'))
     expect(screen.queryByTestId('meta-talent-candidate-weight-meta_campaign_02-meta_campaign_02:blood-bleed-normal')).toBeNull()
   })
@@ -1020,7 +1019,7 @@ describe('GameOverlay', () => {
     })
 
     const { unmount } = render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_difficulty_08'))
     expect(screen.getByTestId('meta-talent-candidate-weight-meta_difficulty_08-meta_difficulty_08:hard-boss-boss').textContent).toContain('Boss 装备候选 · 第 1 关 · 困难 · +8%')
     expect(screen.queryByTestId('meta-talent-candidate-weight-meta_difficulty_08-meta_difficulty_08:hard-boss-normal')).toBeNull()
@@ -1041,7 +1040,7 @@ describe('GameOverlay', () => {
     })
 
     render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_difficulty_16'))
     expect(screen.queryByTestId('boss-extra-equipment-protection-meta_difficulty_16')).toBeNull()
     expect(screen.queryByText('待产品规则（当前不生效）')).toBeNull()
@@ -1060,7 +1059,7 @@ describe('GameOverlay', () => {
     })
 
     const { unmount } = render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_endgame_02'))
     const normalProtection = screen.getByTestId('boss-extra-equipment-protection-meta_endgame_02')
     expect(normalProtection.textContent).toContain('Boss额外装备掉落保护')
@@ -1083,7 +1082,7 @@ describe('GameOverlay', () => {
     })
 
     render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_difficulty_16'))
     const nightmareProtection = screen.getByTestId('boss-extra-equipment-protection-meta_difficulty_16')
     expect(nightmareProtection.textContent).toContain('第 1 关 · 折磨')
@@ -1105,7 +1104,7 @@ describe('GameOverlay', () => {
     })
 
     render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_difficulty_16'))
     const status = screen.getByTestId('boss-extra-equipment-protection-d16-status')
     expect(status.textContent).toContain('仅在折磨 Boss额外装备掉落时生效')
@@ -1123,7 +1122,7 @@ describe('GameOverlay', () => {
     })
 
     render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_endgame_06'))
     expect(screen.queryByTestId('endgame-archive-candidate-weight')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '关闭' }))
@@ -1143,7 +1142,7 @@ describe('GameOverlay', () => {
     })
 
     render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_endgame_06'))
     const archive = screen.getByTestId('endgame-archive-candidate-weight')
     expect(archive.textContent).toContain('第 2 关 · 层数 0 / 4 · 当前 +0%')
@@ -1190,7 +1189,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
 
     expect(screen.getByTestId('hunter-home-talent-balance').textContent).toBe('12')
     expect(screen.getByTestId('hunter-home-meta-unlocked-count').textContent).toBe('0/84')
@@ -1211,7 +1210,7 @@ describe('GameOverlay', () => {
   it('renders missing functional talent art as readable group and BRANCH/DEEP/KEY emblems', () => {
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
 
     const programmaticNodeIcons = document.querySelectorAll(
       '[data-icon-kind="programmatic"][data-testid^="meta-talent-node-icon-"]',
@@ -1253,7 +1252,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
     fireEvent.click(screen.getByTestId('meta-talent-node-meta_common_01'))
     fireEvent.click(screen.getByTestId('meta-talent-node-meta_common_02'))
 
@@ -1289,7 +1288,7 @@ describe('GameOverlay', () => {
     })
 
     render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
 
     const rerollNode = screen.getByTestId('meta-talent-node-meta_common_02')
     expect(rerollNode.getAttribute('data-rank')).toBe('0')
@@ -1319,7 +1318,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
 
     fireEvent.focus(screen.getByTestId('meta-talent-node-meta_common_01'))
     const systemTooltip = screen.getByTestId('meta-talent-tooltip-meta_common_01').textContent ?? ''
@@ -1353,7 +1352,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
 
     expect(screen.getByTestId('meta-talent-row-death').textContent).toContain('死契处刑')
     expect(screen.getByTestId('meta-talent-group-death-base').textContent).toContain('流派寻迹')
@@ -1388,7 +1387,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
     fireEvent.click(screen.getByTestId('meta-talent-node-meta_common_01'))
     fireEvent.click(screen.getByTestId('meta-talent-node-meta_common_02'))
 
@@ -1420,7 +1419,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '猎手之家' }))
+    fireEvent.click(screen.getByRole('button', { name: '猎人之家' }))
     expect((screen.getByTestId('hunter-home-meta-reset') as HTMLButtonElement).disabled).toBe(true)
     expect(screen.queryByTestId('hunter-home-meta-reset-hint')).toBeNull()
   })
@@ -1430,7 +1429,7 @@ describe('GameOverlay', () => {
 
     const { container } = render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
+    fireEvent.click(screen.getByRole('button', { name: '公告信息' }))
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     CAMPAIGN_MONSTER_THEMES.forEach((theme) => {
@@ -1445,7 +1444,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '传送门' }))
+    fireEvent.click(screen.getByRole('button', { name: '开始游戏' }))
     fireEvent.click(screen.getByRole('button', { name: /狼人黑森林/ }))
     const profile = getCampaignLootProfile(3)
 
@@ -1463,7 +1462,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '传送门' }))
+    fireEvent.click(screen.getByRole('button', { name: '开始游戏' }))
 
     expect(screen.getByTestId('selected-campaign-difficulty').textContent).toBe('普通')
     expect(screen.getByRole('button', { name: '普通' })).toBeTruthy()
@@ -1490,7 +1489,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '传送门' }))
+    fireEvent.click(screen.getByRole('button', { name: '开始游戏' }))
     fireEvent.click(screen.getByRole('button', { name: '困难' }))
 
     expect(useGameStore.getState().selectedCampaign).toBe(1)
@@ -1508,7 +1507,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
+    fireEvent.click(screen.getByRole('button', { name: '公告信息' }))
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     expect(screen.queryByTestId('campaign-floor-row-2-1')).toBeNull()
@@ -1522,7 +1521,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
+    fireEvent.click(screen.getByRole('button', { name: '公告信息' }))
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     const campaignTwo = CAMPAIGN_MONSTER_THEMES[1]
@@ -1541,7 +1540,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
+    fireEvent.click(screen.getByRole('button', { name: '公告信息' }))
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     const skeletonArt = screen.getByLabelText('骷髅战士立绘')
@@ -1570,7 +1569,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
+    fireEvent.click(screen.getByRole('button', { name: '公告信息' }))
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     const slimeEntries = screen.getAllByLabelText('腐蚀史莱姆立绘')
@@ -1593,7 +1592,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
+    fireEvent.click(screen.getByRole('button', { name: '公告信息' }))
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     const archerArt = screen.getByLabelText('骷髅弓手立绘')
@@ -1616,7 +1615,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
+    fireEvent.click(screen.getByRole('button', { name: '公告信息' }))
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     const vampireArt = screen.getByLabelText('吸血鬼仆从立绘')
@@ -1634,7 +1633,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
+    fireEvent.click(screen.getByRole('button', { name: '公告信息' }))
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     const hellhoundArt = screen.getByLabelText('地狱犬立绘')
@@ -1653,7 +1652,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
+    fireEvent.click(screen.getByRole('button', { name: '公告信息' }))
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     expect(SKELETON_WARRIOR_SPRITE_ATLAS.actions.idle?.start).toBe(0)
@@ -1673,7 +1672,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
+    fireEvent.click(screen.getByRole('button', { name: '公告信息' }))
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     const wardenArt = screen.getByLabelText('典狱长立绘')
@@ -1691,7 +1690,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '告示牌' }))
+    fireEvent.click(screen.getByRole('button', { name: '公告信息' }))
     fireEvent.click(screen.getByRole('tab', { name: '怪物' }))
 
     const variants: Array<{ entityId: C1SlimeVariantAssetId; name: string; legacySheet: string }> = [
@@ -1768,7 +1767,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    fireEvent.click(screen.getByRole('button', { name: '强化分解' }))
     fireEvent.click(screen.getAllByRole('button', { name: '副属性重铸' })[0])
 
     expect(screen.getByTestId('reforge-current-roll').textContent).toContain('100%')
@@ -1823,7 +1822,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    fireEvent.click(screen.getByRole('button', { name: '强化分解' }))
     const beforeCard = screen.getByTestId('blacksmith-upgrade-slot-weapon')
     expect(beforeCard.textContent).toContain('QA 旧档传承弓 +0')
     expect(screen.getByTestId('blacksmith-upgrade-level-weapon').textContent).toContain('+0')
@@ -1854,7 +1853,7 @@ describe('GameOverlay', () => {
     const item = { id: 'qa-shortage-bow', slot: 'weapon' as const, rarity: 'legacy' as const, name: '缺口传承弓', affix: '死契', buildTag: 'pierce' as const, level: 20, score: 180, bonus: { attackDamage: 35, attackRange: 40 }, modifiers: [{ type: 'projectile-count' as const, amount: 1 }], upgradeLevel: 0 }
     useGameStore.setState({ ...base, equipmentInventory: [item], equippedItems: { weapon: item }, equipmentMaterials: { ...base.equipmentMaterials, ironScraps: 0, legacyEmber: 0, campaignSigil: 0 }, currency: 0 })
     render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    fireEvent.click(screen.getByRole('button', { name: '强化分解' }))
     const card = screen.getByTestId('blacksmith-upgrade-slot-weapon')
     const button = within(card).getByRole('button', { name: /强化到 \+1/ })
     expect(button.hasAttribute('disabled')).toBe(false)
@@ -1870,18 +1869,18 @@ describe('GameOverlay', () => {
     const item = { id: 'qa-shortage-split', slot: 'weapon' as const, rarity: 'legacy' as const, name: '分项缺口弓', affix: '死契', buildTag: 'pierce' as const, level: 20, score: 180, bonus: { attackDamage: 35, attackRange: 40 }, modifiers: [], upgradeLevel: 0 }
     useGameStore.setState({ ...base, equipmentInventory: [item], equippedItems: { weapon: item }, equipmentMaterials: { ...base.equipmentMaterials, ironScraps: 0 }, currency: 9999 })
     render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    fireEvent.click(screen.getByRole('button', { name: '强化分解' }))
     const card = screen.getByTestId('blacksmith-upgrade-slot-weapon')
     expect(screen.getByTestId('blacksmith-upgrade-missing-weapon').textContent).toContain('铁屑 0/')
     expect(screen.queryByTestId('blacksmith-upgrade-feedback-weapon')).toBeNull()
     fireEvent.click(within(card).getByRole('button', { name: /强化到 \+1/ }))
     expect(screen.getByTestId('blacksmith-upgrade-feedback-weapon').getAttribute('aria-live')).toBe('polite')
     fireEvent.click(screen.getByRole('button', { name: '关闭' }))
-    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    fireEvent.click(screen.getByRole('button', { name: '强化分解' }))
     expect(screen.queryByTestId('blacksmith-upgrade-feedback-weapon')).toBeNull()
     useGameStore.setState((state) => ({ ...state, equipmentMaterials: { ...state.equipmentMaterials, ironScraps: 99 }, currency: 0 }))
     fireEvent.click(screen.getByRole('button', { name: '关闭' }))
-    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    fireEvent.click(screen.getByRole('button', { name: '强化分解' }))
     expect(screen.getByTestId('blacksmith-upgrade-missing-weapon').textContent).toContain('金币 0/')
   })
 
@@ -1890,7 +1889,7 @@ describe('GameOverlay', () => {
     const item = { id: 'qa-cap-bow', slot: 'weapon' as const, rarity: 'common' as const, name: '制式弓', affix: '通用', buildTag: 'pierce' as const, level: 1, score: 10, bonus: { attackDamage: 1, attackRange: 10 }, modifiers: [], upgradeLevel: 13 }
     useGameStore.setState({ ...base, equipmentInventory: [item], equippedItems: { weapon: item }, equipmentMaterials: { ...base.equipmentMaterials, ironScraps: 99 }, currency: 9999 })
     render(<GameOverlay />)
-    fireEvent.click(screen.getByRole('button', { name: '铁匠铺' }))
+    fireEvent.click(screen.getByRole('button', { name: '强化分解' }))
     expect(screen.getByTestId('blacksmith-upgrade-cap-weapon').textContent).toContain('强化上限')
   })
 
@@ -1902,7 +1901,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    fireEvent.click(screen.getByRole('button', { name: '传送门' }))
+    fireEvent.click(screen.getByRole('button', { name: '开始游戏' }))
     expect(screen.getByText('关卡')).toBeTruthy()
     expect(screen.getAllByText('死契地牢').length).toBeGreaterThan(0)
     expect(screen.getAllByText('巨龙审判火山').length).toBeGreaterThan(0)

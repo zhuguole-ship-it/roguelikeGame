@@ -1534,6 +1534,8 @@ export type ArrowTurretRuntimeState = {
   groupId: string
   groupCreatedAt: number
   variant: 'base' | 'resonance' | 'taunt'
+  /** Presentation only; absent pre-field runtime records default to right. */
+  horizontalFacing?: 'left' | 'right'
   hp: number
   maxHp: number
   attackInterval: number

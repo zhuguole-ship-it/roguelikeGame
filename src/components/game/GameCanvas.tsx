@@ -43,6 +43,7 @@ function LocalTestControls({
   avoidMinimap,
   highestLayer,
   isVillageModalOpen,
+  isHomepage,
   onAcceptanceOpenChange,
 }: {
   onOpenChange: (open: boolean) => void
@@ -52,6 +53,7 @@ function LocalTestControls({
   avoidMinimap: boolean
   highestLayer: CombatUiHighestLayer
   isVillageModalOpen: boolean
+  isHomepage: boolean
   onAcceptanceOpenChange: (open: boolean) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -95,7 +97,10 @@ function LocalTestControls({
   return (
     <div
       {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.developer, highestLayer)}
-      className={`absolute right-4 text-[#f4f0d7] ${avoidMinimap ? 'top-[8.75rem] sm:top-[9.75rem] md:top-[11.75rem]' : 'top-4'}`}
+      className={`absolute text-[#f4f0d7] ${isHomepage
+        ? 'left-4 top-4 w-[min(10rem,calc(50vw-2rem))]'
+        : `right-4 ${avoidMinimap ? 'top-[8.75rem] sm:top-[9.75rem] md:top-[11.75rem]' : 'top-4'}`}`}
+      data-placement={isHomepage ? 'homepage-left' : 'combat-right'}
       style={getCombatUiLayerStyle(COMBAT_UI_LAYER.developer)}
       data-testid="local-test-controls"
     >
@@ -433,6 +438,7 @@ export function GameCanvas({ enableSceneLoading = import.meta.env.MODE !== 'test
         avoidMinimap={isCombatMinimapVisible(phase)}
         highestLayer={highestLayer}
         isVillageModalOpen={isVillageModalOpen}
+        isHomepage={phase === 'idle'}
         onAcceptanceOpenChange={setDevelopmentAcceptancePanelOpen}
       />
       {enableSceneLoading && combatLoadingManifest && combatLaunchGate.launchId ? (

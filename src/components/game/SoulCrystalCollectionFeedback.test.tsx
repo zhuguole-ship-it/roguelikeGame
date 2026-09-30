@@ -69,16 +69,30 @@ afterEach(() => {
 })
 
 describe('SoulCrystalCollectionFeedback', () => {
-  it('uses the engine projection to show the real effective-radius ring when combat begins', () => {
+  it('hides combat-entry while retaining the real collection API and all pickup state', () => {
+    const snapshot = makeRunningCrystalSnapshot()
+    snapshot.player.position = { x: 450, y: 300 }
+    useGameStore.setState(snapshot)
+    const before = JSON.stringify(useGameStore.getState().pickups)
+    render(<SoulCrystalCollectionFeedback canvasRef={makeCanvasRef()} cameraRef={cameraRef} />)
+    expect(screen.queryByTestId('soul-crystal-direct-collection-feedback')).toBeNull()
+    expect(screen.queryByTestId('soul-crystal-direct-collection-ring')).toBeNull()
+    expect(screen.queryByText('蓝晶收集范围')).toBeNull()
+    expect(engine.getSoulCrystalDirectCollectionPresentation(useGameStore.getState()).crystals[0]).toMatchObject({ isInside: true, effectiveRadius: 53.4 })
+    expect(JSON.stringify(useGameStore.getState().pickups)).toBe(before)
+  })
+
+  it('uses the engine projection to show the real effective-radius ring only on a boundary crossing', () => {
     const presentationSpy = vi.spyOn(engine, 'getSoulCrystalDirectCollectionPresentation')
     useGameStore.setState(makeRunningCrystalSnapshot())
 
     render(<SoulCrystalCollectionFeedback canvasRef={makeCanvasRef()} cameraRef={cameraRef} />)
+    movePlayerIntoCrystalRange()
 
     const feedback = screen.getByTestId('soul-crystal-direct-collection-feedback')
     expect(presentationSpy).toHaveBeenCalled()
     expect(feedback.getAttribute('data-crystal-id')).toBe('direct-collection-crystal')
-    expect(feedback.getAttribute('data-trigger')).toBe('combat-entry')
+    expect(feedback.getAttribute('data-trigger')).toBe('boundary-entry')
     expect(feedback.getAttribute('data-effective-radius')).toBe('53.4000')
     expect(feedback.getAttribute('data-base-radius')).toBe('53.4000')
     expect(feedback.getAttribute('data-meta-rank')).toBe('0')
@@ -93,7 +107,7 @@ describe('SoulCrystalCollectionFeedback', () => {
     const ring = screen.getByTestId('soul-crystal-direct-collection-ring')
     expect(ring.getAttribute('data-effective-radius')).toBe('53.4000')
     expect(ring.getAttribute('data-screen-radius-x')).toBe('53.4000')
-    expect(ring.style.left).toBe('310px')
+    expect(ring.style.left).toBe('330px')
     expect(ring.style.top).toBe('270px')
     expect(ring.className).toContain('pointer-events-none')
     expect(ring.className).toContain('bg-cyan-300/[0.035]')
@@ -105,11 +119,11 @@ describe('SoulCrystalCollectionFeedback', () => {
     expect(screen.getAllByTestId('soul-crystal-direct-collection-feedback')).toHaveLength(1)
   })
 
-  it('uses justEntered to replace the entry cue with one boundary-entry cue', () => {
+  it('uses justEntered for one boundary-entry cue without an opening cue', () => {
     useGameStore.setState(makeRunningCrystalSnapshot())
     render(<SoulCrystalCollectionFeedback canvasRef={makeCanvasRef()} cameraRef={cameraRef} />)
 
-    expect(screen.getByTestId('soul-crystal-direct-collection-feedback').getAttribute('data-trigger')).toBe('combat-entry')
+    expect(screen.queryByTestId('soul-crystal-direct-collection-feedback')).toBeNull()
     act(() => {
       vi.advanceTimersByTime(SOUL_CRYSTAL_COLLECTION_PULSE_DURATION_MS)
     })
@@ -137,6 +151,7 @@ describe('SoulCrystalCollectionFeedback', () => {
   it('removes the cue after its short presentation lifetime', () => {
     useGameStore.setState(makeRunningCrystalSnapshot())
     render(<SoulCrystalCollectionFeedback />)
+    movePlayerIntoCrystalRange()
 
     expect(screen.getByTestId('soul-crystal-direct-collection-feedback')).toBeTruthy()
 
@@ -154,6 +169,7 @@ describe('SoulCrystalCollectionFeedback', () => {
     })))
     useGameStore.setState(makeRunningCrystalSnapshot())
     render(<SoulCrystalCollectionFeedback canvasRef={makeCanvasRef()} cameraRef={cameraRef} />)
+    movePlayerIntoCrystalRange()
 
     const feedback = screen.getByTestId('soul-crystal-direct-collection-feedback')
     expect(feedback.getAttribute('data-reduced-motion')).toBe('true')
@@ -168,6 +184,7 @@ describe('SoulCrystalCollectionFeedback', () => {
     snapshot.metaTalentRanks = { meta_common_05: 3 }
     useGameStore.setState(snapshot)
     render(<SoulCrystalCollectionFeedback canvasRef={makeCanvasRef()} cameraRef={cameraRef} />)
+    movePlayerIntoCrystalRange()
 
     const expectedRadius = SOUL_CRYSTAL_DIRECT_COLLECTION_META_RADII[3]
     expect(expectedRadius).toBe(53.4)
@@ -185,6 +202,7 @@ describe('SoulCrystalCollectionFeedback', () => {
 
     useGameStore.setState(makeRunningCrystalSnapshot())
     render(<SoulCrystalCollectionFeedback canvasRef={canvasRef} cameraRef={cameraRef} />)
+    movePlayerIntoCrystalRange()
     const feedback = screen.getByTestId('soul-crystal-direct-collection-feedback')
     expect(feedback.className).toContain('max-w-[calc(100vw-1.5rem)]')
     expect(feedback.getAttribute('role')).toBe('status')

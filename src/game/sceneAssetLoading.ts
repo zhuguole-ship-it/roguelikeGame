@@ -238,6 +238,9 @@ const decodeImageObjectUrl = (resource: SceneAssetResource, objectUrl: string) =
       if (!image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) {
         throw new Error(`${resource.key} decoded without drawable dimensions`)
       }
+      if (resource.validate && !resource.validate(image)) {
+        throw new Error(`${resource.key} decoded with invalid image dimensions`)
+      }
       cleanup()
       resolve(image)
     } catch (error) {

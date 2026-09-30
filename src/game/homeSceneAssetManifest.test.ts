@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { ARROW_TURRET_ASSETS } from './arrowTurretAssets'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -29,6 +30,7 @@ import {
   SHARED_SCENE_ASSET_CONTENT_VERSIONS,
 } from './sharedSceneAssetContentVersions'
 import { META_TALENT_NODES } from './talents'
+import { HOMEPAGE_FOREST_BACKGROUND, HOMEPAGE_FOREST_MENU_FRAME } from './homepageForestAssets'
 
 const projectRoot = process.cwd()
 const publicRoot = resolve(projectRoot, 'public')
@@ -160,12 +162,11 @@ describe('HOME_SCENE_ASSET_MANIFEST_V1', () => {
     expect(controlledManifest).not.toMatch(/Downloads|\/Users\/|file:/)
   })
 
-  it('audits exactly the eight home modules and keeps physical resources deduplicated', () => {
+  it('audits exactly the seven home modules and keeps physical resources deduplicated', () => {
     expect(HOME_SCENE_DIRECT_DEPENDENCY_AUDIT.map((entry) => entry.module)).toEqual([
       'hunter-home',
       'blacksmith',
       'guide',
-      'portal',
       'character-selection',
       'inventory',
       'settings',
@@ -174,6 +175,24 @@ describe('HOME_SCENE_ASSET_MANIFEST_V1', () => {
     const resources = HOME_SCENE_ASSET_MANIFEST_V1.resources
     expect(dedupeSceneAssetResources(resources)).toHaveLength(resources.length)
     expect(new Set(resources.map(getSceneAssetCacheKey)).size).toBe(resources.length)
+  })
+
+  it('gates the new forest and frame on exact dimensions and separate content hashes without retired home resources', () => {
+    for (const [resource, width, height] of [
+      [HOMEPAGE_FOREST_BACKGROUND, 1733, 907],
+      [HOMEPAGE_FOREST_MENU_FRAME, 3000, 867],
+    ] as const) {
+      const bytes = readFileSync(publicFileForUrl(resource.url))
+      expect(readPngMetadata(bytes)).toMatchObject({ width, height })
+      expect(sha256(bytes)).toBe(resource.version)
+      expect(HOME_SCENE_ASSET_MANIFEST_V1.resources).toContain(resource)
+      expect(resource.validate({ naturalWidth: width, naturalHeight: height })).toBe(true)
+      expect(resource.validate({ naturalWidth: 960, naturalHeight: 640 })).toBe(false)
+      expect(resource.validate(null)).toBe(false)
+    }
+    expect(HOME_SCENE_ASSET_MANIFEST_V1.version).toBe('home-scene-assets-forest-v1')
+    expect(HOME_SCENE_ASSET_MANIFEST_V1.resources.some((r) => /home\.config|home\.background-video|home\.background-poster/.test(r.key))).toBe(false)
+    expect(HOME_SCENE_ASSET_MANIFEST_V1.resources.some((r) => /godot-ui|forest-camp-pixel/.test(r.url ?? ''))).toBe(false)
   })
 
   it('uses only project-local resource URLs and every declared file currently exists', () => {
@@ -239,6 +258,7 @@ describe('HOME_SCENE_ASSET_MANIFEST_V1', () => {
     ]))
     expect(new Set(HOME_SCENE_HUNTER_HOME_SKILL_ICON_RESOURCES.map((resource) => resource.version))).toEqual(new Set([
       SHARED_SCENE_ASSET_CONTENT_VERSIONS.archerSkillIcons,
+      ...Object.values(ARROW_TURRET_ASSETS).map((asset) => asset.sha256),
     ]))
     expect([...idleResources, ...HOME_SCENE_HUNTER_HOME_SKILL_ICON_RESOURCES].some((resource) => (
       /home|combat|loading/.test(resource.version)

@@ -117,7 +117,7 @@ describe('Archer talent V3 UI integration', () => {
     expect(card.getAttribute('aria-label')).toContain(`${target.currentRank} 到 ${target.currentRank + 1} 级`)
   })
 
-  it('uses the same runtime projection for the HUD, pause summary and settlement summary', () => {
+  it('hides the HUD summary without clearing the runtime projection or pause summary', () => {
     const running = createInitialSnapshot('running')
     running.activeSkills = [{ skillId: 'pierce-arrow', familyId: 'pierce-arrow', level: 1, cooldownRemaining: 0 }]
     running.runTalentState.combatTalentV3 = {
@@ -128,8 +128,8 @@ describe('Archer talent V3 UI integration', () => {
     }
     useGameStore.setState(running)
     const { unmount } = render(<GameStatusBar />)
-    expect(screen.getByTestId('combat-talent-v3-hud').textContent).toContain('有限投入：2')
-    expect(screen.getByTestId('combat-talent-v3-hud').textContent).toContain('无限成长：1')
+    expect(screen.queryByTestId('combat-talent-v3-hud')).toBeNull()
+    expect(getArcherCombatTalentV3SnapshotForGame(useGameStore.getState())).toMatchObject({ totalFinitePoints: 2, totalInfiniteSelections: 1 })
     unmount()
 
     useGameStore.setState({ ...running, phase: 'paused', pauseMenuOpen: true })
@@ -158,10 +158,8 @@ describe('Archer talent V3 UI integration', () => {
     useGameStore.setState(running)
 
     const hud = render(<GameStatusBar />)
-    const hudSummary = screen.getByTestId('combat-talent-v3-hud')
-    expect(hudSummary.textContent).toContain('无限成长：3')
-    expect(hudSummary.getAttribute('aria-label')).toContain('无尽轰炸×2')
-    expect(hudSummary.getAttribute('aria-label')).toContain('精准落点×1')
+    expect(screen.queryByTestId('combat-talent-v3-hud')).toBeNull()
+    expect(getArcherCombatTalentV3SnapshotForGame(useGameStore.getState()).totalInfiniteSelections).toBe(3)
     hud.unmount()
 
     useGameStore.setState({ ...running, phase: 'paused', pauseMenuOpen: true })

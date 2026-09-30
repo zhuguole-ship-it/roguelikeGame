@@ -5,8 +5,12 @@ import { createInitialSnapshot } from '../../game/engine'
 import { useGameStore } from '../../store/useGameStore'
 import { InitialSkillDraftOverlay } from './InitialSkillDraftOverlay'
 
-const startFormalDraft = () => {
-  useGameStore.setState({ ...createInitialSnapshot('idle'), metaTalentRanks: {} })
+const startFormalDraft = (rank: 0 | 1 | 2 = 0) => {
+  useGameStore.setState({
+    ...createInitialSnapshot('idle'),
+    unlockedMetaTalentIds: rank ? ['meta_common_02'] : [],
+    metaTalentRanks: rank ? { meta_common_02: rank } : {},
+  })
   useGameStore.getState().startGame()
   return useGameStore.getState().getInitialSkillDraftPresentation()
 }
@@ -17,6 +21,76 @@ afterEach(() => {
 })
 
 describe('InitialSkillDraftOverlay', () => {
+  it.each([1, 2] as const)('consumes FT002 rank %i through the real action independently on all three rounds', (rank) => {
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.45)
+    startFormalDraft(rank)
+    render(<InitialSkillDraftOverlay />)
+    const rewardRerolls = useGameStore.getState().inRunRewardRerolls
+    const talentRerolls = useGameStore.getState().runTalentState.rerollsRemaining
+
+    for (const round of [1, 2, 3]) {
+      expect(screen.getByTestId('initial-skill-draft-progress').textContent).toContain(`第 ${round} / 3 段`)
+      const selectedBefore = [...useGameStore.getState().getInitialSkillDraftPresentation().selectedFamilyIds]
+      for (let used = 0; used < rank; used += 1) {
+        const button = screen.getByRole('button', { name: `初始重掷 · 本轮剩余 ${rank - used} 次` })
+        expect(button.hasAttribute('disabled')).toBe(false)
+        const candidatesBefore = useGameStore.getState().getInitialSkillDraftPresentation().candidates
+        random.mockReturnValue(used === 0 ? 0.03 : 0.93)
+        fireEvent.click(button)
+        const next = useGameStore.getState().getInitialSkillDraftPresentation()
+        expect(next).toMatchObject({ currentRound: round, rerollsRemaining: rank - used - 1, rerollsUsedThisRound: used + 1, selectedFamilyIds: selectedBefore })
+        expect(next.candidates.map((item) => item.choiceId)).not.toEqual(candidatesBefore.map((item) => item.choiceId))
+        expect(screen.getByText(`初始技能选择 ${round}/3：已重掷`).getAttribute('aria-live')).toBe('polite')
+      }
+      const exhausted = screen.getByRole('button', { name: '初始重掷 · 本轮剩余 0 次' })
+      expect(exhausted.hasAttribute('disabled')).toBe(true)
+      const draftBeforeDisabledClick = useGameStore.getState().initialSkillDraft
+      fireEvent.click(exhausted)
+      expect(useGameStore.getState().initialSkillDraft).toEqual(draftBeforeDisabledClick)
+      expect(useGameStore.getState().inRunRewardRerolls).toBe(rewardRerolls)
+      expect(useGameStore.getState().runTalentState.rerollsRemaining).toBe(talentRerolls)
+      random.mockReturnValue(0.45)
+      fireEvent.click(screen.getAllByTestId('initial-skill-draft-choice')[0])
+    }
+    expect(screen.queryByTestId('initial-skill-draft-overlay')).toBeNull()
+    expect(useGameStore.getState().activeSkills).toHaveLength(3)
+    expect(useGameStore.getState().phase).toBe('running')
+  })
+
+  it('shows the core reason without charging a reroll when there are no different candidates', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.37)
+    startFormalDraft(1)
+    render(<InitialSkillDraftOverlay />)
+    const before = useGameStore.getState().initialSkillDraft
+    fireEvent.click(screen.getByTestId('initial-skill-draft-reroll'))
+    expect(useGameStore.getState().initialSkillDraft).toEqual(before)
+    expect(screen.getByTestId('initial-skill-draft-reroll').textContent).toContain('本轮剩余 1 次')
+    expect(screen.getByText('当前初始技能池无法生成不同候选').getAttribute('aria-live')).toBe('polite')
+  })
+
+  it('includes the reroll in the modal keyboard loop and restores the same round after pause', () => {
+    startFormalDraft(2)
+    render(<InitialSkillDraftOverlay />)
+    const grid = screen.getByTestId('initial-skill-draft-choice-grid')
+    const cards = screen.getAllByTestId('initial-skill-draft-choice')
+    const reroll = screen.getByTestId('initial-skill-draft-reroll')
+    fireEvent.keyDown(grid, { key: 'End' })
+    expect(document.activeElement).toBe(cards[2])
+    fireEvent.keyDown(grid, { key: 'Tab' })
+    expect(document.activeElement).toBe(reroll)
+    fireEvent.keyDown(reroll, { key: 'Tab' })
+    expect(document.activeElement).toBe(cards[0])
+    fireEvent.keyDown(cards[0], { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(reroll)
+    const before = useGameStore.getState().initialSkillDraft
+    act(() => useGameStore.getState().togglePause())
+    expect(screen.queryByTestId('initial-skill-draft-overlay')).toBeNull()
+    act(() => useGameStore.getState().togglePause())
+    expect(useGameStore.getState().initialSkillDraft).toEqual(before)
+    expect(screen.getByTestId('initial-skill-draft-reroll').textContent).toContain('本轮剩余 2 次')
+    expect(screen.getByTestId('initial-skill-draft-reroll').className).toContain('motion-reduce:transition-none')
+  })
+
   it('renders the A1 presentation candidates in supplied order as a mandatory three-choice round', () => {
     const opening = startFormalDraft()
 
@@ -46,6 +120,7 @@ describe('InitialSkillDraftOverlay', () => {
 
     for (const round of [1, 2, 3]) {
       const cards = screen.getAllByTestId('initial-skill-draft-choice')
+      expect(screen.queryByTestId('initial-skill-draft-reroll')).toBeNull()
       expect(cards).toHaveLength(3)
       fireEvent.click(cards[0])
       if (round < 3) {

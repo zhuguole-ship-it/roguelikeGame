@@ -17,6 +17,7 @@ import { getFireSacExplosionPublicFrameUrls } from './c1SlimeVariantAssetFrames'
 import { getSkeletonArcherImage2PublicArrowUrl } from './skeletonArcherAssetFrames'
 import { getRuntimeAssetActionOverride } from './runtimeAssetOverrides'
 import { getSharedSceneAssetContentVersionForUrl } from './sharedSceneAssetContentVersions'
+import { ARROW_TURRET_ASSETS, getArrowTurretAssetForUrl, getArrowTurretImageResource } from './arrowTurretAssets'
 import type { BattlefieldMode, CampaignDifficulty, EnemyKind, EnemyMovementTrait, EnemySkillTrait, ProfessionId } from './types'
 
 export const COMBAT_LOADING_CONTRACT_VERSION = 'combat-loading-v1' as const
@@ -154,6 +155,8 @@ export const createCombatRuntimeImageResource = (
   version: string = COMBAT_LOADING_CONTRACT_VERSION,
 ): SceneAssetResource => {
   const url = publicAssetUrl(pathOrUrl)
+  const turretAsset = getArrowTurretAssetForUrl(url)
+  if (turretAsset) return getArrowTurretImageResource(turretAsset.variant, domain)
   return Object.freeze({
     key,
     domain,
@@ -207,6 +210,7 @@ export const getCombatAssetResources = (descriptor: CombatLoadingDependencyDescr
     .map((entry) => createCombatRuntimeImageResource(`player-skill-icon.${entry.skillId}`, 'combat-icons', entry.url))
 
   const resources: SceneAssetResource[] = [
+    ...Object.values(ARROW_TURRET_ASSETS).map((asset) => getArrowTurretImageResource(asset.variant, 'player-skill-fx')),
     ...terrainAssets,
     createCombatRuntimeImageResource('environment.combat-mask', 'environment', COMBAT_DARK_MASK_ASSET_URL),
     ...getEnemyAssetResources(enemyIds),

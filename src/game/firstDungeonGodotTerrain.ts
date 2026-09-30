@@ -73,6 +73,7 @@ const hash = (seed: number, x: number, y: number, salt: number) => {
 const unit = (seed: number, x: number, y: number, salt: number) => hash(seed, x, y, salt) / 0x1_0000_0000
 const range = (seed: number, x: number, y: number, salt: number, min: number, max: number) => min + unit(seed, x, y, salt) * (max - min)
 const integer = (seed: number, x: number, y: number, salt: number, min: number, max: number) => min + hash(seed, x, y, salt) % (max - min + 1)
+/** C1 is one continuous world; floor changes must not change visual identity. */
 export const getFirstDungeonGodotTerrainVisualLevel = (campaign: number, level: number) => campaign === 1 ? 0 : level
 const layoutSeed = (seed: number, campaign: number, level: number) => hash(
   seed,
@@ -123,7 +124,7 @@ export const getFirstDungeonGodotTerrainCoverageSummary = (_contract: FirstDunge
   const signatures = new Set<string>()
   for (let y = range.startY; y <= range.endY; y += 1) for (let x = range.startX; x <= range.endX; x += 1) signatures.add(getFirstDungeonStoneTileState(seed, x, y, campaign, level).variantSignature)
   return Object.freeze({
-    seed: seed >>> 0, campaign, level, worldCellRange: Object.freeze({ ...range }), totalCells: width * height,
+    seed: seed >>> 0, campaign, level: getFirstDungeonGodotTerrainVisualLevel(campaign, level), worldCellRange: Object.freeze({ ...range }), totalCells: width * height,
     stoneCells: width * height, stoneCoverage: 1, connectedStoneGroups: signatures.size, smallStoneComponents: 0,
     mossComponents: 0, narrowMossComponents: 0, isolatedStoneCells: 0, isolatedMossHoles: 0, checkerboardWindows: 0,
   })

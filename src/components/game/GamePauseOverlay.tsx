@@ -4,6 +4,8 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { ARCHER_FIXED_PASSIVE, SKILL_BUILD_LABELS } from '../../game/archerSkills'
 import { ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTION_MAP, getActiveSkillRuntimePresentation, getRuntimeSkillDefinitionById } from '../../game/archerSkillEvolution'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
+import { getArrowTurretIconFitClass } from '../../game/arrowTurretAssets'
+import { ArcherSkillIconImage } from './ArcherSkillIconImage'
 import { EQUIPMENT_MATERIAL_LABELS, EQUIPMENT_RARITY_COLORS, EQUIPMENT_RARITY_LABELS, EQUIPMENT_SET_LABELS, EQUIPMENT_SLOT_LABELS, getEquipmentSetCounts } from '../../game/equipment'
 import { getArcherCombatTalentV3SnapshotForGame, getArrowTurretPresentation, getCampaignRewardPresentationSnapshot, getRunTalentPresentationSnapshot } from '../../game/engine'
 import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
@@ -458,10 +460,10 @@ const AffectedSkillsTooltip = ({
               <span key={skill.displayId} className="inline-flex items-center whitespace-nowrap" data-runtime-display-id={skill.displayId}>
                 <span className="mr-1 inline-grid h-4 w-4 shrink-0 overflow-hidden border border-[#6f7f73] bg-[#0c1510] [image-rendering:pixelated]">
                   {iconUrl ? (
-                    <img
+                    <ArcherSkillIconImage
                       src={iconUrl}
                       alt=""
-                      className="block h-full w-full object-cover [image-rendering:pixelated]"
+                      className={`block h-full w-full ${getArrowTurretIconFitClass(skill.displayId)} [image-rendering:pixelated]`}
                       data-testid={`affected-skill-icon-${choiceId}-${skill.displayId}`}
                     />
                   ) : (

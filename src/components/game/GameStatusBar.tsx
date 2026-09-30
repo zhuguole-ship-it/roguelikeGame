@@ -3,16 +3,14 @@ import { useEffect, useRef, useState } from 'react'
 import { useGameStore } from '../../store/useGameStore'
 import { getActiveSkillRuntimePresentation } from '../../game/archerSkillEvolution'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
+import { getArrowTurretIconFitClass } from '../../game/arrowTurretAssets'
+import { ArcherSkillIconImage } from './ArcherSkillIconImage'
 import { getCombatHudV2AssetUrl } from '../../game/combatHudAssets'
 import {
-  getArcherCombatTalentV3SnapshotForGame,
   getArrowTurretPresentation,
   getBeastContractDomainPresentationSnapshot,
-  getCampaignRewardPresentationSnapshot,
 } from '../../game/engine'
 import { RunTalentFeedbackHud } from './RunTalentFeedbackHud'
-import { CAMPAIGN_REWARD_SOURCE_LABEL } from './CampaignRewardPresentation'
-import { ArcherCombatTalentV3CompactSummary } from './ArcherTalentV3Presentation'
 import {
   COMBAT_UI_LAYER,
   getCombatUiLayerAccessibilityProps,
@@ -256,7 +254,6 @@ export function GameStatusBar() {
   const shield = useGameStore((state) => state.player.shield ?? 0)
   const stamina = useGameStore((state) => state.player.stamina)
   const activeSkills = useGameStore((state) => state.activeSkills)
-  const campaignRewardPresentationSource = useGameStore((state) => state)
   const { highestLayer } = useCombatUiLayerState()
 
   if (phase === 'idle' || phase === 'game-over' || highestLayer !== COMBAT_UI_LAYER.combat) {
@@ -265,8 +262,6 @@ export function GameStatusBar() {
 
   const healthSegments = getCombatHudBarSegments(hp, maxHp, shield)
   const staminaRatio = Math.max(0, Math.min(100, stamina))
-  const campaignRewardSnapshot = getCampaignRewardPresentationSnapshot(campaignRewardPresentationSource)
-  const combatTalentV3Presentation = getArcherCombatTalentV3SnapshotForGame(campaignRewardPresentationSource)
 
   return (
     <>
@@ -339,16 +334,6 @@ export function GameStatusBar() {
               </div>
             </div>
           </div>
-          <p
-            className="mt-1 max-w-full truncate font-pixel text-[7px] leading-tight text-[#dfe7d5] [text-shadow:1px_1px_0_#080b0a] sm:text-[8px]"
-            data-testid="combat-campaign-reward-progress"
-            data-current-reward-source={campaignRewardSnapshot.currentReward?.source ?? ''}
-          >
-            蓝晶 {campaignRewardSnapshot.crystal.talentAwardsGranted}/{campaignRewardSnapshot.crystal.talentQuota}
-            {' · '}节点 {campaignRewardSnapshot.fixedSkill.claimed}/{campaignRewardSnapshot.fixedSkill.total}
-            {' · '}突袭 {campaignRewardSnapshot.eliteRaid.skillAwardsGranted}/{campaignRewardSnapshot.eliteRaid.count}
-            {campaignRewardSnapshot.currentReward ? ` · ${CAMPAIGN_REWARD_SOURCE_LABEL[campaignRewardSnapshot.currentReward.source]}` : ''}
-          </p>
         </div>
 
         <div className="absolute bottom-[6.25rem] left-1/2 w-[calc(100%-1rem)] max-w-[33rem] -translate-x-1/2 sm:bottom-[6.75rem] md:bottom-[7rem] md:w-[min(78vw,35rem)] xl:bottom-4 xl:w-[min(54vw,35rem)]" data-testid="combat-skills-hud">
@@ -384,10 +369,10 @@ export function GameStatusBar() {
               >
                   <div className="absolute left-[7%] top-[16%] h-[68%] w-[28%] overflow-hidden border border-[rgba(244,240,215,0.34)] bg-[#08100b]" data-testid={`combat-skill-icon-shell-${index}`}>
                     {iconUrl ? (
-                      <img
+                      <ArcherSkillIconImage
                         src={iconUrl}
                         alt=""
-                        className={`block h-full w-full object-cover [image-rendering:pixelated] ${ready ? 'brightness-100' : 'brightness-50'}`}
+                        className={`block h-full w-full ${getArrowTurretIconFitClass(presentation?.displayId ?? '')} [image-rendering:pixelated] ${ready ? 'brightness-100' : 'brightness-50'}`}
                         data-testid={`combat-skill-icon-${index}`}
                       />
                     ) : presentation ? (
@@ -423,7 +408,6 @@ export function GameStatusBar() {
         </div>
       </div>
         <RunTalentFeedbackHud />
-        <ArcherCombatTalentV3CompactSummary presentation={combatTalentV3Presentation} placement="hud" />
         <ArrowTurretHud />
         <BeastContractDomainHud />
       </div>

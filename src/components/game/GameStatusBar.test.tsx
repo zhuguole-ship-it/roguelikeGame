@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createInitialSnapshot } from '../../game/engine'
+import { createInitialSnapshot, getCampaignRewardPresentationSnapshot } from '../../game/engine'
 import { ARCHER_SKILL_EVOLUTION_MAP } from '../../game/archerSkillEvolution'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
 import { getCombatHudV2AssetUrl } from '../../game/combatHudAssets'
@@ -21,6 +21,27 @@ afterEach(() => {
 })
 
 describe('GameStatusBar', () => {
+  it('keeps the shared reward counters intact and updating while hiding their combat-only readout', () => {
+    const snapshot = createInitialSnapshot('running')
+    snapshot.campaignRewardProgress = {
+      ...snapshot.campaignRewardProgress!,
+      crystalTalentAwardsGranted: 2,
+      eliteRaidSkillAwardsGranted: 1,
+    }
+    useGameStore.setState(snapshot)
+    const before = getCampaignRewardPresentationSnapshot(useGameStore.getState())
+    render(<GameStatusBar />)
+    expect(getCampaignRewardPresentationSnapshot(useGameStore.getState())).toEqual(before)
+    expect(useGameStore.getState().campaignRewardProgress?.crystalTalentAwardsGranted).toBe(2)
+    act(() => useGameStore.setState((state) => ({ campaignRewardProgress: { ...state.campaignRewardProgress!, crystalTalentAwardsGranted: 3 } })))
+    expect(useGameStore.getState().campaignRewardProgress?.crystalTalentAwardsGranted).toBe(3)
+    expect(useGameStore.getState().campaignRewardProgress?.eliteRaidSkillAwardsGranted).toBe(1)
+    expect(screen.queryByTestId('combat-campaign-reward-progress')).toBeNull()
+    expect(screen.getByTestId('combat-health-bar')).toBeTruthy()
+    expect(screen.getByTestId('combat-stamina-bar')).toBeTruthy()
+    expect(screen.getByTestId('combat-skills-grid')).toBeTruthy()
+  })
+
   it('uses the project-local portrait, health, shield, stamina, and three frame-specific skill slots', () => {
     const base = createInitialSnapshot('running')
 
@@ -45,9 +66,9 @@ describe('GameStatusBar', () => {
     expect(screen.getByTestId('combat-hud-layer').style.zIndex).toBe('100')
     expect(screen.getByTestId('combat-vitals-hud').className).toContain('w-[calc(100vw-1rem)]')
     expect(screen.getByTestId('combat-vitals-hud').className).toContain('max-w-[16rem]')
-    expect(screen.getByTestId('combat-campaign-reward-progress').textContent).toContain('蓝晶 0/')
-    expect(screen.getByTestId('combat-campaign-reward-progress').textContent).toContain('节点 0/')
-    expect(screen.getByTestId('combat-campaign-reward-progress').className).toContain('text-[7px]')
+    expect(screen.queryByTestId('combat-campaign-reward-progress')).toBeNull()
+    expect(screen.queryByTestId('combat-talent-v3-hud')).toBeNull()
+    expect(screen.queryByText(/蓝晶 \d|节点 \d|突袭 \d|有限投入|无限成长|主流派|副流派/)).toBeNull()
     expect(screen.getByTestId('combat-vitals-hud').className).not.toMatch(/\bborder\b|\bbg-\[|\bshadow-/)
     expect(screen.getByTestId('combat-hud-portrait-frame').className).toContain('rounded-full')
     expect(screen.getByTestId('combat-hud-portrait-frame').className).toContain('border-[#d6a648]')

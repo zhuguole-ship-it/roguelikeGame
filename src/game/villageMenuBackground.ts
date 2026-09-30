@@ -1,31 +1,27 @@
+import { HOMEPAGE_FOREST_BACKGROUND } from './homepageForestAssets'
+import { getReadySceneAssetImage } from './sceneAssetLoading'
 import { WORLD_HEIGHT, WORLD_WIDTH } from './config'
 
-const VILLAGE_MENU_BACKGROUND_SRC = `${import.meta.env.BASE_URL}assets/godot-ui/pixel_contract_hunter_start_screen_960x640_poster.png`
-
-const villageMenuBackground =
-  typeof Image === 'undefined'
-    ? null
-    : (() => {
-        const image = new Image()
-        image.src = VILLAGE_MENU_BACKGROUND_SRC
-        return image
-      })()
-
 export const drawVillageMenuBackground = (ctx: CanvasRenderingContext2D) => {
-  if (!villageMenuBackground?.complete || villageMenuBackground.naturalWidth === 0 || villageMenuBackground.naturalHeight === 0) {
+  // Reuse the gated/decoded home image. No eager or hidden poster request.
+  const villageMenuBackground = getReadySceneAssetImage(HOMEPAGE_FOREST_BACKGROUND)?.image
+  if (!villageMenuBackground) {
     return false
   }
 
   ctx.save()
   ctx.imageSmoothingEnabled = false
   ctx.fillStyle = '#050908'
-  ctx.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
+  const transform = ctx.getTransform?.()
+  const width = ctx.canvas ? ctx.canvas.width / Math.abs(transform?.a || 1) : WORLD_WIDTH
+  const height = ctx.canvas ? ctx.canvas.height / Math.abs(transform?.d || 1) : WORLD_HEIGHT
+  ctx.fillRect(0, 0, width, height)
   const imageRatio = villageMenuBackground.naturalWidth / villageMenuBackground.naturalHeight
-  const worldRatio = WORLD_WIDTH / WORLD_HEIGHT
-  const drawWidth = imageRatio > worldRatio ? WORLD_WIDTH : WORLD_HEIGHT * imageRatio
-  const drawHeight = imageRatio > worldRatio ? WORLD_WIDTH / imageRatio : WORLD_HEIGHT
-  const drawX = (WORLD_WIDTH - drawWidth) / 2
-  const drawY = (WORLD_HEIGHT - drawHeight) / 2
+  const worldRatio = width / height
+  const drawWidth = imageRatio > worldRatio ? height * imageRatio : width
+  const drawHeight = imageRatio > worldRatio ? height : width / imageRatio
+  const drawX = (width - drawWidth) * 0.30
+  const drawY = (height - drawHeight) * 0.82
   ctx.drawImage(villageMenuBackground, Math.round(drawX), Math.round(drawY), Math.round(drawWidth), Math.round(drawHeight))
   ctx.restore()
   return true

@@ -1,6 +1,8 @@
 import { useRef, type ReactNode } from 'react'
 
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
+import { getArrowTurretIconFitClass } from '../../game/arrowTurretAssets'
+import { ArcherSkillIconImage } from './ArcherSkillIconImage'
 import { getRunSettlementBlackGoldAssetUrl, type RunSettlementBlackGoldAsset } from '../../game/runSettlementAssets'
 import type { RunSettlementDisplayEntry } from '../../game/runSettlementSummary'
 import { getRunTalentIconAssetUrl } from '../../game/runTalentIcons'
@@ -93,7 +95,7 @@ const SettlementSourceIcon = ({ sourceId, name, expectedKind, context = 'display
       </span>
     )
   }
-  return <img src={resolution.url} alt={name} className="block h-12 w-12 shrink-0 border border-[#c89938] object-cover [image-rendering:pixelated]" data-testid={testId} />
+  return <ArcherSkillIconImage src={resolution.url} alt={name} className={`block h-12 w-12 shrink-0 border border-[#c89938] ${getArrowTurretIconFitClass(sourceId)} [image-rendering:pixelated]`} data-testid={testId} />
 }
 
 const BlackGoldFrame = ({ asset, children, className = '', testId }: {

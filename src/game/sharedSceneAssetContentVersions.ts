@@ -1,3 +1,5 @@
+import { getArrowTurretAssetForUrl } from './arrowTurretAssets'
+
 /**
  * Content revisions for physical image bytes shared by more than one scene.
  * Consumers must use these values instead of assigning a home/combat version
@@ -45,6 +47,8 @@ export const getSharedSceneAssetContentVersion = (key: SharedSceneAssetContentVe
 
 /** Returns the shared physical-content revision without assigning scene ownership. */
 export const getSharedSceneAssetContentVersionForUrl = (logicalUrl: string) => {
+  const turretAsset = getArrowTurretAssetForUrl(logicalUrl)
+  if (turretAsset) return turretAsset.sha256
   const pathname = new URL(logicalUrl, 'https://scene-assets.invalid/').pathname
   return SHARED_SCENE_ASSET_CONTENT_VERSION_RULES.find(({ logicalPathSegment }) => (
     pathname.includes(logicalPathSegment)

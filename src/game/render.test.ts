@@ -175,6 +175,7 @@ const createMockCanvasContext = () => ({
   moveTo: vi.fn(),
   lineTo: vi.fn(),
   rect: vi.fn(),
+  clip: vi.fn(),
   arc: vi.fn(),
   ellipse: vi.fn(),
   fill: vi.fn(),
@@ -328,6 +329,145 @@ describe('game render helpers', () => {
 
     expect((context.fillText as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([value]) => value === '7')).toBe(true)
     expect((context.clearRect as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalled()
+  })
+
+  it.each([
+    [1, true], [2, true], [1, false], [2, false],
+  ] as const)('keeps the P%d red overlay below every Canvas HUD with dark-mask ready=%s in the main renderer', (phase, maskReady) => {
+    class LayerImage {
+      complete = maskReady
+      naturalWidth = maskReady ? 2052 : 0
+      naturalHeight = maskReady ? 1154 : 0
+      decoding = 'async'
+      src = ''
+    }
+    vi.stubGlobal('Image', LayerImage)
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = 22
+    snapshot.battlefield.mode = 'boss-arena'
+    snapshot.battlefield.bossArenaRadius = phase === 1 ? 620 : 390
+    snapshot.battlefield.wardenArena = phase === 1 ? undefined : {
+      center: { x: WORLD_WIDTH / 2 + 80, y: WORLD_HEIGHT / 2 - 40 },
+      elapsed: 7.5, duration: 15, startRadius: 620, minRadius: 160,
+    }
+    snapshot.enemies = [{
+      id: 'r1-warden', kind: 'boss', archetypeId: 'dungeon-warden', bossPhase: phase,
+      position: { x: 210, y: 230 }, size: 34, hp: 90, maxHp: 100,
+      hitFlash: 0, behaviorTimer: 0, walkTimer: 0, markStacks: 0,
+      facingDirection: { x: 1, y: 0 },
+      talentStates: { deathMark: { ttl: 2, stacks: 1 } },
+    } as Enemy]
+    snapshot.beastCompanions = [{
+      id: 'r1-beast', kind: 'wolf', skillId: 'wolf-pack',
+      position: { x: 300, y: 250 }, hp: 40, maxHp: 80, size: 20,
+      speed: 100, damage: 10, attackRange: 40, attackInterval: 1,
+      attackCooldown: 0, hurtCooldown: 0, reviveTimer: 0, commandTtl: 0,
+      commandPoint: { x: 300, y: 250 }, specialCooldown: 0, tint: '#86efac',
+    }]
+    snapshot.projectiles = []
+    snapshot.enemyProjectiles = []
+    snapshot.mapObstacles = []
+    snapshot.mapDecorations = []
+    snapshot.pickups = []
+    snapshot.skillFields = []
+    snapshot.skillEvolutionEffectEvents = []
+    snapshot.enemySkillEffects = []
+    snapshot.bursts = [{ id: 'r1-world', position: { x: 100, y: 100 }, ttl: 0.2, color: 'rgba(255, 255, 255, ALPHA)', radius: 10 }]
+    snapshot.floatingTexts = [{ id: 'r1-hud', position: { x: 100, y: 80 }, velocity: { x: 0, y: -1 }, value: 'r1-damage', color: '#fff', ttl: 0.2 }]
+    snapshot.aimPoint = { x: 333, y: 444 }
+    const before = JSON.stringify(snapshot)
+    const context = createMockCanvasContext()
+    const maskAlphas: number[] = []
+    context.drawImage.mockImplementation((image: { src: string }) => {
+      if (image.src === COMBAT_DARK_MASK_SRC) maskAlphas.push(context.globalAlpha)
+    })
+
+    // Run the actual pipeline, not the exported overlay helper in isolation.
+    renderGame(context, snapshot, { x: 32, y: 24 })
+
+    const fill = context.fill as unknown as ReturnType<typeof vi.fn>
+    const overlayIndex = fill.mock.calls.findIndex(([rule]) => rule === 'evenodd')
+    expect(fill.mock.calls.filter(([rule]) => rule === 'evenodd')).toHaveLength(1)
+    const overlayOrder = fill.mock.invocationCallOrder[overlayIndex]!
+    const rectangles = vi.mocked(context.fillRect)
+    const rectOrder = (x: number, y: number, width: number, height: number) => {
+      const index = rectangles.mock.calls.findIndex((call) => call[0] === x && call[1] === y && call[2] === width && call[3] === height)
+      expect(index).toBeGreaterThanOrEqual(0)
+      return rectangles.mock.invocationCallOrder[index]!
+    }
+    const worldOrder = rectOrder(90, 99, 20, 2)
+    expect(worldOrder).toBeLessThan(overlayOrder)
+    expect(rectOrder(0, 0, WORLD_WIDTH, WORLD_HEIGHT)).toBeLessThan(worldOrder)
+    const maskIndex = context.drawImage.mock.calls.findIndex(([image]) => image.src === COMBAT_DARK_MASK_SRC)
+    if (maskReady) {
+      expect(maskIndex).toBeGreaterThanOrEqual(0)
+      const maskOrder = context.drawImage.mock.invocationCallOrder[maskIndex]!
+      expect(maskOrder).toBeGreaterThan(worldOrder)
+      expect(maskOrder).toBeLessThan(overlayOrder)
+      expect(maskAlphas).toEqual([0.60])
+    } else {
+      expect(maskIndex).toBe(-1)
+      expect(maskAlphas).toEqual([])
+    }
+    const player = snapshot.player
+    const hudOrders = [
+      rectOrder(283, 250 - 20 * 0.78 - 10, 34, 4),
+      rectOrder(174, 230 - 34 * 0.72 - 13, 72, 6),
+      rectOrder(player.position.x - 22, player.position.y - player.size * 0.8 - 15, 44, 5),
+      rectOrder(323, 443, 20, 2), rectOrder(332, 434, 2, 20),
+    ]
+    const text = vi.mocked(context.fillText)
+    for (const label of ['死印 2.0s', 'r1-damage']) {
+      const orders = text.mock.calls.flatMap(([value], index) => value === label ? [text.mock.invocationCallOrder[index]!] : [])
+      expect(orders).toHaveLength(label === 'r1-damage' ? 2 : 1)
+      hudOrders.push(...orders)
+    }
+    expect(hudOrders.every((order) => order > overlayOrder)).toBe(true)
+    const arcs = vi.mocked(context.arc)
+    const boundaryIndex = arcs.mock.calls.findLastIndex(([, , radius]) => radius === snapshot.battlefield.bossArenaRadius)
+    const boundaryOrder = arcs.mock.invocationCallOrder[boundaryIndex]!
+    expect(boundaryOrder).toBeGreaterThan(Math.max(...hudOrders))
+    const statusIndex = text.mock.calls.findIndex(([value]) => value.includes('典狱长 P2 缩圈中'))
+    if (phase === 2) expect(text.mock.invocationCallOrder[statusIndex]!).toBeGreaterThan(boundaryOrder)
+    else expect(statusIndex).toBe(-1)
+    expect(JSON.stringify(snapshot)).toBe(before)
+  })
+
+  it.each(['ordinary', 'other-boss', 'other-campaign'] as const)('does not insert a red overlay into the %s main-render path', (scenario) => {
+    class ReadyImage {
+      complete = true
+      naturalWidth = 2052
+      naturalHeight = 1154
+      decoding = 'async'
+      src = ''
+    }
+    vi.stubGlobal('Image', ReadyImage)
+    const snapshot = createInitialSnapshot('running')
+    snapshot.level = scenario === 'other-campaign' ? 44 : 22
+    snapshot.battlefield.mode = scenario === 'ordinary' ? 'infinite' : 'boss-arena'
+    snapshot.battlefield.wardenArena = undefined
+    snapshot.enemies = []
+    snapshot.beastCompanions = []
+    snapshot.mapObstacles = []
+    snapshot.mapDecorations = []
+    if (scenario !== 'ordinary') snapshot.enemies = [{
+      id: 'non-warden', kind: 'boss', archetypeId: scenario === 'other-campaign' ? 'dungeon-warden' : 'boss-guardian',
+      bossPhase: 1, position: { x: 200, y: 200 }, hp: 100, maxHp: 100,
+      size: 34, hitFlash: 0, behaviorTimer: 0, walkTimer: 0, facingDirection: { x: 1, y: 0 },
+    } as Enemy]
+    snapshot.aimPoint = { x: 333, y: 444 }
+    const context = createMockCanvasContext()
+    renderGame(context, snapshot, { x: 32, y: 24 })
+    expect((context.fill as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([rule]) => rule === 'evenodd')).toBe(false)
+    const darkIndex = context.drawImage.mock.calls.findIndex(([image]) => image.src === COMBAT_DARK_MASK_SRC)
+    expect(darkIndex).toBeGreaterThanOrEqual(0)
+    const rectangles = vi.mocked(context.fillRect)
+    const floorIndex = rectangles.mock.calls.findIndex(([x, y, width, height]) => x === 0 && y === 0 && width === WORLD_WIDTH && height === WORLD_HEIGHT)
+    const aimIndex = rectangles.mock.calls.findIndex(([x, y, width, height]) => x === 323 && y === 443 && width === 20 && height === 2)
+    expect(floorIndex).toBeGreaterThanOrEqual(0)
+    expect(aimIndex).toBeGreaterThanOrEqual(0)
+    expect(rectangles.mock.invocationCallOrder[floorIndex]!).toBeLessThan(context.drawImage.mock.invocationCallOrder[darkIndex]!)
+    expect(rectangles.mock.invocationCallOrder[aimIndex]!).toBeGreaterThan(context.drawImage.mock.invocationCallOrder[darkIndex]!)
   })
 
   it('reads A1’s presentation-only companion scale so only a supplied single-beast boss renders 2×', () => {
@@ -3989,7 +4129,12 @@ describe('game render helpers', () => {
     renderFresh(firstPass, infinite, worldCamera)
 
     const returned = createMockCanvasContext()
+    infinite.level = 2
     renderFresh(returned, infinite, worldCamera)
+
+    infinite.level = 21
+    const penultimateContext = createMockCanvasContext()
+    renderFresh(penultimateContext, infinite, worldCamera)
 
     const boss = createCampaignOneSnapshot('boss-arena')
     const bossContext = createMockCanvasContext()
@@ -4000,10 +4145,11 @@ describe('game render helpers', () => {
     const nonFirstContext = createMockCanvasContext()
     renderFresh(nonFirstContext, nonFirstCampaign, worldCamera)
 
-    expect(drawTerrain).toHaveBeenNthCalledWith(1, firstPass, 19_842, worldCamera, 1, 1)
-    expect(drawTerrain).toHaveBeenNthCalledWith(2, returned, 19_842, worldCamera, 1, 1)
-    expect(drawTerrain).toHaveBeenNthCalledWith(3, bossContext, 19_842, worldCamera, 1, 22)
-    expect(drawTerrain).toHaveBeenCalledTimes(3)
+    expect(drawTerrain).toHaveBeenNthCalledWith(1, firstPass, 19_842, worldCamera, 1, 0)
+    expect(drawTerrain).toHaveBeenNthCalledWith(2, returned, 19_842, worldCamera, 1, 0)
+    expect(drawTerrain).toHaveBeenNthCalledWith(3, penultimateContext, 19_842, worldCamera, 1, 0)
+    expect(drawTerrain).toHaveBeenNthCalledWith(4, bossContext, 19_842, worldCamera, 1, 0)
+    expect(drawTerrain).toHaveBeenCalledTimes(4)
     expect((firstPass.drawImage as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([image]) => (
       image instanceof MockFloorImage && image.src === LEVEL_ONE_DUNGEON_FLOOR_TILE_SRC
     ))).toBe(false)

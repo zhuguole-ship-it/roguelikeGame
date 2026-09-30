@@ -95,36 +95,13 @@ import { BeastContractDomainEquipmentDetails } from './BeastContractDomainEquipm
 import { ArcherCombatTalentV3Catalog } from './ArcherTalentV3Presentation'
 import { CampaignRewardSnapshotSummary } from './CampaignRewardPresentation'
 import { SceneAssetImage } from './SceneAssetImage'
+import { ForestHomepage } from './ForestHomepage'
 
 type VillageModal = 'campaign' | 'shop' | 'guide' | 'character' | 'inventory' | 'settings' | 'hunter-home' | null
 type VillageModalId = Exclude<VillageModal, null>
 type GuideTab = 'career' | 'skills' | 'monsters'
 type HunterHomeTab = 'functional-talents' | 'combat-talents' | 'equipment-codex' | 'history'
 type MetaTalentTreeTab = 'common' | 'death' | 'blood' | 'beast' | 'crystal' | 'difficulty' | 'campaign' | 'endgame'
-type VillageClickAreaConfig = {
-  id: string
-  label: string
-  modal: VillageModalId
-  zIndex: number
-  rect: {
-    leftPct: number
-    topPct: number
-    widthPct: number
-    heightPct: number
-  }
-}
-type VillageBackgroundMediaConfig = {
-  videoSrc?: string
-  posterSrc: string
-}
-type VillageHomepageConfig = {
-  clickAreas?: VillageClickAreaConfig[]
-  backgroundMedia?: VillageBackgroundMediaConfig
-}
-
-const GODOT_HOMEPAGE_LAYOUT_URL = `${import.meta.env.BASE_URL}assets/godot-ui/main-menu-layout.json`
-const DEFAULT_VILLAGE_BACKGROUND_VIDEO = `${import.meta.env.BASE_URL}assets/godot-ui/pixel_contract_hunter_start_screen_960x640.webm`
-const DEFAULT_VILLAGE_BACKGROUND_POSTER = `${import.meta.env.BASE_URL}assets/godot-ui/pixel_contract_hunter_start_screen_960x640_poster.png`
 const characterSelectionAssetUrl = (fileName: string) => `${(import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')}assets/ui/character-selection/${fileName}`
 
 export const CHARACTER_SELECTION_ASSET_URLS = Object.freeze({
@@ -206,109 +183,6 @@ const prefersReducedMotion = () => (
 
 const archerBuildTags: readonly SkillBuildTag[] = ['pierce', 'spread', 'control', 'beast']
 
-const defaultVillageClickAreas: VillageClickAreaConfig[] = [
-  { id: 'start', label: '开始游戏', modal: 'campaign', zIndex: 20, rect: { leftPct: 2.4, topPct: 50.7, widthPct: 16.8, heightPct: 7.9 } },
-  { id: 'character', label: '角色选择', modal: 'character', zIndex: 20, rect: { leftPct: 2.4, topPct: 59.7, widthPct: 16.8, heightPct: 7.9 } },
-  { id: 'inventory', label: '物品仓库', modal: 'inventory', zIndex: 20, rect: { leftPct: 2.4, topPct: 68.8, widthPct: 16.8, heightPct: 7.9 } },
-  { id: 'settings', label: '设置', modal: 'settings', zIndex: 20, rect: { leftPct: 2.4, topPct: 77.8, widthPct: 16.8, heightPct: 7.9 } },
-  { id: 'blacksmith', label: '铁匠铺', modal: 'shop', zIndex: 10, rect: { leftPct: 10.5, topPct: 31.5, widthPct: 24, heightPct: 38 } },
-  { id: 'hunter-home', label: '猎手之家', modal: 'hunter-home', zIndex: 10, rect: { leftPct: 35.5, topPct: 20, widthPct: 30, heightPct: 45 } },
-  { id: 'portal', label: '传送门', modal: 'campaign', zIndex: 10, rect: { leftPct: 69, topPct: 27, widthPct: 15, heightPct: 40 } },
-  { id: 'notice-board', label: '告示牌', modal: 'guide', zIndex: 10, rect: { leftPct: 83, topPct: 42, widthPct: 16, heightPct: 34 } },
-]
-const defaultVillageBackgroundMedia: VillageBackgroundMediaConfig = {
-  videoSrc: DEFAULT_VILLAGE_BACKGROUND_VIDEO,
-  posterSrc: DEFAULT_VILLAGE_BACKGROUND_POSTER,
-}
-
-const VILLAGE_COMPACT_VIEWPORT_QUERY = '(max-width: 1023px)'
-
-const getIsCompactVillageViewport = () => {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true
-  return window.matchMedia(VILLAGE_COMPACT_VIEWPORT_QUERY).matches
-}
-
-const villageModalIds = new Set<VillageModalId>(['campaign', 'shop', 'guide', 'character', 'inventory', 'settings', 'hunter-home'])
-
-const isVillageModalId = (value: unknown): value is VillageModalId => (
-  typeof value === 'string' && villageModalIds.has(value as VillageModalId)
-)
-
-const toFinitePercent = (value: unknown) => {
-  if (!Number.isFinite(value)) return undefined
-  return Math.max(0, Math.min(100, Number(value)))
-}
-
-const resolveGodotPublicAssetUrl = (value: unknown) => {
-  if (typeof value !== 'string' || value.trim().length === 0) return undefined
-  if (/^(https?:)?\/\//.test(value) || value.startsWith('/')) return value
-  return `${import.meta.env.BASE_URL}${value.replace(/^\/+/, '')}`
-}
-
-const normalizeGodotBackgroundMedia = (payload: unknown): VillageBackgroundMediaConfig | undefined => {
-  if (!payload || typeof payload !== 'object') return undefined
-  const backgroundMedia = (payload as {
-    backgroundMedia?: {
-      video?: { url?: unknown }
-      poster?: { url?: unknown }
-    }
-  }).backgroundMedia
-  if (!backgroundMedia || typeof backgroundMedia !== 'object') return undefined
-  const videoSrc = resolveGodotPublicAssetUrl(backgroundMedia.video?.url)
-  const posterSrc = resolveGodotPublicAssetUrl(backgroundMedia.poster?.url)
-  if (!videoSrc && !posterSrc) return undefined
-  return {
-    videoSrc,
-    posterSrc: posterSrc ?? DEFAULT_VILLAGE_BACKGROUND_POSTER,
-  }
-}
-
-const normalizeGodotVillageLayout = (payload: unknown): VillageHomepageConfig | undefined => {
-  if (!payload || typeof payload !== 'object' || !Array.isArray((payload as { clickAreas?: unknown }).clickAreas)) {
-    const backgroundMedia = normalizeGodotBackgroundMedia(payload)
-    return backgroundMedia ? { backgroundMedia } : undefined
-  }
-
-  const clickAreas = (payload as { clickAreas: unknown[] }).clickAreas.flatMap((raw): VillageClickAreaConfig[] => {
-    if (!raw || typeof raw !== 'object') return []
-    const area = raw as {
-      id?: unknown
-      label?: unknown
-      modal?: unknown
-      zIndex?: unknown
-      rect?: {
-        leftPct?: unknown
-        topPct?: unknown
-        widthPct?: unknown
-        heightPct?: unknown
-      }
-    }
-    if (typeof area.id !== 'string' || typeof area.label !== 'string' || !isVillageModalId(area.modal)) {
-      return []
-    }
-    const leftPct = toFinitePercent(area.rect?.leftPct)
-    const topPct = toFinitePercent(area.rect?.topPct)
-    const widthPct = toFinitePercent(area.rect?.widthPct)
-    const heightPct = toFinitePercent(area.rect?.heightPct)
-    if (leftPct === undefined || topPct === undefined || widthPct === undefined || heightPct === undefined || widthPct <= 0 || heightPct <= 0) {
-      return []
-    }
-    return [{
-      id: area.id,
-      label: area.label,
-      modal: area.modal,
-      zIndex: Number.isFinite(area.zIndex) ? Number(area.zIndex) : 10,
-      rect: { leftPct, topPct, widthPct, heightPct },
-    }]
-  })
-
-  const backgroundMedia = normalizeGodotBackgroundMedia(payload)
-  if (clickAreas.length <= 0 && !backgroundMedia) return undefined
-  return {
-    ...(clickAreas.length > 0 ? { clickAreas } : {}),
-    ...(backgroundMedia ? { backgroundMedia } : {}),
-  }
-}
 
 const guideTabs: Array<{ id: GuideTab; label: string }> = [
   { id: 'monsters', label: '怪物' },
@@ -1950,29 +1824,6 @@ const SectionPanel = ({
   )
 }
 
-const VillageClickArea = ({
-  label,
-  onClick,
-  className,
-  style,
-  testId,
-}: {
-  label: string
-  onClick: () => void
-  className?: string
-  style?: CSSProperties
-  testId?: string
-}) => (
-  <button
-    type="button"
-    aria-label={label}
-    title={label}
-    data-testid={testId}
-    className={`pointer-events-auto absolute bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-gold)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#08100b] ${className ?? ''}`}
-    style={style}
-    onClick={onClick}
-  />
-)
 
 const VillageModalShell = ({
   title,
@@ -2539,9 +2390,6 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   const [reforgeRequest, setReforgeRequest] = useState<{ itemId: string; mode: EquipmentReforgeMode } | null>(null)
   const [guideTab, setGuideTab] = useState<GuideTab>('monsters')
   const [hunterHomeTab, setHunterHomeTab] = useState<HunterHomeTab>('functional-talents')
-  const [villageClickAreas, setVillageClickAreas] = useState<VillageClickAreaConfig[]>(defaultVillageClickAreas)
-  const [villageBackgroundMedia, setVillageBackgroundMedia] = useState<VillageBackgroundMediaConfig>(defaultVillageBackgroundMedia)
-  const [isCompactVillageViewport, setIsCompactVillageViewport] = useState(getIsCompactVillageViewport)
   const [equipmentResetFeedback, setEquipmentResetFeedback] = useState('')
   const [enhancementConfirmation, setEnhancementConfirmation] = useState<EquipmentEnhancementConfirmation | null>(null)
   const [standardEnhancementConfirmation, setStandardEnhancementConfirmation] = useState<EquipmentEnhancementConfirmation | null>(null)
@@ -2574,36 +2422,6 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   const returnToCharacterSelection = useCallback(() => {
     characterDetailTransitionLockRef.current = false
     setCharacterSelectionView('selection')
-  }, [])
-  useEffect(() => {
-    const controller = new AbortController()
-    fetch(GODOT_HOMEPAGE_LAYOUT_URL, { cache: 'no-store', signal: controller.signal })
-      .then((response) => response.ok ? response.json() : undefined)
-      .then((payload) => {
-        const homepageConfig = normalizeGodotVillageLayout(payload)
-        if (homepageConfig?.clickAreas) {
-          setVillageClickAreas(homepageConfig.clickAreas)
-        }
-        if (homepageConfig?.backgroundMedia) {
-          setVillageBackgroundMedia(homepageConfig.backgroundMedia)
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setVillageClickAreas(defaultVillageClickAreas)
-          setVillageBackgroundMedia(defaultVillageBackgroundMedia)
-        }
-      })
-    return () => controller.abort()
-  }, [])
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
-    const mediaQuery = window.matchMedia(VILLAGE_COMPACT_VIEWPORT_QUERY)
-    const updateViewportMode = () => setIsCompactVillageViewport(mediaQuery.matches)
-    updateViewportMode()
-    mediaQuery.addEventListener('change', updateViewportMode)
-    return () => mediaQuery.removeEventListener('change', updateViewportMode)
   }, [])
 
   useEffect(() => {
@@ -2686,66 +2504,7 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
 
     return (
       <div className="pointer-events-none absolute inset-0 z-10">
-        <div className="absolute left-1/2 top-1/2 aspect-[3/2] h-auto w-full max-w-[calc(100vh*1.5)] -translate-x-1/2 -translate-y-1/2">
-          {villageBackgroundMedia.videoSrc ? (
-            <video
-              key={villageBackgroundMedia.videoSrc}
-              src={villageBackgroundMedia.videoSrc}
-              poster={villageBackgroundMedia.posterSrc}
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 h-full w-full object-cover"
-              autoPlay
-              loop
-              muted
-              preload="auto"
-              playsInline
-              data-testid="godot-village-background-video"
-            />
-          ) : (
-            <img
-              src={villageBackgroundMedia.posterSrc}
-              alt=""
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 h-full w-full object-cover"
-              draggable={false}
-              data-testid="godot-village-background-poster"
-            />
-          )}
-          {!isCompactVillageViewport ? villageClickAreas.map((area) => (
-            <VillageClickArea
-              key={area.id}
-              label={area.label}
-              testId={`godot-village-click-area-${area.id}`}
-              style={{
-                left: `${area.rect.leftPct}%`,
-                top: `${area.rect.topPct}%`,
-                width: `${area.rect.widthPct}%`,
-                height: `${area.rect.heightPct}%`,
-                zIndex: area.zIndex,
-              }}
-              onClick={() => openVillageModal(area.modal)}
-            />
-          )) : null}
-        </div>
-
-        {isCompactVillageViewport ? (
-        <nav
-          className="pointer-events-auto absolute inset-x-2 bottom-2 z-10 grid grid-cols-2 gap-2 rounded-sm border-2 border-[rgba(157,213,172,0.42)] bg-[rgba(4,10,7,0.9)] p-2 sm:grid-cols-4 lg:hidden"
-          data-testid="village-compact-actions"
-          aria-label="村庄入口"
-        >
-          {villageClickAreas.map((area) => (
-            <button
-              key={`compact-${area.id}`}
-              type="button"
-              className="pixel-button min-w-0 truncate px-2 py-2 font-pixel text-[10px]"
-              onClick={() => openVillageModal(area.modal)}
-            >
-              {area.label}
-            </button>
-          ))}
-        </nav>
-        ) : null}
+        <ForestHomepage onOpen={openVillageModal} />
 
         {villageModal === 'campaign' ? (
           <VillageModalShell
@@ -2891,7 +2650,7 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
 
         {villageModal === 'inventory' ? (
           <VillageModalShell
-            title="仓库"
+            title="物品仓库"
             onClose={() => setVillageModal(null)}
             stickyHeader
             fixedFrame
@@ -2946,7 +2705,7 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
         ) : null}
 
         {villageModal === 'settings' ? (
-          <VillageModalShell title="设置" onClose={() => setVillageModal(null)}>
+          <VillageModalShell title="游戏设置" onClose={() => setVillageModal(null)}>
             <div className="grid gap-4 md:grid-cols-2">
               <SectionPanel eyebrow="音量" title="声音设置">
                 <label className="block text-xl text-[#dfe7d5]">
@@ -2984,9 +2743,9 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
         ) : null}
 
         {villageModal === 'hunter-home' ? (
-          <VillageModalShell title="猎手之家" onClose={() => setVillageModal(null)}>
+          <VillageModalShell title="猎人之家" onClose={() => setVillageModal(null)}>
             <div className="grid gap-4">
-              <div className="flex flex-wrap gap-2" role="tablist" aria-label="猎手之家栏目">
+              <div className="flex flex-wrap gap-2" role="tablist" aria-label="猎人之家栏目">
                 {hunterHomeTabs.map((tab) => {
                   const active = hunterHomeTab === tab.id
                   return (
@@ -3138,7 +2897,7 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
         ) : null}
 
         {villageModal === 'shop' ? (
-              <VillageModalShell title="铁匠铺" onClose={() => { setEnhancementFeedback({}); setEnhancementAttempted({}); setVillageModal(null) }}>
+              <VillageModalShell title="强化分解" onClose={() => { setEnhancementFeedback({}); setEnhancementAttempted({}); setVillageModal(null) }}>
             <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
               <SectionPanel eyebrow="" title="分解">
                 <div className="grid gap-4">
@@ -3424,14 +3183,14 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
 
         {villageModal === 'guide' ? (
           <VillageModalShell
-            title="图鉴"
+            title="公告信息"
             onClose={() => setVillageModal(null)}
             stickyHeader
             fixedFrame
             testId="guide-modal-shell"
             contentTestId="guide-modal-scroll"
             headerExtra={(
-              <div className="flex flex-wrap gap-2" role="tablist" aria-label="图鉴栏目">
+              <div className="flex flex-wrap gap-2" role="tablist" aria-label="公告信息栏目">
                 {guideTabs.map((tab) => {
                   const active = guideTab === tab.id
                   return (

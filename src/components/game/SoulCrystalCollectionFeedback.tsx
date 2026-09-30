@@ -25,7 +25,7 @@ type SoulCrystalCollectionPulse = {
   formula: string
   isInside: boolean
   justEntered: boolean
-  trigger: 'combat-entry' | 'boundary-entry'
+  trigger: 'boundary-entry'
   reducedMotion: boolean
 }
 
@@ -68,7 +68,8 @@ export const getSoulCrystalCollectionRingGeometry = (
 }
 
 /**
- * A small, presentation-only entry cue. The engine projection is the sole
+ * A small, presentation-only boundary-crossing cue (not a combat-entry cue).
+ * The engine projection is the sole
  * authority for both collection range and boundary crossing; this component
  * never changes pickup state or collection timing.
  */
@@ -79,8 +80,6 @@ export function SoulCrystalCollectionFeedback({
   const presentationSource = useGameStore((state) => state)
   const previousPlayerPositionRef = useRef<Vector2 | null>(null)
   const timeoutRef = useRef<number | null>(null)
-  const wasCombatVisibleRef = useRef(false)
-  const pendingCombatEntryRef = useRef(false)
   const [pulse, setPulse] = useState<SoulCrystalCollectionPulse | null>(null)
   const [ringGeometry, setRingGeometry] = useState<SoulCrystalCollectionRingGeometry | null>(null)
   const { highestLayer } = useCombatUiLayerState()
@@ -92,9 +91,7 @@ export function SoulCrystalCollectionFeedback({
   const enteredCrystal = isCombatVisible
     ? presentation.crystals.find((crystal) => crystal.justEntered)
     : undefined
-  const entryCrystal = presentation.crystals.find((crystal) => crystal.isInside) ?? presentation.crystals[0]
-
-  const showPulse = useCallback((crystal: NonNullable<typeof entryCrystal>, trigger: SoulCrystalCollectionPulse['trigger']) => {
+  const showPulse = useCallback((crystal: NonNullable<typeof enteredCrystal>, trigger: SoulCrystalCollectionPulse['trigger']) => {
     const reducedMotion = prefersReducedMotion()
     setPulse({
       crystalId: crystal.id,
@@ -136,22 +133,8 @@ export function SoulCrystalCollectionFeedback({
   useEffect(() => {
     if (!isCombatVisible) {
       setPulse(null)
-      pendingCombatEntryRef.current = false
     }
   }, [isCombatVisible])
-
-  useEffect(() => {
-    if (isCombatVisible && !wasCombatVisibleRef.current) {
-      pendingCombatEntryRef.current = true
-    }
-    wasCombatVisibleRef.current = isCombatVisible
-  }, [isCombatVisible])
-
-  useEffect(() => {
-    if (!isCombatVisible || !pendingCombatEntryRef.current || !entryCrystal) return
-    pendingCombatEntryRef.current = false
-    showPulse(entryCrystal, 'combat-entry')
-  }, [entryCrystal?.effectiveRadius, entryCrystal?.id, entryCrystal?.isInside, isCombatVisible, showPulse])
 
   useEffect(() => {
     if (!enteredCrystal) return

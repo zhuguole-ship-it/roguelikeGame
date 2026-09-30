@@ -1,5 +1,7 @@
 # Godot 资产管线 v1
 
+> **2026-09-29 首页工具删除边界：**用户授权按 [`homepage-forest-menu-v1.md`](./homepage-forest-menu-v1.md) 删除整个 `godot_homepage/`，包括其嵌套第一关地形工具，以及旧首页专用同步／Web依赖。该授权不延伸到 `godot_asset_tools/`、本文件定义的其他资产生产／staging／导入／审查流程、runtime override 或现行Web地形／战斗运行时，不得按Godot关键词泛化清理。
+
 本文件定义方案 A：Godot 只作为资产管理、动画预览、锚点校准、朝向校验、碰撞盒预览、技能特效预览和导出工具。当前 Web 项目仍是唯一正式运行时；战斗核心、技能逻辑、天赋、奖励、关卡、存档和测试体系不迁移到 Godot。
 
 ## 第一性边界

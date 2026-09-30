@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { getRuntimeSkillDefinitionById } from '../../game/archerSkillEvolution'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
@@ -22,10 +22,13 @@ const getSelectedSkillLabel = (familyId: string) => getRuntimeSkillDefinitionByI
 export function InitialSkillDraftOverlay() {
   const presentationSource = useGameStore((state) => state)
   const selectInitialSkillDraftCandidate = useGameStore((state) => state.selectInitialSkillDraftCandidate)
+  const rerollInitialSkillDraft = useGameStore((state) => state.rerollInitialSkillDraft)
   const presentation = presentationSource.getInitialSkillDraftPresentation()
+  const [rerollFeedback, setRerollFeedback] = useState('')
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const { highestLayer } = useCombatUiLayerState()
   useCombatUiLayerInitialFocus(overlayRef, COMBAT_UI_LAYER.initialDraft, highestLayer)
+  useEffect(() => { setRerollFeedback('') }, [presentation.currentRound, presentation.active])
 
   if (!presentation.active || presentation.status !== 'selecting') {
     return null
@@ -49,6 +52,15 @@ export function InitialSkillDraftOverlay() {
       aria-label={`初始技能选择，${progressLabel}`}
       aria-describedby="initial-skill-draft-progress initial-skill-draft-selection-hint"
       tabIndex={-1}
+      onKeyDownCapture={(event) => {
+        if (event.key !== 'Tab') return
+        const controls = Array.from(overlayRef.current?.querySelectorAll<HTMLButtonElement>('button:not([disabled])') ?? [])
+        if (!controls.length) return
+        event.preventDefault()
+        const current = controls.indexOf(document.activeElement as HTMLButtonElement)
+        const next = (current + (event.shiftKey ? -1 : 1) + controls.length) % controls.length
+        controls[next].focus({ preventScroll: true })
+      }}
     >
       <section className="pointer-events-auto my-auto w-full max-w-[1320px] pixel-panel p-4 sm:p-6 md:p-8" aria-label="本局初始技能三选一">
         <header className="border-b border-[rgba(157,213,172,0.34)] pb-4">
@@ -65,6 +77,26 @@ export function InitialSkillDraftOverlay() {
               : `本段需从以下 ${presentation.candidates.length} 项候选中选择 1 项。`}
           </p>
           <p className="mt-1 text-xs leading-relaxed text-[#a8baaa]">初始选择完成前不能进入战斗；按 Esc 可查看暂停菜单。</p>
+          {presentation.rerollsRemaining + presentation.rerollsUsedThisRound > 0 ? (
+            <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="pixel-button px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none"
+                data-testid="initial-skill-draft-reroll"
+                disabled={!presentation.canReroll}
+                aria-describedby="initial-skill-draft-reroll-feedback"
+                onClick={() => {
+                  rerollInitialSkillDraft()
+                  setRerollFeedback(useGameStore.getState().message)
+                }}
+              >
+                初始重掷 · 本轮剩余 {presentation.rerollsRemaining} 次
+              </button>
+              <p id="initial-skill-draft-reroll-feedback" role="status" aria-live="polite" className="min-w-0 break-words text-sm text-[#dfe7d5]">
+                {rerollFeedback || (presentation.rerollsRemaining === 0 ? '本轮重掷已耗尽' : '仅刷新当前轮候选')}
+              </p>
+            </div>
+          ) : null}
         </header>
 
         <SkillChoiceGrid
@@ -72,7 +104,6 @@ export function InitialSkillDraftOverlay() {
           testId="initial-skill-draft-choice-grid"
           choiceCount={presentation.candidates.length}
           focusOnChangeKey={presentation.currentRound}
-          trapTabFocus
           ariaLabel={`初始技能候选，共 ${presentation.candidates.length} 项`}
         >
           {presentation.candidates.map((candidate, index) => {

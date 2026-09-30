@@ -14,6 +14,7 @@ import {
 } from './config'
 import { getCampaignThemeForLevel } from './campaignThemes'
 import { getArrowTurretPresentation, getBeastContractDomainPresentationSnapshot } from './engine'
+import { getArrowTurretAssetUrl, getArrowTurretDrawLayout } from './arrowTurretAssets'
 import {
   FIRE_SAC_EXPLOSION_FRAME_COUNT,
   getFireSacExplosionPublicFrameUrls,
@@ -36,6 +37,7 @@ import {
   type PlayerArcherRenderInput,
 } from './sprites'
 import { getPlayerArcherStableBodyCenter } from './archerAssetFrames'
+import { getFirstDungeonGodotTerrainVisualLevel } from './firstDungeonGodotTerrain'
 import {
   drawFirstDungeonGodotTerrain,
   type FirstDungeonGodotTerrainDrawStatus,
@@ -1262,24 +1264,32 @@ const drawBossArenaBoundary = (ctx: CanvasRenderingContext2D, state: GameSnapsho
   ctx.restore()
 }
 
-const drawDungeonWardenArenaOverlay = (ctx: CanvasRenderingContext2D, state: GameSnapshot, camera: Vector2) => {
+export const drawDungeonWardenArenaOverlay = (ctx: CanvasRenderingContext2D, state: GameSnapshot, camera: Vector2) => {
   const arena = state.battlefield.wardenArena
-  if (state.phase !== 'running' || !arena) {
+  const hasP1Boundary = state.battlefield.mode === 'boss-arena'
+    && state.enemies.some((enemy) => enemy.kind === 'boss' && enemy.archetypeId === 'dungeon-warden'
+      && enemy.hp > 0 && (enemy.bossPhase ?? 1) === 1)
+  if (state.phase !== 'running' || getCampaignIndex(state.level) !== 1 || (!arena && !hasP1Boundary)) {
     return
   }
 
-  const radius = state.battlefield.bossArenaRadius ?? arena.startRadius
+  const radius = state.battlefield.bossArenaRadius ?? arena?.startRadius ?? BOSS_ARENA_RADIUS
+  const worldCenter = arena?.center ?? { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 }
   const center = {
-    x: arena.center.x - camera.x,
-    y: arena.center.y - camera.y,
+    x: worldCenter.x - camera.x,
+    y: worldCenter.y - camera.y,
   }
+  const viewport = getCombatCanvasLogicalViewportSize(ctx)
 
-  // A single even-odd canvas path paints only the visible outside region and
-  // leaves the arena interior untouched. The DOM HUD remains above the canvas.
+  // Clip first: even-odd alone also paints portions of a circle outside the
+  // rectangle when it crosses the viewport. The world and DOM input are unchanged.
   ctx.save()
+  ctx.beginPath()
+  ctx.rect(0, 0, viewport.width, viewport.height)
+  ctx.clip()
   ctx.fillStyle = 'rgba(220, 38, 38, 0.24)'
   ctx.beginPath()
-  ctx.rect(0, 0, WORLD_WIDTH, WORLD_HEIGHT)
+  ctx.rect(0, 0, viewport.width, viewport.height)
   ctx.moveTo(center.x + radius, center.y)
   ctx.arc(center.x, center.y, radius, 0, Math.PI * 2)
   ctx.fill('evenodd')
@@ -1321,7 +1331,7 @@ const drawInfiniteFloor = (
       state.battlefield.seed,
       camera,
       getCampaignIndex(state.level),
-      state.level,
+      getFirstDungeonGodotTerrainVisualLevel(getCampaignIndex(state.level), state.level),
     )
     if (terrainStatus === 'drawn' || terrainStatus === 'building') {
       return
@@ -1620,12 +1630,8 @@ const drawMiniArrow = (ctx: CanvasRenderingContext2D, x: number, y: number, angl
 export const drawArrowTurrets = (ctx: CanvasRenderingContext2D, state: Pick<GameSnapshot, 'skillFields'>) => {
   getArrowTurretPresentation(state).forEach((tower) => {
     const isResonance = tower.variant === 'resonance'
-    const isTaunt = tower.variant === 'taunt'
     const isTaunting = tower.tauntRemaining > 0
     const isBerserk = tower.berserkRemaining > 0
-    const coreColor = isResonance ? '#67e8f9' : isTaunt ? '#fbbf24' : '#93c5fd'
-    const edgeColor = isBerserk ? '#fb7185' : '#f4f0d7'
-
     ctx.save()
 
     if (isTaunting && tower.tauntRadius !== undefined) {
@@ -1639,12 +1645,21 @@ export const drawArrowTurrets = (ctx: CanvasRenderingContext2D, state: Pick<Game
       ctx.setLineDash([])
     }
 
-    pixel(ctx, tower.position.x - 13, tower.position.y - 20, 26, 34, 'rgba(8, 16, 11, 0.46)')
-    pixel(ctx, tower.position.x - 10, tower.position.y - 18, 20, 28, '#22313a')
-    pixel(ctx, tower.position.x - 8, tower.position.y - 16, 16, 18, coreColor)
-    pixel(ctx, tower.position.x - 6, tower.position.y - 14, 12, 14, '#101c24')
-    pixel(ctx, tower.position.x - 8, tower.position.y - 24, 16, 8, edgeColor)
-    pixel(ctx, tower.position.x - 16, tower.position.y + 12, 32, 4, isBerserk ? '#fb7185' : coreColor)
+    // Full original image, bottom-centered on the existing ground position.
+    // Facing is A1's last real shot, never current mouse/target geometry.
+    const image = getSharedCombatRuntimeImage(
+      `arrow-turret-image.${tower.variant}`, 'player-skill-fx', getArrowTurretAssetUrl(tower.variant),
+    )
+    if (image) {
+      const layout = getArrowTurretDrawLayout(tower.variant)
+      ctx.save()
+      ctx.globalAlpha = 1
+      ctx.imageSmoothingEnabled = false
+      ctx.translate(tower.position.x, tower.position.y)
+      ctx.scale(tower.horizontalFacing === 'left' ? -1 : 1, 1)
+      ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height)
+      ctx.restore()
+    }
 
     if (isResonance && tower.inheritedEffect) {
       pixel(ctx, tower.position.x - 2, tower.position.y - 31, 4, 5, '#a7f3d0')
@@ -2812,6 +2827,7 @@ export const renderGame = (
     ctx.restore()
 
     drawCombatDarkMask(ctx)
+    drawDungeonWardenArenaOverlay(ctx, state, camera)
 
     ctx.save()
     ctx.translate(-camera.x, -camera.y)
@@ -2839,7 +2855,6 @@ export const renderGame = (
     drawAimCursor(ctx, state)
     drawFloatingTexts(ctx, state)
     ctx.restore()
-    drawDungeonWardenArenaOverlay(ctx, state, camera)
     drawBossArenaBoundary(ctx, state, camera)
     drawDungeonWardenArenaStatus(ctx, state)
   }
