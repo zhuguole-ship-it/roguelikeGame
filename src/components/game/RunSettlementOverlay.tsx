@@ -1,7 +1,7 @@
 import { useRef, type ReactNode } from 'react'
 
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
-import { getArrowTurretIconFitClass } from '../../game/arrowTurretAssets'
+import { getArrowTurretIconFitClass, isArrowTurretDisplayId } from '../../game/arrowTurretAssets'
 import { ArcherSkillIconImage } from './ArcherSkillIconImage'
 import { getRunSettlementBlackGoldAssetUrl, type RunSettlementBlackGoldAsset } from '../../game/runSettlementAssets'
 import type { RunSettlementDisplayEntry } from '../../game/runSettlementSummary'
@@ -34,6 +34,7 @@ const PLAYER_BASIC_ATTACK_ICON_SKILL_ID = 'eagle-eye-focus'
 
 export type RunSettlementIconResolution =
   | { status: 'resolved'; url: string; kind: RunSettlementIconKind }
+  | { status: 'name-only'; kind: 'active-skill' }
   | { status: 'form-placeholder'; kind: 'run-talent' }
   | { status: 'missing'; sourceId: string }
 
@@ -54,6 +55,7 @@ export const resolveRunSettlementIcon = (
   const kinds = expectedKind ? [expectedKind] : ['active-skill', 'run-talent'] as const
   for (const kind of kinds) {
     if (kind === 'active-skill') {
+      if (isArrowTurretDisplayId(sourceId)) return { status: 'name-only', kind }
       const url = getArcherSkillIconAssetUrl(sourceId)
       if (url) return { status: 'resolved', url, kind }
       continue
@@ -94,6 +96,9 @@ const SettlementSourceIcon = ({ sourceId, name, expectedKind, context = 'display
         形态<br />节点
       </span>
     )
+  }
+  if (resolution.status === 'name-only') {
+    return <span className="inline-flex h-12 min-w-12 shrink-0 items-center justify-center border border-[#c89938] bg-[#0c1510] px-1 text-center font-pixel text-[10px] leading-tight text-amber-200" data-testid={`${testId}-name-only`}>{name}</span>
   }
   return <ArcherSkillIconImage src={resolution.url} alt={name} className={`block h-12 w-12 shrink-0 border border-[#c89938] ${getArrowTurretIconFitClass(sourceId)} [image-rendering:pixelated]`} data-testid={testId} />
 }

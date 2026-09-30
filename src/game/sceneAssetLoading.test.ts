@@ -88,18 +88,17 @@ afterEach(() => {
 })
 
 describe('scene asset loading', () => {
-  it.each(Object.values(ARROW_TURRET_ASSETS))('keeps $variant gated after decode failure, retries and shares the decoded body/icon cache', async (asset) => {
+  it.each(Object.values(ARROW_TURRET_ASSETS))('keeps $variant-$facing gated after decode failure and retries the combat cache', async (asset) => {
     const runtime = installImageRuntime({ failDecodeAttempts: 2, width: 1254, height: 1254 })
-    const home = getArrowTurretImageResource(asset.variant)
-    const combat = getArrowTurretImageResource(asset.variant, 'player-skill-fx')
-    await expect(acquireSceneAssetImage(home)).rejects.toThrow('decode failed')
-    expect(getReadySceneAssetImage(home)).toBeUndefined()
+    const combat = getArrowTurretImageResource(asset.variant, asset.facing, 'player-skill-fx')
+    await expect(acquireSceneAssetImage(combat)).rejects.toThrow('decode failed')
+    expect(getReadySceneAssetImage(combat)).toBeUndefined()
     const waits: number[] = []
-    const result = await loadSceneAssetManifest(manifest([home, combat]), {
-      wait: async (delay: number) => { waits.push(delay); expect(getReadySceneAssetImage(home)).toBeUndefined() },
+    const result = await loadSceneAssetManifest(manifest([combat, combat]), {
+      wait: async (delay: number) => { waits.push(delay); expect(getReadySceneAssetImage(combat)).toBeUndefined() },
     })
     expect(result).toMatchObject({ total: 1, ready: 1, progressPercent: 100, status: 'ready' })
-    expect(await acquireSceneAssetImage(combat)).toBe(getReadySceneAssetImage(home))
+    expect(await acquireSceneAssetImage(combat)).toBe(getReadySceneAssetImage(combat))
     expect(runtime.fetchMock).toHaveBeenCalledTimes(3)
     expect(runtime.fetchMock).toHaveBeenLastCalledWith(expect.stringContaining(asset.sha256), expect.anything())
     expect(waits).toEqual([1000])
@@ -107,7 +106,7 @@ describe('scene asset loading', () => {
 
   it('does not permit a wrong-size tower PNG to become drawable', async () => {
     installImageRuntime()
-    const item = getArrowTurretImageResource('base')
+    const item = getArrowTurretImageResource('base', 'right')
     await expect(acquireSceneAssetImage(item)).rejects.toThrow('invalid image dimensions')
     expect(getReadySceneAssetImage(item)).toBeUndefined()
   })

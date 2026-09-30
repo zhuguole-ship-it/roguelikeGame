@@ -191,7 +191,7 @@ export function SkillChoiceCard({
             data-testid={`reward-choice-icon-${choiceId}`}
           />
         </div>
-      ) : fallbackIconLabel ? (
+      ) : fallbackIconLabel && familyId !== 'arrow-turret' ? (
         <div
           aria-hidden="true"
           className={`${SKILL_CHOICE_ICON_SHELL_CLASS} grid place-items-center bg-[#0c1510] px-1 text-center font-pixel text-[8px] leading-tight tracking-[0.04em] text-amber-200`}

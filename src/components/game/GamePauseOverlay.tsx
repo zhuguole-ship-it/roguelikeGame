@@ -4,7 +4,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { ARCHER_FIXED_PASSIVE, SKILL_BUILD_LABELS } from '../../game/archerSkills'
 import { ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTION_MAP, getActiveSkillRuntimePresentation, getRuntimeSkillDefinitionById } from '../../game/archerSkillEvolution'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
-import { getArrowTurretIconFitClass } from '../../game/arrowTurretAssets'
+import { getArrowTurretIconFitClass, isArrowTurretDisplayId } from '../../game/arrowTurretAssets'
 import { ArcherSkillIconImage } from './ArcherSkillIconImage'
 import { EQUIPMENT_MATERIAL_LABELS, EQUIPMENT_RARITY_COLORS, EQUIPMENT_RARITY_LABELS, EQUIPMENT_SET_LABELS, EQUIPMENT_SLOT_LABELS, getEquipmentSetCounts } from '../../game/equipment'
 import { getArcherCombatTalentV3SnapshotForGame, getArrowTurretPresentation, getCampaignRewardPresentationSnapshot, getRunTalentPresentationSnapshot } from '../../game/engine'
@@ -455,10 +455,12 @@ const AffectedSkillsTooltip = ({
         <span className="block font-pixel text-[8px] uppercase tracking-[0.14em] text-amber-300">影响技能</span>
         <span className="mt-2 flex flex-wrap gap-x-2 gap-y-1">
           {skills.map((skill, index) => {
-            const iconUrl = getArcherSkillIconAssetUrl(skill.displayId) ?? getArcherSkillIconAssetUrl(skill.behaviorSkillId)
+            const iconUrl = isArrowTurretDisplayId(skill.displayId)
+              ? undefined
+              : getArcherSkillIconAssetUrl(skill.displayId) ?? getArcherSkillIconAssetUrl(skill.behaviorSkillId)
             return (
               <span key={skill.displayId} className="inline-flex items-center whitespace-nowrap" data-runtime-display-id={skill.displayId}>
-                <span className="mr-1 inline-grid h-4 w-4 shrink-0 overflow-hidden border border-[#6f7f73] bg-[#0c1510] [image-rendering:pixelated]">
+                {!isArrowTurretDisplayId(skill.displayId) ? <span className="mr-1 inline-grid h-4 w-4 shrink-0 overflow-hidden border border-[#6f7f73] bg-[#0c1510] [image-rendering:pixelated]">
                   {iconUrl ? (
                     <ArcherSkillIconImage
                       src={iconUrl}
@@ -471,7 +473,7 @@ const AffectedSkillsTooltip = ({
                       {skill.name}
                     </span>
                   )}
-                </span>
+                </span> : null}
                 {skill.name}
                 {index < skills.length - 1 ? <span className="ml-2 text-[#6f7f73]">/</span> : null}
               </span>

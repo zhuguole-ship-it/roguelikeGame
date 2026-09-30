@@ -20,16 +20,16 @@ const context = () => ({
 afterEach(() => vi.restoreAllMocks())
 
 describe('arrow turret original sprite rendering', () => {
-  it.each(Object.values(ARROW_TURRET_ASSETS).flatMap((asset) => ['left', 'right'].map((facing) => ({ ...asset, facing: facing as 'left' | 'right' }))))('draws $variant facing $facing from the frozen presentation without changing runtime', (asset) => {
+  it.each(Object.values(ARROW_TURRET_ASSETS))('draws $variant facing $facing from its own original PNG without mirroring', (asset) => {
     const image = { naturalWidth: 1254, naturalHeight: 1254 } as HTMLImageElement
     const ready = vi.spyOn(loading, 'getReadySceneAssetImage').mockReturnValue({ image } as loading.SceneAssetImageHandle)
     const ctx = context(), tower = field(asset.variant, asset.facing)
-    const before = JSON.stringify(tower), draw = getArrowTurretDrawLayout(asset.variant)
+    const before = JSON.stringify(tower), draw = getArrowTurretDrawLayout(asset.variant, asset.facing)
     drawArrowTurrets(ctx as unknown as CanvasRenderingContext2D, { skillFields: [tower] })
-    const resource = getArrowTurretImageResource(asset.variant, 'player-skill-fx')
+    const resource = getArrowTurretImageResource(asset.variant, asset.facing, 'player-skill-fx')
     expect(ready).toHaveBeenCalledWith(expect.objectContaining({ ...resource, validate: expect.any(Function) }))
     expect(ctx.translate).toHaveBeenCalledExactlyOnceWith(140, 90)
-    expect(ctx.scale).toHaveBeenCalledExactlyOnceWith(asset.facing === 'left' ? -1 : 1, 1)
+    expect(ctx.scale).not.toHaveBeenCalled()
     expect(ctx.drawImage).toHaveBeenCalledExactlyOnceWith(image, draw.x, draw.y, draw.width, draw.height)
     expect(ctx.rotate).not.toHaveBeenCalled()
     expect(ctx.imageSmoothingEnabled).toBe(false)

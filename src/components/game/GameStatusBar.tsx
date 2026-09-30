@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useGameStore } from '../../store/useGameStore'
 import { getActiveSkillRuntimePresentation } from '../../game/archerSkillEvolution'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
-import { getArrowTurretIconFitClass } from '../../game/arrowTurretAssets'
+import { getArrowTurretIconFitClass, isArrowTurretDisplayId } from '../../game/arrowTurretAssets'
 import { ArcherSkillIconImage } from './ArcherSkillIconImage'
 import { getCombatHudV2AssetUrl } from '../../game/combatHudAssets'
 import {
@@ -347,6 +347,7 @@ export function GameStatusBar() {
               : 0
             const cooldownLabel = skill ? getCooldownRemainingLabel(skill.cooldownRemaining) : null
             const iconUrl = presentation ? getArcherSkillIconAssetUrl(presentation.displayId) : undefined
+            const turretNameOnly = isArrowTurretDisplayId(presentation?.displayId ?? '')
             const skillName = presentation?.name ?? '空槽'
 
             return (
@@ -367,7 +368,7 @@ export function GameStatusBar() {
                   backgroundSize: '300% 100%',
                 }}
               >
-                  <div className="absolute left-[7%] top-[16%] h-[68%] w-[28%] overflow-hidden border border-[rgba(244,240,215,0.34)] bg-[#08100b]" data-testid={`combat-skill-icon-shell-${index}`}>
+                  <div className={`absolute left-[7%] top-[16%] h-[68%] overflow-hidden border border-[rgba(244,240,215,0.34)] bg-[#08100b] ${turretNameOnly ? 'w-[85%]' : 'w-[28%]'}`} data-testid={`combat-skill-icon-shell-${index}`}>
                     {iconUrl ? (
                       <ArcherSkillIconImage
                         src={iconUrl}
@@ -378,7 +379,7 @@ export function GameStatusBar() {
                     ) : presentation ? (
                       <span
                         aria-hidden="true"
-                        className={`grid h-full w-full place-items-center break-words bg-[#0c1510] px-1 text-center font-pixel text-[7px] leading-tight tracking-[0.04em] text-amber-200 [image-rendering:pixelated] sm:text-[8px] ${ready ? 'brightness-100' : 'brightness-50'}`}
+                        className={`grid h-full w-full place-items-center break-words bg-[#0c1510] px-1 text-center font-pixel leading-tight tracking-[0.04em] text-amber-200 [image-rendering:pixelated] ${turretNameOnly ? 'text-[clamp(9px,1.1vw,14px)]' : 'text-[7px] sm:text-[8px]'} ${ready ? 'brightness-100' : 'brightness-50'}`}
                         data-testid={`combat-skill-icon-placeholder-${index}`}
                       >
                         {presentation.name}
@@ -399,9 +400,9 @@ export function GameStatusBar() {
                       </span>
                     ) : null}
                   </div>
-                  <span className="absolute left-[40%] right-[8%] top-1/2 min-w-0 -translate-y-1/2 truncate font-pixel text-[8px] leading-tight text-[#f4f0d7] [text-shadow:1px_1px_0_#080b0a] sm:text-[9px] md:text-[10px]" title={skillName}>
+                  {!turretNameOnly ? <span className="absolute left-[40%] right-[8%] top-1/2 min-w-0 -translate-y-1/2 truncate font-pixel text-[8px] leading-tight text-[#f4f0d7] [text-shadow:1px_1px_0_#080b0a] sm:text-[9px] md:text-[10px]" title={skillName}>
                     {skillName}
-                  </span>
+                  </span> : null}
               </div>
             )
           })}

@@ -1,5 +1,5 @@
 import { ARCHER_ACTIVE_SKILLS, ARCHER_FIXED_PASSIVE } from './archerSkills'
-import { getArrowTurretAssetForDisplayId } from './arrowTurretAssets'
+import { isArrowTurretDisplayId } from './arrowTurretAssets'
 
 export const ARCHER_SKILL_ICON_BASE_PATH = 'assets/skills/archer/icons'
 
@@ -9,8 +9,7 @@ export const ARCHER_SKILL_ICON_NAME_BY_ID: Readonly<Record<string, string>> = Ob
 })
 
 export const getArcherSkillIconAssetPath = (skillId: string) => {
-  const turretAsset = getArrowTurretAssetForDisplayId(skillId)
-  if (turretAsset) return turretAsset.path
+  if (isArrowTurretDisplayId(skillId)) return undefined
   const name = ARCHER_SKILL_ICON_NAME_BY_ID[skillId]
   return name ? `${ARCHER_SKILL_ICON_BASE_PATH}/${name}.png` : undefined
 }

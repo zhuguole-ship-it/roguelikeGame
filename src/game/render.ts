@@ -1648,15 +1648,15 @@ export const drawArrowTurrets = (ctx: CanvasRenderingContext2D, state: Pick<Game
     // Full original image, bottom-centered on the existing ground position.
     // Facing is A1's last real shot, never current mouse/target geometry.
     const image = getSharedCombatRuntimeImage(
-      `arrow-turret-image.${tower.variant}`, 'player-skill-fx', getArrowTurretAssetUrl(tower.variant),
+      `arrow-turret-image.${tower.variant}.${tower.horizontalFacing}`,
+      'player-skill-fx', getArrowTurretAssetUrl(tower.variant, tower.horizontalFacing),
     )
     if (image) {
-      const layout = getArrowTurretDrawLayout(tower.variant)
+      const layout = getArrowTurretDrawLayout(tower.variant, tower.horizontalFacing)
       ctx.save()
       ctx.globalAlpha = 1
       ctx.imageSmoothingEnabled = false
       ctx.translate(tower.position.x, tower.position.y)
-      ctx.scale(tower.horizontalFacing === 'left' ? -1 : 1, 1)
       ctx.drawImage(image, layout.x, layout.y, layout.width, layout.height)
       ctx.restore()
     }

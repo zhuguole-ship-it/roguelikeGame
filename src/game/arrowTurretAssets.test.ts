@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { inflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
-import { ARROW_TURRET_ASSETS, getArrowTurretDrawLayout, getArrowTurretImageResource, getArrowTurretIconFitClass } from './arrowTurretAssets'
+import { ARROW_TURRET_ASSETS, getArrowTurretDrawLayout, getArrowTurretImageResource, getArrowTurretIconFitClass, isArrowTurretDisplayId } from './arrowTurretAssets'
 import { PLAYER_ARCHER_IDLE_BODY_REFERENCE_HEIGHT } from './archerAssetFrames'
 import { getArcherSkillIconAssetPath, getArcherSkillIconAssetUrl } from './archerSkillIcons'
 import { buildCombatSceneAssetDependencyDescriptor, createCombatRuntimeImageResource } from './combatLoading'
@@ -58,22 +58,22 @@ describe('arrow turret original assets and shared resource contract', () => {
     expect(transparent).toBeGreaterThan(0)
     expect(opaque).toBeGreaterThan(0)
     expect({ left, top, right, bottom }).toEqual(asset.visibleBounds)
-    const draw = getArrowTurretDrawLayout(asset.variant)
+    const draw = getArrowTurretDrawLayout(asset.variant, asset.facing)
     expect(draw.visibleHeight).toBe(PLAYER_ARCHER_IDLE_BODY_REFERENCE_HEIGHT * 1.5)
     expect(draw.visibleHeight).toBe(61.5)
     expect((bottom - top) * draw.scale).toBe(61.5)
-    for (const facing of [1, -1]) {
-      expect(facing * (draw.x + (left + right) / 2 * draw.scale)).toBeCloseTo(0)
-      expect(draw.y + bottom * draw.scale).toBeCloseTo(0)
-    }
+    expect(draw.x + (left + right) / 2 * draw.scale).toBeCloseTo(0)
+    expect(draw.y + bottom * draw.scale).toBeCloseTo(0)
+    expect(draw.scale).toBeGreaterThan(0)
     expect(draw.width / width).toBe(draw.height / height)
   })
 
   it('routes only the three display identities and keeps existing icons unchanged', () => {
-    for (const asset of Object.values(ARROW_TURRET_ASSETS)) {
-      expect(getArcherSkillIconAssetPath(asset.displayId)).toBe(asset.path)
-      expect(getArrowTurretIconFitClass(asset.displayId)).toBe('object-contain')
-      expect(getArrowTurretIconFitClass(getArcherSkillIconAssetUrl(asset.displayId)!)).toBe('object-contain')
+    for (const id of ['arrow-turret', 'feather-resonance', 'bait-bastion']) {
+      expect(isArrowTurretDisplayId(id)).toBe(true)
+      expect(getArcherSkillIconAssetPath(id)).toBeUndefined()
+      expect(getArcherSkillIconAssetUrl(id)).toBeUndefined()
+      expect(getHomeSceneSkillIconResource(id)).toBeUndefined()
     }
     expect(getArcherSkillIconAssetPath('arrow-screen')).toBe('assets/skills/archer/icons/箭幕推进.png')
     expect(getArcherSkillIconAssetPath('sentry-tower')).toBe('assets/skills/archer/icons/林熊护卫.png')
@@ -81,18 +81,17 @@ describe('arrow turret original assets and shared resource contract', () => {
     expect(getArcherSkillIconAssetPath('unknown')).toBeUndefined()
   })
 
-  it('includes all three in both real manifests with identical canonical content and dimensions', () => {
+  it('gates all six in combat and none in home with canonical content and dimensions', () => {
     const combat = buildCombatSceneAssetDependencyDescriptor({
       runtimeMode: 'formal-run', campaign: 1, level: 1, difficulty: 'normal', battlefieldMode: 'infinite', professionId: 'archer',
     })
     for (const asset of Object.values(ARROW_TURRET_ASSETS)) {
-      const resource = getArrowTurretImageResource(asset.variant)
+      const resource = getArrowTurretImageResource(asset.variant, asset.facing)
       const identity = getSceneAssetCacheKey(resource)
       const homes = HOME_SCENE_ASSET_MANIFEST_V1.resources.filter((entry) => getSceneAssetCacheKey(entry) === identity)
       const combats = combat.resources.filter((entry) => getSceneAssetCacheKey(entry) === identity)
-      expect(homes).toHaveLength(1)
+      expect(homes).toHaveLength(0)
       expect(combats).toHaveLength(1)
-      expect(getHomeSceneSkillIconResource(asset.displayId)?.version).toBe(asset.sha256)
       expect(createCombatRuntimeImageResource('body', 'player-skill-fx', resource.url!).version).toBe(asset.sha256)
       expect(getSharedSceneAssetContentVersionForUrl(resource.url!)).toBe(asset.sha256)
       expect(resource.url).not.toMatch(/Downloads|concepts/)

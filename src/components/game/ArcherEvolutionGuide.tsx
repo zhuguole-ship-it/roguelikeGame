@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import { SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
 import { ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTION_MAP } from '../../game/archerSkillEvolution'
 import { getHomeSceneSkillIconResource } from '../../game/homeSceneAssetManifest'
-import { getArrowTurretAssetForDisplayId, getArrowTurretIconFitClass } from '../../game/arrowTurretAssets'
+import { getArrowTurretIconFitClass, isArrowTurretDisplayId } from '../../game/arrowTurretAssets'
 import type { SceneAssetResource } from '../../game/sceneAssetLoading'
 import type { SkillBuildTag } from '../../game/types'
 import { SceneAssetImage } from './SceneAssetImage'
@@ -70,7 +70,7 @@ const getEvolutionTrajectoryPreview = (evolutionId: string) => {
  * No family, evolution, discovery or combat value is authored here.
  */
 export const getArcherEvolutionGuideIconResource = (evolutionId: string, behaviorSkillId?: string) => (
-  getHomeSceneSkillIconResource(getArrowTurretAssetForDisplayId(evolutionId) ? evolutionId : behaviorSkillId ?? evolutionId)
+  isArrowTurretDisplayId(evolutionId) ? undefined : getHomeSceneSkillIconResource(behaviorSkillId ?? evolutionId)
 )
 
 export const createArcherEvolutionGuideCatalog = (discoveredEvolutionIds: readonly string[]): ArcherEvolutionGuideCatalog => ({
@@ -132,7 +132,7 @@ const getTooltipStyle = (rect: DOMRect): CSSProperties => {
 
 const EvolutionNamePlaceholderIcon = ({ name, discovered, compact = false }: { name: string; discovered: boolean; compact?: boolean }) => (
   <span
-    className={`flex shrink-0 items-center justify-center border-2 bg-[#0c1510] px-1 text-center font-pixel leading-tight tracking-[0.04em] [image-rendering:pixelated] ${compact ? 'h-full w-full text-[clamp(0.25rem,0.46cqw,0.65rem)]' : 'h-14 w-14 text-[8px]'} ${discovered ? 'border-[#fbbf24] text-amber-200 shadow-[inset_0_0_0_2px_rgba(251,191,36,0.12)]' : 'border-[#64748b] text-slate-500 grayscale'}`}
+    className={`flex shrink-0 items-center justify-center break-all border-2 bg-[#0c1510] text-center font-pixel tracking-[0.04em] [image-rendering:pixelated] ${compact ? 'h-full w-full px-0 text-[clamp(0.5rem,0.5cqw,0.65rem)] leading-none' : 'h-14 w-14 px-1 text-[10px] leading-tight'} ${discovered ? 'border-[#fbbf24] text-amber-200 shadow-[inset_0_0_0_2px_rgba(251,191,36,0.12)]' : 'border-[#64748b] text-slate-500 grayscale'}`}
     data-testid={`evolution-name-placeholder-${name}`}
     aria-hidden="true"
   >
@@ -261,7 +261,7 @@ export const ArcherEvolutionGuide = ({ catalog }: { catalog: ArcherEvolutionGuid
                 <div className="flex min-w-0 items-center gap-3">
                   {family.iconResource ? (
                     <SceneAssetImage resource={family.iconResource} alt="" className={`h-12 w-12 shrink-0 border-2 border-[#9dd5ac] ${getArrowTurretIconFitClass(family.familyId)} [image-rendering:pixelated]`} data-testid={`archer-evolution-guide-core-image-${family.familyId}`} />
-                  ) : (
+                  ) : !isArrowTurretDisplayId(family.familyId) ? (
                     <span
                       aria-hidden="true"
                       className="grid h-12 w-12 shrink-0 place-items-center border-2 border-amber-300 bg-[#0c1510] px-1 text-center font-pixel text-[7px] leading-tight tracking-[0.04em] text-amber-200 [image-rendering:pixelated]"
@@ -269,7 +269,7 @@ export const ArcherEvolutionGuide = ({ catalog }: { catalog: ArcherEvolutionGuid
                     >
                       {family.name}
                     </span>
-                  )}
+                  ) : null}
                   <div className="min-w-0">
                     <p className="font-pixel text-[9px] uppercase tracking-[0.12em] text-[#9dd5ac]">核心技能</p>
                     <h4 className="mt-1 break-words font-pixel text-xs tracking-[0.1em] text-[#f4f0d7]">{family.name}</h4>
@@ -335,14 +335,14 @@ export const ArcherEvolutionDetailSkillGrid = ({ catalog }: { catalog: ArcherEvo
             {family.iconResource ? (
               <SceneAssetImage resource={family.iconResource} alt="" className={`h-[clamp(1rem,1.9cqw,3.5rem)] w-[clamp(1rem,1.9cqw,3.5rem)] shrink-0 border border-[#9dd5ac] ${getArrowTurretIconFitClass(family.familyId)} [image-rendering:pixelated]`} />
             ) : (
-              <span
+              !isArrowTurretDisplayId(family.familyId) ? <span
                 aria-hidden="true"
                 className="grid h-[clamp(1rem,1.9cqw,3.5rem)] w-[clamp(1rem,1.9cqw,3.5rem)] shrink-0 place-items-center border border-amber-300 bg-[#0c1510] px-px text-center font-pixel text-[clamp(0.2rem,0.36cqw,0.5rem)] leading-tight tracking-[0.04em] text-amber-200 [image-rendering:pixelated]"
               >
                 {family.name}
-              </span>
+              </span> : null
             )}
-            <p className="min-w-0 truncate font-pixel text-[clamp(0.4rem,0.72cqw,1.15rem)] tracking-[0.08em] text-[#f4f0d7]" title={family.name}>{family.name}</p>
+            <p className={`min-w-0 font-pixel text-[clamp(0.4rem,0.72cqw,1.15rem)] tracking-[0.08em] text-[#f4f0d7] ${isArrowTurretDisplayId(family.familyId) ? 'break-words' : 'truncate'}`} title={family.name}>{family.name}</p>
           </div>
           <div className="mt-[clamp(0.2rem,0.38cqw,0.6rem)] grid grid-cols-2 justify-items-start gap-[clamp(0.25rem,0.55cqw,0.9rem)]" data-testid={`character-detail-evolution-entries-${family.familyId}`}>
             {family.evolutions.map((evolution) => (

@@ -156,7 +156,7 @@ export const createCombatRuntimeImageResource = (
 ): SceneAssetResource => {
   const url = publicAssetUrl(pathOrUrl)
   const turretAsset = getArrowTurretAssetForUrl(url)
-  if (turretAsset) return getArrowTurretImageResource(turretAsset.variant, domain)
+  if (turretAsset) return getArrowTurretImageResource(turretAsset.variant, turretAsset.facing, domain)
   return Object.freeze({
     key,
     domain,
@@ -210,7 +210,7 @@ export const getCombatAssetResources = (descriptor: CombatLoadingDependencyDescr
     .map((entry) => createCombatRuntimeImageResource(`player-skill-icon.${entry.skillId}`, 'combat-icons', entry.url))
 
   const resources: SceneAssetResource[] = [
-    ...Object.values(ARROW_TURRET_ASSETS).map((asset) => getArrowTurretImageResource(asset.variant, 'player-skill-fx')),
+    ...Object.values(ARROW_TURRET_ASSETS).map((asset) => getArrowTurretImageResource(asset.variant, asset.facing, 'player-skill-fx')),
     ...terrainAssets,
     createCombatRuntimeImageResource('environment.combat-mask', 'environment', COMBAT_DARK_MASK_ASSET_URL),
     ...getEnemyAssetResources(enemyIds),

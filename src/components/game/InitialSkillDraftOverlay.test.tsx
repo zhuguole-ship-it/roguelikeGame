@@ -160,7 +160,12 @@ describe('InitialSkillDraftOverlay', () => {
     expect(cards[0].getAttribute('data-skill-choice-card-contract')).toBe('active-skill-choice-v1')
     expect(cards[0].className).toContain('min-h-[18rem]')
     expect(cards[0].className).toContain('hover:border-amber-300')
-    expect(cards[0].querySelector('img')?.className).toContain('[image-rendering:pixelated]')
+    const firstIcon = cards[0].querySelector('img')
+    if (firstIcon) {
+      expect(firstIcon.className).toContain('[image-rendering:pixelated]')
+    } else {
+      expect(cards[0].textContent).toContain(useGameStore.getState().getInitialSkillDraftPresentation().candidates[0].title)
+    }
     expect(cards[0].className).toContain('motion-reduce:transition-none')
 
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth })

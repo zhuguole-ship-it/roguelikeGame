@@ -1,67 +1,54 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ARROW_TURRET_ASSETS } from '../../game/arrowTurretAssets'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
 import { createInitialSnapshot } from '../../game/engine'
 import { useGameStore } from '../../store/useGameStore'
 import { ArcherEvolutionGuide, createArcherEvolutionGuideCatalog, getArcherEvolutionGuideIconResource } from './ArcherEvolutionGuide'
 import { GameStatusBar } from './GameStatusBar'
-import { RunSettlementOverlay } from './RunSettlementOverlay'
+import { RunSettlementOverlay, resolveRunSettlementIcon } from './RunSettlementOverlay'
 import { SkillChoiceCard } from './SkillChoiceCard'
-import { ArcherSkillIconImage } from './ArcherSkillIconImage'
-import * as loading from '../../game/sceneAssetLoading'
-import { getArrowTurretImageResource } from '../../game/arrowTurretAssets'
 
-const assets = Object.values(ARROW_TURRET_ASSETS)
+const towerNames = [
+  { id: 'arrow-turret', name: '箭幕哨塔' },
+  { id: 'feather-resonance', name: '百羽共鸣' },
+  { id: 'bait-bastion', name: '诱敌战垒' },
+] as const
+
 afterEach(() => { cleanup(); useGameStore.setState(createInitialSnapshot()); vi.restoreAllMocks() })
 
-describe('three tower identities in real existing UI components', () => {
-  it('uses the ready decoded object URL instead of starting an unversioned icon request', () => {
-    const resource = getArrowTurretImageResource('resonance')
-    vi.spyOn(loading, 'getSceneAssetResourceState').mockReturnValue('ready')
-    const cached = vi.spyOn(loading, 'getReadySceneAssetImage').mockReturnValue({
-      domSrc: 'blob:shared-resonance', naturalWidth: 1254, naturalHeight: 1254,
-      identity: loading.resolveSceneAssetCanonicalIdentity(resource),
-    } as loading.SceneAssetImageHandle)
-    render(<ArcherSkillIconImage src={resource.url} alt="百羽共鸣" />)
-    const icon = screen.getByAltText('百羽共鸣')
-    expect(icon.getAttribute('src')).toBe('blob:shared-resonance')
-    expect(icon.getAttribute('data-scene-asset-state')).toBe('ready')
-    expect(cached.mock.calls[0][0].version).toBe(ARROW_TURRET_ASSETS.resonance.sha256)
+describe('directional tower bodies remain combat-only while existing UI uses full names', () => {
+  it('resolves no tower static icon, including branches with a reused base behavior', () => {
+    towerNames.forEach(({ id }) => expect(getArcherSkillIconAssetUrl(id)).toBeUndefined())
+    expect(getArcherEvolutionGuideIconResource('feather-resonance', 'arrow-turret')).toBeUndefined()
+    expect(getArcherEvolutionGuideIconResource('bait-bastion', 'arrow-turret')).toBeUndefined()
+    towerNames.forEach(({ id }) => expect(resolveRunSettlementIcon(id, 'active-skill')).toEqual({ status: 'name-only', kind: 'active-skill' }))
+    expect(decodeURIComponent(getArcherSkillIconAssetUrl('arrow-screen')!)).toContain('箭幕推进')
   })
-  it('prioritizes both branch display identities over a reused base behavior without changing skill data', () => {
-    for (const id of ['feather-resonance', 'bait-bastion']) {
-      expect(getArcherEvolutionGuideIconResource(id, 'arrow-turret')?.url).toBe(getArcherSkillIconAssetUrl(id))
-    }
-  })
-  it('uses each actual runtime evolution identity in HUD without mirroring or changing slots', () => {
-    useGameStore.setState({ ...createInitialSnapshot('running'), activeSkills: assets.map((asset, index) => ({
-      skillId: 'arrow-turret', familyId: 'arrow-turret', evolutionId: index ? asset.displayId : undefined,
+
+  it('keeps the actual runtime branch names legible in the existing HUD slots', () => {
+    useGameStore.setState({ ...createInitialSnapshot('running'), activeSkills: towerNames.map(({ id }, index) => ({
+      skillId: 'arrow-turret', familyId: 'arrow-turret', evolutionId: index ? id : undefined,
       level: index ? 4 : 3, cooldownRemaining: 0,
     })) })
     render(<GameStatusBar />)
-    assets.forEach((asset, index) => {
-      const icon = screen.getByTestId(`combat-skill-icon-${index}`)
-      expect(icon.getAttribute('data-scene-asset-logical-url')).toBe(getArcherSkillIconAssetUrl(asset.displayId))
-      expect(icon.getAttribute('src')).toBeNull()
-      expect(icon.className).toContain('object-contain')
-      expect(icon.style.transform).toBe('')
-      expect(screen.getByTestId(`combat-skill-slot-${index}`).getAttribute('data-runtime-display-id')).toBe(asset.displayId)
+    towerNames.forEach(({ id, name }, index) => {
+      const slot = screen.getByTestId(`combat-skill-slot-${index}`)
+      expect(slot.getAttribute('data-runtime-display-id')).toBe(id)
+      expect(slot.getAttribute('aria-label')).toBe(name)
+      expect(screen.getByTestId(`combat-skill-icon-placeholder-${index}`).textContent).toBe(name)
+      expect(screen.queryByTestId(`combat-skill-icon-${index}`)).toBeNull()
     })
   })
 
-  it('uses the same three resource identities in the shared guide and preserves undiscovered restrictions', () => {
+  it('shows guide names without tower images and retains undiscovered restrictions', () => {
     const live = createArcherEvolutionGuideCatalog(['feather-resonance'])
     const catalog = { ...live, families: live.families.filter((family) => family.familyId === 'arrow-turret') }
     render(<ArcherEvolutionGuide catalog={catalog} />)
-    assets.forEach((asset) => {
-      const id = asset.variant === 'base' ? 'archer-evolution-guide-core-image-arrow-turret' : `archer-evolution-guide-image-${asset.displayId}`
-      const icon = screen.getByTestId(id)
-      expect(icon.getAttribute('data-scene-asset-logical-url')).toBe(getArcherSkillIconAssetUrl(asset.displayId))
-      expect(icon.className).toContain('object-contain')
-    })
+    expect(screen.getByTestId('archer-evolution-guide-family-arrow-turret').textContent).toContain('箭幕哨塔')
+    expect(screen.queryByTestId('archer-evolution-guide-core-image-arrow-turret')).toBeNull()
+    expect(screen.getByTestId('evolution-name-placeholder-百羽共鸣')).toBeTruthy()
+    expect(screen.getByTestId('evolution-name-placeholder-诱敌战垒')).toBeTruthy()
     const undiscovered = screen.getByTestId('archer-evolution-guide-undiscovered-bait-bastion')
-    expect(undiscovered.getAttribute('tabindex')).toBeNull()
     fireEvent.mouseEnter(undiscovered)
     fireEvent.click(undiscovered)
     expect(screen.queryByTestId('archer-evolution-guide-tooltip-bait-bastion')).toBeNull()
@@ -69,29 +56,27 @@ describe('three tower identities in real existing UI components', () => {
     expect(screen.getByTestId('archer-evolution-guide-tooltip-feather-resonance')).toBeTruthy()
   })
 
-  it.each(assets)('keeps $displayId contained in the initial/regular shared card and leaves selection real', (asset) => {
+  it.each(towerNames)('reuses full $name card title with no empty or tiny icon frame', ({ id, name }) => {
     const select = vi.fn()
-    render(<SkillChoiceCard testId="tower-shared-card" choiceId={asset.displayId} familyId="arrow-turret" title={asset.displayId} description="真实说明" iconUrl={getArcherSkillIconAssetUrl(asset.displayId)} ariaLabel={asset.displayId} onSelect={select} />)
-    const icon = screen.getByTestId(`reward-choice-icon-${asset.displayId}`)
-    expect(icon.className).toContain('object-contain')
-    expect(icon.getAttribute('data-scene-asset-logical-url')).toBe(getArcherSkillIconAssetUrl(asset.displayId))
-    expect(icon.getAttribute('src')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: asset.displayId }))
+    render(<SkillChoiceCard testId="tower-shared-card" choiceId={id} familyId="arrow-turret" title={name} fallbackIconLabel={name} description="真实说明" onSelect={select} />)
+    const card = screen.getByTestId('tower-shared-card')
+    expect(card.textContent).toContain(name)
+    expect(screen.queryByTestId(`reward-choice-icon-shell-${id}`)).toBeNull()
+    expect(screen.queryByTestId(`reward-choice-icon-placeholder-${id}`)).toBeNull()
+    fireEvent.click(card)
     expect(select).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps display and real-damage settlement identities on their respective sprites', () => {
+  it('uses full names rather than missing-icon warnings in display and damage settlement', () => {
     useGameStore.setState(createInitialSnapshot('game-over'))
     render(<RunSettlementOverlay onReturnToVillage={vi.fn()} summary={{
       result: 'success', reachedLevel: 22, finalCarriedEquipmentIds: [], carriedEquipmentCount: 0, talentPointsEarned: 0,
-      displayEntries: assets.map((asset, order) => ({ kind: 'active-skill', sourceId: asset.displayId, name: asset.displayId, order, level: 4 })),
-      damageEntries: assets.map((asset) => ({ sourceId: asset.displayId, sourceName: asset.displayId, totalDamage: 10, maxHitDamage: 10 })),
+      displayEntries: towerNames.map(({ id, name }, order) => ({ kind: 'active-skill', sourceId: id, name, order, level: 4 })),
+      damageEntries: towerNames.map(({ id, name }) => ({ sourceId: id, sourceName: name, totalDamage: 10, maxHitDamage: 10 })),
     }} />)
-    for (const asset of assets) for (const region of ['display', 'damage']) {
-      const icon = screen.getByTestId(`run-settlement-${region}-icon-${asset.displayId}`)
-      expect(icon.getAttribute('data-scene-asset-logical-url')).toBe(getArcherSkillIconAssetUrl(asset.displayId))
-      expect(icon.getAttribute('src')).toBeNull()
-      expect(icon.className).toContain('object-contain')
+    for (const { id, name } of towerNames) for (const region of ['display', 'damage']) {
+      expect(screen.getByTestId(`run-settlement-${region}-icon-${id}-name-only`).textContent).toBe(name)
+      expect(screen.queryByTestId(`run-settlement-${region}-icon-${id}-missing`)).toBeNull()
     }
   })
 })

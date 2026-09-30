@@ -2,7 +2,6 @@ import { developerAssetEntities } from './assetManifest'
 import { SEVEN_CUE_AUDIO_ASSETS } from './sevenCueAudioAssets'
 import { ARCHER_CORE_SKILLS, ARCHER_SKILL_EVOLUTIONS } from './archerSkillEvolution'
 import { getArcherSkillIconAssetPath } from './archerSkillIcons'
-import { getArrowTurretAssetForDisplayId, getArrowTurretImageResource } from './arrowTurretAssets'
 import { getPlayerArcherFrameUrls } from './archerAssetFrames'
 import { getMetaTalentIconAssetPath } from './metaTalentIcons'
 import { META_TALENT_NODES } from './talents'
@@ -78,10 +77,7 @@ skillIconIds.forEach((skillId) => {
   const path = getArcherSkillIconAssetPath(skillId)
   if (!path) return
   const existing = skillIconResourceByPath.get(path)
-  const turretAsset = getArrowTurretAssetForDisplayId(skillId)
-  const resource = existing ?? (turretAsset
-    ? getArrowTurretImageResource(turretAsset.variant)
-    : imageResource(`skill-icon.${skillId}`, 'skill-icons', path))
+  const resource = existing ?? imageResource(`skill-icon.${skillId}`, 'skill-icons', path)
   skillIconResourceByPath.set(path, resource)
   skillIconResourceById.set(skillId, resource)
 })

@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { ARROW_TURRET_ASSETS } from './arrowTurretAssets'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -258,7 +257,6 @@ describe('HOME_SCENE_ASSET_MANIFEST_V1', () => {
     ]))
     expect(new Set(HOME_SCENE_HUNTER_HOME_SKILL_ICON_RESOURCES.map((resource) => resource.version))).toEqual(new Set([
       SHARED_SCENE_ASSET_CONTENT_VERSIONS.archerSkillIcons,
-      ...Object.values(ARROW_TURRET_ASSETS).map((asset) => asset.sha256),
     ]))
     expect([...idleResources, ...HOME_SCENE_HUNTER_HOME_SKILL_ICON_RESOURCES].some((resource) => (
       /home|combat|loading/.test(resource.version)
