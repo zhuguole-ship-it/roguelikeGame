@@ -795,10 +795,7 @@ describe('game engine', () => {
     reviveCount: overrides.reviveCount,
     blockCooldown: overrides.blockCooldown,
     blockTimer: overrides.blockTimer,
-    skeletonWarriorDefenseCooldown: overrides.skeletonWarriorDefenseCooldown,
     skeletonWarriorDefenseTimer: overrides.skeletonWarriorDefenseTimer,
-    skeletonWarriorDefenseDirection: overrides.skeletonWarriorDefenseDirection,
-    skeletonWarriorDefensePosition: overrides.skeletonWarriorDefensePosition,
     breathTimer: overrides.breathTimer,
     breathDirection: overrides.breathDirection,
     breathTickCooldown: overrides.breathTickCooldown,
@@ -4868,7 +4865,7 @@ describe('game engine', () => {
   })
 
   it('keeps curve return skeleton warrior hits front outbound and critical backstab on return', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.99)
+    vi.spyOn(Math, 'random').mockReturnValue(0.1)
     const snapshot = createInitialSnapshot('running')
     snapshot.levelTargetKills = 999
     snapshot.remainingToSpawn = 0
@@ -4894,8 +4891,6 @@ describe('game engine', () => {
       speed: 0,
       attackCooldown: 99,
       behaviorCooldown: 99,
-      skeletonWarriorDefenseCooldown: 0,
-      skeletonWarriorDefenseTimer: 0,
     })]
     snapshot.projectiles = [makeProjectile({
       id: 'curve-skeleton-hit',
@@ -4924,9 +4919,9 @@ describe('game engine', () => {
     }
 
     expect(hpAfterOutbound).toBeCloseTo(970, 5)
-    expect(next.enemies[0].skeletonWarriorDefenseTimer).toBeGreaterThan(0)
+    expect(next.enemies[0].skeletonWarriorDefenseTimer).toBeLessThanOrEqual(0.16)
     expect(next.enemies[0].hp).toBeCloseTo(795, 5)
-    expect(next.floatingTexts.some((text) => text.value === '正面防御')).toBe(true)
+    expect(next.floatingTexts.some((text) => text.value === '格挡')).toBe(true)
     expect(next.floatingTexts.some((text) => text.value === '暴击')).toBe(true)
     expect(next.combatDamageLog).toEqual(expect.arrayContaining([
       expect.objectContaining({ targetId: 'curve-skeleton-warrior', sourceId: 'curve-return', isCritical: false }),
@@ -6411,8 +6406,7 @@ describe('game engine', () => {
       hp: rawDamage * 0.5,
       maxHp: rawDamage * 0.5,
       facingDirection: { x: -1, y: 0 },
-      skeletonWarriorDefenseTimer: 3,
-      skeletonWarriorDefenseCooldown: 5,
+      skeletonWarriorDefenseTimer: 0,
     })
     const executable = makeEnemy({
       id: 'real-executable',
@@ -11231,359 +11225,125 @@ describe('game engine', () => {
     expect(unblocked.enemies[0].blockTimer).toBe(0)
   })
 
-  it('triggers skeleton warrior defense from real player projectile hits and respects front and back damage', () => {
-    const createDefenseSnapshot = (velocity: Vector2) => {
-      const snapshot = createInitialSnapshot('running')
-      snapshot.player.position = { x: 100, y: 200 }
-      snapshot.player.attackCooldown = 999
-      snapshot.remainingToSpawn = 1
-      snapshot.spawnCooldown = 999
-      snapshot.mapObstacles = []
-      snapshot.enemies = [makeEnemy({
-        id: 'skeleton-warrior-defense',
-        kind: 'melee',
-        archetypeId: 'dungeon-skeleton-warrior',
-        displayName: '骷髅战士',
-        position: { x: 250, y: 200 },
-        lastPosition: { x: 250, y: 200 },
-        facingDirection: { x: -1, y: 0 },
-        behaviorDirection: { x: -1, y: 0 },
-        hp: 500,
-        maxHp: 500,
-        speed: 0,
-        attackCooldown: 99,
-        behaviorCooldown: 99,
-        skeletonWarriorDefenseCooldown: 0,
-        skeletonWarriorDefenseTimer: 0,
-      })]
-      snapshot.projectiles = [{
-        id: `defense-shot-${velocity.x}`,
-        owner: 'player',
-        position: { x: 250, y: 200 },
-        velocity,
-        damage: 100,
-        ttl: 1,
-        size: 5,
-        color: '#fde68a',
-        pierceRemaining: 0,
-        explosionRadius: 0,
-        effect: 'none',
-        effectStrength: 0,
-        sourceSkillId: 'basic-arrow',
-      }]
-      return snapshot
-    }
-
-    const frontHit = advanceGame(createDefenseSnapshot({ x: 1, y: 0 }), { up: false, down: false, left: false, right: false }, 0.016)
-    expect(frontHit.enemies[0].hp).toBeCloseTo(470, 5)
-    expect(frontHit.enemies[0].skeletonWarriorDefenseTimer).toBe(3)
-    expect(frontHit.enemies[0].skeletonWarriorDefenseCooldown).toBe(5)
-    expect(frontHit.enemies[0].skeletonWarriorDefenseDirection).toEqual({ x: -1, y: 0 })
-
-    const backHit = advanceGame(createDefenseSnapshot({ x: -1, y: 0 }), { up: false, down: false, left: false, right: false }, 0.016)
-    expect(backHit.enemies[0].hp).toBeCloseTo(400, 5)
-    expect(backHit.enemies[0].skeletonWarriorDefenseTimer).toBe(3)
-    expect(backHit.enemies[0].skeletonWarriorDefenseCooldown).toBe(5)
-  })
-
-  it('keeps skeleton warrior defense active for three seconds and prevents retrigger until five seconds', () => {
-    let snapshot = createInitialSnapshot('running')
+  const createSkeletonBlockSnapshot = (entry: 'formal' | 'local' = 'formal', archetypeId = 'dungeon-skeleton-warrior') => {
+    const snapshot = entry === 'local'
+      ? startLocalBattleTestSnapshot(createInitialSnapshot('idle'))
+      : createInitialSnapshot('running')
+    snapshot.battlefield.mode = 'infinite'
+    snapshot.battlefield.activeChunks = []
+    snapshot.battlefield.bossArenaRadius = 2000
     snapshot.player.position = { x: 100, y: 200 }
     snapshot.player.attackCooldown = 999
     snapshot.remainingToSpawn = 1
     snapshot.spawnCooldown = 999
     snapshot.mapObstacles = []
     snapshot.enemies = [makeEnemy({
-      id: 'skeleton-warrior-cooldown',
-      kind: 'melee',
-      archetypeId: 'dungeon-skeleton-warrior',
-      displayName: '骷髅战士',
-      position: { x: 250, y: 200 },
-      lastPosition: { x: 250, y: 200 },
-      facingDirection: { x: -1, y: 0 },
-      behaviorDirection: { x: -1, y: 0 },
-      hp: 800,
-      maxHp: 800,
-      speed: 0,
-      attackCooldown: 99,
-      behaviorCooldown: 99,
-      skeletonWarriorDefenseCooldown: 0,
-      skeletonWarriorDefenseTimer: 0,
+      id: 'block-target', kind: 'melee', archetypeId, position: { x: 250, y: 200 },
+      lastPosition: { x: 250, y: 200 }, facingDirection: { x: -1, y: 0 },
+      behaviorDirection: { x: -1, y: 0 }, hp: 500, maxHp: 500,
+      speed: 0, attackCooldown: 99, behaviorCooldown: 99,
     })]
+    return snapshot
+  }
+  const strikeSkeleton = (snapshot: GameSnapshot, velocity: Vector2, sourceSkillId = 'basic-arrow') => {
+    snapshot.projectiles = [makeProjectile({
+      id: 'block-shot', owner: 'player', position: { ...snapshot.enemies[0].position },
+      velocity, damage: 100, ttl: 1, size: 5, pierceRemaining: 0,
+      sourceSkillId,
+    })]
+    return advanceGame(snapshot, noInput, 0.016)
+  }
 
-    const fireFrontProjectile = (current: GameSnapshot, id: string) => {
-      current.projectiles = [{
-        id,
-        owner: 'player',
-        position: { ...current.enemies[0].position },
-        velocity: { x: 1, y: 0 },
-        damage: 100,
-        ttl: 1,
-        size: 5,
-        color: '#fde68a',
-        pierceRemaining: 0,
-        explosionRadius: 0,
-        effect: 'none',
-        effectStrength: 0,
-        sourceSkillId: 'basic-arrow',
-      }]
-      return advanceGame(current, { up: false, down: false, left: false, right: false }, 0.016)
-    }
-
-    snapshot = fireFrontProjectile(snapshot, 'first-defense-hit')
-    expect(snapshot.enemies[0].hp).toBeCloseTo(770, 5)
-
-    for (let index = 0; index < 59; index += 1) {
-      snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
-    }
+  it.each(['formal', 'local'] as const)('uses the same independent passive block in %s combat', (entry) => {
+    const random = vi.spyOn(Math, 'random')
+    let snapshot = createSkeletonBlockSnapshot(entry)
+    expect(Boolean(snapshot.localBattleTest?.active)).toBe(entry === 'local')
+    random.mockReturnValue(0.1)
+    snapshot = strikeSkeleton(snapshot, { x: 1, y: 0 })
+    expect(snapshot.enemies[0].hp).toBeCloseTo(470, 5)
     expect(snapshot.enemies[0].skeletonWarriorDefenseTimer).toBeGreaterThan(0)
+    expect(snapshot.enemies[0].skeletonWarriorDefenseTimer).toBeLessThanOrEqual(0.16)
+    expect(snapshot.floatingTexts.some((text) => text.value === '格挡')).toBe(true)
+    const firstBlockCount = snapshot.floatingTexts.filter((text) => text.value === '格挡').length
 
-    for (let index = 0; index < 2; index += 1) {
-      snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
-    }
+    random.mockReturnValue(0.8)
+    snapshot = strikeSkeleton(snapshot, { x: 1, y: 0 })
+    expect(snapshot.enemies[0].hp).toBeCloseTo(370, 5)
     expect(snapshot.enemies[0].skeletonWarriorDefenseTimer).toBe(0)
-    expect(snapshot.enemies[0].skeletonWarriorDefenseCooldown).toBeGreaterThan(0)
-    expect(snapshot.enemies[0].skeletonWarriorDefenseDirection).toBeUndefined()
+    expect(snapshot.floatingTexts.filter((text) => text.value === '格挡')).toHaveLength(firstBlockCount)
 
-    snapshot = fireFrontProjectile(snapshot, 'cooldown-hit')
-    expect(snapshot.enemies[0].hp).toBeCloseTo(670, 5)
+    random.mockReturnValue(0.24)
+    snapshot = strikeSkeleton(snapshot, { x: 1, y: 0 })
+    expect(snapshot.enemies[0].hp).toBeCloseTo(340, 5)
+    expect(snapshot.floatingTexts.filter((text) => text.value === '格挡')).toHaveLength(firstBlockCount + 1)
+
+    random.mockReturnValue(0)
+    snapshot = strikeSkeleton(snapshot, { x: 1, y: 0 })
+    expect(snapshot.enemies[0].hp).toBeCloseTo(310, 5)
+    expect(snapshot.floatingTexts.filter((text) => text.value === '格挡')).toHaveLength(firstBlockCount + 2)
+
+    random.mockReturnValue(0.25)
+    snapshot = strikeSkeleton(snapshot, { x: 1, y: 0 })
+    expect(snapshot.enemies[0].hp).toBeCloseTo(210, 5)
+    expect(snapshot.floatingTexts.filter((text) => text.value === '格挡')).toHaveLength(firstBlockCount + 2)
+
+    random.mockReturnValue(0)
+    snapshot = strikeSkeleton(snapshot, { x: -1, y: 0 })
+    expect(snapshot.enemies[0].hp).toBeCloseTo(110, 5)
     expect(snapshot.enemies[0].skeletonWarriorDefenseTimer).toBe(0)
-
-    for (let index = 0; index < 40; index += 1) {
-      snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
-    }
-    expect(snapshot.enemies[0].skeletonWarriorDefenseCooldown).toBe(0)
-
-    snapshot = fireFrontProjectile(snapshot, 'ready-again-hit')
-    expect(snapshot.enemies[0].hp).toBeCloseTo(640, 5)
-    expect(snapshot.enemies[0].skeletonWarriorDefenseTimer).toBe(3)
-    expect(snapshot.enemies[0].skeletonWarriorDefenseCooldown).toBe(5)
+    expect(snapshot.floatingTexts.filter((text) => text.value === '格挡')).toHaveLength(firstBlockCount + 2)
   })
 
-  it('moves ordinary skeleton warrior defense at forty percent while locking orientation and actions', () => {
-    let snapshot = createInitialSnapshot('running')
-    snapshot.player.position = { x: 100, y: 200 }
-    snapshot.player.hp = 100
-    snapshot.player.hurtCooldown = 0
-    snapshot.player.attackCooldown = 999
-    snapshot.remainingToSpawn = 1
-    snapshot.spawnCooldown = 999
-    clearCombatObstacles(snapshot)
-    snapshot.enemies = [makeEnemy({
-      id: 'skeleton-warrior-defense-lock',
-      kind: 'melee',
-      archetypeId: 'dungeon-skeleton-warrior',
-      displayName: '骷髅战士',
-      position: { x: 250, y: 200 },
-      lastPosition: { x: 250, y: 200 },
-      facingDirection: { x: -1, y: 0 },
-      behaviorDirection: { x: -1, y: 0 },
-      hp: 800,
-      maxHp: 800,
-      speed: 0,
-      attackCooldown: 99,
-      behaviorCooldown: 0,
-      skeletonWarriorDefenseCooldown: 0,
-      skeletonWarriorDefenseTimer: 0,
-    })]
-    snapshot.projectiles = [{
-      id: 'defense-lock-trigger',
-      owner: 'player',
-      position: { x: 250, y: 200 },
-      velocity: { x: 1, y: 0 },
-      damage: 100,
-      ttl: 1,
-      size: 5,
-      color: '#fde68a',
-      pierceRemaining: 0,
-      explosionRadius: 0,
-      effect: 'none',
-      effectStrength: 0,
-      sourceSkillId: 'basic-arrow',
-    }]
-
-    snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
-    const defenseStartPosition = { ...snapshot.enemies[0].position }
-
-    expect(snapshot.enemies[0].skeletonWarriorDefenseTimer).toBe(3)
-    expect(snapshot.enemies[0].skeletonWarriorDefenseCooldown).toBe(5)
-    expect(snapshot.enemies[0].skeletonWarriorDefenseDirection).toEqual({ x: -1, y: 0 })
-    expect(snapshot.enemies[0].skeletonWarriorDefensePosition).toBeUndefined()
-
-    let normalBaseline: GameSnapshot = {
-      ...snapshot,
-      player: { ...snapshot.player },
-      enemies: snapshot.enemies.map((enemy) => ({ ...enemy })),
-      projectiles: [],
-      enemyProjectiles: [],
-    }
-
-    snapshot.player.position = { x: 520, y: 200 }
+  it('keeps normal movement, turning, and melee available after a successful block', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    let snapshot = createSkeletonBlockSnapshot()
     snapshot.enemies[0].speed = 180
-    snapshot.enemies[0].slowTtl = 1
-    snapshot.enemies[0].slowFactor = 0.2
-    snapshot.enemies[0].attackCooldown = 0
     snapshot.enemies[0].behaviorCooldown = 0
-    snapshot.enemies[0].behaviorTimer = 0.6
-    snapshot.enemies[0].meleeAttackWindup = 0.4
-    snapshot.enemies[0].meleeAttackReady = true
-    snapshot.enemies[0].meleeAttackImpactDelay = 0
-    snapshot.enemies[0].meleeAttackOrigin = { x: 240, y: 200 }
-    snapshot.enemies[0].meleeAttackDirection = { x: -1, y: 0 }
-    snapshot.enemies[0].walkTimer = 3
-
-    normalBaseline.player.position = { x: 520, y: 200 }
-    normalBaseline.enemies[0] = {
-      ...normalBaseline.enemies[0],
-      position: { ...defenseStartPosition },
-      lastPosition: { ...defenseStartPosition },
-      speed: 180,
-      slowTtl: 1,
-      slowFactor: 0.2,
-      attackCooldown: 0,
-      behaviorCooldown: 0,
-      behaviorTimer: 0,
-      meleeAttackWindup: 0,
-      meleeAttackReady: false,
-      meleeAttackImpactDelay: 0,
-      meleeAttackOrigin: undefined,
-      meleeAttackDirection: undefined,
-      walkTimer: 0,
-      skeletonWarriorDefenseCooldown: 0,
-      skeletonWarriorDefenseTimer: 0,
-      skeletonWarriorDefenseDirection: undefined,
-      skeletonWarriorDefensePosition: undefined,
-    }
-
-    for (let frame = 0; frame < 10; frame += 1) {
-      snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
-      normalBaseline = advanceGame(normalBaseline, { up: false, down: false, left: false, right: false }, 0.05)
-      expect(snapshot.enemies[0].position.x).toBeGreaterThan(defenseStartPosition.x)
-      expect(snapshot.enemies[0].lastPosition).toEqual(snapshot.enemies[0].position)
-      expect(snapshot.enemies[0].facingDirection).toEqual({ x: -1, y: 0 })
-      expect(snapshot.enemies[0].behaviorDirection).toEqual({ x: -1, y: 0 })
-      expect(snapshot.enemies[0].behaviorTimer).toBe(0)
-      expect(snapshot.enemies[0].meleeAttackWindup).toBe(0)
-      expect(snapshot.enemies[0].meleeAttackReady).toBe(false)
-      expect(snapshot.enemies[0].meleeAttackImpactDelay).toBe(0)
-      expect(snapshot.enemies[0].walkTimer).toBe(0)
-      expect(snapshot.enemySkillEffects.some((effect) => effect.kind === 'skeleton-slash' || effect.kind === 'skeleton-whirlwind')).toBe(false)
-      expect(snapshot.player.hp).toBe(100)
-    }
+    snapshot.enemies[0].attackCooldown = 0
+    snapshot = strikeSkeleton(snapshot, { x: 1, y: 0 })
     expect(snapshot.enemies[0].skeletonWarriorDefenseTimer).toBeGreaterThan(0)
-    const normalDistance = distance(defenseStartPosition, normalBaseline.enemies[0].position)
-    const defenseDistance = distance(defenseStartPosition, snapshot.enemies[0].position)
-    expect(defenseDistance).toBeCloseTo(normalDistance * 0.4, 5)
-
-    for (let frame = 0; frame < 80 && (snapshot.enemies[0].skeletonWarriorDefenseTimer ?? 0) > 0; frame += 1) {
-      snapshot = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.05)
-    }
-
-    expect(snapshot.enemies[0].skeletonWarriorDefenseTimer).toBe(0)
-    expect(snapshot.enemies[0].skeletonWarriorDefenseDirection).toBeUndefined()
-    expect(snapshot.enemies[0].skeletonWarriorDefensePosition).toBeUndefined()
-
-    snapshot.player.position = { x: snapshot.enemies[0].position.x - 32, y: snapshot.enemies[0].position.y }
-    snapshot.enemies[0].attackCooldown = 0
-    snapshot.enemies[0].behaviorCooldown = 0
-    const resumed = (snapshot.enemies[0].meleeAttackWindup ?? 0) > 0
-      ? snapshot
-      : advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.016)
-    expect(resumed.enemies[0].meleeAttackWindup ?? 0).toBeGreaterThan(0)
+    const firstPosition = { ...snapshot.enemies[0].position }
+    snapshot.player.position = { x: 520, y: 200 }
+    const moving = advanceGame(snapshot, noInput, 0.05)
+    expect(moving.enemies[0].position.x).toBeGreaterThan(firstPosition.x)
+    expect(moving.enemies[0].facingDirection?.x).toBeGreaterThan(0)
+    expect(moving.enemies[0].skeletonWarriorDefenseTimer).toBeGreaterThan(0)
+    moving.player.position = { x: moving.enemies[0].position.x + 32, y: moving.enemies[0].position.y }
+    moving.enemies[0].attackCooldown = 0
+    moving.enemies[0].behaviorCooldown = 0
+    const attacking = advanceGame(moving, noInput, 0.016)
+    expect((attacking.enemies[0].meleeAttackWindup ?? 0) > 0 || attacking.enemies[0].meleeAttackReady).toBe(true)
   })
 
-  it('does not apply skeleton warrior defense movement locks to other enemies', () => {
-    const snapshot = createInitialSnapshot('running')
-    snapshot.player.position = { x: 220, y: 200 }
-    snapshot.player.attackCooldown = 999
-    snapshot.remainingToSpawn = 1
-    snapshot.spawnCooldown = 999
-    snapshot.mapObstacles = []
-    snapshot.enemies = [makeEnemy({
-      id: 'non-skeleton-defense-lock',
-      kind: 'melee',
-      archetypeId: 'training-melee',
-      displayName: '训练近战',
-      position: { x: 540, y: 200 },
-      lastPosition: { x: 540, y: 200 },
-      facingDirection: { x: -1, y: 0 },
-      behaviorDirection: { x: -1, y: 0 },
-      speed: 120,
-      attackCooldown: 99,
-      behaviorCooldown: 99,
-      skeletonWarriorDefenseTimer: 2,
-      skeletonWarriorDefenseCooldown: 4,
-      skeletonWarriorDefenseDirection: { x: -1, y: 0 },
-      skeletonWarriorDefensePosition: { x: 540, y: 200 },
-    })]
-
-    const next = advanceGame(snapshot, { up: false, down: false, left: false, right: false }, 0.2)
-
-    expect(next.enemies[0].position.x).toBeLessThan(540)
-    expect(next.enemies[0].walkTimer).toBeGreaterThan(0)
-    expect(next.enemies[0].skeletonWarriorDefenseTimer).toBeLessThan(2)
-  })
-
-  it('does not trigger skeleton warrior defense from non-projectile damage or on other enemies', () => {
-    const nonProjectile = createInitialSnapshot('running')
-    nonProjectile.player.attackCooldown = 999
-    nonProjectile.remainingToSpawn = 1
-    nonProjectile.spawnCooldown = 999
-    nonProjectile.mapObstacles = []
-    nonProjectile.enemies = [makeEnemy({
-      kind: 'melee',
-      archetypeId: 'dungeon-skeleton-warrior',
-      displayName: '骷髅战士',
-      hp: 500,
-      maxHp: 500,
-      speed: 0,
-      burnTtl: 1,
-      burnDamagePerSecond: 100,
-      skeletonWarriorDefenseCooldown: 0,
-      skeletonWarriorDefenseTimer: 0,
-    })]
-
-    const burned = advanceGame(nonProjectile, { up: false, down: false, left: false, right: false }, 0.05)
+  it('does not block periodic damage or other enemies, even when the random roll would succeed', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const periodic = createSkeletonBlockSnapshot()
+    periodic.enemies[0].burnTtl = 1
+    periodic.enemies[0].burnDamagePerSecond = 100
+    const burned = advanceGame(periodic, noInput, 0.05)
     expect(burned.enemies[0].hp).toBeCloseTo(495, 5)
-    expect(burned.enemies[0].skeletonWarriorDefenseTimer).toBe(0)
-    expect(burned.enemies[0].skeletonWarriorDefenseCooldown).toBe(0)
+    expect(burned.enemies[0].skeletonWarriorDefenseTimer ?? 0).toBe(0)
 
-    const otherEnemy = createInitialSnapshot('running')
-    otherEnemy.player.position = { x: 100, y: 200 }
-    otherEnemy.player.attackCooldown = 999
-    otherEnemy.remainingToSpawn = 1
-    otherEnemy.spawnCooldown = 999
-    otherEnemy.mapObstacles = []
-    otherEnemy.enemies = [makeEnemy({
-      kind: 'melee',
-      archetypeId: 'dungeon-skeleton-archer',
-      position: { x: 250, y: 200 },
-      lastPosition: { x: 250, y: 200 },
-      facingDirection: { x: -1, y: 0 },
-      hp: 500,
-      maxHp: 500,
-      speed: 0,
-    })]
-    otherEnemy.projectiles = [{
-      id: 'other-enemy-hit',
-      owner: 'player',
-      position: { x: 250, y: 200 },
-      velocity: { x: 1, y: 0 },
-      damage: 100,
-      ttl: 1,
-      size: 5,
-      color: '#fde68a',
-      pierceRemaining: 0,
-      explosionRadius: 0,
-      effect: 'none',
-      effectStrength: 0,
-      sourceSkillId: 'basic-arrow',
-    }]
+    const other = createSkeletonBlockSnapshot('formal', 'dungeon-skeleton-archer')
+    const hitOther = strikeSkeleton(other, { x: 1, y: 0 })
+    expect(hitOther.enemies[0].hp).toBeCloseTo(400, 5)
+    expect(hitOther.enemies[0].skeletonWarriorDefenseTimer ?? 0).toBe(0)
+    expect(hitOther.floatingTexts.some((text) => text.value === '格挡')).toBe(false)
+    const elite = createSkeletonBlockSnapshot()
+    elite.enemies[0].kind = 'elite'
+    const hitElite = strikeSkeleton(elite, { x: 1, y: 0 })
+    expect(hitElite.enemies[0].hp).toBeCloseTo(400, 5)
+    expect(hitElite.enemies[0].skeletonWarriorDefenseTimer ?? 0).toBe(0)
+  })
 
-    const hitOtherEnemy = advanceGame(otherEnemy, { up: false, down: false, left: false, right: false }, 0.016)
-    expect(hitOtherEnemy.enemies[0].hp).toBeCloseTo(400, 5)
-    expect(hitOtherEnemy.enemies[0].skeletonWarriorDefenseTimer ?? 0).toBe(0)
-    expect(hitOtherEnemy.enemies[0].skeletonWarriorDefenseCooldown ?? 0).toBe(0)
+  it('drops legacy three-second warrior posture to a visual-only flash on clone', () => {
+    const legacy = createSkeletonBlockSnapshot()
+    legacy.enemies[0].skeletonWarriorDefenseTimer = 3
+    legacy.enemies[0].speed = 180
+    const resumed = advanceGame(legacy, noInput, 0.05)
+    expect(legacy.enemies[0].skeletonWarriorDefenseTimer).toBe(3)
+    expect(resumed.enemies[0].skeletonWarriorDefenseTimer).toBeLessThanOrEqual(0.16)
+    expect(resumed.enemies[0].position.x).toBeLessThan(legacy.enemies[0].position.x)
   })
 
   it('lets explicit fire-breath enemies use a cone flame breath at close range', () => {

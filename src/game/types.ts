@@ -1026,10 +1026,8 @@ export type Enemy = {
   reviveCount?: number
   blockCooldown?: number
   blockTimer?: number
-  skeletonWarriorDefenseCooldown?: number
+  /** Visual-only Protect flash after a successful passive block. */
   skeletonWarriorDefenseTimer?: number
-  skeletonWarriorDefenseDirection?: Vector2
-  skeletonWarriorDefensePosition?: Vector2
   breathTimer?: number
   breathDirection?: Vector2
   breathTickCooldown?: number

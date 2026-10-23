@@ -434,8 +434,8 @@ const FIRST_CAMPAIGN_SINGLE_LIFE_ELITE_ARCHETYPE_IDS = new Set([
 const SKELETON_KNIGHT_BLOCK_COOLDOWN = 3.2
 const SKELETON_KNIGHT_BLOCK_DURATION = 0.85
 const SKELETON_KNIGHT_BLOCK_REDUCTION = 0.82
-const SKELETON_WARRIOR_DEFENSE_COOLDOWN = 5
-const SKELETON_WARRIOR_DEFENSE_DURATION = 3
+const SKELETON_WARRIOR_BLOCK_CHANCE = 0.25
+const SKELETON_WARRIOR_BLOCK_FLASH_DURATION = 0.16
 const SKELETON_WARRIOR_FRONTAL_DAMAGE_MULTIPLIER = 0.3
 const JAILER_CHIEF_CAST_RANGE = 180
 const JAILER_CHIEF_CAST_DURATION = 0.6
@@ -2923,7 +2923,7 @@ type CombatDamageAttribution = {
   attackerName: string
   sourceId: string
   sourceName: string
-  /** Only real player projectile impacts can start skeleton-warrior defense. */
+  /** Only real player projectile impacts can roll skeleton-warrior block. */
   playerProjectile?: boolean
   /** Settlement aggregation distinguishes ordinary attacks without parsing display text. */
   playerDamageKind?: 'basic' | 'skill' | 'run-talent'
@@ -3286,35 +3286,14 @@ const damagePlayer = (
 }
 
 const isSkeletonWarriorDefenseTarget = (enemy: Enemy) => enemy.archetypeId === 'dungeon-skeleton-warrior'
-
-const clearSkeletonWarriorDefenseLock = (enemy: Enemy) => {
-  enemy.skeletonWarriorDefenseDirection = undefined
-  enemy.skeletonWarriorDefensePosition = undefined
-}
-
-const cancelSkeletonWarriorDefenseLockedActions = (enemy: Enemy) => {
-  enemy.behaviorTimer = 0
-  enemy.meleeAttackWindup = 0
-  enemy.meleeAttackReady = false
-  enemy.meleeAttackImpactDelay = 0
-  enemy.meleeAttackOrigin = undefined
-  enemy.meleeAttackDirection = undefined
-  enemy.walkTimer = 0
-}
-
-const lockSkeletonWarriorDefenseState = (enemy: Enemy) => {
-  const facing = getSkeletonWarriorDefenseFacing(enemy)
-  enemy.facingDirection = facing
-  enemy.behaviorDirection = facing
-  cancelSkeletonWarriorDefenseLockedActions(enemy)
-}
+  && enemy.kind !== 'elite' && enemy.kind !== 'boss' && enemy.role !== 'elite' && enemy.role !== 'boss'
 
 const getSkeletonWarriorDefenseFacing = (enemy: Enemy) => normalize(
-  enemy.skeletonWarriorDefenseDirection ?? enemy.facingDirection ?? enemy.behaviorDirection ?? { x: 0, y: 1 },
+  enemy.facingDirection ?? enemy.behaviorDirection ?? { x: 0, y: 1 },
 )
 
 const isSkeletonWarriorFrontalDefense = (enemy: Enemy, incomingDirection: Vector2) => {
-  if (!isSkeletonWarriorDefenseTarget(enemy) || (enemy.skeletonWarriorDefenseTimer ?? 0) <= 0) {
+  if (!isSkeletonWarriorDefenseTarget(enemy)) {
     return false
   }
 
@@ -3327,21 +3306,10 @@ const isSkeletonWarriorFrontalDefense = (enemy: Enemy, incomingDirection: Vector
   return incoming.x * facing.x + incoming.y * facing.y < 0
 }
 
-const primeSkeletonWarriorDefense = (snapshot: GameSnapshot, enemy: Enemy) => {
-  if (!isSkeletonWarriorDefenseTarget(enemy) || (enemy.skeletonWarriorDefenseCooldown ?? 0) > 0) {
-    return false
-  }
-
-  const facing = normalize(enemy.facingDirection ?? enemy.behaviorDirection ?? { x: 0, y: 1 })
-  enemy.skeletonWarriorDefenseDirection = facing.x === 0 && facing.y === 0 ? { x: 0, y: 1 } : facing
-  enemy.skeletonWarriorDefensePosition = undefined
-  enemy.skeletonWarriorDefenseTimer = SKELETON_WARRIOR_DEFENSE_DURATION
-  enemy.skeletonWarriorDefenseCooldown = SKELETON_WARRIOR_DEFENSE_COOLDOWN
-  lockSkeletonWarriorDefenseState(enemy)
-  snapshot.message = '骷髅战士进入防御姿态，绕到背面可造成完整伤害'
-  snapshot.floatingTexts.push(createFloatingText(enemy.position, '防御', '#bfdbfe'))
+const showSkeletonWarriorBlock = (snapshot: GameSnapshot, enemy: Enemy) => {
+  enemy.skeletonWarriorDefenseTimer = SKELETON_WARRIOR_BLOCK_FLASH_DURATION
+  snapshot.floatingTexts.push(createFloatingText(enemy.position, '格挡', '#bfdbfe'))
   snapshot.bursts.push(createBurst({ ...enemy.position }, 'rgba(191, 219, 254, ALPHA)', enemy.size * 0.8))
-  return true
 }
 
 const getActiveSkillFamilyForDamageAttribution = (snapshot: GameSnapshot, attribution: CombatDamageAttribution) => {
@@ -3442,10 +3410,13 @@ const damageEnemy = (
   }
 
   if (attribution.playerProjectile && incomingDirection) {
-    primeSkeletonWarriorDefense(snapshot, enemy)
-    if (isSkeletonWarriorFrontalDefense(enemy, incomingDirection)) {
-      appliedDamage *= SKELETON_WARRIOR_FRONTAL_DAMAGE_MULTIPLIER
-      snapshot.floatingTexts.push(createFloatingText(enemy.position, '正面防御', '#bfdbfe'))
+    if (isSkeletonWarriorDefenseTarget(enemy)) {
+      if (isSkeletonWarriorFrontalDefense(enemy, incomingDirection) && Math.random() < SKELETON_WARRIOR_BLOCK_CHANCE) {
+        appliedDamage *= SKELETON_WARRIOR_FRONTAL_DAMAGE_MULTIPLIER
+        showSkeletonWarriorBlock(snapshot, enemy)
+      } else {
+        enemy.skeletonWarriorDefenseTimer = 0
+      }
     }
   }
 
@@ -6522,10 +6493,7 @@ const createEnemy = (
     reviveCount: 0,
     blockCooldown: resolvedKind === 'boss' && campaignIndex === 1 && !isWardenArchetype ? 1.2 : 0,
     blockTimer: 0,
-    skeletonWarriorDefenseCooldown: 0,
     skeletonWarriorDefenseTimer: 0,
-    skeletonWarriorDefenseDirection: undefined,
-    skeletonWarriorDefensePosition: undefined,
     breathTimer: 0,
     breathDirection: { x: 1, y: 0 },
     breathTickCooldown: 0,
@@ -6966,10 +6934,7 @@ const spawnEliteEnemy = (
     reviveCount: 0,
     blockCooldown: 0,
     blockTimer: 0,
-    skeletonWarriorDefenseCooldown: 0,
     skeletonWarriorDefenseTimer: 0,
-    skeletonWarriorDefenseDirection: undefined,
-    skeletonWarriorDefensePosition: undefined,
     breathTimer: 0,
     breathDirection: { x: 1, y: 0 },
     breathTickCooldown: 0,
@@ -7370,15 +7335,12 @@ const cloneSnapshot = (snapshot: GameSnapshot): GameSnapshot => ({
   battlefield: cloneBattlefieldState(snapshot.battlefield),
   enemies: snapshot.enemies.map((enemy) => ({
     ...enemy,
+    skeletonWarriorDefenseTimer: isSkeletonWarriorDefenseTarget(enemy)
+      ? Math.min(SKELETON_WARRIOR_BLOCK_FLASH_DURATION, Math.max(0, enemy.skeletonWarriorDefenseTimer ?? 0))
+      : enemy.skeletonWarriorDefenseTimer,
     position: { ...enemy.position },
     behaviorDirection: { ...enemy.behaviorDirection },
     facingDirection: { ...(enemy.facingDirection ?? { x: 0, y: 1 }) },
-    skeletonWarriorDefenseDirection: enemy.skeletonWarriorDefenseDirection
-      ? { ...enemy.skeletonWarriorDefenseDirection }
-      : undefined,
-    skeletonWarriorDefensePosition: enemy.skeletonWarriorDefensePosition
-      ? { ...enemy.skeletonWarriorDefensePosition }
-      : undefined,
     talentStates: enemy.talentStates
       ? Object.fromEntries(Object.entries(enemy.talentStates).map(([key, state]) => [key, state ? { ...state } : state])) as Enemy['talentStates']
       : undefined,
@@ -8801,12 +8763,9 @@ const previewDirectProjectileActualDamage = (
     getProjectileDamageForEnemy(snapshot, projectile, enemy, enemy.markStacks),
   ) * getTalentStateDamageMultiplier(snapshot, enemy))
 
-  const skeletonWarriorWillDefend = isSkeletonWarriorDefenseTarget(enemy) && (
-    (enemy.skeletonWarriorDefenseTimer ?? 0) > 0 || (enemy.skeletonWarriorDefenseCooldown ?? 0) <= 0
-  )
-  const defenseFacing = getSkeletonWarriorDefenseFacing(enemy)
-  const incoming = normalize(incomingDirection)
-  if (skeletonWarriorWillDefend && incoming.x * defenseFacing.x + incoming.y * defenseFacing.y < 0) {
+  // A preview cannot consume a random roll. Use the guaranteed minimum HP
+  // damage on a frontal hit, so target selection never assumes a 75% outcome.
+  if (isSkeletonWarriorFrontalDefense(enemy, incomingDirection)) {
     appliedDamage *= SKELETON_WARRIOR_FRONTAL_DAMAGE_MULTIPLIER
   }
 
@@ -13886,39 +13845,7 @@ const updateEnemies = (snapshot: GameSnapshot, delta: number) => {
       : basicMeleePositioning.currentDistance
     let movement = { x: 0, y: 0 }
 
-    enemy.skeletonWarriorDefenseCooldown = Math.max(0, (enemy.skeletonWarriorDefenseCooldown ?? 0) - delta)
     enemy.skeletonWarriorDefenseTimer = Math.max(0, (enemy.skeletonWarriorDefenseTimer ?? 0) - delta)
-    if (isSkeletonWarriorDefenseTarget(enemy) && (enemy.skeletonWarriorDefenseTimer ?? 0) > 0) {
-      enemy.blockCooldown = Math.max(0, (enemy.blockCooldown ?? 0) - delta)
-      enemy.blockTimer = Math.max(0, (enemy.blockTimer ?? 0) - delta)
-      enemy.steeringTimer = Math.max(0, (enemy.steeringTimer ?? 0) - delta)
-      enemy.stunTimer = Math.max(0, (enemy.stunTimer ?? 0) - delta)
-      enemy.slowTtl = Math.max(0, enemy.slowTtl - delta)
-      if (enemy.slowTtl <= 0) {
-        enemy.slowFactor = 0
-      }
-      enemy.hitFlash = Math.max(0, enemy.hitFlash - delta)
-      lockSkeletonWarriorDefenseState(enemy)
-      const defenseMovement = {
-        x: movementDirection.x * slowedSpeed * delta * 0.4,
-        y: movementDirection.y * slowedSpeed * delta * 0.4,
-      }
-      const nextPosition = moveEnemyWithSteering(
-        enemy.position,
-        enemy.size * 0.5,
-        defenseMovement,
-        movementTargetPosition,
-        snapshot.mapObstacles,
-        enemy.steeringSide ?? 0,
-        boundedByRoom,
-      )
-      enemy.position = keepInsideCombatArea(snapshot, nextPosition, enemy.size * 0.55)
-      enemy.lastPosition = { ...enemy.position }
-      return
-    }
-    if (isSkeletonWarriorDefenseTarget(enemy)) {
-      clearSkeletonWarriorDefenseLock(enemy)
-    }
     enemy.behaviorCooldown = Math.max(0, enemy.behaviorCooldown - delta)
     enemy.behaviorTimer = Math.max(0, enemy.behaviorTimer - delta)
     enemy.blockCooldown = Math.max(0, (enemy.blockCooldown ?? 0) - delta)
