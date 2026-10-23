@@ -50,6 +50,14 @@ import {
 const defaultStartGame = useGameStore.getState().startGame
 const defaultPrepareFormalCombatLaunch = useGameStore.getState().prepareFormalCombatLaunch
 
+// Loading/cache mechanics have their own tests. These interaction regressions
+// exercise the real presentation and Store without fetching images in jsdom.
+vi.mock('../../game/sceneAssetLoading', async (original) => ({
+  ...await original<typeof import('../../game/sceneAssetLoading')>(),
+  isSceneAssetManifestReady: () => true,
+  loadSceneAssetManifest: vi.fn(async () => ({ status: 'ready' })),
+}))
+
 afterEach(() => {
   useGameStore.setState({
     ...createInitialSnapshot(),
@@ -235,7 +243,7 @@ describe('GameOverlay', () => {
 
     render(<GameOverlay />)
 
-    expect(screen.getByTestId('forest-home-background').getAttribute('data-scene-asset-logical-url')).toContain('ui/homepage-forest-v1/background.png')
+    expect(screen.getByTestId('forest-home-background').getAttribute('data-scene-asset-logical-url')).toContain('ui/homepage-forest-v1/background.webp')
     expect(document.querySelector('video')).toBeNull()
 
     const compactActions = screen.getByTestId('forest-home-menu')
@@ -248,20 +256,14 @@ describe('GameOverlay', () => {
     expect(within(compactActions).getByRole('button', { name: '猎人之家' })).toBeTruthy()
 
     fireEvent.click(within(compactActions).getByRole('button', { name: '开始游戏' }))
-    expect(screen.getByTestId('campaign-modal-shell').className).toContain('h-[min(92vh,760px)]')
-    expect(screen.getByTestId('campaign-modal-shell-backdrop').className).toContain('overflow-y-auto')
-    expect(screen.getByTestId('campaign-modal-shell-backdrop').className).toContain('overflow-x-hidden')
-    expect(screen.getByTestId('campaign-modal-header').className).toContain('shrink-0')
-    expect(screen.getByTestId('campaign-modal-header').className).toContain('bg-[#101913]')
-    expect(screen.getByTestId('campaign-modal-scroll').className).toContain('overflow-y-auto')
-    expect(screen.getByTestId('campaign-modal-scroll').className).toContain('flex-1')
-    expect(within(screen.getByTestId('campaign-modal-header')).getByText('关卡')).toBeTruthy()
-    expect(within(screen.getByTestId('campaign-modal-header')).getByRole('button', { name: '关闭' })).toBeTruthy()
-    const campaignShellClass = screen.getByTestId('campaign-modal-shell').className
-    fireEvent.click(within(screen.getByTestId('campaign-modal-header')).getByRole('button', { name: '关闭' }))
-    expect(screen.queryByTestId('campaign-modal-shell')).toBeNull()
+    expect(screen.getByTestId('preparation-overlay')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '关卡选择' }).getAttribute('aria-selected')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: '返回首页' }))
+    expect(screen.queryByTestId('preparation-overlay')).toBeNull()
 
     fireEvent.click(within(compactActions).getByRole('button', { name: '角色选择' }))
+    fireEvent.click(screen.getByRole('button', { name: '查看弓箭手职业详情' }))
+    fireEvent.click(screen.getByRole('button', { name: '返回' }))
     expect(screen.getByTestId('character-selection-dialog')).toBeTruthy()
     expect(screen.getByTestId('character-selection-stage').className).toContain('xl:aspect-[1670/942]')
     expect(screen.getByTestId('character-selection-background').getAttribute('src')).toBe(CHARACTER_SELECTION_ASSET_URLS.selectionBackground)
@@ -273,7 +275,6 @@ describe('GameOverlay', () => {
     expect(screen.queryByTestId('character-selection-dialog')).toBeNull()
 
     fireEvent.click(within(compactActions).getByRole('button', { name: '物品仓库' }))
-    expect(screen.getByTestId('inventory-modal-shell').className).toBe(campaignShellClass)
     expect(screen.getByTestId('inventory-modal-shell').className).toContain('h-[min(92vh,760px)]')
     expect(screen.getByTestId('inventory-modal-header').className).toContain('shrink-0')
     expect(screen.getByTestId('inventory-modal-header').className).toContain('bg-[#101913]')
@@ -553,6 +554,8 @@ describe('GameOverlay', () => {
 
     const openCharacterSelection = () => {
       fireEvent.click(within(screen.getByTestId('forest-home-menu')).getByRole('button', { name: '角色选择' }))
+      fireEvent.click(screen.getByRole('button', { name: '查看弓箭手职业详情' }))
+      fireEvent.click(screen.getByRole('button', { name: '返回' }))
     }
 
     openCharacterSelection()
@@ -889,6 +892,8 @@ describe('GameOverlay', () => {
     render(<GameOverlay />)
 
     fireEvent.click(within(screen.getByTestId('forest-home-menu')).getByRole('button', { name: '角色选择' }))
+    fireEvent.click(screen.getByRole('button', { name: '查看弓箭手职业详情' }))
+    fireEvent.click(screen.getByRole('button', { name: '返回' }))
     const detailButton = screen.getByTestId('character-selection-detail-button')
     fireEvent.click(detailButton)
     fireEvent.click(detailButton)
@@ -928,6 +933,8 @@ describe('GameOverlay', () => {
     render(<GameOverlay />)
 
     fireEvent.click(within(screen.getByTestId('forest-home-menu')).getByRole('button', { name: '角色选择' }))
+    fireEvent.click(screen.getByRole('button', { name: '查看弓箭手职业详情' }))
+    fireEvent.click(screen.getByRole('button', { name: '返回' }))
     fireEvent.click(screen.getByTestId('character-selection-detail-button'))
 
     expect(screen.queryByTestId('character-detail-transition')).toBeNull()
@@ -1450,10 +1457,12 @@ describe('GameOverlay', () => {
     expect(screen.queryByText('传送门目标')).toBeNull()
     expect(screen.queryByText('选择要进入的战役')).toBeNull()
     expect(screen.queryByText(/将使用该战役的主题怪物池/)).toBeNull()
-    expect(screen.getByText(/掉落：兽王赦令与野兽伙伴装备/)).toBeTruthy()
+    expect(screen.getByText('推荐：' + profile.recommendedState)).toBeTruthy()
+    expect(screen.getByText('威胁：' + profile.themeThreat)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '掉落预览' }))
+    expect(screen.getByText(/实际奖励以结算为准/)).toBeTruthy()
     expect(screen.getByText(profile.primaryLootReason)).toBeTruthy()
-    expect(screen.getByText(profile.recommendedState)).toBeTruthy()
-    expect(screen.getByText(profile.themeThreat)).toBeTruthy()
+    expect(screen.queryByText('威胁：' + profile.themeThreat)).toBeNull()
   })
 
   it('shows per-campaign difficulty selection with locked higher difficulties', () => {
@@ -1463,7 +1472,7 @@ describe('GameOverlay', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '开始游戏' }))
 
-    expect(screen.getByTestId('selected-campaign-difficulty').textContent).toBe('普通')
+    expect(screen.getByTestId('selected-campaign-difficulty').textContent).toBe('难度：普通')
     expect(screen.getByRole('button', { name: '普通' })).toBeTruthy()
     expect(screen.getByRole('button', { name: '困难未解锁' }).hasAttribute('disabled')).toBe(true)
     expect(screen.getByRole('button', { name: '困难未解锁' }).getAttribute('title')).toBe('通关本关普通后开放')
@@ -1493,7 +1502,7 @@ describe('GameOverlay', () => {
 
     expect(useGameStore.getState().selectedCampaign).toBe(1)
     expect(useGameStore.getState().selectedCampaignDifficulty).toBe('hard')
-    expect(screen.getByTestId('selected-campaign-difficulty').textContent).toBe('困难')
+    expect(screen.getByTestId('selected-campaign-difficulty').textContent).toBe('难度：困难')
 
     fireEvent.click(screen.getByRole('button', { name: /吸血鬼古堡/ }))
     expect(useGameStore.getState().selectedCampaign).toBe(2)
@@ -1901,13 +1910,13 @@ describe('GameOverlay', () => {
     render(<GameOverlay />)
 
     fireEvent.click(screen.getByRole('button', { name: '开始游戏' }))
-    expect(screen.getByText('关卡')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '关卡选择' })).toBeTruthy()
     expect(screen.getAllByText('死契地牢').length).toBeGreaterThan(0)
     expect(screen.getAllByText('巨龙审判火山').length).toBeGreaterThan(0)
 
     fireEvent.click(screen.getAllByText('巨龙审判火山')[0])
     expect(useGameStore.getState().selectedCampaign).toBe(10)
-    fireEvent.click(screen.getByRole('button', { name: '进入' }))
+    fireEvent.click(screen.getByRole('button', { name: '进入关卡' }))
 
     expect(useGameStore.getState().phase).toBe('idle')
     expect(useGameStore.getState().combatLaunchGate).toMatchObject({

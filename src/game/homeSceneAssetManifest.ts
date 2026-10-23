@@ -7,7 +7,7 @@ import { getMetaTalentIconAssetPath } from './metaTalentIcons'
 import { META_TALENT_NODES } from './talents'
 import type { SceneAssetManifest, SceneAssetResource } from './sceneAssetLoading'
 import { getSharedSceneAssetContentVersionForUrl } from './sharedSceneAssetContentVersions'
-import { HOMEPAGE_FOREST_BACKGROUND, HOMEPAGE_FOREST_MENU_FRAME } from './homepageForestAssets'
+import { HOMEPAGE_FOREST_BACKGROUND, HOMEPAGE_FOREST_MENU_PAPER } from './homepageForestAssets'
 
 const baseUrl = (import.meta.env.BASE_URL || '/').replace(/\/?$/, '/')
 const encodeAssetPath = (path: string) => path.split('/').map(encodeURIComponent).join('/')
@@ -133,7 +133,7 @@ export const HOME_SCENE_ASSET_MANIFEST_V1: SceneAssetManifest = Object.freeze({
       validate: (payload: unknown) => Boolean(payload && typeof payload === 'object' && (payload as { schemaVersion?: unknown }).schemaVersion === 'home-combat-loading-transition-assets-v1'),
     },
     HOMEPAGE_FOREST_BACKGROUND,
-    HOMEPAGE_FOREST_MENU_FRAME,
+    HOMEPAGE_FOREST_MENU_PAPER,
     imageResource('character.selection-background', 'character-selection', 'assets/ui/character-selection/character-selection-background.png'),
     imageResource('character.detail-button', 'character-selection', 'assets/ui/character-selection/character-detail-button-transparent.png'),
     imageResource('character.detail-background', 'character-selection', 'assets/ui/character-selection/archer-detail-background.png'),

@@ -1,0 +1,737 @@
+{
+  "schemaVersion": "preparation-detail-semantic-icons-v1",
+  "version": "refinement-20261020",
+  "runtimeEligible": true,
+  "resources": [
+    {
+      "id": "REF.attack-speed",
+      "file": "attack-speed.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "cf05075acaadb2c951c366f152978273c6bc45c9c03c449001a097bf4c054d52",
+      "alphaBBox": [
+        15,
+        14,
+        50,
+        50
+      ],
+      "semanticFields": [
+        "bonus.attackIntervalOffset",
+        "ordinaryAffixes.attackSpeed",
+        "modifiers.beast-on-hit-haste",
+        "beast-contract-domain.beast.core.helmet",
+        "beast-contract-domain.beast.core.hands"
+      ]
+    },
+    {
+      "id": "REF.beast",
+      "file": "beast.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "8fa0549f902f32323589c4e3028734bc95f6ea7905c4ecd6359e15e131d7bce5",
+      "alphaBBox": [
+        14,
+        12,
+        51,
+        49
+      ],
+      "semanticFields": [
+        "bonus.beastDamageMultiplier",
+        "beast-contract-domain.beast.core.weapon",
+        "beast-contract-domain.beast.core.shoulders",
+        "beast-contract-domain.beast.relic.ring1",
+        "beast-contract-domain.beast.relic.ring2",
+        "beast-contract-domain.beast.boss-core-replacement.weapon"
+      ]
+    },
+    {
+      "id": "REF.blood",
+      "file": "blood.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "a44c36a685c3fa58e238a50dfd80daa6940a69710fe0a9092773a6a50460316c",
+      "alphaBBox": [
+        16,
+        15,
+        48,
+        47
+      ],
+      "semanticFields": [
+        "blood-core-weapon-equipment-template-legacy-weapon-spread-血羽封场",
+        "blood-core-helmet-equipment-template-legacy-helmet-spread-血羽封场",
+        "blood-core-shoulders-equipment-template-legacy-shoulders-spread-血羽封场",
+        "blood-relic-wrists-equipment-template-legacy-wrists-spread-血羽封场",
+        "blood-relic-ring2-equipment-template-legacy-ring2-spread-血羽封场",
+        "blood-boss-core-replacement-weapon-boss-legacy-weapon-2",
+        "blood-boss-core-replacement-weapon-boss-legacy-weapon-5",
+        "blood-boss-core-replacement-weapon-boss-legacy-weapon-7"
+      ]
+    },
+    {
+      "id": "REF.bond",
+      "file": "bond.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "a3df6fb4c3bae8177ec84e1c7d1d0c841ab5715f8cf79955b8c6549b9e500f83",
+      "alphaBBox": [
+        12,
+        15,
+        50,
+        48
+      ],
+      "semanticFields": [
+        "modifiers.beast-dual-bond"
+      ]
+    },
+    {
+      "id": "REF.burst",
+      "file": "burst.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "45c522cbec3dab88570ef3d8169ec3c24c40ef0f6ee3c66afbecbbb32a3a8932",
+      "alphaBBox": [
+        15,
+        13,
+        50,
+        48
+      ],
+      "semanticFields": [
+        "modifiers.field-end-burst",
+        "blood-core-necklace-equipment-template-legacy-necklace-spread-血羽封场",
+        "blood-relic-hands-equipment-template-legacy-hands-spread-血羽封场",
+        "beast-contract-domain.beast.relic.legs"
+      ]
+    },
+    {
+      "id": "REF.cooldown",
+      "file": "cooldown.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "24bb1d8f7ef9bbbc4e4bdf88f048e3df2a48df358150a3767ccef19c24888c69",
+      "alphaBBox": [
+        17,
+        15,
+        49,
+        46
+      ],
+      "semanticFields": [
+        "bonus.skillCooldownMultiplier",
+        "ordinaryAffixes.skillHaste",
+        "beast-contract-domain.domain.core.hands"
+      ]
+    },
+    {
+      "id": "REF.crystal-xp",
+      "file": "crystal-xp.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "1f0c67a5db2081e94b0708419b99d19ca06871988ce1ca53868fb33017b8a1c3",
+      "alphaBBox": [
+        22,
+        20,
+        43,
+        48
+      ],
+      "semanticFields": [
+        "bonus.crystalXpMultiplier"
+      ]
+    },
+    {
+      "id": "REF.death",
+      "file": "death.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "0ddc4ca2107446c4eaf88bebc054888f8d2546bdbc8e34674f5f39d66010444a",
+      "alphaBBox": [
+        17,
+        16,
+        49,
+        46
+      ],
+      "semanticFields": [
+        "modifiers.beast-death-trigger"
+      ]
+    },
+    {
+      "id": "REF.drop",
+      "file": "drop.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "2f775fbc20ce715636c084fb6c7fa3b4c8efac1a393393dd854817277310853b",
+      "alphaBBox": [
+        18,
+        15,
+        48,
+        43
+      ],
+      "semanticFields": [
+        "bonus.dropRateMultiplier"
+      ]
+    },
+    {
+      "id": "REF.duration",
+      "file": "duration.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "5d1be56b144be6f07ef54c502353194fec5088b3fc46254955af3e78e0fc02f2",
+      "alphaBBox": [
+        21,
+        15,
+        47,
+        47
+      ],
+      "semanticFields": [
+        "modifiers.field-duration",
+        "modifiers.beast-duration",
+        "death-relic-wrists-equipment-template-legacy-wrists-pierce-死契处刑线",
+        "beast-contract-domain.beast.relic.necklace",
+        "beast-contract-domain.domain.core.shoulders",
+        "beast-contract-domain.domain.relic.necklace"
+      ]
+    },
+    {
+      "id": "REF.echo",
+      "file": "echo.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "fe1619101ef7bec4b8d5d6923558bf2fcfb8b62932847cbd0f2216ab0855139e",
+      "alphaBBox": [
+        11,
+        15,
+        51,
+        47
+      ],
+      "semanticFields": [
+        "modifiers.pierce-echo",
+        "death-relic-ring2-equipment-template-legacy-ring2-pierce-死契处刑线",
+        "beast-contract-domain.domain.relic.ring1"
+      ]
+    },
+    {
+      "id": "REF.electric",
+      "file": "electric.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "f857d00cad0d4df082e6a25187643be03a0e16a6155c2a38f7264cf76220d7e2",
+      "alphaBBox": [
+        22,
+        12,
+        44,
+        49
+      ],
+      "semanticFields": [
+        "specialBlue.electric"
+      ]
+    },
+    {
+      "id": "REF.field-energy",
+      "file": "field-energy.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "80105bee3d4b735d3ca00f9e60f90c9e1bcf4ca2b4bef61b5d9135343a3bf006",
+      "alphaBBox": [
+        18,
+        15,
+        48,
+        46
+      ],
+      "semanticFields": [
+        "beast-contract-domain.domain.relic.wrists"
+      ]
+    },
+    {
+      "id": "REF.fire",
+      "file": "fire.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "620bbdb23ff3aebe482a89b1f95f80149e8cab1fd9861fa9a32e138caa810189",
+      "alphaBBox": [
+        21,
+        14,
+        46,
+        49
+      ],
+      "semanticFields": [
+        "specialBlue.fire"
+      ]
+    },
+    {
+      "id": "REF.hit",
+      "file": "hit.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "62f8d831d5b2d3367e7dfcc5bffa63e5c668eacfc12280e428d3c68dfd2afc5c",
+      "alphaBBox": [
+        18,
+        13,
+        54,
+        46
+      ],
+      "semanticFields": [
+        "ordinaryAffixes.hitChance"
+      ]
+    },
+    {
+      "id": "REF.ice",
+      "file": "ice.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "72f7e4538d44d119b0eb84bcdd61f08c1d5739fa28af49cdecbfb0438936aa7b",
+      "alphaBBox": [
+        12,
+        12,
+        49,
+        53
+      ],
+      "semanticFields": [
+        "specialBlue.ice"
+      ]
+    },
+    {
+      "id": "REF.intelligence",
+      "file": "intelligence.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "cdd3918889820cf977432b13325e5b0a2ae8caf916f74992e8348b5ffa255e97",
+      "alphaBBox": [
+        14,
+        18,
+        48,
+        50
+      ],
+      "semanticFields": [
+        "ordinaryAffixes.intelligence",
+        "ordinaryAffixes.intelligencePercent"
+      ]
+    },
+    {
+      "id": "REF.light",
+      "file": "light.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "dc1ed007e1cd83faea00ca2300a1c533c51b94c17309151b60c50056d29fec87",
+      "alphaBBox": [
+        18,
+        19,
+        43,
+        45
+      ],
+      "semanticFields": [
+        "specialBlue.light"
+      ]
+    },
+    {
+      "id": "REF.mana",
+      "file": "mana.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "ca73578e831503ce0920fd84011e85225d0c95488a9c74d87e640652516097ea",
+      "alphaBBox": [
+        18,
+        19,
+        45,
+        45
+      ],
+      "semanticFields": [
+        "ordinaryAffixes.maxMana",
+        "ordinaryAffixes.manaPercent"
+      ]
+    },
+    {
+      "id": "REF.nature",
+      "file": "nature.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "a2b9b77c41df0e0015c8085aa62b85ea427cc75072a0fc4903507a52668734aa",
+      "alphaBBox": [
+        20,
+        17,
+        50,
+        45
+      ],
+      "semanticFields": [
+        "specialBlue.nature"
+      ]
+    },
+    {
+      "id": "REF.parallel",
+      "file": "parallel.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "e7ebc7c5b1773293953585744e128b81480a645788e3b910741fffc761470798",
+      "alphaBBox": [
+        18,
+        19,
+        50,
+        47
+      ],
+      "semanticFields": [
+        "modifiers.elite-parallel-line",
+        "modifiers.double-line"
+      ]
+    },
+    {
+      "id": "REF.pickup",
+      "file": "pickup.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "0975f386e32cc46e2a684765805d7f40c6802f3e48daf03af039c1a5d707d8f6",
+      "alphaBBox": [
+        15,
+        16,
+        51,
+        47
+      ],
+      "semanticFields": [
+        "bonus.pickupRange"
+      ]
+    },
+    {
+      "id": "REF.pierce",
+      "file": "pierce.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "01c440295f5c27bb1cdd7a581a3b5d4ce0245b21fb80cf3e2576665eeb5cd4ff",
+      "alphaBBox": [
+        13,
+        23,
+        52,
+        42
+      ],
+      "semanticFields": [
+        "bonus.attackPierce",
+        "bonus.pierceProjectileBonus",
+        "death-core-weapon-equipment-template-legacy-weapon-pierce-死契处刑线",
+        "death-core-helmet-equipment-template-legacy-helmet-pierce-死契处刑线",
+        "death-core-shoulders-equipment-template-legacy-shoulders-pierce-死契处刑线",
+        "death-boss-core-replacement-weapon-boss-legacy-weapon-1",
+        "death-boss-core-replacement-weapon-boss-legacy-weapon-9"
+      ]
+    },
+    {
+      "id": "REF.projectile-speed",
+      "file": "projectile-speed.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "3c6f30461bc879751f3db3e262906310d57e68cef6fb7f7d924a2382fae216b2",
+      "alphaBBox": [
+        16,
+        19,
+        52,
+        46
+      ],
+      "semanticFields": [
+        "modifiers.spread-speed"
+      ]
+    },
+    {
+      "id": "REF.radius",
+      "file": "radius.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "10310d84ac6b60b022d95e9a50d503de7c2b2e7c750393799c3d2194577cb37d",
+      "alphaBBox": [
+        16,
+        18,
+        47,
+        48
+      ],
+      "semanticFields": [
+        "bonus.fieldRadiusMultiplier",
+        "blood-core-ring1-equipment-template-legacy-ring1-spread-血羽封场",
+        "blood-relic-boots-equipment-template-legacy-boots-spread-血羽封场",
+        "beast-contract-domain.domain.core.helmet"
+      ]
+    },
+    {
+      "id": "REF.ricochet",
+      "file": "ricochet.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "41b6c5356ab838ca6779cffacffdea852bfde09b6c247d80553f8b8589c8818d",
+      "alphaBBox": [
+        14,
+        18,
+        51,
+        43
+      ],
+      "semanticFields": [
+        "modifiers.ricochet-bounces"
+      ]
+    },
+    {
+      "id": "REF.shield",
+      "file": "shield.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "bad627200178c3b0982e81af54691406c7ba86153e06fc876658b39811d70619",
+      "alphaBBox": [
+        23,
+        14,
+        49,
+        43
+      ],
+      "semanticFields": [
+        "modifiers.beast-shield",
+        "death-core-chest-equipment-template-legacy-chest-pierce-死契处刑线",
+        "death-core-necklace-equipment-template-legacy-necklace-pierce-死契处刑线",
+        "death-relic-cloak-equipment-template-legacy-cloak-pierce-死契处刑线",
+        "blood-relic-cloak-equipment-template-legacy-cloak-spread-血羽封场",
+        "beast-contract-domain.beast.core.chest",
+        "beast-contract-domain.beast.relic.cloak",
+        "beast-contract-domain.domain.core.chest"
+      ]
+    },
+    {
+      "id": "REF.skill-damage",
+      "file": "skill-damage.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "59d1ccd10375c5b943a141d6bbf757033b11cb37976c220510ded95fc00bf8a4",
+      "alphaBBox": [
+        12,
+        14,
+        48,
+        47
+      ],
+      "semanticFields": [
+        "bonus.skillDamageMultiplier",
+        "beast-contract-domain.domain.core.weapon",
+        "beast-contract-domain.domain.relic.legs",
+        "beast-contract-domain.domain.relic.ring2",
+        "beast-contract-domain.domain.boss-core-replacement.weapon"
+      ]
+    },
+    {
+      "id": "REF.speed",
+      "file": "speed.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "5477d27fc5c2c313168d1da0ebecfd583ab0b5f353332aefa8c7d377c9148524",
+      "alphaBBox": [
+        20,
+        20,
+        47,
+        43
+      ],
+      "semanticFields": [
+        "bonus.speed",
+        "inherentStats.moveSpeed",
+        "ordinaryAffixes.moveSpeed",
+        "death-relic-legs-equipment-template-legacy-legs-pierce-死契处刑线",
+        "death-relic-boots-equipment-template-legacy-boots-pierce-死契处刑线",
+        "blood-relic-legs-equipment-template-legacy-legs-spread-血羽封场",
+        "beast-contract-domain.beast.core.boots",
+        "beast-contract-domain.domain.core.boots",
+        "beast-contract-domain.domain.relic.cloak"
+      ]
+    },
+    {
+      "id": "REF.spread",
+      "file": "spread.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "ccf0580ad2b6ecc9c6ede303d1556fcb1686d0a64e81ed11cd92b0ae3d1b1442",
+      "alphaBBox": [
+        21,
+        18,
+        50,
+        49
+      ],
+      "semanticFields": [
+        "bonus.spreadProjectileBonus",
+        "modifiers.spread-angle",
+        "modifiers.spread-double-next"
+      ]
+    },
+    {
+      "id": "REF.stamina",
+      "file": "stamina.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "35bc99015044684444543ed67a1dde5c8543d0abbc7c2d510f278be274060d01",
+      "alphaBBox": [
+        24,
+        21,
+        44,
+        47
+      ],
+      "semanticFields": [
+        "ordinaryAffixes.maxStamina",
+        "ordinaryAffixes.staminaPercent"
+      ]
+    },
+    {
+      "id": "REF.strength",
+      "file": "strength.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "7573232d10afd62a2e8b940b866518bc42cb65c8328ad462d92bb70a6fbd7926",
+      "alphaBBox": [
+        18,
+        10,
+        50,
+        46
+      ],
+      "semanticFields": [
+        "ordinaryAffixes.strength",
+        "ordinaryAffixes.strengthPercent"
+      ]
+    },
+    {
+      "id": "REF.summon",
+      "file": "summon.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "b66e7331570000f6f92ffa8ceca7b1ce2edc051da01f4b49b7041d63ce435155",
+      "alphaBBox": [
+        19,
+        18,
+        46,
+        50
+      ],
+      "semanticFields": [
+        "modifiers.beast-extra-summon"
+      ]
+    },
+    {
+      "id": "REF.target-mark",
+      "file": "target-mark.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "d9d5b1974e99f4dccb27c2ee2d8f27ee272fda0ef0e24fdad36568730ae18363",
+      "alphaBBox": [
+        10,
+        14,
+        49,
+        53
+      ],
+      "semanticFields": [
+        "death-relic-hands-equipment-template-legacy-hands-pierce-死契处刑线",
+        "beast-contract-domain.beast.relic.wrists"
+      ]
+    },
+    {
+      "id": "REF.taunt",
+      "file": "taunt.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "f1267430fca6f104e1b736e1381968955fdb704637374346b70600dd9c0966f2",
+      "alphaBBox": [
+        17,
+        20,
+        47,
+        42
+      ],
+      "semanticFields": [
+        "modifiers.beast-taunt"
+      ]
+    },
+    {
+      "id": "REF.water",
+      "file": "water.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "9ea9d89cf347fb3405ba1ecf44078080dd44f36b144f5f94a8e0397e6f8f35b6",
+      "alphaBBox": [
+        21,
+        17,
+        49,
+        45
+      ],
+      "semanticFields": [
+        "specialBlue.water"
+      ]
+    },
+    {
+      "id": "REF.wind",
+      "file": "wind.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "2515d1b861f7e2eacd6252eeab85f4f45e3d29ba48258a9b5b1c206905c2f0da",
+      "alphaBBox": [
+        17,
+        18,
+        49,
+        45
+      ],
+      "semanticFields": [
+        "specialBlue.wind"
+      ]
+    }
+  ]
+}

@@ -29,7 +29,7 @@ import {
   SHARED_SCENE_ASSET_CONTENT_VERSIONS,
 } from './sharedSceneAssetContentVersions'
 import { META_TALENT_NODES } from './talents'
-import { HOMEPAGE_FOREST_BACKGROUND, HOMEPAGE_FOREST_MENU_FRAME } from './homepageForestAssets'
+import { HOMEPAGE_FOREST_BACKGROUND, HOMEPAGE_FOREST_MENU_PAPER } from './homepageForestAssets'
 
 const projectRoot = process.cwd()
 const publicRoot = resolve(projectRoot, 'public')
@@ -40,6 +40,19 @@ const readPngMetadata = (bytes: Buffer) => ({
   height: bytes.readUInt32BE(20),
   hasAlpha: [4, 6].includes(bytes[25]),
 })
+
+// Runtime exports use VP8 for the background and VP8L for lossless paper alpha.
+const readWebpMetadata = (bytes: Buffer) => {
+  expect(bytes.toString('ascii', 0, 4)).toBe('RIFF')
+  expect(bytes.toString('ascii', 8, 12)).toBe('WEBP')
+  if (bytes.toString('ascii', 12, 16) === 'VP8L') {
+    expect(bytes[20]).toBe(0x2f)
+    const header = bytes.readUInt32LE(21)
+    return { width: (header & 0x3fff) + 1, height: ((header >>> 14) & 0x3fff) + 1, hasAlpha: Boolean(header & (1 << 28)) }
+  }
+  expect(bytes.toString('ascii', 12, 16)).toBe('VP8 ')
+  return { width: bytes.readUInt16LE(26) & 0x3fff, height: bytes.readUInt16LE(28) & 0x3fff }
+}
 
 const readJpegMetadata = (bytes: Buffer) => {
   let offset = 2
@@ -176,19 +189,26 @@ describe('HOME_SCENE_ASSET_MANIFEST_V1', () => {
     expect(new Set(resources.map(getSceneAssetCacheKey)).size).toBe(resources.length)
   })
 
-  it('gates the new forest and frame on exact dimensions and separate content hashes without retired home resources', () => {
-    for (const [resource, width, height] of [
-      [HOMEPAGE_FOREST_BACKGROUND, 1733, 907],
-      [HOMEPAGE_FOREST_MENU_FRAME, 3000, 867],
+  it('gates forest and transparent paper on dimensions and content hashes without old button frames', () => {
+    for (const [resource, width, height, inspect] of [
+      [HOMEPAGE_FOREST_BACKGROUND, 2880, 1508, readWebpMetadata],
+      [HOMEPAGE_FOREST_MENU_PAPER, 639, 970, readWebpMetadata],
     ] as const) {
       const bytes = readFileSync(publicFileForUrl(resource.url))
-      expect(readPngMetadata(bytes)).toMatchObject({ width, height })
+      expect(inspect(bytes)).toMatchObject({ width, height })
       expect(sha256(bytes)).toBe(resource.version)
       expect(HOME_SCENE_ASSET_MANIFEST_V1.resources).toContain(resource)
       expect(resource.validate({ naturalWidth: width, naturalHeight: height })).toBe(true)
       expect(resource.validate({ naturalWidth: 960, naturalHeight: 640 })).toBe(false)
       expect(resource.validate(null)).toBe(false)
     }
+    expect(readFileSync(publicFileForUrl(HOMEPAGE_FOREST_BACKGROUND.url)).byteLength).toBeLessThan(600_000)
+    const paper = readFileSync(publicFileForUrl(HOMEPAGE_FOREST_MENU_PAPER.url))
+    expect(paper.byteLength).toBeLessThan(31_671)
+    expect(readWebpMetadata(paper)).toMatchObject({ hasAlpha: true })
+    expect(HOME_SCENE_ASSET_MANIFEST_V1.resources.some((r) => r.key === 'home.forest-menu-frame')).toBe(false)
+    expect(existsSync(resolve(publicRoot, 'assets/ui/run-settlement-black-gold/title-frame-3x.png'))).toBe(true)
+    expect(HOMEPAGE_FOREST_BACKGROUND.validate({ naturalWidth: 1733, naturalHeight: 907 })).toBe(false)
     expect(HOME_SCENE_ASSET_MANIFEST_V1.version).toBe('home-scene-assets-forest-v1')
     expect(HOME_SCENE_ASSET_MANIFEST_V1.resources.some((r) => /home\.config|home\.background-video|home\.background-poster/.test(r.key))).toBe(false)
     expect(HOME_SCENE_ASSET_MANIFEST_V1.resources.some((r) => /godot-ui|forest-camp-pixel/.test(r.url ?? ''))).toBe(false)

@@ -1,0 +1,792 @@
+{
+  "schemaVersion": "preparation-detail-semantic-icons-v1",
+  "references": [
+    {
+      "path": "public/assets/ui/preparation-equipment-detail-v1/icons/ED13.feather.png",
+      "sha256": "68488c7c1ad1d2b7c8026f7c221f7a69e42b44080dc9140640e9b91568a511ac"
+    },
+    {
+      "path": "public/assets/ui/preparation-equipment-detail-v1/icons/ED10.png",
+      "sha256": "02fda25c290fc03341493a2bae139d108e28bb5835bcb197e3475e0592c44162"
+    }
+  ],
+  "sources": [
+    {
+      "id": "REF.attack-speed",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: a slender sword with a small clock and forward tick, meaning attack speed. Match the supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear large negative spaces, not realistic. Square transparent RGBA, centered with safe margin, designed for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, drop shadow, colored fills or extra unrelated symbols. Reference images are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-ae999b8a-78d1-4078-a057-1b27ef45088e.png",
+      "sourceSha256": "408477d2273c4255907e0be69b3b0657c7fcf4178f94684abad21b5c9112a9fd",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        33,
+        23,
+        1192,
+        1206
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "cf05075acaadb2c951c366f152978273c6bc45c9c03c449001a097bf4c054d52",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/attack-speed.png"
+    },
+    {
+      "id": "REF.beast",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: one distinct clawed animal paw, meaning beast companion damage. Match the supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear large negative spaces, not realistic. Square transparent RGBA, centered with safe margin, designed for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, drop shadow, colored fills or extra unrelated symbols. Reference images are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-aaff2fce-2c1d-491c-9cb1-9cb711c905f5.png",
+      "sourceSha256": "ca368ba96de9c1f6830b7da644654e48cc9278730687afc32fcaeebde5288af7",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        194,
+        138,
+        1138,
+        1180
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "8fa0549f902f32323589c4e3028734bc95f6ea7905c4ecd6359e15e131d7bce5",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/beast.png"
+    },
+    {
+      "id": "REF.blood",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: a feather paired with one blood droplet, meaning blood-feather charge. Match the supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear large negative spaces, not realistic. Square transparent RGBA, centered with safe margin, designed for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, drop shadow, colored fills or extra unrelated symbols. Reference images are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-84c2a299-1606-4b55-ad99-f566933a8272.png",
+      "sourceSha256": "cf6735f66f77cd8cc68887065ccf13681df7f623194167d1061cc78c51979d32",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        65,
+        150,
+        1232,
+        1138
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "a44c36a685c3fa58e238a50dfd80daa6940a69710fe0a9092773a6a50460316c",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/blood.png"
+    },
+    {
+      "id": "REF.bond",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: two small animal paw prints joined by one link, meaning beast bond. Match the supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear large negative spaces, not realistic. Square transparent RGBA, centered with safe margin, designed for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, drop shadow, colored fills or extra unrelated symbols. Reference images are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-6d82f1eb-88a6-44cd-862e-0d81f7e11d00.png",
+      "sourceSha256": "64eece28ba37bf83474e8b36b68f9d43cdf7695b75eaf2ff5f587cb21bf2c55e",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        119,
+        103,
+        1198,
+        1157
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "a3df6fb4c3bae8177ec84e1c7d1d0c841ab5715f8cf79955b8c6549b9e500f83",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/bond.png"
+    },
+    {
+      "id": "REF.burst",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: one sharp radial explosion burst, meaning triggered damage explosion. Match the supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear large negative spaces, not realistic. Square transparent RGBA, centered with safe margin, designed for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, drop shadow, colored fills or extra unrelated symbols. Reference images are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-0e7ade12-7263-4252-938e-43936f794c6d.png",
+      "sourceSha256": "78636dbfd6de07f6662034b84446830d6e3e8e5c8a98fd4d9e1cd5783d906f04",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        25,
+        77,
+        1214,
+        1230
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "45c522cbec3dab88570ef3d8169ec3c24c40ef0f6ee3c66afbecbbb32a3a8932",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/burst.png"
+    },
+    {
+      "id": "REF.cooldown",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: an hourglass surrounded by a single return arrow, meaning skill cooldown. Match the supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear large negative spaces, not realistic. Square transparent RGBA, centered with safe margin, designed for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, drop shadow, colored fills or extra unrelated symbols. Reference images are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-e7ee695a-7f89-43ba-a274-04d3b87d9104.png",
+      "sourceSha256": "222a7bf9a25d073e9ecb46f7398f35a6ba872fd721ffbfd2621f5c362c8ddb90",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        51,
+        85,
+        1144,
+        1214
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "24bb1d8f7ef9bbbc4e4bdf88f048e3df2a48df358150a3767ccef19c24888c69",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/cooldown.png"
+    },
+    {
+      "id": "REF.crystal-xp",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: a faceted crystal with one small ascending spark, meaning crystal experience. Match the supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear large negative spaces, not realistic. Square transparent RGBA, centered with safe margin, designed for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, drop shadow, colored fills or extra unrelated symbols. Reference images are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-5994e543-7efa-46be-823e-f803fe9cc261.png",
+      "sourceSha256": "ea29ea6896c1acf291396cae5f5b46566e62c8b7408fd5de7ec5efa58676f98f",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        130,
+        21,
+        1144,
+        1166
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "1f0c67a5db2081e94b0708419b99d19ca06871988ce1ca53868fb33017b8a1c3",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/crystal-xp.png"
+    },
+    {
+      "id": "REF.death",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: a small animal skull with one downward spark, meaning beast death trigger. Match the supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear large negative spaces, not realistic. Square transparent RGBA, centered with safe margin, designed for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, drop shadow, colored fills or extra unrelated symbols. Reference images are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-c7eff9ac-5b3a-4fe3-b5b0-43e9ddcf304b.png",
+      "sourceSha256": "98bcf9666800857aee7d6f6e409a94b593a89771832258e9647d494ab767d509",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        33,
+        19,
+        1232,
+        1182
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "0ddc4ca2107446c4eaf88bebc054888f8d2546bdbc8e34674f5f39d66010444a",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/death.png"
+    },
+    {
+      "id": "REF.drop",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: a small treasure chest with one falling gem, meaning extra equipment drop trigger. Match supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear negative spaces. Square transparent RGBA, centered with safe margin, for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, shadow, gradient or unrelated symbols. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-1f1c0192-83dc-4798-8156-a3b8e215657e.png",
+      "sourceSha256": "89f1b06f7e3acaea5a29db71e82af6e568a0e1b74b33615a49c6060b0d2006f3",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        49,
+        138,
+        1234,
+        1236
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "2f775fbc20ce715636c084fb6c7fa3b4c8efac1a393393dd854817277310853b",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/drop.png"
+    },
+    {
+      "id": "REF.duration",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: a single clear hourglass with a small plus mark, meaning duration extension. Match supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear negative spaces. Square transparent RGBA, centered with safe margin, for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, shadow, gradient or unrelated symbols. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-209bf077-3d08-462b-a5d9-331d6428c8c4.png",
+      "sourceSha256": "125a56aee20fb62601fc2272e4b48d0f2e8bb4e78cda49ae97fb42937f85bbd5",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        73,
+        87,
+        1184,
+        1150
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "5d1be56b144be6f07ef54c502353194fec5088b3fc46254955af3e78e0fc02f2",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/duration.png"
+    },
+    {
+      "id": "REF.echo",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: a piercing arrow with two echo arcs, meaning a hit-triggered echo. Match supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear negative spaces. Square transparent RGBA, centered with safe margin, for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, shadow, gradient or unrelated symbols. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-d43255a4-cfd0-47ae-b693-820e10a44863.png",
+      "sourceSha256": "26a2023d3ec8d049bd4b081a9baef0f282feeec0681f41057d3fb55e423982b5",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        190,
+        256,
+        1154,
+        1058
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "fe1619101ef7bec4b8d5d6923558bf2fcfb8b62932847cbd0f2216ab0855139e",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/echo.png"
+    },
+    {
+      "id": "REF.electric",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: one sharp lightning bolt, meaning electric damage. Match supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear negative spaces. Square transparent RGBA, centered with safe margin, for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, shadow, gradient or unrelated symbols. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-3385757a-c9d0-4202-b9cf-47638ff57c57.png",
+      "sourceSha256": "94da238033c1bee7385680621ad17d16dfbe89f402ae80fa5596eebc5b41f944",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        138,
+        111,
+        1134,
+        1214
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "f857d00cad0d4df082e6a25187643be03a0e16a6155c2a38f7264cf76220d7e2",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/electric.png"
+    },
+    {
+      "id": "REF.field-energy",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG effect glyph: a small circular magic field with three distinct inward charge sparks around its center, meaning accumulated field energy, NOT a mana orb or experience crystal. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or unrelated icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-cf99680e-3914-493f-bce8-910d19a311de.png",
+      "sourceSha256": "4cfcae21c20bc71d4e89bbcb1aa782c8cce7a09beb8cc483c33908ca12aea596",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        25,
+        99,
+        1182,
+        1198
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "80105bee3d4b735d3ca00f9e60f90c9e1bcf4ca2b4bef61b5d9135343a3bf006",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/field-energy.png"
+    },
+    {
+      "id": "REF.fire",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: one simple rising flame, meaning fire damage. Match supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear negative spaces. Square transparent RGBA, centered with safe margin, for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, shadow, gradient or unrelated symbols. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-9c1741bf-48c4-45a2-8505-51a8e33bd999.png",
+      "sourceSha256": "440abff886b650108cb98c87208b540672a02111cafb7d392eb6169c811e6ba1",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        65,
+        55,
+        1138,
+        1226
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "620bbdb23ff3aebe482a89b1f95f80149e8cab1fd9861fa9a32e138caa810189",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/fire.png"
+    },
+    {
+      "id": "REF.hit",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: one bullseye with an arrow striking its center, meaning hit accuracy. Match supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear negative spaces. Square transparent RGBA, centered with safe margin, for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, shadow, gradient or unrelated symbols. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-e855ef0a-9d7a-4246-9369-82120eb9a8bb.png",
+      "sourceSha256": "8b8dd2e8be38c8a51d00118af4b68514cb6d88f971d430d499caf2e1fdabeb1e",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        53,
+        279,
+        1053,
+        1117
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "62f8d831d5b2d3367e7dfcc5bffa63e5c668eacfc12280e428d3c68dfd2afc5c",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/hit.png"
+    },
+    {
+      "id": "REF.ice",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: one six-branch snowflake, meaning ice damage. Match supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear negative spaces. Square transparent RGBA, centered with safe margin, for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, shadow, gradient or unrelated symbols. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-15789edd-5d5e-4564-af3d-2f778f9b39ce.png",
+      "sourceSha256": "d91fed68ff43091e33e280344e0547198d59daaeec37c082fa6db0ffd041695e",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        130,
+        71,
+        1192,
+        1139
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "72f7e4538d44d119b0eb84bcdd61f08c1d5739fa28af49cdecbfb0438936aa7b",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/ice.png"
+    },
+    {
+      "id": "REF.intelligence",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Asset: exactly ONE small isolated fantasy RPG stat/effect icon. Subject: one open book with a small thought spark, meaning intelligence. Match supplied style references: simple crisp ivory linework / restrained ivory silhouette with warm gold accent, clear negative spaces. Square transparent RGBA, centered with safe margin, for downscale to 64x64 and display at 24px. No text, frame, background, checkerboard, glow, shadow, gradient or unrelated symbols. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-bfeb6f7c-6004-47eb-aca0-551dcdace82e.png",
+      "sourceSha256": "bc1f40c596b488002b98297dd917898d29ae3ef9f21da14395076889f72eaf24",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        148,
+        70,
+        1154,
+        1061
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "cdd3918889820cf977432b13325e5b0a2ae8caf916f74992e8348b5ffa255e97",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/intelligence.png"
+    },
+    {
+      "id": "REF.light",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: a small sun with four short clean rays, meaning light damage. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or other icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-b4871e80-51f7-4ff9-91fc-2227fb15b6a0.png",
+      "sourceSha256": "85f98dd4dc3915413dd6e11125b50fa7ffaba1e96e725882f9e2aef7f4c01068",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        132,
+        31,
+        1214,
+        1230
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "dc1ed007e1cd83faea00ca2300a1c533c51b94c17309151b60c50056d29fec87",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/light.png"
+    },
+    {
+      "id": "REF.mana",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: one round magic orb with a tiny central star, meaning mana capacity. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or other icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-a4e38e7a-d3d6-4422-b40b-7a50d9ffb5e6.png",
+      "sourceSha256": "b0ea704f384e77cc627e18f0065757a5fbd3780a09fbfbd516ba831d28a520f8",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        73,
+        38,
+        1182,
+        1231
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "ca73578e831503ce0920fd84011e85225d0c95488a9c74d87e640652516097ea",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/mana.png"
+    },
+    {
+      "id": "REF.nature",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: one simple leaf on a short branch, meaning nature damage. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or other icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-2fc11bf7-7281-479b-b8c9-46fbc58151cd.png",
+      "sourceSha256": "e7ea0c2a820b331218f7e371399953f2b5330cf04754b8552c6ef2c78ac09caa",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        73,
+        248,
+        1105,
+        1068
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "a2b9b77c41df0e0015c8085aa62b85ea427cc75072a0fc4903507a52668734aa",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/nature.png"
+    },
+    {
+      "id": "REF.parallel",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: two separate arrows travelling in parallel, meaning parallel projectile lines. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or other icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-819aa696-dac6-4b89-a456-b6877325042a.png",
+      "sourceSha256": "09c56549fd7362761d6968b180722729a40475a6378ecb80392eb7076a3f5822",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        33,
+        183,
+        1127,
+        1085
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "e7ebc7c5b1773293953585744e128b81480a645788e3b910741fffc761470798",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/parallel.png"
+    },
+    {
+      "id": "REF.pickup",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: a small crystal drawn toward an open hand, meaning pickup reach. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or other icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-9fa0061b-127a-49a9-96a9-48139f9ddc17.png",
+      "sourceSha256": "fca673d2d63e93799703c3708101dcbaf46a62359e14ef95eb412a661a15ff7c",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        41,
+        99,
+        1154,
+        1228
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "0975f386e32cc46e2a684765805d7f40c6802f3e48daf03af039c1a5d707d8f6",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/pickup.png"
+    },
+    {
+      "id": "REF.pierce",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: one arrow passing through two thin targets, meaning projectile penetration. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or other icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-053b486d-4ce6-4ee9-a459-3461a7d1b047.png",
+      "sourceSha256": "67a826f3636c3a76d958340ad5bba47e5c8e1c481c4d566f07945ba393e2e1c7",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        23,
+        47,
+        1226,
+        1158
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "01c440295f5c27bb1cdd7a581a3b5d4ce0245b21fb80cf3e2576665eeb5cd4ff",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/pierce.png"
+    },
+    {
+      "id": "REF.projectile-speed",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: one flying arrow with two short trailing speed strokes, meaning projectile velocity. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or other icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-fd178a4a-fff1-47bc-9178-29ce91c64b41.png",
+      "sourceSha256": "3c72787cd34a0710523911884739c5c8726a3177b0e72d74db1cb32a5dcf2119",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        43,
+        117,
+        1178,
+        1122
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "3c6f30461bc879751f3db3e262906310d57e68cef6fb7f7d924a2382fae216b2",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/projectile-speed.png"
+    },
+    {
+      "id": "REF.radius",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: a circular area with one center dot and a radial double-ended arrow, meaning area radius. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or other icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-605e9980-acc6-498c-88c3-34093128e7a2.png",
+      "sourceSha256": "64aae0fc33351e70138cab5535a56eb89a2547ae99bda90c631455966556ba53",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        119,
+        87,
+        1146,
+        1125
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "10310d84ac6b60b022d95e9a50d503de7c2b2e7c750393799c3d2194577cb37d",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/radius.png"
+    },
+    {
+      "id": "REF.ricochet",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: a single angular arrow bouncing off two small surfaces, meaning projectile ricochet. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or unrelated icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-32835e6b-34eb-4b4a-bcd4-d9474e720e04.png",
+      "sourceSha256": "575844cdf45cc8e3739937dc708590ea2b386b5bac479bd7e0c56d74da3e413c",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        25,
+        85,
+        1192,
+        1230
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "41b6c5356ab838ca6779cffacffdea852bfde09b6c247d80553f8b8589c8818d",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/ricochet.png"
+    },
+    {
+      "id": "REF.shield",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: one clean shield with a small central protective spark, meaning temporary shielding or damage reduction. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or unrelated icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-c5444fad-616e-448f-955a-cd283c0817b9.png",
+      "sourceSha256": "80daf25dd182d58414a2afc1a62197d5226d9f7bfc6f415106c34917648c069f",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        25,
+        181,
+        1031,
+        1214
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "bad627200178c3b0982e81af54691406c7ba86153e06fc876658b39811d70619",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/shield.png"
+    },
+    {
+      "id": "REF.skill-damage",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: a magic star striking an arrowhead, meaning active skill damage rather than basic attack. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or unrelated icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-9d265fb7-5f69-4093-8308-a40324c45287.png",
+      "sourceSha256": "da83397263678583bb1ca604442e0acafdadee7dd9ae150b41d5778cf0f02add",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        202,
+        152,
+        1184,
+        1197
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "59d1ccd10375c5b943a141d6bbf757033b11cb37976c220510ded95fc00bf8a4",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/skill-damage.png"
+    },
+    {
+      "id": "REF.speed",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Generate exactly ONE isolated UI attribute glyph: a boot with two short forward speed strokes, meaning movement speed. Match reference style only: spare ivory-white linear fantasy RPG glyph with a tiny warm-gold accent, flat crisp strokes, readable at 24px. Target 64x64 square transparent RGBA, centered with 8px safe padding. No panel, border, text, label, shadow, glow, gradient, checkerboard or other icons. Reference images are style references only, not edit targets.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-9881b62c-32b2-42a1-b2e0-04382127c847.png",
+      "sourceSha256": "f53efb68c565d87374a4328dc52be17e6ebae32ceba1ca480dfbfd0296e30c19",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        69,
+        47,
+        1107,
+        1226
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "5477d27fc5c2c313168d1da0ebecfd583ab0b5f353332aefa8c7d377c9148524",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/speed.png"
+    },
+    {
+      "id": "REF.spread",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: three arrowheads fanning from one origin, meaning spread projectiles and fan width. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or unrelated icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-1c0e02d1-17cc-4a07-a110-0c908f4bb4db.png",
+      "sourceSha256": "b6445af363d2d95313f8b14d5196b4b5237f9ded3c0c6fda3c611a9a3ac22e5c",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        49,
+        23,
+        1095,
+        1182
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "ccf0580ad2b6ecc9c6ede303d1556fcb1686d0a64e81ed11cd92b0ae3d1b1442",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/spread.png"
+    },
+    {
+      "id": "REF.stamina",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: a simple flexing leg with a small energy spark, meaning physical stamina capacity. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or unrelated icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-b5e76c4f-9430-477e-aaf2-babcf177e5af.png",
+      "sourceSha256": "10e81c83938a876f4268944a2dc000b5f03c8863b0e740f76f7baa91f2ffa2c5",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        39,
+        28,
+        1212,
+        1142
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "35bc99015044684444543ed67a1dde5c8543d0abbc7c2d510f278be274060d01",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/stamina.png"
+    },
+    {
+      "id": "REF.strength",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: one clenched fist, meaning strength attribute. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or unrelated icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-6a368014-9e58-44bb-ae72-fb4e3c50c474.png",
+      "sourceSha256": "a8c778a724a4e6ddebba5d22923414e4bef1b3041a5603bf8b37b71e32fc6e4d",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        194,
+        283,
+        1023,
+        1196
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "7573232d10afd62a2e8b940b866518bc42cb65c8328ad462d92bb70a6fbd7926",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/strength.png"
+    },
+    {
+      "id": "REF.summon",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: an animal paw emerging above a small plus mark, meaning extra beast summon. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or unrelated icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-19352241-ed95-4eab-8edd-4cd67d80fb83.png",
+      "sourceSha256": "e8596609d2085a2cec94301d3186befb655a8cb058e0a47c93f90aaef3aad683",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        41,
+        39,
+        1178,
+        1134
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "b66e7331570000f6f92ffa8ceca7b1ce2edc051da01f4b49b7041d63ce435155",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/summon.png"
+    },
+    {
+      "id": "REF.target-mark",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG effect glyph: a simple hunter's target sigil with a small claw-notch mark at its center, meaning a status mark on a target, NOT accuracy or a damage weapon. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or unrelated icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-3bd22784-f5b5-4613-93e4-27f119241bfe.png",
+      "sourceSha256": "4200b23715aa2f4642019601e1e75c6fc25b083b1fa42a6f8a1d558eb15927ec",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        194,
+        79,
+        1152,
+        1053
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "d9d5b1974e99f4dccb27c2ee2d8f27ee272fda0ef0e24fdad36568730ae18363",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/target-mark.png"
+    },
+    {
+      "id": "REF.taunt",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: a small animal head emitting two outward call arcs, meaning beast taunt. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or unrelated icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-1f7d55a1-7c59-4e95-b7df-9cc86fe12556.png",
+      "sourceSha256": "024c16a057c59b635c4f949ad2623933a242b134139e6474095875b7304fc743",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        31,
+        61,
+        1230,
+        1230
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "f1267430fca6f104e1b736e1381968955fdb704637374346b70600dd9c0966f2",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/taunt.png"
+    },
+    {
+      "id": "REF.water",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: one clear water droplet above two short ripples, meaning water damage. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or unrelated icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-643025cf-36c3-42d7-89b2-187d587be363.png",
+      "sourceSha256": "d4cadd75ce23cd5af65c8356b58ced926d0e086a67d8c422815f0865cff908b5",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        33,
+        136,
+        1073,
+        1180
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "9ea9d89cf347fb3405ba1ecf44078080dd44f36b144f5f94a8e0397e6f8f35b6",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/water.png"
+    },
+    {
+      "id": "REF.wind",
+      "generator": "built-in image_gen; one call per glyph",
+      "prompt": "Use case: ui-mockup. Exactly ONE isolated fantasy RPG attribute glyph: three short curved gust strokes, meaning wind damage. Match reference style: spare crisp ivory-white linear/silhouette glyph with tiny warm-gold accent and large negative space. Transparent RGBA square, centered, safe margins, designed for downscale to 64x64 and 24px display. No panel, text, label, frame, glow, shadow, gradient, background or unrelated icons. References are style only.",
+      "generatedPath": "/Users/zackota/.codex/generated_images/019feffd-a22b-7bf0-9c59-30e136437396/exec-311a17dd-1436-43d4-939b-853fd054954f.png",
+      "sourceSha256": "feefff5661748fc995e537f7c7b431ced5cb1790dba524660ddc3b74a5d6ac11",
+      "sourceSize": [
+        1254,
+        1254
+      ],
+      "sourceMode": "RGBA",
+      "generatedAlphaBBox": [
+        81,
+        121,
+        1214,
+        1131
+      ],
+      "normalization": "alpha-bbox crop only; uniform Lanczos resize to max44px; transparent 64px canvas; no drawing/recoloring",
+      "finalSha256": "2515d1b861f7e2eacd6252eeab85f4f45e3d29ba48258a9b5b1c206905c2f0da",
+      "sourceCopy": "assets/developer-assets/preparation-detail-semantic-icons-v1/sources/wind.png"
+    }
+  ]
+}

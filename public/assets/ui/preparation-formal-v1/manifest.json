@@ -1,0 +1,4099 @@
+{
+  "schemaVersion": "preparation-formal-v1",
+  "runtimeEligible": true,
+  "visualRevision": "r6",
+  "resources": [
+    {
+      "id": "A06",
+      "file": "A06.png",
+      "sha256": "a5ee44ac8cdde4a8070d11ae5f112c793c9a118e7539dbc44a0683483e4de4e2",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A07",
+      "file": "A07.png",
+      "sha256": "aa19267c91b95dbf65ee11ad653f7d0a70c6a551f6e63793e37d6c1a84336851",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A08",
+      "file": "A08.png",
+      "sha256": "bab7d88eae9ae1bcda663156c525089c8c7f60b23bae733925348e8c4aacb77f",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A13",
+      "file": "A13.png",
+      "sha256": "f2ec5dbd6b2dacfae8041d60a4e18d1b91724c274ee748f99d155754029c9bb9",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A18",
+      "file": "A18.png",
+      "sha256": "4b23bd74a765521a6311ce8cd58e111554a45568ee30f7ecc736d14224880ffd",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A21.up",
+      "file": "A21-up.png",
+      "sha256": "14a4001396cc0b5fa4917acfac862fa1caa2f2207cc17fbd251a68be6526652a",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A21.down",
+      "file": "A21-down.png",
+      "sha256": "762620a54b678eeb5ec59465b962ae42f3e92523d65f3d7df7b6bfdd60ea7d3e",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A22",
+      "file": "A22.png",
+      "sha256": "6eaa8e21b28b289be0d370572d15506e083fefedb3242ff7f7ea03dfd2948a3d",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A23",
+      "file": "A23.png",
+      "sha256": "82278e211df31cf8a34d958f41241c59a94f4709a2d0ab55b95de1a51fa067e3",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A24",
+      "file": "A24.png",
+      "sha256": "35987d7c83bea46000a72c35ddad93b3de521c740f4f2b3e5a880cdac1858b6d",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A25",
+      "file": "A25.png",
+      "sha256": "48185e60c6e53902e04b8e07e5eb96194d2a105a860b11e35981ab4b7245d265",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A27",
+      "file": "A27.png",
+      "sha256": "f5642ed53b0d22d68c3e87e9482db3de8ebc611dbf33bfc570ebeb1292add1a7",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A29",
+      "file": "A29.png",
+      "sha256": "4dc3fa4734373441e02a1ac36766bab170b7a507b5cefb68c12689daa258688f",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A31",
+      "file": "A31.png",
+      "sha256": "852fa63b7384ba6a06bc09540df1eb9291e2492681875785def32f41d43119c8",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A32",
+      "file": "A32.png",
+      "sha256": "08d785742e31fb4ecc6259b2e6213599eff5203f4956d624914e58690a2ca61d",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A33",
+      "file": "A33.png",
+      "sha256": "cdf70c9808df6ef76dc579005c660ae8fae4cd6fe7b05b43f5d6d5370bfa5ea1",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A34",
+      "file": "A34.png",
+      "sha256": "c12d913b288fcd2aaeb1ab60acbb56ecc0c432cd3385c4a4e3067be4c7e31eae",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A01.left.normal",
+      "file": "A01-left-normal.png",
+      "sha256": "8d84f3641658c585026b4284b2e70ad91a401f0af36257786c6a2056c711ac0f",
+      "kind": "skin",
+      "slice": [
+        24,
+        12,
+        24,
+        56
+      ],
+      "borderWidths": [
+        12,
+        6,
+        12,
+        28
+      ],
+      "fill": true
+    },
+    {
+      "id": "A01.left.selected",
+      "file": "A01-left-selected.png",
+      "sha256": "75afa108b3c2c4f16088d12d0cd01805ae509b74e9d247faecabb2d22b3bca11",
+      "kind": "skin",
+      "slice": [
+        24,
+        12,
+        24,
+        56
+      ],
+      "borderWidths": [
+        12,
+        6,
+        12,
+        28
+      ],
+      "fill": true
+    },
+    {
+      "id": "A01.right.normal",
+      "file": "A01-right-normal.png",
+      "sha256": "8ff523eedf8f94fd960b246f0d69b716b6039b5959049f60edd16e9646c5d712",
+      "kind": "skin",
+      "slice": [
+        24,
+        56,
+        24,
+        12
+      ],
+      "borderWidths": [
+        12,
+        28,
+        12,
+        6
+      ],
+      "fill": true
+    },
+    {
+      "id": "A01.right.selected",
+      "file": "A01-right-selected.png",
+      "sha256": "e77e1a520d09a5e830601dc6b584cdc3d62e96f0b6665b6891bc403eda6a9e1c",
+      "kind": "skin",
+      "slice": [
+        24,
+        56,
+        24,
+        12
+      ],
+      "borderWidths": [
+        12,
+        28,
+        12,
+        6
+      ],
+      "fill": true
+    },
+    {
+      "id": "A02",
+      "file": "A02.png",
+      "sha256": "f2d188d5b02853bf93c6087a89afe0a13d06102701ccd88c4922645d5e52ef0e",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A03",
+      "file": "A03.png",
+      "sha256": "51fa0b2e36f3ad242eeae459bcee6adb80d5e044dccd8a520edc06c00fc843a7",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A05",
+      "file": "A05.png",
+      "sha256": "2f7812a19b8628b16136a2ab7b133003f3de161527638cc6a880eb4ad7ed5de9",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A09",
+      "file": "A09.png",
+      "sha256": "7d85026e077fb9ca5cc4098552f4fa1d0350f48ea1d074e13e261d69d32ab775",
+      "kind": "skin",
+      "slice": [
+        20,
+        50,
+        20,
+        50
+      ],
+      "borderWidths": [
+        10,
+        25,
+        10,
+        25
+      ],
+      "fill": true
+    },
+    {
+      "id": "A10",
+      "file": "A10.png",
+      "sha256": "3607663173774b81fc844a7e8a156ab40b7c4e72f5f08fb082ec22312d44e970",
+      "kind": "skin",
+      "slice": [
+        96,
+        96,
+        96,
+        96
+      ],
+      "borderWidths": [
+        48,
+        48,
+        48,
+        48
+      ],
+      "fill": false
+    },
+    {
+      "id": "A11",
+      "file": "A11.png",
+      "sha256": "f3f8a2090540a7668e8c0cd9708ef5a711de2e61d623b5f1850d5cf8b1198408",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A14",
+      "file": "A14.png",
+      "sha256": "369ce6722b6240eca544daf3d986cd0203e980ff9b916110e822e47de55fbed7",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A15",
+      "file": "A15.png",
+      "sha256": "a678dc27efae619a0ece17c99dc337eeccee80db478f03959150511017b386b4",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A16",
+      "file": "A16.png",
+      "sha256": "005316ba815b638c78e8bf05920a129e68b7b7c5075c890431f64fd19e8b7f85",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A17",
+      "file": "A17.png",
+      "sha256": "d11cb021d0f2106bb05af821a217591b579072a6572dc9367b8396661be6422f",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A19",
+      "file": "A19.png",
+      "sha256": "45bc9f0fd7fded661fb491965cb939ca0c0cd6da5a8144bfcca443326b01c1c0",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A20",
+      "file": "A20.png",
+      "sha256": "5f1eb5e448d5e7e9c5cb7e2ccc00afb669ca3207f3657307bb9a1ef045b1ceb8",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A26",
+      "file": "A26.png",
+      "sha256": "fc48fbba5968a281432446f9cc16020a46f99dcf906cdd3d48ac359dc5591f3e",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A28",
+      "file": "A28.png",
+      "sha256": "5751c77d32efd5f3f776541a679b37970a677970bb598db0b4dc6f1ce15ec845",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A30",
+      "file": "A30.png",
+      "sha256": "439676e39f6b62fb76fdb40464b310e081d7cba86e52ae84ea10fe0e194373a9",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A35",
+      "file": "A35.png",
+      "sha256": "503db1e30bc1a666f5c7705f1704f8170f683fc58d0f7d3c0d12dfbdb0d20a08",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A36",
+      "file": "A36.png",
+      "sha256": "e59dba174755a14b5ceabe24d62485a242ad67defc5b6abacefffba1231a41aa",
+      "kind": "skin",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "A37.normal",
+      "file": "A37-normal.png",
+      "sha256": "a405c953c2320ca6a29ba6941d090dc52f9070594a055337b934dd5bf6aaf83a",
+      "kind": "skin",
+      "slice": [
+        12,
+        12,
+        12,
+        12
+      ],
+      "borderWidths": [
+        6,
+        6,
+        6,
+        6
+      ],
+      "fill": true
+    },
+    {
+      "id": "A37.selected",
+      "file": "A37-selected.png",
+      "sha256": "1b75196509e922d24fd8b640554e33605e8295b3cfbdb366878d01aa52b5c542",
+      "kind": "skin",
+      "slice": [
+        12,
+        12,
+        12,
+        12
+      ],
+      "borderWidths": [
+        6,
+        6,
+        6,
+        6
+      ],
+      "fill": true
+    },
+    {
+      "id": "A38.normal",
+      "file": "A38-normal.png",
+      "sha256": "b1091edfb4591891225371de7b739c3fdd835fd7bd42990938b41ebf8ab12c54",
+      "kind": "skin",
+      "slice": [
+        24,
+        34,
+        24,
+        34
+      ],
+      "borderWidths": [
+        12,
+        17,
+        12,
+        17
+      ],
+      "fill": true
+    },
+    {
+      "id": "A38.selected",
+      "file": "A38-selected.png",
+      "sha256": "60fc294a7498f130bd98be2945421f29506a57b808a7e6825bd23ecd7d6a31db",
+      "kind": "skin",
+      "slice": [
+        24,
+        34,
+        24,
+        34
+      ],
+      "borderWidths": [
+        12,
+        17,
+        12,
+        17
+      ],
+      "fill": true
+    },
+    {
+      "id": "A39.compact",
+      "file": "A39-compact.png",
+      "sha256": "215916fd404dbdfe0f27a0b0ae5a52522fb7a5e09d332a091eedfb7eaa4b1c07",
+      "kind": "skin",
+      "slice": [
+        24,
+        28,
+        24,
+        28
+      ],
+      "borderWidths": [
+        12,
+        14,
+        12,
+        14
+      ],
+      "fill": true
+    },
+    {
+      "id": "A39.ornate",
+      "file": "A39-ornate.png",
+      "sha256": "2d354552654ccb9e9cc93f2e28d01b9aea4f2ebb1794064b142d2d60bf27214e",
+      "kind": "skin",
+      "slice": [
+        30,
+        64,
+        30,
+        64
+      ],
+      "borderWidths": [
+        15,
+        32,
+        15,
+        32
+      ],
+      "fill": true
+    },
+    {
+      "id": "A40.danger",
+      "file": "A40-danger.png",
+      "sha256": "b70ed7a3170f5e19186af09f0e52e5246265c602a96482b2717e5b2b035ac80a",
+      "kind": "skin",
+      "slice": [
+        30,
+        64,
+        30,
+        64
+      ],
+      "borderWidths": [
+        15,
+        32,
+        15,
+        32
+      ],
+      "fill": true
+    },
+    {
+      "id": "A41.broken",
+      "file": "A41-broken.png",
+      "sha256": "8537c255e5031a5f055d87c8f599331eb98696c8a920b7a88760111a34542e00",
+      "kind": "skin",
+      "slice": [
+        14,
+        14,
+        14,
+        14
+      ],
+      "borderWidths": [
+        7,
+        7,
+        7,
+        7
+      ],
+      "fill": true
+    },
+    {
+      "id": "A41.common",
+      "file": "A41-common.png",
+      "sha256": "ad985d61092fcfc2509209f5a26244c7f00706880c75db605e155483dcce680a",
+      "kind": "skin",
+      "slice": [
+        14,
+        14,
+        14,
+        14
+      ],
+      "borderWidths": [
+        7,
+        7,
+        7,
+        7
+      ],
+      "fill": true
+    },
+    {
+      "id": "A41.epic",
+      "file": "A41-epic.png",
+      "sha256": "a328760e15909c29a76ce318154631f8ce95b32470d2f6105145f73d6e884043",
+      "kind": "skin",
+      "slice": [
+        14,
+        14,
+        14,
+        14
+      ],
+      "borderWidths": [
+        7,
+        7,
+        7,
+        7
+      ],
+      "fill": true
+    },
+    {
+      "id": "A41.fine",
+      "file": "A41-fine.png",
+      "sha256": "934f0a49192e73ba01a04dec1c51183d6871962aeaea36f7c03e0ccccd09fcbc",
+      "kind": "skin",
+      "slice": [
+        14,
+        14,
+        14,
+        14
+      ],
+      "borderWidths": [
+        7,
+        7,
+        7,
+        7
+      ],
+      "fill": true
+    },
+    {
+      "id": "A41.focus",
+      "file": "A41-focus.png",
+      "sha256": "a8e1b73d85b232018f474b34eaf1c5565823cdabe14edcf3cacce7d3a48da452",
+      "kind": "skin",
+      "slice": [
+        40,
+        40,
+        40,
+        40
+      ],
+      "borderWidths": [
+        20,
+        20,
+        20,
+        20
+      ],
+      "fill": true
+    },
+    {
+      "id": "A41.hover",
+      "file": "A41-hover.png",
+      "sha256": "e33dc96839e813c3f0835328999104041ed2d2bdd8069750bfa267e72145ad34",
+      "kind": "skin",
+      "slice": [
+        40,
+        40,
+        40,
+        40
+      ],
+      "borderWidths": [
+        20,
+        20,
+        20,
+        20
+      ],
+      "fill": true
+    },
+    {
+      "id": "A41.legacy",
+      "file": "A41-legacy.png",
+      "sha256": "3d89f0edaa995a628f5f4e4617dc91486a860f95171dafc66244b14eb16c29b2",
+      "kind": "skin",
+      "slice": [
+        14,
+        14,
+        14,
+        14
+      ],
+      "borderWidths": [
+        7,
+        7,
+        7,
+        7
+      ],
+      "fill": true
+    },
+    {
+      "id": "A41.legendary",
+      "file": "A41-legendary.png",
+      "sha256": "66af399281f885d4975324adf93f8c2019d302f3a822fc6af0f8d19102bec96e",
+      "kind": "skin",
+      "slice": [
+        14,
+        14,
+        14,
+        14
+      ],
+      "borderWidths": [
+        7,
+        7,
+        7,
+        7
+      ],
+      "fill": true
+    },
+    {
+      "id": "A41.rare",
+      "file": "A41-rare.png",
+      "sha256": "92b16a0ca1e0a0566c1a91da06edbe7837e195a2bde190e75dc96644feb4cedd",
+      "kind": "skin",
+      "slice": [
+        14,
+        14,
+        14,
+        14
+      ],
+      "borderWidths": [
+        7,
+        7,
+        7,
+        7
+      ],
+      "fill": true
+    },
+    {
+      "id": "A41.selected",
+      "file": "A41-selected.png",
+      "sha256": "a284cc30108648c9627567f6841cfbe9e2345a6c8370b60f8b3f4160ee961d45",
+      "kind": "skin",
+      "slice": [
+        40,
+        40,
+        40,
+        40
+      ],
+      "borderWidths": [
+        20,
+        20,
+        20,
+        20
+      ],
+      "fill": true
+    },
+    {
+      "id": "A42.focus",
+      "file": "A42-focus.png",
+      "sha256": "4a809fb731203265a635c25a24cf5b352e2e7cec5eb494414e1b043f4919e2e0",
+      "kind": "skin",
+      "slice": [
+        96,
+        96,
+        96,
+        96
+      ],
+      "borderWidths": [
+        48,
+        48,
+        48,
+        48
+      ],
+      "fill": true
+    },
+    {
+      "id": "A42.hover",
+      "file": "A42-hover.png",
+      "sha256": "d034f05667cde2874586476e39d27831d6a09e7c8c3d56390257835f632fe17a",
+      "kind": "skin",
+      "slice": [
+        96,
+        96,
+        96,
+        96
+      ],
+      "borderWidths": [
+        48,
+        48,
+        48,
+        48
+      ],
+      "fill": true
+    },
+    {
+      "id": "A42.normal",
+      "file": "A42-normal.png",
+      "sha256": "ee7b1cd31d76caadc70046b095072dde2681c801c5bcd8f71131a15838e2d5aa",
+      "kind": "skin",
+      "slice": [
+        54,
+        54,
+        54,
+        54
+      ],
+      "borderWidths": [
+        27,
+        27,
+        27,
+        27
+      ],
+      "fill": true
+    },
+    {
+      "id": "A42.selected",
+      "file": "A42-selected.png",
+      "sha256": "f33f701d088dbdf5117378337726a6fc9fc21447fe78a10efdb94c1e0d522d60",
+      "kind": "skin",
+      "slice": [
+        54,
+        54,
+        54,
+        54
+      ],
+      "borderWidths": [
+        27,
+        27,
+        27,
+        27
+      ],
+      "fill": true
+    },
+    {
+      "id": "A43",
+      "file": "A43.png",
+      "sha256": "626acb867dec467fb6d7bb3033ba9703ba2aa8b58a59deaf83c439720f1b5e74",
+      "kind": "skin",
+      "slice": [
+        16,
+        16,
+        16,
+        16
+      ],
+      "borderWidths": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "fill": true
+    },
+    {
+      "id": "A44",
+      "file": "A44.png",
+      "sha256": "b8d36ac9f19c82163f0438142581e2769f636e2a705decfb9c9af361cecc48cb",
+      "kind": "skin",
+      "slice": [
+        12,
+        12,
+        12,
+        12
+      ],
+      "borderWidths": [
+        6,
+        6,
+        6,
+        6
+      ],
+      "fill": true
+    },
+    {
+      "id": "A45",
+      "file": "A45.png",
+      "sha256": "d0c14c8442ed6a4e9c2b9c2fcf08038a16ab5bc3adafa37e4934d441dd70216b",
+      "kind": "skin",
+      "slice": [
+        22,
+        22,
+        22,
+        22
+      ],
+      "borderWidths": [
+        11,
+        11,
+        11,
+        11
+      ],
+      "fill": true
+    },
+    {
+      "id": "A46",
+      "file": "A46.png",
+      "sha256": "bffbeb6248c4f1c37697a93aa8d712b2ca2b3c741c2854c9d67212a4baa38eac",
+      "kind": "skin",
+      "slice": [
+        12,
+        12,
+        12,
+        12
+      ],
+      "borderWidths": [
+        6,
+        6,
+        6,
+        6
+      ],
+      "fill": true
+    },
+    {
+      "id": "R5-G05",
+      "file": "R5-G05.png",
+      "sha256": "0982bc95f6dd68fc2d6d40d27a7e7ed76363d947d02099cae54fc314a111eaa6",
+      "kind": "skin",
+      "slice": [
+        24,
+        24,
+        24,
+        24
+      ],
+      "borderWidths": [
+        12,
+        12,
+        12,
+        12
+      ],
+      "fill": true
+    },
+    {
+      "id": "R5-G06",
+      "file": "R5-G06.png",
+      "sha256": "b7f5c0953d73850a2a57642f6874fa4f7db86a5496692eb1c0dd2d6947623664",
+      "kind": "skin",
+      "slice": [
+        30,
+        30,
+        30,
+        30
+      ],
+      "borderWidths": [
+        15,
+        15,
+        15,
+        15
+      ],
+      "fill": true
+    },
+    {
+      "id": "R5-G06.selected",
+      "file": "R5-G06-selected.png",
+      "sha256": "4e6530517c843c9eee1d8410c0c6de15dde8fb50d40ea16d4ae9f08ddddf31ec",
+      "kind": "skin",
+      "slice": [
+        32,
+        32,
+        32,
+        32
+      ],
+      "borderWidths": [
+        16,
+        16,
+        16,
+        16
+      ],
+      "fill": true
+    },
+    {
+      "id": "R5-G07a",
+      "file": "R5-G07a.png",
+      "sha256": "cb6e1f7133757eac2d675bb27e3adb25d0ff2fb360fb9e1493862801040e0cb3",
+      "kind": "skin",
+      "slice": [
+        8,
+        8,
+        8,
+        8
+      ],
+      "borderWidths": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "fill": true
+    },
+    {
+      "id": "R5-G07b",
+      "file": "R5-G07b.png",
+      "sha256": "9bdc25bdfe78647b1132a362f5e3a40a2dd9dd49c0b90b0e99fb3d675ec6f9f3",
+      "kind": "skin",
+      "slice": [
+        12,
+        12,
+        12,
+        12
+      ],
+      "borderWidths": [
+        6,
+        6,
+        6,
+        6
+      ],
+      "fill": true
+    },
+    {
+      "id": "forest",
+      "file": "forest.webp",
+      "sha256": "787c71072278974f83724aa69ed02706163ebd8a8ee19e09c068c9cdfd4371c2",
+      "kind": "background",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "portrait",
+      "file": "portrait.png",
+      "sha256": "dd735f70b17bdf30e6058f56fd0d424a2df91a6d01ad1e177c579b21509ed13d",
+      "kind": "portrait",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "idle.1",
+      "file": "idle-1.png",
+      "sha256": "f7925854d75f80d05c3e922fe127a768dc7e2cf10abde35d7d4231e90c564fdd",
+      "kind": "character-frame",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "idle.2",
+      "file": "idle-2.png",
+      "sha256": "4748798f058c0de4bcbdec82e79fef41623f59ad5f66bc866e4361137c0f47d8",
+      "kind": "character-frame",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "idle.3",
+      "file": "idle-3.png",
+      "sha256": "b8f1ed55985e03ae04a768b482db3c8ea23a1447d361e68cca4b77ae14bbfcc4",
+      "kind": "character-frame",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "idle.4",
+      "file": "idle-4.png",
+      "sha256": "d95465af5503b4d8040d40348e7499f95a8225c0bbed9e78f82632e4434cf807",
+      "kind": "character-frame",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "idle.5",
+      "file": "idle-5.png",
+      "sha256": "72f4a9be3ab203b3018864897ab20cf3d3790727fa957be960eba9529c370a45",
+      "kind": "character-frame",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "idle.6",
+      "file": "idle-6.png",
+      "sha256": "4919e9c78026361da44f3c42c2996cf1d341caeff28fe6ba83ceb62a4384add1",
+      "kind": "character-frame",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.0",
+      "file": "item-0.webp",
+      "sha256": "8fe069caf36ec62832446427080fd3847156bdd3913c6f256dda19629dc996b7",
+      "kind": "equipment",
+      "artKey": "boss-weapons/boss-legacy-weapon-1",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.1",
+      "file": "item-1.webp",
+      "sha256": "63cd0906e7c53044684869742ad0f20a38c0b0514529381fb184e07a0cb70b8a",
+      "kind": "equipment",
+      "artKey": "boss-weapons/boss-legacy-weapon-10",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.2",
+      "file": "item-2.webp",
+      "sha256": "48874777e7576dcb0f339a00d73c1e297a24c293139b67eb2b16ef4d15cda88a",
+      "kind": "equipment",
+      "artKey": "boss-weapons/boss-legacy-weapon-2",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.3",
+      "file": "item-3.webp",
+      "sha256": "4ea1a8fb45a7af23eb6026a93d3ebbe6a8501400b25251189bd727726dc4e4db",
+      "kind": "equipment",
+      "artKey": "boss-weapons/boss-legacy-weapon-3",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.4",
+      "file": "item-4.webp",
+      "sha256": "aca3c98b712579975ffea5bc5eea2c50b5278654a4a665970cffdd522a0be34c",
+      "kind": "equipment",
+      "artKey": "boss-weapons/boss-legacy-weapon-4",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.5",
+      "file": "item-5.webp",
+      "sha256": "bde43040fe549a394ddc0a4b66d5e724d9f6b099f1de7248282d76b2b1b45e3f",
+      "kind": "equipment",
+      "artKey": "boss-weapons/boss-legacy-weapon-5",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.6",
+      "file": "item-6.webp",
+      "sha256": "3a0706ab9977f39e7d957e2cd3caf1a284a2658df0ae43e6e1e3626fab6d3eb4",
+      "kind": "equipment",
+      "artKey": "boss-weapons/boss-legacy-weapon-6",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.7",
+      "file": "item-7.webp",
+      "sha256": "29cbde844bc9c1669f557865f34d9f8b344cc9de8ec6be846fe86fbe625871f0",
+      "kind": "equipment",
+      "artKey": "boss-weapons/boss-legacy-weapon-7",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.8",
+      "file": "item-8.webp",
+      "sha256": "048e1ca5282a0a897696151c9dfacc490305177c651e5004760692996a66ed2b",
+      "kind": "equipment",
+      "artKey": "boss-weapons/boss-legacy-weapon-8",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.9",
+      "file": "item-9.webp",
+      "sha256": "b0127661f7273ea7ec165ca338268e877c8c799e826c876b40cd224f5c80f118",
+      "kind": "equipment",
+      "artKey": "boss-weapons/boss-legacy-weapon-9",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.10",
+      "file": "item-10.webp",
+      "sha256": "67ff4ad4ecb84a4692333eb02cc394aa5438e38f2def6ed1480a9f641851d80c",
+      "kind": "equipment",
+      "artKey": "collection/beast/core/boots",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.11",
+      "file": "item-11.webp",
+      "sha256": "39369cd10f54df351a83373c2e0e39e6d902cb6f743600b24486dce026898631",
+      "kind": "equipment",
+      "artKey": "collection/beast/core/chest",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.12",
+      "file": "item-12.webp",
+      "sha256": "4b1a5d07913bf79e37d0dae154f9c866c43eb1bf31f9363136d4f51b1e132e90",
+      "kind": "equipment",
+      "artKey": "collection/beast/core/hands",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.13",
+      "file": "item-13.webp",
+      "sha256": "0948f64fd0730e2dc210a924a635be2edbbff168a531eb919031cbed9cc5d086",
+      "kind": "equipment",
+      "artKey": "collection/beast/core/helmet",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.14",
+      "file": "item-14.webp",
+      "sha256": "5ef378f4708d705a24e1e4c46490380884eda01134386e3a3470f6e597a9975a",
+      "kind": "equipment",
+      "artKey": "collection/beast/core/shoulders",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.15",
+      "file": "item-15.webp",
+      "sha256": "1568c839d65b1b17152ec8ef5edea9cb8d94275017beef44a819243d924d014a",
+      "kind": "equipment",
+      "artKey": "collection/beast/core/weapon",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.16",
+      "file": "item-16.webp",
+      "sha256": "5dce70a2caebc74876555f04f2068231020fd1857c75ae409731d0e796077360",
+      "kind": "equipment",
+      "artKey": "collection/beast/relic/cloak",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.17",
+      "file": "item-17.webp",
+      "sha256": "78c788822790be96889f37c7201925ed495ac22067e57d1a52409cc0831a60d8",
+      "kind": "equipment",
+      "artKey": "collection/beast/relic/legs",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.18",
+      "file": "item-18.webp",
+      "sha256": "df9ad94a259c2a770bd2693515e6877bc86ff559f426d161bc96a7d53a2a3f7d",
+      "kind": "equipment",
+      "artKey": "collection/beast/relic/necklace",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.19",
+      "file": "item-19.webp",
+      "sha256": "b5b7527bbec1857e80830425ed7b49431035e39c655211142c083dd28aa89bb9",
+      "kind": "equipment",
+      "artKey": "collection/beast/relic/ring1",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.20",
+      "file": "item-20.webp",
+      "sha256": "35dbc85d1d495a4ede2d6215bd3b3571c904590b3b13a694bb7453f90a7c6165",
+      "kind": "equipment",
+      "artKey": "collection/beast/relic/ring2",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.21",
+      "file": "item-21.webp",
+      "sha256": "8f3998045d15d427a69b7cbfb17b1c9d84d8dddcb3c7e14b2a2ea4841a7305cd",
+      "kind": "equipment",
+      "artKey": "collection/beast/relic/wrists",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.22",
+      "file": "item-22.webp",
+      "sha256": "ed54e53aaa6c5591848c5b9f6e71db98c958c0307ed382a93910bdf026cf35ef",
+      "kind": "equipment",
+      "artKey": "collection/blood/core/chest",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.23",
+      "file": "item-23.webp",
+      "sha256": "aab1a08dad8d9444e94e5996e8d12975361d565dd5b7fee28cfa8f7d24ad4a69",
+      "kind": "equipment",
+      "artKey": "collection/blood/core/helmet",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.24",
+      "file": "item-24.webp",
+      "sha256": "2033c90ac3dccc32c3ddf21429e1efcaa926210e2dd6eee84dffdd193ea8c4cf",
+      "kind": "equipment",
+      "artKey": "collection/blood/core/necklace",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.25",
+      "file": "item-25.webp",
+      "sha256": "460cd59bda20ca3774763aff4a5e9ba9242a312b423cde1d29ef23a88b28dc05",
+      "kind": "equipment",
+      "artKey": "collection/blood/core/ring1",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.26",
+      "file": "item-26.webp",
+      "sha256": "01b40dd9cc6e36444c69d6c4913e94a4da949af26aecd9f1a9839e79872c677e",
+      "kind": "equipment",
+      "artKey": "collection/blood/core/shoulders",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.27",
+      "file": "item-27.webp",
+      "sha256": "1dc266deaa72f343ae1b4c286a479021651b0ec890e3960960b8509b34272b12",
+      "kind": "equipment",
+      "artKey": "collection/blood/core/weapon",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.28",
+      "file": "item-28.webp",
+      "sha256": "b8023a5c8f7596f428ee965ff59b45419e31b090947f01ae72d01be7f3e8ede3",
+      "kind": "equipment",
+      "artKey": "collection/blood/relic/boots",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.29",
+      "file": "item-29.webp",
+      "sha256": "5a0aa8083b042601c5c1757732ce77e46e63a32002f58470881b9f6a94635609",
+      "kind": "equipment",
+      "artKey": "collection/blood/relic/cloak",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.30",
+      "file": "item-30.webp",
+      "sha256": "2b267e19c6384da2c65c9d0e91032056719b54299859c0844b1eddcc3498ae72",
+      "kind": "equipment",
+      "artKey": "collection/blood/relic/hands",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.31",
+      "file": "item-31.webp",
+      "sha256": "74f1f6dddcd49981f381e56514544c37782bda2239519cd902e842135f469579",
+      "kind": "equipment",
+      "artKey": "collection/blood/relic/legs",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.32",
+      "file": "item-32.webp",
+      "sha256": "263e75cbb1b451fa338eb26ae3289c555783fdcf5cd0328a377586313f86691e",
+      "kind": "equipment",
+      "artKey": "collection/blood/relic/ring2",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.33",
+      "file": "item-33.webp",
+      "sha256": "269e48d894f511f555476e04efd817bd37f55b7b21fa2d26267eb1120603ead7",
+      "kind": "equipment",
+      "artKey": "collection/blood/relic/wrists",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.34",
+      "file": "item-34.webp",
+      "sha256": "27cc616a3c2e676f5aa2148887b233e147a8c3cb2d5e897131cd26ace5635c4d",
+      "kind": "equipment",
+      "artKey": "collection/death/core/chest",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.35",
+      "file": "item-35.webp",
+      "sha256": "b9ded8fe256da76811cf4eeb5b7dcfa3916cf25fff2e277a1ddf117b6cb192e6",
+      "kind": "equipment",
+      "artKey": "collection/death/core/helmet",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.36",
+      "file": "item-36.webp",
+      "sha256": "27c7ac4df56e250b23a9f659c52c2acd8b03395071c6388d28821d222ee6d764",
+      "kind": "equipment",
+      "artKey": "collection/death/core/necklace",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.37",
+      "file": "item-37.webp",
+      "sha256": "e11e40a106c4073a8718a5ec43be0b2d56573c164880c0675f5d3c845ce3222f",
+      "kind": "equipment",
+      "artKey": "collection/death/core/ring1",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.38",
+      "file": "item-38.webp",
+      "sha256": "50b7b07a7eb0da5f7b8b3b88dadee60fe5931010385f8de10fe04b26083630a1",
+      "kind": "equipment",
+      "artKey": "collection/death/core/shoulders",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.39",
+      "file": "item-39.webp",
+      "sha256": "5b0a17ea6da83ac9ba7c296afb3288119358ba49ba53ed744ec0db364d37c6dd",
+      "kind": "equipment",
+      "artKey": "collection/death/core/weapon",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.40",
+      "file": "item-40.webp",
+      "sha256": "525efd5ac32ad289e665e605f1c4044fe3776112f51467f5a68171f54ea43870",
+      "kind": "equipment",
+      "artKey": "collection/death/relic/boots",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.41",
+      "file": "item-41.webp",
+      "sha256": "172150680bf720741d184197f1b912bec362e66cb7e9c1ff3fabc8e8a25dda42",
+      "kind": "equipment",
+      "artKey": "collection/death/relic/cloak",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.42",
+      "file": "item-42.webp",
+      "sha256": "997f51ec9bae6892c5483a423de0598f4f676c6478b930eaf749ac9a33b344c9",
+      "kind": "equipment",
+      "artKey": "collection/death/relic/hands",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.43",
+      "file": "item-43.webp",
+      "sha256": "8d1349a2f912c0273a269c03059cc5ef1e62b03f41722900a805cef560419a44",
+      "kind": "equipment",
+      "artKey": "collection/death/relic/legs",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.44",
+      "file": "item-44.webp",
+      "sha256": "014aadec89c968c4afa71dbc696d959940ccd91e8f4ee6bcaf2c4e845a55c400",
+      "kind": "equipment",
+      "artKey": "collection/death/relic/ring2",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.45",
+      "file": "item-45.webp",
+      "sha256": "5efe4154067ec0c594df0b6062f0809ebee8d159b9d4e457f0043bb89bb4c873",
+      "kind": "equipment",
+      "artKey": "collection/death/relic/wrists",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.46",
+      "file": "item-46.webp",
+      "sha256": "31b4d3196f6301c81ea1149db8e7e800141a9fac45b9ae808661995f6a4cef62",
+      "kind": "equipment",
+      "artKey": "collection/domain/core/boots",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.47",
+      "file": "item-47.webp",
+      "sha256": "e294e8619019846ec4c0523ef8ad36a3ab3e0c1f73a3812a0156e32c6cc689bd",
+      "kind": "equipment",
+      "artKey": "collection/domain/core/chest",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.48",
+      "file": "item-48.webp",
+      "sha256": "ef47a6ff93356c02c9250e23c83b0f206af92b6a95c540d1c9287b3e51d610ec",
+      "kind": "equipment",
+      "artKey": "collection/domain/core/hands",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.49",
+      "file": "item-49.webp",
+      "sha256": "eb8776c0d5659e0e417ee9d83a48a418dc623a36cabde6ac78cc30a45264534c",
+      "kind": "equipment",
+      "artKey": "collection/domain/core/helmet",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.50",
+      "file": "item-50.webp",
+      "sha256": "90f1eeac9a1a9046eced1789809b9127145a4ee19551065b9e85380927f32792",
+      "kind": "equipment",
+      "artKey": "collection/domain/core/shoulders",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.51",
+      "file": "item-51.webp",
+      "sha256": "bf37ac68720b98c58d9635e5601f1a5a90671144c30195b88325acf36f8b201d",
+      "kind": "equipment",
+      "artKey": "collection/domain/core/weapon",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.52",
+      "file": "item-52.webp",
+      "sha256": "ee60b89fe2d3f8b9f4fb70667cc7c7223985fa5a78bffca6c2df6336e3d2f91b",
+      "kind": "equipment",
+      "artKey": "collection/domain/relic/cloak",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.53",
+      "file": "item-53.webp",
+      "sha256": "c82c168892e2fd26d1d0fca910ef90dd3dd205b85a49f5cc968a01124b4a65a1",
+      "kind": "equipment",
+      "artKey": "collection/domain/relic/legs",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.54",
+      "file": "item-54.webp",
+      "sha256": "52b167f12a4423fe9a2a795c62cd6b67efa79763cbdbc3be03ce548dc8a744f4",
+      "kind": "equipment",
+      "artKey": "collection/domain/relic/necklace",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.55",
+      "file": "item-55.webp",
+      "sha256": "c77859c3d8af8df290e2b3ae128d0286f28973d90c5ed18579729071306ca4a2",
+      "kind": "equipment",
+      "artKey": "collection/domain/relic/ring1",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.56",
+      "file": "item-56.webp",
+      "sha256": "3339199095102c197c369cb370b2ad39e94bfe76584bb55dca39d1692a02e2a5",
+      "kind": "equipment",
+      "artKey": "collection/domain/relic/ring2",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.57",
+      "file": "item-57.webp",
+      "sha256": "6559eed55ca25ef859e0a46fc19ec953e936ab6dc685a9fdf9e5ffe0d1b2abec",
+      "kind": "equipment",
+      "artKey": "collection/domain/relic/wrists",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.58",
+      "file": "item-58.webp",
+      "sha256": "7b450bfba814531f3015f6afe1cd255059e6f3f141946709f0d62b1d47fa9e0b",
+      "kind": "equipment",
+      "artKey": "legacy-weapons/embercore-composite",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.59",
+      "file": "item-59.webp",
+      "sha256": "3ea6bb4f3f8ef91f737d784566da4a17b08731e32a8c1c91e5a3eaa9fe19a1b7",
+      "kind": "equipment",
+      "artKey": "legacy-weapons/frostline-warbow",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.60",
+      "file": "item-60.webp",
+      "sha256": "649e30d8fede440a2c3ae78e5adee1ea8dc023dbb14f78e941d9b2a6cd7e14fc",
+      "kind": "equipment",
+      "artKey": "legacy-weapons/moonshadow-arc-bow",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.61",
+      "file": "item-61.webp",
+      "sha256": "ac98553bceb14a32db40559f1e65ce5ac6eb522755c10dc9bfa88131fc9b822b",
+      "kind": "equipment",
+      "artKey": "legacy-weapons/skybreaker-judgement-bow",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.62",
+      "file": "item-62.webp",
+      "sha256": "2294facd754ae52fbf40a2fde662ebf0161cbb0d64917d9cdd77f1a8d0e52001",
+      "kind": "equipment",
+      "artKey": "legacy-weapons/starfeather-greatbow",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.63",
+      "file": "item-63.webp",
+      "sha256": "347e9195df81da135ca99c9439bacf20ab65d5d07c260d8b7978764812a0f3b2",
+      "kind": "equipment",
+      "artKey": "legacy-weapons/stoneheart-hunter-bow",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.64",
+      "file": "item-64.webp",
+      "sha256": "18d41bf4c25ff328aecfe6c9a17e7d582a010b372a4a4b6e4d729a33c7ca3133",
+      "kind": "equipment",
+      "artKey": "legacy-weapons/swift-reed-longbow",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.65",
+      "file": "item-65.webp",
+      "sha256": "2edda151ef845882e0cf2b7e620fdd5b6ce0027fb42449c6784fd868658df782",
+      "kind": "equipment",
+      "artKey": "legacy-weapons/windsplit-serpent-bow",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.66",
+      "file": "item-66.webp",
+      "sha256": "0d105ff6e4ac451197dda550bcb43ea0a365b15e927a85078a0214b3ccb19dd0",
+      "kind": "equipment",
+      "artKey": "legacy-weapons/woodland-shortbow",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.67",
+      "file": "item-67.webp",
+      "sha256": "861131d802def2162b9a21eedba809c9efe1c0c66263bb0b39ae3475ee6911da",
+      "kind": "equipment",
+      "artKey": "legacy-weapons/yang-birch-bow",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.68",
+      "file": "item-68.webp",
+      "sha256": "899e238d53f7cd893c6d0b3d5a15ef83982e5742817ce6b1594665b05fb84b6d",
+      "kind": "equipment",
+      "artKey": "ordinary/beast/boots",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.69",
+      "file": "item-69.webp",
+      "sha256": "3306568129533cd7fbc4c589816c32ba80f08d720871cf3e5401e52e10d85a04",
+      "kind": "equipment",
+      "artKey": "ordinary/beast/chest",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.70",
+      "file": "item-70.webp",
+      "sha256": "458d627fe2b387f671cbfa375a8d74ba144649302a115a0775a9e765d3cf9179",
+      "kind": "equipment",
+      "artKey": "ordinary/beast/cloak",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.71",
+      "file": "item-71.webp",
+      "sha256": "61ab494ee779ac8e510d7f034de4c92f5ca573b7cdebc9098df50f590f107661",
+      "kind": "equipment",
+      "artKey": "ordinary/beast/hands",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.72",
+      "file": "item-72.webp",
+      "sha256": "a2f469547111795a2fb0e1adcaf9c1433dad0f599b386095c9c028b90f9cba5b",
+      "kind": "equipment",
+      "artKey": "ordinary/beast/helmet",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.73",
+      "file": "item-73.webp",
+      "sha256": "2ded028cd0448b2694592c6ed4fc0f990c8cf4b63f3dcd1447c57a84b9878e33",
+      "kind": "equipment",
+      "artKey": "ordinary/beast/legs",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.74",
+      "file": "item-74.webp",
+      "sha256": "fd2862a30d89ec905416f50025a36d09818fa3164a0b7bef8e07530a2314bf4a",
+      "kind": "equipment",
+      "artKey": "ordinary/beast/necklace",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.75",
+      "file": "item-75.webp",
+      "sha256": "20ee71c42fe84f73be9c47376355f2707620a235b85bfce23994a4c00d84fcc5",
+      "kind": "equipment",
+      "artKey": "ordinary/beast/ring",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.76",
+      "file": "item-76.webp",
+      "sha256": "4ef43ec52cb6730d83793d2dee0d32ade2c56d14b31a051a735ddab06e1d3009",
+      "kind": "equipment",
+      "artKey": "ordinary/beast/shoulders",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.77",
+      "file": "item-77.webp",
+      "sha256": "d745aa8df19f2280502d4b5c97bc8f5f3a4e5b1dc712adf791c2dadde776df54",
+      "kind": "equipment",
+      "artKey": "ordinary/beast/weapon",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.78",
+      "file": "item-78.webp",
+      "sha256": "771f905bb71fd6b102ac8532bc14da6be30c747114056d6230526b04b9b4e6f2",
+      "kind": "equipment",
+      "artKey": "ordinary/beast/wrists",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.79",
+      "file": "item-79.webp",
+      "sha256": "79b5bfabf50f53e0eb0ed581b41db00d429f7c105fdabe91e13a74d5418f7852",
+      "kind": "equipment",
+      "artKey": "ordinary/broken/boots",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.80",
+      "file": "item-80.webp",
+      "sha256": "bb5f8ecee415b1cb41730773754bda315191ab1edfa24962e8743e1628419a1c",
+      "kind": "equipment",
+      "artKey": "ordinary/broken/chest",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.81",
+      "file": "item-81.webp",
+      "sha256": "dec9326453ad22a3fdc364631d6e20cdb7ac15c908e6a853936dd48f3c5cde22",
+      "kind": "equipment",
+      "artKey": "ordinary/broken/cloak",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.82",
+      "file": "item-82.webp",
+      "sha256": "19ba035a89e7f0c1949b16f9ad048bce6e123eaee7a4696ee238c82268e5d132",
+      "kind": "equipment",
+      "artKey": "ordinary/broken/hands",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.83",
+      "file": "item-83.webp",
+      "sha256": "14a9aed0deb646f5c49d9eb41b4707013b8746744004cc2e682d8632479c721e",
+      "kind": "equipment",
+      "artKey": "ordinary/broken/helmet",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.84",
+      "file": "item-84.webp",
+      "sha256": "f05440ed0ea2a449e9b2d152288c346b7f27a7713aa62463fb38f41d9cf3db83",
+      "kind": "equipment",
+      "artKey": "ordinary/broken/legs",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.85",
+      "file": "item-85.webp",
+      "sha256": "ec7a1618ecb0701ad26306e9315d938fcaefdee78bff35c9843bd7f425fe27f7",
+      "kind": "equipment",
+      "artKey": "ordinary/broken/necklace",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.86",
+      "file": "item-86.webp",
+      "sha256": "502762b34bad47df9b7a29cfc7a50df208e0d585e75646ef8ca83f8469ce4d8b",
+      "kind": "equipment",
+      "artKey": "ordinary/broken/ring",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.87",
+      "file": "item-87.webp",
+      "sha256": "f00c53f0554513f2dc7b5a4f82b9062cd266cc87a55f6967c5a92ec32cc01653",
+      "kind": "equipment",
+      "artKey": "ordinary/broken/shoulders",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.88",
+      "file": "item-88.webp",
+      "sha256": "1f77dd2f819cfbb507b958bab72e6aed9bf2c5f1730f39f2120b46789439b5dc",
+      "kind": "equipment",
+      "artKey": "ordinary/broken/weapon",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.89",
+      "file": "item-89.webp",
+      "sha256": "2fbd7d7739054426aa9178ec4d65f823b8a4730b8ebc6748216fbbcfb7833090",
+      "kind": "equipment",
+      "artKey": "ordinary/broken/wrists",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.90",
+      "file": "item-90.webp",
+      "sha256": "acbef851945cf93a01c44dd54fe4ba2fda1cb4bd3b384a1cdfb69109b8d7a379",
+      "kind": "equipment",
+      "artKey": "ordinary/common/boots",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.91",
+      "file": "item-91.webp",
+      "sha256": "81ec60611d55c504e034060f427a2b6157ce1706d77fed030a817b7f4a37da13",
+      "kind": "equipment",
+      "artKey": "ordinary/common/chest",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.92",
+      "file": "item-92.webp",
+      "sha256": "a34527150f09eaac154253331864167a59fa8183d70997a5f5043f6c0e3868c1",
+      "kind": "equipment",
+      "artKey": "ordinary/common/cloak",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.93",
+      "file": "item-93.webp",
+      "sha256": "db47e783efa60b88a7ede4c45a8984c51191b424d0923f1640f85b8236cdce32",
+      "kind": "equipment",
+      "artKey": "ordinary/common/hands",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.94",
+      "file": "item-94.webp",
+      "sha256": "76c840ed2a6eb30b6b6bd58fb6c70e05e3312fbd5f41d5de468b8a0a1a5a96fe",
+      "kind": "equipment",
+      "artKey": "ordinary/common/helmet",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.95",
+      "file": "item-95.webp",
+      "sha256": "b297bf367cb0a60fff3bf47280173f63a17bb9b8302815b8c2910bd2de176ba8",
+      "kind": "equipment",
+      "artKey": "ordinary/common/legs",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.96",
+      "file": "item-96.webp",
+      "sha256": "3740aaac4b4e31a7ece6f7642211a93aa0b56f9a9f3a4aa276b1373cdd4b4ce2",
+      "kind": "equipment",
+      "artKey": "ordinary/common/necklace",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.97",
+      "file": "item-97.webp",
+      "sha256": "0575ca3c12004aa4c37161ef3f410a56533d778b4adc7ee2e9a4e8c00f0e8a52",
+      "kind": "equipment",
+      "artKey": "ordinary/common/ring",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.98",
+      "file": "item-98.webp",
+      "sha256": "600208a0bc6360b1d98f137c832b4a69f9558acd8cd5dcb5a9db79d94430b3ad",
+      "kind": "equipment",
+      "artKey": "ordinary/common/shoulders",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.99",
+      "file": "item-99.webp",
+      "sha256": "afdc10554fd4be6b4343e601d8752f0779be0252df29efcd13d9d9d80eaa36e8",
+      "kind": "equipment",
+      "artKey": "ordinary/common/weapon",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.100",
+      "file": "item-100.webp",
+      "sha256": "1578c15471909d98634c860e40d540b9a2aa60deeb7e9c401b64b60b61b16d14",
+      "kind": "equipment",
+      "artKey": "ordinary/common/wrists",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.101",
+      "file": "item-101.webp",
+      "sha256": "acca9b447e52d5a8e39615a6e2404856c43324e9ccbfc0a570cf0740a3154409",
+      "kind": "equipment",
+      "artKey": "ordinary/control/boots",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.102",
+      "file": "item-102.webp",
+      "sha256": "ccf7c137ba72dd7bc32abb7c8ed2244a94922da2d068461a109d466ccd635cf0",
+      "kind": "equipment",
+      "artKey": "ordinary/control/chest",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.103",
+      "file": "item-103.webp",
+      "sha256": "bdb6effe4520a0608ea2ad81d81a4f9c8fada633a3d654643077d0d7f368b209",
+      "kind": "equipment",
+      "artKey": "ordinary/control/cloak",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.104",
+      "file": "item-104.webp",
+      "sha256": "a407bac4aa468a9f858626b099a0e79709e2d3a4540221353c86c907715eefe0",
+      "kind": "equipment",
+      "artKey": "ordinary/control/hands",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.105",
+      "file": "item-105.webp",
+      "sha256": "34da3aafdc4f8f31222527eecf283a15bf6aa533b7ffb1576f8de07387a87d3e",
+      "kind": "equipment",
+      "artKey": "ordinary/control/helmet",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.106",
+      "file": "item-106.webp",
+      "sha256": "b600c17ca58ca435200a2fb44fd902c3798fdafb5665a264e397c77f2de3a1cf",
+      "kind": "equipment",
+      "artKey": "ordinary/control/legs",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.107",
+      "file": "item-107.webp",
+      "sha256": "5d16a048361a476efba1078ba87d6db56d3f2197eb255fa9f22eda47b6515d4c",
+      "kind": "equipment",
+      "artKey": "ordinary/control/necklace",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.108",
+      "file": "item-108.webp",
+      "sha256": "3b6ed8831a547572ea38c701c96bd71e4f18e6db95ccfab1e2e3281f3983698b",
+      "kind": "equipment",
+      "artKey": "ordinary/control/ring",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.109",
+      "file": "item-109.webp",
+      "sha256": "945753a7e010d36f3e59026879919e2a083f43cdfe70965edc4e8f36000864a2",
+      "kind": "equipment",
+      "artKey": "ordinary/control/shoulders",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.110",
+      "file": "item-110.webp",
+      "sha256": "b3b959e9153e33863c5bdb48f1ffe42b313f29f5918bc7a2e0687e1ea0376a07",
+      "kind": "equipment",
+      "artKey": "ordinary/control/weapon",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.111",
+      "file": "item-111.webp",
+      "sha256": "83895f47ec75dd3579a526d2339eacd66e75eff48c6116b39edbd36288b5ff83",
+      "kind": "equipment",
+      "artKey": "ordinary/control/wrists",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.112",
+      "file": "item-112.webp",
+      "sha256": "3c50630d102d4c4752078ca8597076e8afc7e5a9402380edfec57de58cd507c0",
+      "kind": "equipment",
+      "artKey": "ordinary/fine/boots",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.113",
+      "file": "item-113.webp",
+      "sha256": "d6149bb82d0f846557a273b68a9c15978d800e8dde0104a1e75c57857932dafd",
+      "kind": "equipment",
+      "artKey": "ordinary/fine/chest",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.114",
+      "file": "item-114.webp",
+      "sha256": "62cfc0ff93e27cae0de455af1315e39db5d06c2a3b24df904621851dd4f3fb86",
+      "kind": "equipment",
+      "artKey": "ordinary/fine/cloak",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.115",
+      "file": "item-115.webp",
+      "sha256": "0aef631a49a3083ea554cf8993ca0ac1e50d1bef88e704e5fe05134e50ee96f5",
+      "kind": "equipment",
+      "artKey": "ordinary/fine/hands",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.116",
+      "file": "item-116.webp",
+      "sha256": "1842e137a55e99fbf941addbc52d469171ded61c3fc1a6bc6de357bfb8f0133c",
+      "kind": "equipment",
+      "artKey": "ordinary/fine/helmet",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.117",
+      "file": "item-117.webp",
+      "sha256": "9917b157457fc01b9507d1d2aecb52f1501085090ab743b40044ab5d14317620",
+      "kind": "equipment",
+      "artKey": "ordinary/fine/legs",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.118",
+      "file": "item-118.webp",
+      "sha256": "9b3dd191c61aa1a4f853ed4805367dd3fefc7a89b63b31746bde929c7c7953f7",
+      "kind": "equipment",
+      "artKey": "ordinary/fine/necklace",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.119",
+      "file": "item-119.webp",
+      "sha256": "d9c86892052d2c21717380d65c8fe2d5fc6449272e715a31304d90d0decb7290",
+      "kind": "equipment",
+      "artKey": "ordinary/fine/ring",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.120",
+      "file": "item-120.webp",
+      "sha256": "a7f63d9b453f22d3f45b2a3204c255879ae5bf4cea99b518a82b0e038f843e96",
+      "kind": "equipment",
+      "artKey": "ordinary/fine/shoulders",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.121",
+      "file": "item-121.webp",
+      "sha256": "4e22c71509fecf6658471fd17a88d7104c0466182afdcfae9889d13865e3a650",
+      "kind": "equipment",
+      "artKey": "ordinary/fine/weapon",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.122",
+      "file": "item-122.webp",
+      "sha256": "dd4b3f49f1054f2ee4d5ab6918ac856b281046b72100ab0c10ed5e2778001dac",
+      "kind": "equipment",
+      "artKey": "ordinary/fine/wrists",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.123",
+      "file": "item-123.webp",
+      "sha256": "79275ab0280009475ea26e572b2fc0f0b176e20436354b1966143bd456441e20",
+      "kind": "equipment",
+      "artKey": "ordinary/general/boots",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.124",
+      "file": "item-124.webp",
+      "sha256": "3ac45def6068e8f901d388a6e4365360e90e2d41494756d1898f436eef1b1d0b",
+      "kind": "equipment",
+      "artKey": "ordinary/general/chest",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.125",
+      "file": "item-125.webp",
+      "sha256": "b11adfebdfca28cea6e33761f4d0817d1932a98cc756b3f92980ab4e9bfdb65c",
+      "kind": "equipment",
+      "artKey": "ordinary/general/cloak",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.126",
+      "file": "item-126.webp",
+      "sha256": "8232f8f282c8f670f0fb3766e55c9dc55e7e74b524508c2b7572b9eb04c19db7",
+      "kind": "equipment",
+      "artKey": "ordinary/general/hands",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.127",
+      "file": "item-127.webp",
+      "sha256": "16d09e62746a09c2058a16f51b3e831dbd60087a1c646fa76fc2f71c98a18830",
+      "kind": "equipment",
+      "artKey": "ordinary/general/helmet",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.128",
+      "file": "item-128.webp",
+      "sha256": "b18d931580b1e668bc3058377372d9e621635ef91556c0ec262d3d4685fba732",
+      "kind": "equipment",
+      "artKey": "ordinary/general/legs",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.129",
+      "file": "item-129.webp",
+      "sha256": "b24a4b5649a6b9815679a9ea091e049bff303212e8f98feb5ba489169052efd7",
+      "kind": "equipment",
+      "artKey": "ordinary/general/necklace",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.130",
+      "file": "item-130.webp",
+      "sha256": "6374c8e3aa044252d52b046e3500f9c8fcd960ca7a414cb48fc3c829bfc4cedd",
+      "kind": "equipment",
+      "artKey": "ordinary/general/ring",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.131",
+      "file": "item-131.webp",
+      "sha256": "848efb104a7065dd763fcec1179e6ac7a7a64e2cbd8fba850d94fbfaa982a9d4",
+      "kind": "equipment",
+      "artKey": "ordinary/general/shoulders",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.132",
+      "file": "item-132.webp",
+      "sha256": "8cec56ffbb3372d3fa08e85395af8cf2d6ed0196cd5a6af6056ce74058472dc5",
+      "kind": "equipment",
+      "artKey": "ordinary/general/weapon",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.133",
+      "file": "item-133.webp",
+      "sha256": "8aa70802925da9d57ba1c65839032849a16ccb02ef00b64d971fdfc04045a426",
+      "kind": "equipment",
+      "artKey": "ordinary/general/wrists",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.134",
+      "file": "item-134.webp",
+      "sha256": "6c591aac1402c95994d04444f62d381de81e4d3a92cd7bd33bdfa7a17b1486bd",
+      "kind": "equipment",
+      "artKey": "ordinary/pierce/boots",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.135",
+      "file": "item-135.webp",
+      "sha256": "83a2de413fce67429948492bab483ddf6e96b1f53683aa4b27d4cddcc028cdf4",
+      "kind": "equipment",
+      "artKey": "ordinary/pierce/chest",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.136",
+      "file": "item-136.webp",
+      "sha256": "41a149c5cf909a3efa3d7ee0969807e5bce3e5a964181757503b8890751268f0",
+      "kind": "equipment",
+      "artKey": "ordinary/pierce/cloak",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.137",
+      "file": "item-137.webp",
+      "sha256": "e02839c092351abbe3cd5f7f040064c3816baeddc7cd392722cd39c316495f45",
+      "kind": "equipment",
+      "artKey": "ordinary/pierce/hands",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.138",
+      "file": "item-138.webp",
+      "sha256": "5ffbf1d952fb0227a87f169888a5cf53af5349f019b3593e785ce51178691511",
+      "kind": "equipment",
+      "artKey": "ordinary/pierce/helmet",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.139",
+      "file": "item-139.webp",
+      "sha256": "b9919c59c4118ea94bcfc31060065534bb5d2d9d1573a1798d4c656758b8db0b",
+      "kind": "equipment",
+      "artKey": "ordinary/pierce/legs",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.140",
+      "file": "item-140.webp",
+      "sha256": "319652dcd061aa7b75fdb92b5c2692d0c82a834b557e28a742172f515b682028",
+      "kind": "equipment",
+      "artKey": "ordinary/pierce/necklace",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.141",
+      "file": "item-141.webp",
+      "sha256": "2c32aef934efe2660a4a6a6ac03dba4a4034b0c74cb104efea757aa3621f78bb",
+      "kind": "equipment",
+      "artKey": "ordinary/pierce/ring",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.142",
+      "file": "item-142.webp",
+      "sha256": "dc0483d42ce448dba73854ec9f87d91488cc283ea90cc2d5828ce680596d0152",
+      "kind": "equipment",
+      "artKey": "ordinary/pierce/shoulders",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.143",
+      "file": "item-143.webp",
+      "sha256": "3bf27eca31dee80d2691810ed98e70a0b7befd8ab0deb9b284b6843ee5894c4f",
+      "kind": "equipment",
+      "artKey": "ordinary/pierce/weapon",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.144",
+      "file": "item-144.webp",
+      "sha256": "8515216c13191589505f87b0d015d1e4a51a7f10ce163a3bbed67337e072ce4f",
+      "kind": "equipment",
+      "artKey": "ordinary/pierce/wrists",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.145",
+      "file": "item-145.webp",
+      "sha256": "639f934598f00de34bb9701fe1e4a157541982b7660dcf248b4556e5b35e3cea",
+      "kind": "equipment",
+      "artKey": "ordinary/spread/boots",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.146",
+      "file": "item-146.webp",
+      "sha256": "ed4a167cd0a9056d95b0b0e96d45ab7ca089f34b4cdb48e0a218199667ed84c2",
+      "kind": "equipment",
+      "artKey": "ordinary/spread/chest",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.147",
+      "file": "item-147.webp",
+      "sha256": "b68bd3f3bd5f54f7c37a996e43d8618d9edc8766b6936bf7775b15bf2461d280",
+      "kind": "equipment",
+      "artKey": "ordinary/spread/cloak",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.148",
+      "file": "item-148.webp",
+      "sha256": "0f39294e9aeca7fc950c7712e4267c9e4b2271046f882d5591ecd0fc28b9f1c9",
+      "kind": "equipment",
+      "artKey": "ordinary/spread/hands",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.149",
+      "file": "item-149.webp",
+      "sha256": "47d7aa475c4b08b109b6289f96146cd7d210f8aa0459e98fb39e40de59d9c790",
+      "kind": "equipment",
+      "artKey": "ordinary/spread/helmet",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.150",
+      "file": "item-150.webp",
+      "sha256": "77d1cc93998c393c8d7aa640c4056ff633d12da3d5139856349b8b903dd629f0",
+      "kind": "equipment",
+      "artKey": "ordinary/spread/legs",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.151",
+      "file": "item-151.webp",
+      "sha256": "9b638897b5d7b5ac5bf17e476b3504426aa50f2f269256e287643c20efaf98ee",
+      "kind": "equipment",
+      "artKey": "ordinary/spread/necklace",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.152",
+      "file": "item-152.webp",
+      "sha256": "e0e58414e4f1f42d7b0b84644e32eadde823851790607ae2b1f2378d789c7d45",
+      "kind": "equipment",
+      "artKey": "ordinary/spread/ring",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.153",
+      "file": "item-153.webp",
+      "sha256": "c4b0e405b234a32b8c91942fb046bf3305753eec9c358665ab139286d924164c",
+      "kind": "equipment",
+      "artKey": "ordinary/spread/shoulders",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.154",
+      "file": "item-154.webp",
+      "sha256": "fb9284219901ea343a487f73769e331dd7cc959cf45c458b67275f32a1917d74",
+      "kind": "equipment",
+      "artKey": "ordinary/spread/weapon",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.155",
+      "file": "item-155.webp",
+      "sha256": "5f770bfc6f4e9f6f1b8c7e966db63b28e3d67a3a76b37e92b6c5ee58f47c9ea0",
+      "kind": "equipment",
+      "artKey": "ordinary/spread/wrists",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.156",
+      "file": "item-156.webp",
+      "sha256": "56295dd5cb1f528c5b32a566177e4a8c15a771e808ef7b3bfcfa2de49e07c756",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-boots-general-死契回响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.157",
+      "file": "item-157.webp",
+      "sha256": "89fdc8975ea684208c69f3ad2ed7cb2d302242b5717a36134902cce29a749520",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-boots-pierce-死契箭线",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.158",
+      "file": "item-158.webp",
+      "sha256": "f2f5c73baa03e03d94db7ac3bb7d2051290428cbf4658aa575b293880b550572",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-boots-pierce-贯通残响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.159",
+      "file": "item-159.webp",
+      "sha256": "1e3daf678adcc9f73700da181455598ecf384926983035895fb36df4f2039057",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-boots-spread-多重尾羽",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.160",
+      "file": "item-160.webp",
+      "sha256": "0fd3bb384bd9a95fbcb6aa9c286c5554d8f50fdf5c4faa605a576619c79d4fc5",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-boots-spread-战场封锁",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.161",
+      "file": "item-161.webp",
+      "sha256": "d7fa6af418875433da724f9cc8292abb9eac6b29207cd05925b2e278b269258c",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-chest-general-死契回响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.162",
+      "file": "item-162.webp",
+      "sha256": "151f4f5cf5362b44b41099cdefb7fb89f89110b9d9d2669709b7abbb1ff86ede",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-chest-pierce-死契箭线",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.163",
+      "file": "item-163.webp",
+      "sha256": "b047f9241bf9ac4384cfb9de7fdfc76d5e0ec62b9c6d000510b920813bac4ca6",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-chest-pierce-贯通残响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.164",
+      "file": "item-164.webp",
+      "sha256": "77b2ff7de006664834019e5fed42cb382c7a5e702909e6accc75494f8aa5efbd",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-chest-spread-多重尾羽",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.165",
+      "file": "item-165.webp",
+      "sha256": "db3929042b5ca5f71a92d103b268c5da240c9aebaff9f564e39f25c78d90d977",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-chest-spread-战场封锁",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.166",
+      "file": "item-166.webp",
+      "sha256": "8348244649b9525d34bd5bb13c48589123a7db701278cc6c5919e14b1e06d7a7",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-cloak-general-死契回响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.167",
+      "file": "item-167.webp",
+      "sha256": "20dec2e27495e88feadb7492bbd0daeef86425a0f8d926381b8b24e60a9d1f06",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-cloak-pierce-死契箭线",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.168",
+      "file": "item-168.webp",
+      "sha256": "4603aa7bc76bf37f44e8350560b58b50cabfa558b0752a7fd7a1083fb7b53654",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-cloak-pierce-贯通残响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.169",
+      "file": "item-169.webp",
+      "sha256": "a7348952d0e2a2cca2689be51d9c6f7946b6362185a53ebb2ff7ef5e80d5d0df",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-cloak-spread-多重尾羽",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.170",
+      "file": "item-170.webp",
+      "sha256": "58acaf1bd742ca48eb61b5fdef00d2c5ca7fd4b75654f9ffc8eb25218273b0de",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-cloak-spread-战场封锁",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.171",
+      "file": "item-171.webp",
+      "sha256": "232efcd16d9fed30807dd8a6cb90548c7e1db5be9a6130969b51cdcd9a605e14",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-hands-general-死契回响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.172",
+      "file": "item-172.webp",
+      "sha256": "9d782dba40db0c87ba7e5c926e17fff9a17ebab41142284a486dad0f6cc74529",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-hands-pierce-死契箭线",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.173",
+      "file": "item-173.webp",
+      "sha256": "166733d1dfde7ffb85f49446387b6944bfa29b7580e38c08925d55e7f7bc533a",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-hands-pierce-贯通残响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.174",
+      "file": "item-174.webp",
+      "sha256": "54cf7baf6e03815e658e15b88e9432ddde687bd1bf3e33670a3f217e532c5a7d",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-hands-spread-多重尾羽",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.175",
+      "file": "item-175.webp",
+      "sha256": "57176fe92885245e6b08faed506fdb95ef5d4df48ba14e410f336c810ef22ad8",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-hands-spread-战场封锁",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.176",
+      "file": "item-176.webp",
+      "sha256": "bf1a2e01338702ddd184ed1fe6cf186254d8c2aaad04e1b8d82eacb510a9a380",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-helmet-general-死契回响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.177",
+      "file": "item-177.webp",
+      "sha256": "167892a7fa1374954f631fbceaffc160eafa0a1aeb8cb062eda298fe3925a4a1",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-helmet-pierce-死契箭线",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.178",
+      "file": "item-178.webp",
+      "sha256": "741582c65be39f2cf0bbfa62f8de97da6297050a36e2bb1ccfa19fa6b7443802",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-helmet-pierce-贯通残响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.179",
+      "file": "item-179.webp",
+      "sha256": "29174f49ca26e15d5aff79edb67117a89ba011100838374dc4a2a3d0001bc587",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-helmet-spread-多重尾羽",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.180",
+      "file": "item-180.webp",
+      "sha256": "ca07891bf7647b4b833cf03384ae94d6777efe8ef8314fb63b351a7214a6ed26",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-helmet-spread-战场封锁",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.181",
+      "file": "item-181.webp",
+      "sha256": "5d08e0aaf711f28f997399181bd98a4982f3b98bc7710a652cc11e27746de878",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-legs-general-死契回响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.182",
+      "file": "item-182.webp",
+      "sha256": "aea044cf8c52906f0b7e26accc392cfba61238a1792076610c0575cbd7b62d5a",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-legs-pierce-死契箭线",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.183",
+      "file": "item-183.webp",
+      "sha256": "caa9c4446b4bbc07dc56cc57e4b47c3f18a0d95c9ebb5ad192b7f3587330971f",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-legs-pierce-贯通残响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.184",
+      "file": "item-184.webp",
+      "sha256": "b9cef4aa9f2954f1c39e90f5449a6e5178bf12790f9436dc304bd284b519e984",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-legs-spread-多重尾羽",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.185",
+      "file": "item-185.webp",
+      "sha256": "b3f7380ed1b4c2ae47ab69ffea7645b603365e80103c93c019c3a2a8afd2ef50",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-legs-spread-战场封锁",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.186",
+      "file": "item-186.webp",
+      "sha256": "1cb4ba48f94bd3d98e3ad215e6af2c1cf1985e6e336cf6ee96848a77b6ce10b5",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-necklace-general-死契回响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.187",
+      "file": "item-187.webp",
+      "sha256": "f168832dfd869a615d1c542fac4cb77ecc7d5d7a8200e148c802a03e988ec541",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-necklace-pierce-死契箭线",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.188",
+      "file": "item-188.webp",
+      "sha256": "72762baf675cfcc470decf69940b7e85ffa4478cda61a8be71e35263310f7b77",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-necklace-pierce-贯通残响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.189",
+      "file": "item-189.webp",
+      "sha256": "951b9c4689c32c91f6f405f45a9f63d5f7162233f281d6ded4bad474da4bbd0d",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-necklace-spread-多重尾羽",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.190",
+      "file": "item-190.webp",
+      "sha256": "bd7e39f026cf3114581eafe6c1c6c64260196848ea51538365f0082bbd70f359",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-necklace-spread-战场封锁",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.191",
+      "file": "item-191.webp",
+      "sha256": "55921a5dc1c2653c6d6ab5eee51cbdc2ae1d78013696dcc4b5dbc42becd099c8",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-ring1-general-死契回响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.192",
+      "file": "item-192.webp",
+      "sha256": "3923d8bc201d022947534069e0d1627eefa1dd9e573cda64d13d124a59b44e49",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-ring1-pierce-死契箭线",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.193",
+      "file": "item-193.webp",
+      "sha256": "585be6af2c2ac27b70c44554a7e11939bb7571f051d6a4b99a7f024497ebb0da",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-ring1-pierce-贯通残响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.194",
+      "file": "item-194.webp",
+      "sha256": "7526a4ee13cf72a9cdefad636362b438c6c36669805d72a5be13addefc6d28c4",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-ring1-spread-多重尾羽",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.195",
+      "file": "item-195.webp",
+      "sha256": "2c1e261200657c2f52c4e0b9b3040b8b7c58da75e8e18f1c296952042aeb8d89",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-ring1-spread-战场封锁",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.196",
+      "file": "item-196.webp",
+      "sha256": "45e25366811bd7855ded229247e51fa313bc78226b14cca49e236e44449e9264",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-ring2-general-死契回响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.197",
+      "file": "item-197.webp",
+      "sha256": "cd8e2138903cc537ee8a8f6cab928c7d0e583f134c29cd1b48638a0641db794f",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-ring2-pierce-死契箭线",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.198",
+      "file": "item-198.webp",
+      "sha256": "3969f8833279db989ce1ddd58bd23470b610f1ef95a148f45d11209058614125",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-ring2-pierce-贯通残响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.199",
+      "file": "item-199.webp",
+      "sha256": "d690da47d4f4a1553c52bed790925052ae33234738419e1a8a95ec26ccd41d2f",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-ring2-spread-多重尾羽",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.200",
+      "file": "item-200.webp",
+      "sha256": "df91e7dbc1059e3cb9c1cdd4ef99ea3a7aa6b464411613b7c9bc6dc8b68a6224",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-ring2-spread-战场封锁",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.201",
+      "file": "item-201.webp",
+      "sha256": "a0f8e8c70e9c02da41d9bb8c9baa59067f1752b95c8572a0b4453a39d0bebf90",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-shoulders-general-死契回响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.202",
+      "file": "item-202.webp",
+      "sha256": "5ed9ac20f6bfa6b9a7f0693d2562ffc7e5078ac75635a752ad0ac5469f8eced6",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-shoulders-pierce-死契箭线",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.203",
+      "file": "item-203.webp",
+      "sha256": "07c042669579ad75e5d43fc66f13b373b07ba815d0f24d99598a5d96c68803ee",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-shoulders-pierce-贯通残响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.204",
+      "file": "item-204.webp",
+      "sha256": "fd852a5b27e4a5ccfdd1e9a00d7cf1766685ca62a58ee6afcfc4e6b9d71485a7",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-shoulders-spread-多重尾羽",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.205",
+      "file": "item-205.webp",
+      "sha256": "2a5f231fdf1f151d9bff2656fb0d9158265109dd3083881315d622e948fb2a90",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-shoulders-spread-战场封锁",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.206",
+      "file": "item-206.webp",
+      "sha256": "54a10aff158762a6faded49da1c53e3480dfd08be6b18a337b220fd3b9a5cf3d",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-weapon-general-死契回响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.207",
+      "file": "item-207.webp",
+      "sha256": "b4c7d87f78be67ec9008ba191c4fdb759b19845fd9d6f90a3a5001d8972edbf9",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-weapon-pierce-死契箭线",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.208",
+      "file": "item-208.webp",
+      "sha256": "22a849c04b99541d342854d00d4f7b9b4673f721bb35a336cd9f6acece784682",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-weapon-pierce-贯通残响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.209",
+      "file": "item-209.webp",
+      "sha256": "1e8168c1ff2c34d5e9b021edbdf2ebbbbe6dacaa0081113563384838845afadb",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-weapon-spread-多重尾羽",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.210",
+      "file": "item-210.webp",
+      "sha256": "d2c4c69d63c0f81863e5efc5aabcffc6555c6df7137a223270d510c704ceb6c3",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-weapon-spread-战场封锁",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.211",
+      "file": "item-211.webp",
+      "sha256": "7e5892f600f953bb75cdcd18afef14b50abc1519867f834e32a0f88877446c1e",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-wrists-general-死契回响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.212",
+      "file": "item-212.webp",
+      "sha256": "df2843cd487be0a6971df03717c73353e7aa867c762034a9e0bf4bb8764da029",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-wrists-pierce-死契箭线",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.213",
+      "file": "item-213.webp",
+      "sha256": "b3ea3d040357a5798bb420cb4bb3185ff484efcdf96d7aff7401d83897adf829",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-wrists-pierce-贯通残响",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.214",
+      "file": "item-214.webp",
+      "sha256": "c9c5e30bc2f96244bda9d86ca06701bf43c91ed8138e7ff7b3f22e55ea5a8b4a",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-wrists-spread-多重尾羽",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.215",
+      "file": "item-215.webp",
+      "sha256": "34280497d6c28ee58815422183f9b7d10566ecfb68907be1d8777ce04a974e49",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-epic-wrists-spread-战场封锁",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.216",
+      "file": "item-216.webp",
+      "sha256": "56d10b6d4f211665baa0c053ccbe5dd2aa86cd11234a85d0333ce78ab96171ee",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-boots-pierce-审判之弦",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.217",
+      "file": "item-217.webp",
+      "sha256": "8f64059fc06894d2f98ae18b07fdc0d61f6af491ab99194f60808a7fa0148805",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-boots-spread-千羽王令",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.218",
+      "file": "item-218.webp",
+      "sha256": "bc285843a0b363f93c8144a40376c4cb851ce876373a9ab89aaa159cd2833687",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-chest-pierce-审判之弦",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.219",
+      "file": "item-219.webp",
+      "sha256": "8c737cb80b8715fa49af950293831aca7867e9f96a2469e52947411f8535b5ab",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-chest-spread-千羽王令",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.220",
+      "file": "item-220.webp",
+      "sha256": "c21e6f22f910c6bc8ceb8df643f984398b0edfe2d4d88f558022f161d921a217",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-cloak-pierce-审判之弦",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.221",
+      "file": "item-221.webp",
+      "sha256": "c608a5365e594693a777e8d65ca53388b1736bfca309eb9292c4052eec95adc4",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-cloak-spread-千羽王令",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.222",
+      "file": "item-222.webp",
+      "sha256": "fc03c7ecfcc27b5f0c169d552dbe3c6f0bf8313646a67336e40500c4b1a9ad5a",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-hands-pierce-审判之弦",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.223",
+      "file": "item-223.webp",
+      "sha256": "4e0e6407aad3c8322f7cf7f645d4c5f7904d96fe9e18a2e17179d42f0fcf3b21",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-hands-spread-千羽王令",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.224",
+      "file": "item-224.webp",
+      "sha256": "bcd2ddad55230da0d0dd22cf96e7f94812cf9ad39354db7b92e360c3d44023e0",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-helmet-pierce-审判之弦",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.225",
+      "file": "item-225.webp",
+      "sha256": "f0c84ee73efdba54a7bb65564af6d7e631f72d45275d128106ae309b8cf4e461",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-helmet-spread-千羽王令",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.226",
+      "file": "item-226.webp",
+      "sha256": "73452c05719755d4f5beeadd2463a44a12444c200eadb987fe7144109a0ac655",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-legs-pierce-审判之弦",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.227",
+      "file": "item-227.webp",
+      "sha256": "15b9c4e337ee6f50a44d42e0211c4391ddab7e75d3ea2f9e729e2612084fe16b",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-legs-spread-千羽王令",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.228",
+      "file": "item-228.webp",
+      "sha256": "8dc4e0887fa5a4998d462f899cb501a3c89eab39a6bb03a9a3210f8ed30aa593",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-necklace-pierce-审判之弦",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.229",
+      "file": "item-229.webp",
+      "sha256": "1e8ffceac58a5aa8dd473900886e9dd4946df0c4888249d710be21316fc4df4d",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-necklace-spread-千羽王令",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.230",
+      "file": "item-230.webp",
+      "sha256": "6d6cffa5dda7692676bf4d06a9d19a6499291e0c68769859972eec82d660650e",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-ring1-pierce-审判之弦",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.231",
+      "file": "item-231.webp",
+      "sha256": "43f89548be958d7776b12560b260310f10511c02e24fc8eceeac0bbd5c685d43",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-ring1-spread-千羽王令",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.232",
+      "file": "item-232.webp",
+      "sha256": "c7d6b8afb760e41b89a34a18df3d78569a87c1984b60a72326a1d8b30e220d12",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-ring2-pierce-审判之弦",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.233",
+      "file": "item-233.webp",
+      "sha256": "394874eda30bcd2fba0c1d1d9e005a870f3eaddbf2d68c5fb73d5f4206567080",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-ring2-spread-千羽王令",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.234",
+      "file": "item-234.webp",
+      "sha256": "02c8f6320bc51cc94fc1d9ae78b245bd7223ba933fba5f6ff0ffc0e004910adc",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-shoulders-pierce-审判之弦",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.235",
+      "file": "item-235.webp",
+      "sha256": "dc74ea771ac2b735d871ed4a637271cffd34a98de243f7cb95943c12374b3a47",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-shoulders-spread-千羽王令",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.236",
+      "file": "item-236.webp",
+      "sha256": "feaa97fc4866e6b97a74fccff5adce45e8369a3d43af324d6cb04b3c71f7f67a",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-weapon-pierce-审判之弦",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.237",
+      "file": "item-237.webp",
+      "sha256": "76e72c8a6f08e18bad15d3918f623e047936ef111ea717aad2016868e2eea198",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-weapon-spread-千羽王令",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.238",
+      "file": "item-238.webp",
+      "sha256": "42326c637596ad82799dd610cd1a3659556f2f468cf62037a87ee1118c0752aa",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-wrists-pierce-审判之弦",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "item.239",
+      "file": "item-239.webp",
+      "sha256": "2d25a1fec4feb50171a5ba825373e022d7589a1c5281c30c107949c87c2d812d",
+      "kind": "equipment",
+      "artKey": "other-set-associated/equipment-template-legendary-wrists-spread-千羽王令",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "material.ironScraps",
+      "file": "material-ironScraps.webp",
+      "sha256": "37655a49ebc6a1618fb7ba4acf80ed354178a701444763d9fae8d08945f2c253",
+      "kind": "material",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "material.crystalDust",
+      "file": "material-crystalDust.webp",
+      "sha256": "0f5ae90365b4b80357c6da7d1de0c51a169f2bf7bdb141878897d9c7af74a329",
+      "kind": "material",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "material.buildRune",
+      "file": "material-buildRune.webp",
+      "sha256": "7d79b57c0bc1ccff4fb0587eb776bfa62148b27958e4d29bd3fa5edb8c1723d4",
+      "kind": "material",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "material.contractAsh",
+      "file": "material-contractAsh.webp",
+      "sha256": "a5083e83d41bfd152a6fdf9e2f24a8eef60b82ac3e95f28d975b859685187a97",
+      "kind": "material",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "material.refinedIron",
+      "file": "material-refinedIron.webp",
+      "sha256": "3bd80a79b524965916da69e2452850b44d9e9fdcdf9588f85816888d24ce3983",
+      "kind": "material",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "material.buildShard",
+      "file": "material-buildShard.webp",
+      "sha256": "8c81946fd2c19998a978eda680bbbd8557edafc51f25151c1d92429cbd9c0e2f",
+      "kind": "material",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "material.skillPage",
+      "file": "material-skillPage.webp",
+      "sha256": "7b45c6a248323a04c1a102238df2ec8c249b839a38c446d9c92f6507b9a7e72d",
+      "kind": "material",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "material.legacyEmber",
+      "file": "material-legacyEmber.webp",
+      "sha256": "d0669cdecb20219331f85f52d921f81660388b9631417ac4279b4787081010a2",
+      "kind": "material",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "material.campaignSigil",
+      "file": "material-campaignSigil.webp",
+      "sha256": "38e1870f79142904681d8d177046a90a05f327090add56b2fd640f82ad36e1c1",
+      "kind": "material",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "material.legendaryCore",
+      "file": "material-legendaryCore.webp",
+      "sha256": "1f63a2615c4aa0b5905a10094e508a982efe4a6290a8c38ccc6faa7ee74ba38b",
+      "kind": "material",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "cover.1",
+      "file": "cover-1.webp",
+      "sha256": "f978146bfb31c58590b5b4e1a92b09f9e7795e3a4486eb3228830ad3e9e8aed4",
+      "kind": "campaign-cover",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "cover.2",
+      "file": "cover-2.webp",
+      "sha256": "a619b27525e983cc48accee71ea68ecdc1a64734e1d3d02ca36f606edacd4aa0",
+      "kind": "campaign-cover",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "cover.3",
+      "file": "cover-3.webp",
+      "sha256": "02d7dd6eb1180a0341140a6a7638e033d4a7c3850ac0a974ee5a581c3b0e8c19",
+      "kind": "campaign-cover",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "cover.4",
+      "file": "cover-4.webp",
+      "sha256": "a07a9798d8db98c3412d94d22792e08407eda6c3cc259c9b4934ace13b1ad615",
+      "kind": "campaign-cover",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "cover.5",
+      "file": "cover-5.webp",
+      "sha256": "d862989a6fe305daaaf62d62f04f77ae4d50c3c8fa4284575d05afefb1f26e35",
+      "kind": "campaign-cover",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "cover.6",
+      "file": "cover-6.webp",
+      "sha256": "f4b624f2188cdfa9803eba401fa25f3c5592956d5249dd93f17064620a3cd608",
+      "kind": "campaign-cover",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "cover.7",
+      "file": "cover-7.webp",
+      "sha256": "523dcf7cc9c46cabc4c2ba959c226b32cb073e3440cc3eb3b33be9109f0e8949",
+      "kind": "campaign-cover",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "cover.8",
+      "file": "cover-8.webp",
+      "sha256": "2b106665d5d12d0f998961a422dabaeac3fd83cb912181614dc28a8722c33dd5",
+      "kind": "campaign-cover",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "cover.9",
+      "file": "cover-9.webp",
+      "sha256": "6ec3e8a931fe7bc75a2816c81cbadc4b6845a92b029cedb19cc5ba17e37ffdef",
+      "kind": "campaign-cover",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    },
+    {
+      "id": "cover.10",
+      "file": "cover-10.webp",
+      "sha256": "b4cdbcd73507b34d5431e1bdd67a25d252ed71959228d57f29c702603e3634ee",
+      "kind": "campaign-cover",
+      "slice": null,
+      "borderWidths": null,
+      "fill": false
+    }
+  ],
+  "equipmentArt": {
+    "equipment-template-broken-weapon-general-裂纹": "item.88",
+    "equipment-template-broken-weapon-general-锈蚀": "item.88",
+    "equipment-template-broken-weapon-general-残破": "item.88",
+    "equipment-template-common-weapon-general-制式": "item.99",
+    "equipment-template-common-weapon-general-坚实": "item.99",
+    "equipment-template-common-weapon-general-均衡": "item.99",
+    "equipment-template-fine-weapon-general-灵巧": "item.121",
+    "equipment-template-fine-weapon-general-厚实": "item.121",
+    "equipment-template-fine-weapon-general-迅捷": "item.121",
+    "equipment-template-rare-weapon-pierce-锐锋": "item.143",
+    "equipment-template-rare-weapon-pierce-裂骨箭头": "item.143",
+    "equipment-template-rare-weapon-spread-密集羽簇": "item.154",
+    "equipment-template-rare-weapon-spread-扇面扩张": "item.154",
+    "equipment-template-rare-weapon-control-滞留法纹": "item.110",
+    "equipment-template-rare-weapon-control-蓝晶触媒": "item.110",
+    "equipment-template-rare-weapon-beast-兽群呼应": "item.77",
+    "equipment-template-rare-weapon-beast-猎兽齿印": "item.77",
+    "equipment-template-rare-weapon-general-蓝晶契约": "item.132",
+    "equipment-template-rare-weapon-general-处刑准备": "item.132",
+    "equipment-template-epic-weapon-pierce-贯通残响": "item.208",
+    "equipment-template-epic-weapon-pierce-死契箭线": "item.207",
+    "equipment-template-epic-weapon-spread-多重尾羽": "item.209",
+    "equipment-template-epic-weapon-spread-战场封锁": "item.210",
+    "equipment-template-epic-weapon-control-扩张法阵": "item.110",
+    "equipment-template-epic-weapon-control-滞留回响": "item.110",
+    "equipment-template-epic-weapon-beast-野性共鸣": "item.77",
+    "equipment-template-epic-weapon-beast-守护印记": "item.77",
+    "equipment-template-epic-weapon-general-死契回响": "item.206",
+    "equipment-template-legacy-weapon-pierce-死契处刑线": "item.39",
+    "equipment-template-legacy-weapon-spread-血羽封场": "item.27",
+    "equipment-template-legacy-weapon-control-契约领域": "item.51",
+    "equipment-template-legacy-weapon-beast-兽王契约": "item.15",
+    "equipment-template-legacy-weapon-general-赦免印记": "item.132",
+    "equipment-template-legendary-weapon-pierce-审判之弦": "item.236",
+    "equipment-template-legendary-weapon-spread-千羽王令": "item.237",
+    "equipment-template-legendary-weapon-control-禁域审判": "item.110",
+    "equipment-template-legendary-weapon-beast-万兽赦令": "item.77",
+    "equipment-template-legendary-weapon-general-终局赦令": "item.132",
+    "equipment-template-broken-helmet-general-裂纹": "item.83",
+    "equipment-template-broken-helmet-general-锈蚀": "item.83",
+    "equipment-template-broken-helmet-general-残破": "item.83",
+    "equipment-template-common-helmet-general-制式": "item.94",
+    "equipment-template-common-helmet-general-坚实": "item.94",
+    "equipment-template-common-helmet-general-均衡": "item.94",
+    "equipment-template-fine-helmet-general-灵巧": "item.116",
+    "equipment-template-fine-helmet-general-厚实": "item.116",
+    "equipment-template-fine-helmet-general-迅捷": "item.116",
+    "equipment-template-rare-helmet-pierce-锐锋": "item.138",
+    "equipment-template-rare-helmet-pierce-裂骨箭头": "item.138",
+    "equipment-template-rare-helmet-spread-密集羽簇": "item.149",
+    "equipment-template-rare-helmet-spread-扇面扩张": "item.149",
+    "equipment-template-rare-helmet-control-滞留法纹": "item.105",
+    "equipment-template-rare-helmet-control-蓝晶触媒": "item.105",
+    "equipment-template-rare-helmet-beast-兽群呼应": "item.72",
+    "equipment-template-rare-helmet-beast-猎兽齿印": "item.72",
+    "equipment-template-rare-helmet-general-蓝晶契约": "item.127",
+    "equipment-template-rare-helmet-general-处刑准备": "item.127",
+    "equipment-template-epic-helmet-pierce-贯通残响": "item.178",
+    "equipment-template-epic-helmet-pierce-死契箭线": "item.177",
+    "equipment-template-epic-helmet-spread-多重尾羽": "item.179",
+    "equipment-template-epic-helmet-spread-战场封锁": "item.180",
+    "equipment-template-epic-helmet-control-扩张法阵": "item.105",
+    "equipment-template-epic-helmet-control-滞留回响": "item.105",
+    "equipment-template-epic-helmet-beast-野性共鸣": "item.72",
+    "equipment-template-epic-helmet-beast-守护印记": "item.72",
+    "equipment-template-epic-helmet-general-死契回响": "item.176",
+    "equipment-template-legacy-helmet-pierce-死契处刑线": "item.35",
+    "equipment-template-legacy-helmet-spread-血羽封场": "item.23",
+    "equipment-template-legacy-helmet-control-契约领域": "item.49",
+    "equipment-template-legacy-helmet-beast-兽王契约": "item.13",
+    "equipment-template-legacy-helmet-general-赦免印记": "item.127",
+    "equipment-template-legendary-helmet-pierce-审判之弦": "item.224",
+    "equipment-template-legendary-helmet-spread-千羽王令": "item.225",
+    "equipment-template-legendary-helmet-control-禁域审判": "item.105",
+    "equipment-template-legendary-helmet-beast-万兽赦令": "item.72",
+    "equipment-template-legendary-helmet-general-终局赦令": "item.127",
+    "equipment-template-broken-chest-general-裂纹": "item.80",
+    "equipment-template-broken-chest-general-锈蚀": "item.80",
+    "equipment-template-broken-chest-general-残破": "item.80",
+    "equipment-template-common-chest-general-制式": "item.91",
+    "equipment-template-common-chest-general-坚实": "item.91",
+    "equipment-template-common-chest-general-均衡": "item.91",
+    "equipment-template-fine-chest-general-灵巧": "item.113",
+    "equipment-template-fine-chest-general-厚实": "item.113",
+    "equipment-template-fine-chest-general-迅捷": "item.113",
+    "equipment-template-rare-chest-pierce-锐锋": "item.135",
+    "equipment-template-rare-chest-pierce-裂骨箭头": "item.135",
+    "equipment-template-rare-chest-spread-密集羽簇": "item.146",
+    "equipment-template-rare-chest-spread-扇面扩张": "item.146",
+    "equipment-template-rare-chest-control-滞留法纹": "item.102",
+    "equipment-template-rare-chest-control-蓝晶触媒": "item.102",
+    "equipment-template-rare-chest-beast-兽群呼应": "item.69",
+    "equipment-template-rare-chest-beast-猎兽齿印": "item.69",
+    "equipment-template-rare-chest-general-蓝晶契约": "item.124",
+    "equipment-template-rare-chest-general-处刑准备": "item.124",
+    "equipment-template-epic-chest-pierce-贯通残响": "item.163",
+    "equipment-template-epic-chest-pierce-死契箭线": "item.162",
+    "equipment-template-epic-chest-spread-多重尾羽": "item.164",
+    "equipment-template-epic-chest-spread-战场封锁": "item.165",
+    "equipment-template-epic-chest-control-扩张法阵": "item.102",
+    "equipment-template-epic-chest-control-滞留回响": "item.102",
+    "equipment-template-epic-chest-beast-野性共鸣": "item.69",
+    "equipment-template-epic-chest-beast-守护印记": "item.69",
+    "equipment-template-epic-chest-general-死契回响": "item.161",
+    "equipment-template-legacy-chest-pierce-死契处刑线": "item.34",
+    "equipment-template-legacy-chest-spread-血羽封场": "item.22",
+    "equipment-template-legacy-chest-control-契约领域": "item.47",
+    "equipment-template-legacy-chest-beast-兽王契约": "item.11",
+    "equipment-template-legacy-chest-general-赦免印记": "item.124",
+    "equipment-template-legendary-chest-pierce-审判之弦": "item.218",
+    "equipment-template-legendary-chest-spread-千羽王令": "item.219",
+    "equipment-template-legendary-chest-control-禁域审判": "item.102",
+    "equipment-template-legendary-chest-beast-万兽赦令": "item.69",
+    "equipment-template-legendary-chest-general-终局赦令": "item.124",
+    "equipment-template-broken-shoulders-general-裂纹": "item.87",
+    "equipment-template-broken-shoulders-general-锈蚀": "item.87",
+    "equipment-template-broken-shoulders-general-残破": "item.87",
+    "equipment-template-common-shoulders-general-制式": "item.98",
+    "equipment-template-common-shoulders-general-坚实": "item.98",
+    "equipment-template-common-shoulders-general-均衡": "item.98",
+    "equipment-template-fine-shoulders-general-灵巧": "item.120",
+    "equipment-template-fine-shoulders-general-厚实": "item.120",
+    "equipment-template-fine-shoulders-general-迅捷": "item.120",
+    "equipment-template-rare-shoulders-pierce-锐锋": "item.142",
+    "equipment-template-rare-shoulders-pierce-裂骨箭头": "item.142",
+    "equipment-template-rare-shoulders-spread-密集羽簇": "item.153",
+    "equipment-template-rare-shoulders-spread-扇面扩张": "item.153",
+    "equipment-template-rare-shoulders-control-滞留法纹": "item.109",
+    "equipment-template-rare-shoulders-control-蓝晶触媒": "item.109",
+    "equipment-template-rare-shoulders-beast-兽群呼应": "item.76",
+    "equipment-template-rare-shoulders-beast-猎兽齿印": "item.76",
+    "equipment-template-rare-shoulders-general-蓝晶契约": "item.131",
+    "equipment-template-rare-shoulders-general-处刑准备": "item.131",
+    "equipment-template-epic-shoulders-pierce-贯通残响": "item.203",
+    "equipment-template-epic-shoulders-pierce-死契箭线": "item.202",
+    "equipment-template-epic-shoulders-spread-多重尾羽": "item.204",
+    "equipment-template-epic-shoulders-spread-战场封锁": "item.205",
+    "equipment-template-epic-shoulders-control-扩张法阵": "item.109",
+    "equipment-template-epic-shoulders-control-滞留回响": "item.109",
+    "equipment-template-epic-shoulders-beast-野性共鸣": "item.76",
+    "equipment-template-epic-shoulders-beast-守护印记": "item.76",
+    "equipment-template-epic-shoulders-general-死契回响": "item.201",
+    "equipment-template-legacy-shoulders-pierce-死契处刑线": "item.38",
+    "equipment-template-legacy-shoulders-spread-血羽封场": "item.26",
+    "equipment-template-legacy-shoulders-control-契约领域": "item.50",
+    "equipment-template-legacy-shoulders-beast-兽王契约": "item.14",
+    "equipment-template-legacy-shoulders-general-赦免印记": "item.131",
+    "equipment-template-legendary-shoulders-pierce-审判之弦": "item.234",
+    "equipment-template-legendary-shoulders-spread-千羽王令": "item.235",
+    "equipment-template-legendary-shoulders-control-禁域审判": "item.109",
+    "equipment-template-legendary-shoulders-beast-万兽赦令": "item.76",
+    "equipment-template-legendary-shoulders-general-终局赦令": "item.131",
+    "equipment-template-broken-wrists-general-裂纹": "item.89",
+    "equipment-template-broken-wrists-general-锈蚀": "item.89",
+    "equipment-template-broken-wrists-general-残破": "item.89",
+    "equipment-template-common-wrists-general-制式": "item.100",
+    "equipment-template-common-wrists-general-坚实": "item.100",
+    "equipment-template-common-wrists-general-均衡": "item.100",
+    "equipment-template-fine-wrists-general-灵巧": "item.122",
+    "equipment-template-fine-wrists-general-厚实": "item.122",
+    "equipment-template-fine-wrists-general-迅捷": "item.122",
+    "equipment-template-rare-wrists-pierce-锐锋": "item.144",
+    "equipment-template-rare-wrists-pierce-裂骨箭头": "item.144",
+    "equipment-template-rare-wrists-spread-密集羽簇": "item.155",
+    "equipment-template-rare-wrists-spread-扇面扩张": "item.155",
+    "equipment-template-rare-wrists-control-滞留法纹": "item.111",
+    "equipment-template-rare-wrists-control-蓝晶触媒": "item.111",
+    "equipment-template-rare-wrists-beast-兽群呼应": "item.78",
+    "equipment-template-rare-wrists-beast-猎兽齿印": "item.78",
+    "equipment-template-rare-wrists-general-蓝晶契约": "item.133",
+    "equipment-template-rare-wrists-general-处刑准备": "item.133",
+    "equipment-template-epic-wrists-pierce-贯通残响": "item.213",
+    "equipment-template-epic-wrists-pierce-死契箭线": "item.212",
+    "equipment-template-epic-wrists-spread-多重尾羽": "item.214",
+    "equipment-template-epic-wrists-spread-战场封锁": "item.215",
+    "equipment-template-epic-wrists-control-扩张法阵": "item.111",
+    "equipment-template-epic-wrists-control-滞留回响": "item.111",
+    "equipment-template-epic-wrists-beast-野性共鸣": "item.78",
+    "equipment-template-epic-wrists-beast-守护印记": "item.78",
+    "equipment-template-epic-wrists-general-死契回响": "item.211",
+    "equipment-template-legacy-wrists-pierce-死契处刑线": "item.45",
+    "equipment-template-legacy-wrists-spread-血羽封场": "item.33",
+    "equipment-template-legacy-wrists-control-契约领域": "item.57",
+    "equipment-template-legacy-wrists-beast-兽王契约": "item.21",
+    "equipment-template-legacy-wrists-general-赦免印记": "item.133",
+    "equipment-template-legendary-wrists-pierce-审判之弦": "item.238",
+    "equipment-template-legendary-wrists-spread-千羽王令": "item.239",
+    "equipment-template-legendary-wrists-control-禁域审判": "item.111",
+    "equipment-template-legendary-wrists-beast-万兽赦令": "item.78",
+    "equipment-template-legendary-wrists-general-终局赦令": "item.133",
+    "equipment-template-broken-hands-general-裂纹": "item.82",
+    "equipment-template-broken-hands-general-锈蚀": "item.82",
+    "equipment-template-broken-hands-general-残破": "item.82",
+    "equipment-template-common-hands-general-制式": "item.93",
+    "equipment-template-common-hands-general-坚实": "item.93",
+    "equipment-template-common-hands-general-均衡": "item.93",
+    "equipment-template-fine-hands-general-灵巧": "item.115",
+    "equipment-template-fine-hands-general-厚实": "item.115",
+    "equipment-template-fine-hands-general-迅捷": "item.115",
+    "equipment-template-rare-hands-pierce-锐锋": "item.137",
+    "equipment-template-rare-hands-pierce-裂骨箭头": "item.137",
+    "equipment-template-rare-hands-spread-密集羽簇": "item.148",
+    "equipment-template-rare-hands-spread-扇面扩张": "item.148",
+    "equipment-template-rare-hands-control-滞留法纹": "item.104",
+    "equipment-template-rare-hands-control-蓝晶触媒": "item.104",
+    "equipment-template-rare-hands-beast-兽群呼应": "item.71",
+    "equipment-template-rare-hands-beast-猎兽齿印": "item.71",
+    "equipment-template-rare-hands-general-蓝晶契约": "item.126",
+    "equipment-template-rare-hands-general-处刑准备": "item.126",
+    "equipment-template-epic-hands-pierce-贯通残响": "item.173",
+    "equipment-template-epic-hands-pierce-死契箭线": "item.172",
+    "equipment-template-epic-hands-spread-多重尾羽": "item.174",
+    "equipment-template-epic-hands-spread-战场封锁": "item.175",
+    "equipment-template-epic-hands-control-扩张法阵": "item.104",
+    "equipment-template-epic-hands-control-滞留回响": "item.104",
+    "equipment-template-epic-hands-beast-野性共鸣": "item.71",
+    "equipment-template-epic-hands-beast-守护印记": "item.71",
+    "equipment-template-epic-hands-general-死契回响": "item.171",
+    "equipment-template-legacy-hands-pierce-死契处刑线": "item.42",
+    "equipment-template-legacy-hands-spread-血羽封场": "item.30",
+    "equipment-template-legacy-hands-control-契约领域": "item.48",
+    "equipment-template-legacy-hands-beast-兽王契约": "item.12",
+    "equipment-template-legacy-hands-general-赦免印记": "item.126",
+    "equipment-template-legendary-hands-pierce-审判之弦": "item.222",
+    "equipment-template-legendary-hands-spread-千羽王令": "item.223",
+    "equipment-template-legendary-hands-control-禁域审判": "item.104",
+    "equipment-template-legendary-hands-beast-万兽赦令": "item.71",
+    "equipment-template-legendary-hands-general-终局赦令": "item.126",
+    "equipment-template-broken-legs-general-裂纹": "item.84",
+    "equipment-template-broken-legs-general-锈蚀": "item.84",
+    "equipment-template-broken-legs-general-残破": "item.84",
+    "equipment-template-common-legs-general-制式": "item.95",
+    "equipment-template-common-legs-general-坚实": "item.95",
+    "equipment-template-common-legs-general-均衡": "item.95",
+    "equipment-template-fine-legs-general-灵巧": "item.117",
+    "equipment-template-fine-legs-general-厚实": "item.117",
+    "equipment-template-fine-legs-general-迅捷": "item.117",
+    "equipment-template-rare-legs-pierce-锐锋": "item.139",
+    "equipment-template-rare-legs-pierce-裂骨箭头": "item.139",
+    "equipment-template-rare-legs-spread-密集羽簇": "item.150",
+    "equipment-template-rare-legs-spread-扇面扩张": "item.150",
+    "equipment-template-rare-legs-control-滞留法纹": "item.106",
+    "equipment-template-rare-legs-control-蓝晶触媒": "item.106",
+    "equipment-template-rare-legs-beast-兽群呼应": "item.73",
+    "equipment-template-rare-legs-beast-猎兽齿印": "item.73",
+    "equipment-template-rare-legs-general-蓝晶契约": "item.128",
+    "equipment-template-rare-legs-general-处刑准备": "item.128",
+    "equipment-template-epic-legs-pierce-贯通残响": "item.183",
+    "equipment-template-epic-legs-pierce-死契箭线": "item.182",
+    "equipment-template-epic-legs-spread-多重尾羽": "item.184",
+    "equipment-template-epic-legs-spread-战场封锁": "item.185",
+    "equipment-template-epic-legs-control-扩张法阵": "item.106",
+    "equipment-template-epic-legs-control-滞留回响": "item.106",
+    "equipment-template-epic-legs-beast-野性共鸣": "item.73",
+    "equipment-template-epic-legs-beast-守护印记": "item.73",
+    "equipment-template-epic-legs-general-死契回响": "item.181",
+    "equipment-template-legacy-legs-pierce-死契处刑线": "item.43",
+    "equipment-template-legacy-legs-spread-血羽封场": "item.31",
+    "equipment-template-legacy-legs-control-契约领域": "item.53",
+    "equipment-template-legacy-legs-beast-兽王契约": "item.17",
+    "equipment-template-legacy-legs-general-赦免印记": "item.128",
+    "equipment-template-legendary-legs-pierce-审判之弦": "item.226",
+    "equipment-template-legendary-legs-spread-千羽王令": "item.227",
+    "equipment-template-legendary-legs-control-禁域审判": "item.106",
+    "equipment-template-legendary-legs-beast-万兽赦令": "item.73",
+    "equipment-template-legendary-legs-general-终局赦令": "item.128",
+    "equipment-template-broken-boots-general-裂纹": "item.79",
+    "equipment-template-broken-boots-general-锈蚀": "item.79",
+    "equipment-template-broken-boots-general-残破": "item.79",
+    "equipment-template-common-boots-general-制式": "item.90",
+    "equipment-template-common-boots-general-坚实": "item.90",
+    "equipment-template-common-boots-general-均衡": "item.90",
+    "equipment-template-fine-boots-general-灵巧": "item.112",
+    "equipment-template-fine-boots-general-厚实": "item.112",
+    "equipment-template-fine-boots-general-迅捷": "item.112",
+    "equipment-template-rare-boots-pierce-锐锋": "item.134",
+    "equipment-template-rare-boots-pierce-裂骨箭头": "item.134",
+    "equipment-template-rare-boots-spread-密集羽簇": "item.145",
+    "equipment-template-rare-boots-spread-扇面扩张": "item.145",
+    "equipment-template-rare-boots-control-滞留法纹": "item.101",
+    "equipment-template-rare-boots-control-蓝晶触媒": "item.101",
+    "equipment-template-rare-boots-beast-兽群呼应": "item.68",
+    "equipment-template-rare-boots-beast-猎兽齿印": "item.68",
+    "equipment-template-rare-boots-general-蓝晶契约": "item.123",
+    "equipment-template-rare-boots-general-处刑准备": "item.123",
+    "equipment-template-epic-boots-pierce-贯通残响": "item.158",
+    "equipment-template-epic-boots-pierce-死契箭线": "item.157",
+    "equipment-template-epic-boots-spread-多重尾羽": "item.159",
+    "equipment-template-epic-boots-spread-战场封锁": "item.160",
+    "equipment-template-epic-boots-control-扩张法阵": "item.101",
+    "equipment-template-epic-boots-control-滞留回响": "item.101",
+    "equipment-template-epic-boots-beast-野性共鸣": "item.68",
+    "equipment-template-epic-boots-beast-守护印记": "item.68",
+    "equipment-template-epic-boots-general-死契回响": "item.156",
+    "equipment-template-legacy-boots-pierce-死契处刑线": "item.40",
+    "equipment-template-legacy-boots-spread-血羽封场": "item.28",
+    "equipment-template-legacy-boots-control-契约领域": "item.46",
+    "equipment-template-legacy-boots-beast-兽王契约": "item.10",
+    "equipment-template-legacy-boots-general-赦免印记": "item.123",
+    "equipment-template-legendary-boots-pierce-审判之弦": "item.216",
+    "equipment-template-legendary-boots-spread-千羽王令": "item.217",
+    "equipment-template-legendary-boots-control-禁域审判": "item.101",
+    "equipment-template-legendary-boots-beast-万兽赦令": "item.68",
+    "equipment-template-legendary-boots-general-终局赦令": "item.123",
+    "equipment-template-broken-ring1-general-裂纹": "item.86",
+    "equipment-template-broken-ring1-general-锈蚀": "item.86",
+    "equipment-template-broken-ring1-general-残破": "item.86",
+    "equipment-template-common-ring1-general-制式": "item.97",
+    "equipment-template-common-ring1-general-坚实": "item.97",
+    "equipment-template-common-ring1-general-均衡": "item.97",
+    "equipment-template-fine-ring1-general-灵巧": "item.119",
+    "equipment-template-fine-ring1-general-厚实": "item.119",
+    "equipment-template-fine-ring1-general-迅捷": "item.119",
+    "equipment-template-rare-ring1-pierce-锐锋": "item.141",
+    "equipment-template-rare-ring1-pierce-裂骨箭头": "item.141",
+    "equipment-template-rare-ring1-spread-密集羽簇": "item.152",
+    "equipment-template-rare-ring1-spread-扇面扩张": "item.152",
+    "equipment-template-rare-ring1-control-滞留法纹": "item.108",
+    "equipment-template-rare-ring1-control-蓝晶触媒": "item.108",
+    "equipment-template-rare-ring1-beast-兽群呼应": "item.75",
+    "equipment-template-rare-ring1-beast-猎兽齿印": "item.75",
+    "equipment-template-rare-ring1-general-蓝晶契约": "item.130",
+    "equipment-template-rare-ring1-general-处刑准备": "item.130",
+    "equipment-template-epic-ring1-pierce-贯通残响": "item.193",
+    "equipment-template-epic-ring1-pierce-死契箭线": "item.192",
+    "equipment-template-epic-ring1-spread-多重尾羽": "item.194",
+    "equipment-template-epic-ring1-spread-战场封锁": "item.195",
+    "equipment-template-epic-ring1-control-扩张法阵": "item.108",
+    "equipment-template-epic-ring1-control-滞留回响": "item.108",
+    "equipment-template-epic-ring1-beast-野性共鸣": "item.75",
+    "equipment-template-epic-ring1-beast-守护印记": "item.75",
+    "equipment-template-epic-ring1-general-死契回响": "item.191",
+    "equipment-template-legacy-ring1-pierce-死契处刑线": "item.37",
+    "equipment-template-legacy-ring1-spread-血羽封场": "item.25",
+    "equipment-template-legacy-ring1-control-契约领域": "item.55",
+    "equipment-template-legacy-ring1-beast-兽王契约": "item.19",
+    "equipment-template-legacy-ring1-general-赦免印记": "item.130",
+    "equipment-template-legendary-ring1-pierce-审判之弦": "item.230",
+    "equipment-template-legendary-ring1-spread-千羽王令": "item.231",
+    "equipment-template-legendary-ring1-control-禁域审判": "item.108",
+    "equipment-template-legendary-ring1-beast-万兽赦令": "item.75",
+    "equipment-template-legendary-ring1-general-终局赦令": "item.130",
+    "equipment-template-broken-ring2-general-裂纹": "item.86",
+    "equipment-template-broken-ring2-general-锈蚀": "item.86",
+    "equipment-template-broken-ring2-general-残破": "item.86",
+    "equipment-template-common-ring2-general-制式": "item.97",
+    "equipment-template-common-ring2-general-坚实": "item.97",
+    "equipment-template-common-ring2-general-均衡": "item.97",
+    "equipment-template-fine-ring2-general-灵巧": "item.119",
+    "equipment-template-fine-ring2-general-厚实": "item.119",
+    "equipment-template-fine-ring2-general-迅捷": "item.119",
+    "equipment-template-rare-ring2-pierce-锐锋": "item.141",
+    "equipment-template-rare-ring2-pierce-裂骨箭头": "item.141",
+    "equipment-template-rare-ring2-spread-密集羽簇": "item.152",
+    "equipment-template-rare-ring2-spread-扇面扩张": "item.152",
+    "equipment-template-rare-ring2-control-滞留法纹": "item.108",
+    "equipment-template-rare-ring2-control-蓝晶触媒": "item.108",
+    "equipment-template-rare-ring2-beast-兽群呼应": "item.75",
+    "equipment-template-rare-ring2-beast-猎兽齿印": "item.75",
+    "equipment-template-rare-ring2-general-蓝晶契约": "item.130",
+    "equipment-template-rare-ring2-general-处刑准备": "item.130",
+    "equipment-template-epic-ring2-pierce-贯通残响": "item.198",
+    "equipment-template-epic-ring2-pierce-死契箭线": "item.197",
+    "equipment-template-epic-ring2-spread-多重尾羽": "item.199",
+    "equipment-template-epic-ring2-spread-战场封锁": "item.200",
+    "equipment-template-epic-ring2-control-扩张法阵": "item.108",
+    "equipment-template-epic-ring2-control-滞留回响": "item.108",
+    "equipment-template-epic-ring2-beast-野性共鸣": "item.75",
+    "equipment-template-epic-ring2-beast-守护印记": "item.75",
+    "equipment-template-epic-ring2-general-死契回响": "item.196",
+    "equipment-template-legacy-ring2-pierce-死契处刑线": "item.44",
+    "equipment-template-legacy-ring2-spread-血羽封场": "item.32",
+    "equipment-template-legacy-ring2-control-契约领域": "item.56",
+    "equipment-template-legacy-ring2-beast-兽王契约": "item.20",
+    "equipment-template-legacy-ring2-general-赦免印记": "item.130",
+    "equipment-template-legendary-ring2-pierce-审判之弦": "item.232",
+    "equipment-template-legendary-ring2-spread-千羽王令": "item.233",
+    "equipment-template-legendary-ring2-control-禁域审判": "item.108",
+    "equipment-template-legendary-ring2-beast-万兽赦令": "item.75",
+    "equipment-template-legendary-ring2-general-终局赦令": "item.130",
+    "equipment-template-broken-cloak-general-裂纹": "item.81",
+    "equipment-template-broken-cloak-general-锈蚀": "item.81",
+    "equipment-template-broken-cloak-general-残破": "item.81",
+    "equipment-template-common-cloak-general-制式": "item.92",
+    "equipment-template-common-cloak-general-坚实": "item.92",
+    "equipment-template-common-cloak-general-均衡": "item.92",
+    "equipment-template-fine-cloak-general-灵巧": "item.114",
+    "equipment-template-fine-cloak-general-厚实": "item.114",
+    "equipment-template-fine-cloak-general-迅捷": "item.114",
+    "equipment-template-rare-cloak-pierce-锐锋": "item.136",
+    "equipment-template-rare-cloak-pierce-裂骨箭头": "item.136",
+    "equipment-template-rare-cloak-spread-密集羽簇": "item.147",
+    "equipment-template-rare-cloak-spread-扇面扩张": "item.147",
+    "equipment-template-rare-cloak-control-滞留法纹": "item.103",
+    "equipment-template-rare-cloak-control-蓝晶触媒": "item.103",
+    "equipment-template-rare-cloak-beast-兽群呼应": "item.70",
+    "equipment-template-rare-cloak-beast-猎兽齿印": "item.70",
+    "equipment-template-rare-cloak-general-蓝晶契约": "item.125",
+    "equipment-template-rare-cloak-general-处刑准备": "item.125",
+    "equipment-template-epic-cloak-pierce-贯通残响": "item.168",
+    "equipment-template-epic-cloak-pierce-死契箭线": "item.167",
+    "equipment-template-epic-cloak-spread-多重尾羽": "item.169",
+    "equipment-template-epic-cloak-spread-战场封锁": "item.170",
+    "equipment-template-epic-cloak-control-扩张法阵": "item.103",
+    "equipment-template-epic-cloak-control-滞留回响": "item.103",
+    "equipment-template-epic-cloak-beast-野性共鸣": "item.70",
+    "equipment-template-epic-cloak-beast-守护印记": "item.70",
+    "equipment-template-epic-cloak-general-死契回响": "item.166",
+    "equipment-template-legacy-cloak-pierce-死契处刑线": "item.41",
+    "equipment-template-legacy-cloak-spread-血羽封场": "item.29",
+    "equipment-template-legacy-cloak-control-契约领域": "item.52",
+    "equipment-template-legacy-cloak-beast-兽王契约": "item.16",
+    "equipment-template-legacy-cloak-general-赦免印记": "item.125",
+    "equipment-template-legendary-cloak-pierce-审判之弦": "item.220",
+    "equipment-template-legendary-cloak-spread-千羽王令": "item.221",
+    "equipment-template-legendary-cloak-control-禁域审判": "item.103",
+    "equipment-template-legendary-cloak-beast-万兽赦令": "item.70",
+    "equipment-template-legendary-cloak-general-终局赦令": "item.125",
+    "equipment-template-broken-necklace-general-裂纹": "item.85",
+    "equipment-template-broken-necklace-general-锈蚀": "item.85",
+    "equipment-template-broken-necklace-general-残破": "item.85",
+    "equipment-template-common-necklace-general-制式": "item.96",
+    "equipment-template-common-necklace-general-坚实": "item.96",
+    "equipment-template-common-necklace-general-均衡": "item.96",
+    "equipment-template-fine-necklace-general-灵巧": "item.118",
+    "equipment-template-fine-necklace-general-厚实": "item.118",
+    "equipment-template-fine-necklace-general-迅捷": "item.118",
+    "equipment-template-rare-necklace-pierce-锐锋": "item.140",
+    "equipment-template-rare-necklace-pierce-裂骨箭头": "item.140",
+    "equipment-template-rare-necklace-spread-密集羽簇": "item.151",
+    "equipment-template-rare-necklace-spread-扇面扩张": "item.151",
+    "equipment-template-rare-necklace-control-滞留法纹": "item.107",
+    "equipment-template-rare-necklace-control-蓝晶触媒": "item.107",
+    "equipment-template-rare-necklace-beast-兽群呼应": "item.74",
+    "equipment-template-rare-necklace-beast-猎兽齿印": "item.74",
+    "equipment-template-rare-necklace-general-蓝晶契约": "item.129",
+    "equipment-template-rare-necklace-general-处刑准备": "item.129",
+    "equipment-template-epic-necklace-pierce-贯通残响": "item.188",
+    "equipment-template-epic-necklace-pierce-死契箭线": "item.187",
+    "equipment-template-epic-necklace-spread-多重尾羽": "item.189",
+    "equipment-template-epic-necklace-spread-战场封锁": "item.190",
+    "equipment-template-epic-necklace-control-扩张法阵": "item.107",
+    "equipment-template-epic-necklace-control-滞留回响": "item.107",
+    "equipment-template-epic-necklace-beast-野性共鸣": "item.74",
+    "equipment-template-epic-necklace-beast-守护印记": "item.74",
+    "equipment-template-epic-necklace-general-死契回响": "item.186",
+    "equipment-template-legacy-necklace-pierce-死契处刑线": "item.36",
+    "equipment-template-legacy-necklace-spread-血羽封场": "item.24",
+    "equipment-template-legacy-necklace-control-契约领域": "item.54",
+    "equipment-template-legacy-necklace-beast-兽王契约": "item.18",
+    "equipment-template-legacy-necklace-general-赦免印记": "item.129",
+    "equipment-template-legendary-necklace-pierce-审判之弦": "item.228",
+    "equipment-template-legendary-necklace-spread-千羽王令": "item.229",
+    "equipment-template-legendary-necklace-control-禁域审判": "item.107",
+    "equipment-template-legendary-necklace-beast-万兽赦令": "item.74",
+    "equipment-template-legendary-necklace-general-终局赦令": "item.129",
+    "boss-legacy-weapon-1": "item.0",
+    "boss-legacy-weapon-2": "item.2",
+    "boss-legacy-weapon-3": "item.3",
+    "boss-legacy-weapon-4": "item.4",
+    "boss-legacy-weapon-5": "item.5",
+    "boss-legacy-weapon-6": "item.6",
+    "boss-legacy-weapon-7": "item.7",
+    "boss-legacy-weapon-8": "item.8",
+    "boss-legacy-weapon-9": "item.9",
+    "boss-legacy-weapon-10": "item.1"
+  }
+}

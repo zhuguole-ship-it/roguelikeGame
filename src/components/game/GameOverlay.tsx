@@ -7,16 +7,11 @@ import { ARCHER_FIXED_PASSIVE, SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } fr
 import { getActiveSkillRuntimePresentation } from '../../game/archerSkillEvolution'
 import { PLAYER_ARCHER_ACTIONS, getPlayerArcherPublicFrameSrc } from '../../game/archerAssetFrames'
 import { developerAssetEntities, type DeveloperAssetAction } from '../../game/assetManifest'
-import {
-  CAMPAIGN_DIFFICULTY_ORDER,
-  getCampaignDifficultyLabel,
-  getCampaignDifficultyConfig,
-  getCampaignDifficultyUnlockHint,
-  isCampaignDifficultyCompleted,
-  isCampaignDifficultyUnlocked,
-} from '../../game/difficulty'
+import { getCampaignDifficultyLabel } from '../../game/difficulty'
 import { getCampaignIndex } from '../../game/config'
-import { CAMPAIGN_MONSTER_THEMES, CORROSIVE_SLIME_ARCHETYPE, getCampaignLootProfile, type CampaignEnemyArchetype } from '../../game/campaignMonsters'
+import { CAMPAIGN_MONSTER_THEMES, CORROSIVE_SLIME_ARCHETYPE, type CampaignEnemyArchetype } from '../../game/campaignMonsters'
+import { PreparationOverlay } from './preparation/PreparationOverlay'
+import type { PreparationDetailPresentation } from './preparation/PreparationEquipmentDetail'
 import {
   EQUIPMENT_MATERIAL_IDS,
   EQUIPMENT_MATERIAL_LABELS,
@@ -91,14 +86,20 @@ import {
 import { ArcherEvolutionDetailSkillGrid, ArcherEvolutionGuide, createArcherEvolutionGuideCatalog, type ArcherEvolutionGuideCatalog } from './ArcherEvolutionGuide'
 import { RunSettlementOverlay } from './RunSettlementOverlay'
 import { EquipmentCodex } from './EquipmentCodex'
-import { getDeathBloodSetEffectCopy } from './deathBloodEquipmentCodexCopy'
+import { getDeathBloodSetEffectCopy, getDeathBloodSingleEffectCopy } from './deathBloodEquipmentCodexCopy'
+import { BEAST_CONTRACT_DOMAIN_SET_NAME, getBeastContractDomainSetEffectCopy, getBeastContractDomainSingleEffectCopy } from './beastContractDomainEquipmentCopy'
+import { detailAffixValue, detailSecondsValue, detailStatIcon, detailStatLabel, isReplacedPreparationBonusZero, signedDetailValue } from './preparation/detailPresentation'
+import { preparationModifierLines } from './preparation/equipmentModifierScope'
+import { applyTwoLegendaryBowsCopy } from './preparation/twoLegendaryBowsCopy'
+import { applyPreparationEquipmentCopy } from './preparation/allEquipmentCopy'
+import { detailFieldIcon } from './preparation/detailIconSemantics'
 import { BeastContractDomainEquipmentDetails } from './BeastContractDomainEquipmentDetails'
 import { ArcherCombatTalentV3Catalog } from './ArcherTalentV3Presentation'
 import { CampaignRewardSnapshotSummary } from './CampaignRewardPresentation'
 import { SceneAssetImage } from './SceneAssetImage'
 import { ForestHomepage } from './ForestHomepage'
 
-type VillageModal = 'campaign' | 'shop' | 'guide' | 'character' | 'inventory' | 'settings' | 'hunter-home' | null
+type VillageModal = 'campaign' | 'shop' | 'guide' | 'character' | 'character-details' | 'inventory' | 'settings' | 'hunter-home' | null
 type VillageModalId = Exclude<VillageModal, null>
 type GuideTab = 'career' | 'skills' | 'monsters'
 type HunterHomeTab = 'functional-talents' | 'combat-talents' | 'equipment-codex' | 'history'
@@ -1044,7 +1045,6 @@ const getMonsterGuideAssetAction = (monsterId: string): DeveloperAssetAction | u
     ?? assetEntity?.actions.find((action) => action.guideFrame)
 }
 
-const formatPortalDropHint = (hint: string) => hint.replace(/^适合刷/, '').replace(/[。.]$/, '')
 
 const getUniqueCampaignMonsters = (theme: (typeof CAMPAIGN_MONSTER_THEMES)[number]) => {
   const allMonsters = [CORROSIVE_SLIME_ARCHETYPE, ...theme.normalPool, ...theme.elitePool, theme.boss]
@@ -1275,6 +1275,63 @@ const getWarehouseEquipmentSetEffects = (item: EquipmentItem) => {
     return description ? [`${threshold.threshold} 件：${description}`] : []
   }) ?? []
   return set && effects.length > 0 ? { name: set.name, effects } : null
+}
+
+/** Preparation-only adapter. Warehouse/tooltip formatting stays unchanged. */
+export const getPreparationDetailPresentation = (
+  item: EquipmentItem,
+  equippedItems: Partial<Record<EquipmentSlot, EquipmentItem>>,
+): PreparationDetailPresentation => {
+  const domain = getBeastContractDomainEquipmentPresentation(item.equipmentId)
+  const loadout = getBeastContractDomainLoadoutSnapshot(equippedItems)
+  const template = item.equipmentId ? getEquipmentTemplateCodexPresentation(item.equipmentId) : null
+  const deathBlood = template?.deathBloodPresentation
+  const singleEffect = deathBlood && deathBlood.identity !== 'excluded' ? getDeathBloodSingleEffectCopy(deathBlood.definitionId) : null
+  const effects: PreparationDetailPresentation['effects'][number][] = domain ? [] : item.modifiers.map((modifier,index)=>({
+    id:`modifier:${index}`,source:`modifiers[${index}].${modifier.type}`,title:formatEquipmentModifier(modifier),icon:detailFieldIcon(`modifiers.${modifier.type}`),lines:preparationModifierLines(modifier),
+  }))
+  if(item.specialBlue) effects.push({id:'specialBlue',source:'specialBlue',title:'特殊蓝',icon:detailFieldIcon(`specialBlue.${item.specialBlue.type}`),lines:[formatSpecialBlueDetail(item.specialBlue.type,item.specialBlue.percent)]})
+  if(singleEffect) effects.push({id:'singleEffect',source:`deathBloodPresentation.${deathBlood!.definitionId}`,title:'单件效果',icon:detailFieldIcon(deathBlood!.definitionId),lines:[singleEffect]})
+  let setEffects: PreparationDetailPresentation['setEffects'] = null
+  if(domain){
+    const setName=BEAST_CONTRACT_DOMAIN_SET_NAME[domain.collection]
+    const identity=domain.identity==='relic'?`协同散件，不计套装件数。关联套装：${setName}。`:domain.identity==='boss-core-replacement'?`${setName} · Boss 替代核心武器，计入对应套装 1 件；与同套专用猎行弓互斥。`:`${setName} · 核心套装装备，计入对应套装 1 件。`
+    effects.push({id:'domain-identity',source:`domain.${domain.identity}`,title:'套装身份',icon:detailFieldIcon(`domain.${domain.identity}`),lines:[identity]})
+    const copy=getBeastContractDomainSingleEffectCopy(domain.descriptionKey)
+    if(copy)effects.push({id:'domain-single',source:domain.descriptionKey,title:'独立效果',icon:detailFieldIcon(domain.descriptionKey),lines:[copy]})
+    if(domain.coreContribution===1){
+      const state=loadout[domain.collection]
+      setEffects={id:domain.collection,name:setName,summary:`已装备核心件数 ${state.coreCount}/6`,rows:domain.thresholds.flatMap(({threshold,descriptionKey})=>{
+        const lines=getBeastContractDomainSetEffectCopy(descriptionKey)
+        const active=threshold===2?state.twoPieceActive:threshold===3?state.threePieceActive:state.fivePieceActive
+        return lines?[{id:descriptionKey,source:descriptionKey,title:`${threshold} 件 · ${active?'已激活':'未激活'}`,lines,active,icon:detailFieldIcon(descriptionKey)}]:[]
+      })}
+    }
+  }else if(deathBlood){
+    if(deathBlood.identity!=='excluded'&&deathBlood.coreContribution===1&&deathBlood.setPresentation){
+      setEffects={id:deathBlood.collection,name:deathBlood.setPresentation.name,rows:deathBlood.setPresentation.thresholds.flatMap(({threshold})=>{
+        const text=getDeathBloodSetEffectCopy(deathBlood.collection,threshold)
+        return text?[{id:`deathBlood:${threshold}`,source:`deathBlood.${deathBlood.collection}.${threshold}`,title:`${threshold} 件`,lines:[text],icon:detailFieldIcon(`deathBlood.${deathBlood.collection}.${threshold}`)}]:[]
+      })}
+    }
+  }else if(template?.setPresentation){
+    const set=template.setPresentation
+    setEffects={id:set.name,name:set.name,rows:set.thresholds.map(threshold=>({id:String(threshold.threshold),source:`setPresentation.thresholds.${threshold.threshold}`,title:`${threshold.threshold} 件`,lines:threshold.description?[threshold.description]:threshold.effects.map(effect=>effect.display),icon:'ED15'}))}
+  }
+  const percentKeys=new Set(['skillDamageMultiplier','skillCooldownMultiplier','crystalXpMultiplier','dropRateMultiplier','beastDamageMultiplier','fieldRadiusMultiplier'])
+  const basePriority:Readonly<Record<string,number>>={attackDamage:0,attackRange:1,armor:2,maxHp:3}
+  return applyPreparationEquipmentCopy(item, applyTwoLegendaryBowsCopy(item, {
+    name: domain?.name ?? item.name,
+    baseStats: [
+      ...Object.entries(item.bonus).filter(([id,value])=>typeof value==='number'&&!isReplacedPreparationBonusZero(id,value,item.inherentStats)).map(([id,value])=>({
+        id,source:`bonus.${id}`,label:id==='dropRateMultiplier'?'额外装备掉落触发率':equipmentBonusLabels[id as keyof EquipmentItem['bonus']]??id,
+        value:id==='attackIntervalOffset'?detailSecondsValue(value):percentKeys.has(id)?`${signedDetailValue(value*100*(id==='skillCooldownMultiplier'?-1:1))}%`:signedDetailValue(value),icon:detailStatIcon(id,'base'),
+      })),
+      ...(item.inherentStats??[]).map((stat,index)=>({id:stat.id,source:`inherentStats[${index}].${stat.id}`,label:detailStatLabel(stat.id),value:signedDetailValue(stat.value),icon:detailStatIcon(stat.id,'base')})),
+    ].sort((a,b)=>(basePriority[a.id]??4)-(basePriority[b.id]??4)),
+    affixes:(item.ordinaryAffixes??[]).map((affix,index)=>({id:affix.id,source:`ordinaryAffixes[${index}].${affix.id}`,label:detailStatLabel(affix.id),value:detailAffixValue(affix.id,affix.value),icon:detailStatIcon(affix.id,'affix',item.slot),quality:affix.quality,effective:affix.effectiveForArcher})),
+    effects,setEffects,
+  }))
 }
 
 const WarehouseEquipmentDetail = ({
@@ -2317,15 +2374,11 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   const getCharacterEquipmentProgressionPresentation = useGameStore((state) => state.getCharacterEquipmentProgressionPresentation)
   const getEquipmentEnhancementPreview = useGameStore((state) => state.getEquipmentEnhancementPreview)
   const enhanceEquipment = useGameStore((state) => state.enhanceEquipment)
-  const selectedCampaign = useGameStore((state) => state.selectedCampaign)
-  const selectedCampaignDifficulty = useGameStore((state) => state.selectedCampaignDifficulty)
   const unlockedCampaignDifficulties = useGameStore((state) => state.unlockedCampaignDifficulties)
   const completedCampaignDifficulties = useGameStore((state) => state.completedCampaignDifficulties)
   const discoveredSkillEvolutionIds = useGameStore((state) => state.discoveredSkillEvolutionIds)
   const audioSettings = useGameStore((state) => state.audioSettings)
   const prepareFormalCombatLaunch = useGameStore((state) => state.prepareFormalCombatLaunch)
-  const selectCampaign = useGameStore((state) => state.selectCampaign)
-  const selectCampaignDifficulty = useGameStore((state) => state.selectCampaignDifficulty)
   const returnToVillage = useGameStore((state) => state.returnToVillage)
   const exitLocalBattleTest = useGameStore((state) => state.exitLocalBattleTest)
   const resetLocalHighRarityEquipmentInventory = useGameStore((state) => state.resetLocalHighRarityEquipmentInventory)
@@ -2397,8 +2450,32 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   const [enhancementFeedback, setEnhancementFeedback] = useState<Record<string, { equipmentId: string; message: string }>>({})
   const [enhancementAttempted, setEnhancementAttempted] = useState<Record<string, boolean>>({})
   const [campaignLaunchFeedback, setCampaignLaunchFeedback] = useState('')
+  const preparationConfirmationRef = useRef<HTMLDivElement>(null)
+  const preparationOpen = villageModal === 'campaign' || villageModal === 'character'
+  const preparationConfirmationOpen = preparationOpen && Boolean(enhancementConfirmation || standardEnhancementConfirmation)
+  useEffect(() => {
+    if (!preparationConfirmationOpen) return
+    const previous = document.activeElement as HTMLElement | null
+    const dialog = preparationConfirmationRef.current
+    dialog?.querySelector<HTMLButtonElement>('button')?.focus()
+    const handleKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault(); event.stopPropagation()
+        setEnhancementConfirmation(null); setStandardEnhancementConfirmation(null)
+      } else if (event.key === 'Tab') {
+        const buttons = [...(dialog?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])]
+        if (event.shiftKey && document.activeElement === buttons[0]) { event.preventDefault(); buttons.at(-1)?.focus() }
+        else if (!event.shiftKey && document.activeElement === buttons.at(-1)) { event.preventDefault(); buttons[0]?.focus() }
+      }
+    }
+    dialog?.addEventListener('keydown', handleKey)
+    return () => {
+      dialog?.removeEventListener('keydown', handleKey)
+      if (previous?.isConnected) previous.focus()
+    }
+  }, [preparationConfirmationOpen])
   const openVillageModal = (modal: VillageModalId) => {
-    if (modal === 'campaign') {
+    if (modal === 'campaign' || modal === 'character') {
       setCampaignLaunchFeedback('')
     }
     if (modal === 'character') {
@@ -2461,7 +2538,6 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
       ['low-score-rare', '分解低分蓝装'],
       ['off-build-rare', '分解非本流派蓝装'],
     ]
-    const selectedDifficultyConfig = getCampaignDifficultyConfig(selectedCampaignDifficulty)
     const reforgeItem = reforgeRequest ? equipmentInventory.find((item) => item.id === reforgeRequest.itemId) : undefined
     const reforgeCost = reforgeItem && reforgeRequest ? getEquipmentReforgeCost(reforgeItem, reforgeRequest.mode) : null
     const reforgeGoldCost = reforgeItem && reforgeRequest ? getEquipmentReforgeGoldCost(reforgeItem, reforgeRequest.mode) : 0
@@ -2507,137 +2583,44 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
       <div className="pointer-events-none absolute inset-0 z-10">
         <ForestHomepage onOpen={openVillageModal} />
 
-        {villageModal === 'campaign' ? (
-          <VillageModalShell
-            title="关卡"
+        {(villageModal === 'campaign' || villageModal === 'character') ? (
+          <PreparationOverlay
+            initialPage={villageModal === 'campaign' ? 'level' : 'ready'}
             onClose={() => setVillageModal(null)}
-            stickyHeader
-            fixedFrame
-            testId="campaign-modal-shell"
-            headerTestId="campaign-modal-header"
-            contentTestId="campaign-modal-scroll"
-          >
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-              <SectionPanel eyebrow="" title="">
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {CAMPAIGN_MONSTER_THEMES.map((theme) => {
-                    const active = selectedCampaign === theme.campaign
-                    const lootProfile = getCampaignLootProfile(theme.campaign)
-                    return (
-                      <button
-                        key={theme.campaign}
-                        type="button"
-                        className={`border-2 p-4 text-left transition-colors ${
-                          active
-                            ? 'border-amber-300 bg-[#2b2110] text-amber-100'
-                            : 'border-[#08100b] bg-[#101913] text-[#dfe7d5] hover:border-amber-300 hover:text-amber-200'
-                        }`}
-                        onClick={() => selectCampaign(theme.campaign)}
-                      >
-                        <p className="font-pixel text-[9px] uppercase tracking-[0.14em] text-[#9dd5ac]">第 {theme.campaign} 关</p>
-                        <p className="mt-2 text-xl leading-tight">{theme.name}</p>
-                        <p className="mt-2 text-[0.95rem] leading-tight text-[#9dd5ac]">
-                          Boss：{theme.boss.name}
-                        </p>
-                        <p className="mt-2 text-[0.9rem] leading-tight text-amber-200">掉落：{formatPortalDropHint(lootProfile.portalHint)}</p>
-                        <p className="mt-2 text-[0.9rem] leading-tight text-[#9dd5ac]">推荐：{lootProfile.recommendedState}</p>
-                        <div className="mt-3 flex flex-wrap gap-1.5">
-                          {CAMPAIGN_DIFFICULTY_ORDER.map((difficulty) => {
-                            const unlocked = isCampaignDifficultyUnlocked(unlockedCampaignDifficulties, theme.campaign, difficulty)
-                            const completed = isCampaignDifficultyCompleted(completedCampaignDifficulties, theme.campaign, difficulty)
-                            return (
-                              <span
-                                key={difficulty}
-                                className={`border px-2 py-1 font-pixel text-[7px] ${completed ? 'border-amber-300 text-amber-200' : unlocked ? 'border-[rgba(157,213,172,0.35)] text-[#9dd5ac]' : 'border-[rgba(80,104,89,0.35)] text-[#506859]'}`}
-                              >
-                                {getCampaignDifficultyLabel(difficulty)}
-                              </span>
-                            )
-                          })}
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              </SectionPanel>
-
-              <SectionPanel eyebrow="" title="">
-                <div className="border-2 border-[#08100b] bg-[#101913] p-4">
-                  {(() => {
-                    const lootProfile = getCampaignLootProfile(selectedCampaign)
-                    return (
-                      <div className="mb-4 grid gap-2 text-[0.95rem] leading-tight text-[#dfe7d5]">
-                        <p><span className="font-pixel text-[8px] text-[#9dd5ac]">掉落</span> {lootProfile.primaryLootReason}</p>
-                        <p><span className="font-pixel text-[8px] text-[#9dd5ac]">威胁</span> {lootProfile.themeThreat}</p>
-                        <p><span className="font-pixel text-[8px] text-[#9dd5ac]">推荐</span> {lootProfile.recommendedState}</p>
-                      </div>
-                    )
-                  })()}
-                  <div className="border-2 border-[#08100b] bg-[#0b120d] p-3" data-testid="campaign-difficulty-selector">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="font-pixel text-[8px] uppercase tracking-[0.14em] text-[#9dd5ac]">难度</p>
-                      <span className="font-pixel text-[8px] text-amber-300" data-testid="selected-campaign-difficulty">
-                        {selectedDifficultyConfig.label}
-                      </span>
-                    </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      {CAMPAIGN_DIFFICULTY_ORDER.map((difficulty) => {
-                        const unlocked = isCampaignDifficultyUnlocked(unlockedCampaignDifficulties, selectedCampaign, difficulty)
-                        const activeDifficulty = selectedCampaignDifficulty === difficulty
-                        const completed = isCampaignDifficultyCompleted(completedCampaignDifficulties, selectedCampaign, difficulty)
-                        return (
-                          <button
-                            key={difficulty}
-                            type="button"
-                            disabled={!unlocked}
-                            className={`border-2 px-3 py-2 text-left font-pixel text-[8px] transition-colors ${
-                              activeDifficulty
-                                ? 'border-amber-300 bg-[#2b2110] text-amber-200'
-                                : unlocked
-                                  ? 'border-[#08100b] bg-[#101913] text-[#9dd5ac] hover:border-amber-300'
-                                  : 'cursor-not-allowed border-[#08100b] bg-[#070d0a] text-[#506859]'
-                            }`}
-                            aria-label={`${getCampaignDifficultyLabel(difficulty)}${unlocked ? '' : '未解锁'}`}
-                            title={getCampaignDifficultyUnlockHint(unlockedCampaignDifficulties, selectedCampaign, difficulty)}
-                            onClick={() => selectCampaignDifficulty(selectedCampaign, difficulty)}
-                          >
-                            <span>{getCampaignDifficultyLabel(difficulty)}</span>
-                            <span className="ml-2 text-[7px]">{completed ? '已通关' : unlocked ? '开放' : '锁定'}</span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                    <p className="mt-3 text-[0.9rem] leading-tight text-[#9dd5ac]" data-testid="campaign-difficulty-hint">
-                      {selectedDifficultyConfig.pressureTags.join(' / ')}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="pixel-button mt-5 w-full px-5 py-4 font-pixel text-[10px]"
-                    onClick={() => {
-                      const prepared = prepareFormalCombatLaunch()
-                      if (!prepared.ok) {
-                        setCampaignLaunchFeedback(prepared.errors.join('；') || '战斗资源加载准备失败。')
-                        return
-                      }
-                      setCampaignLaunchFeedback('')
-                      setVillageModal(null)
-                    }}
-                  >
-                    进入
-                  </button>
-                  {campaignLaunchFeedback ? (
-                    <p className="mt-3 text-sm leading-5 text-red-300" role="status" aria-live="polite" data-testid="campaign-launch-feedback">
-                      {campaignLaunchFeedback}
-                    </p>
-                  ) : null}
-                </div>
-              </SectionPanel>
-            </div>
-          </VillageModalShell>
+            onShowCharacter={() => { setCharacterSelectionView('details'); setVillageModal('character-details') }}
+            onLaunch={() => {
+              const prepared = prepareFormalCombatLaunch()
+              if (!prepared.ok) {
+                setCampaignLaunchFeedback(prepared.errors.join('；') || '战斗资源加载准备失败。')
+                return
+              }
+              setCampaignLaunchFeedback('')
+              setVillageModal(null)
+            }}
+            launchFeedback={campaignLaunchFeedback}
+            onClearFeedback={() => setCampaignLaunchFeedback('')}
+            confirmationOpen={Boolean(enhancementConfirmation || standardEnhancementConfirmation)}
+            renderEquipmentDetail={(item, includeName) => <WarehouseEquipmentDetail item={item} equippedItems={equippedItems} includeName={includeName} />}
+            getDetailPresentation={(item) => getPreparationDetailPresentation(item, equippedItems)}
+            onEnhance={(item) => {
+              const preview = getEquipmentEnhancementPreview(item.id)
+              if (!preview) return
+              if (!preview.affordable) {
+                setCampaignLaunchFeedback(`强化资源不足：${formatMaterialSummary(preview.materialCost)} · 金币 ${preview.goldCost}G`)
+              } else if (preview.dangerous) {
+                setEnhancementConfirmation({ equipmentId: preview.equipmentId, targetLevel: preview.targetLevel, acknowledgedPermanentDestruction: false })
+              } else if (preview.targetLevel >= 6) {
+                setStandardEnhancementConfirmation({ equipmentId: preview.equipmentId, targetLevel: preview.targetLevel, acknowledgedPermanentDestruction: false })
+              } else {
+                if (equippedItems[item.slot]?.id === item.id) useGameStore.getState().upgradeEquippedEquipment(item.slot)
+                else enhanceEquipment(item.id)
+                setCampaignLaunchFeedback(useGameStore.getState().message)
+              }
+            }}
+          />
         ) : null}
 
-        {villageModal === 'character' ? (
+        {villageModal === 'character-details' ? (
           <CharacterSelectionDialog
             view={characterSelectionView}
             evolutionCatalog={archerEvolutionGuideCatalog}
@@ -3077,12 +3060,12 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
           const item = [...equipmentInventory, ...Object.values(equippedItems).filter((entry): entry is EquipmentItem => Boolean(entry))].find((entry) => entry.id === standardEnhancementConfirmation.equipmentId)
           const preview = item ? getEquipmentEnhancementPreview(item.id) : null
           if (!item || !preview) return null
-          return <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-label="强化确认">
+          return <div ref={preparationOpen ? preparationConfirmationRef : undefined} className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-label="强化确认">
             <div className="w-full max-w-lg border-4 border-amber-600 bg-[#162019] p-5 text-[#f4f0d7]">
               <h3 className="font-pixel text-sm text-amber-200">强化确认 · +{preview.targetLevel}</h3>
               <p className="mt-3 text-sm leading-relaxed">成功率 {(preview.successChance * 100).toFixed(0)}%；失败结果：{preview.failureResult === 'downgrade' ? `降至 +${preview.failureLevel ?? 1}` : preview.failureResult === 'reset-to-one' ? '回到 +1' : '不降级'}。</p>
               <p className="mt-2 text-sm">消耗：{formatMaterialSummary(preview.materialCost)} · 金币 {preview.goldCost}G</p>
-              <div className="mt-5 flex justify-end gap-2"><button type="button" className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => setStandardEnhancementConfirmation(null)}>取消</button><button type="button" className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => { enhanceEquipment(item.id, standardEnhancementConfirmation); const result = useGameStore.getState().equippedItems[item.slot]; setEnhancementAttempted((current) => ({ ...current, [item.slot]: true })); setEnhancementFeedback((current) => ({ ...current, [item.slot]: { equipmentId: item.id, message: result?.upgradeLevel === preview.targetLevel ? '强化成功。' : result ? `强化失败：当前为 +${result.upgradeLevel ?? 0}。` : '强化失败：装备已永久破碎。' } })); setStandardEnhancementConfirmation(null) }}>确认强化</button></div>
+              <div className="mt-5 flex justify-end gap-2"><button type="button" className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => setStandardEnhancementConfirmation(null)}>取消</button><button type="button" className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => { enhanceEquipment(item.id, standardEnhancementConfirmation); if (preparationOpen) setCampaignLaunchFeedback(useGameStore.getState().message); const result = useGameStore.getState().equippedItems[item.slot]; setEnhancementAttempted((current) => ({ ...current, [item.slot]: true })); setEnhancementFeedback((current) => ({ ...current, [item.slot]: { equipmentId: item.id, message: result?.upgradeLevel === preview.targetLevel ? '强化成功。' : result ? `强化失败：当前为 +${result.upgradeLevel ?? 0}。` : '强化失败：装备已永久破碎。' } })); setStandardEnhancementConfirmation(null) }}>确认强化</button></div>
             </div>
           </div>
         })() : null}
@@ -3093,7 +3076,7 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
           const dangerousPreview = dangerousItem ? getEquipmentEnhancementPreview(dangerousItem.id) : null
           if (!dangerousItem || !dangerousPreview) return null
           return (
-            <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" role="alertdialog" aria-modal="true" aria-label="永久破碎危险确认">
+            <div ref={preparationOpen ? preparationConfirmationRef : undefined} className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" role="alertdialog" aria-modal="true" aria-label="永久破碎危险确认">
               <div className="w-full max-w-lg border-4 border-red-700 bg-[#241014] p-5 text-red-100">
                 <h3 className="font-pixel text-sm text-red-200">永久破碎危险确认</h3>
                 <p className="mt-3 text-sm leading-relaxed">{dangerousItem.name} 将强化至 +{dangerousPreview.targetLevel}。失败结果：永久破碎，不返还装备或材料。</p>
@@ -3102,6 +3085,7 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
                   <button type="button" className="pixel-button px-4 py-3 font-pixel text-[10px]" onClick={() => setEnhancementConfirmation(null)}>取消</button>
                   <button type="button" className="pixel-button border-red-500 px-4 py-3 font-pixel text-[10px] text-red-100" onClick={() => {
                     enhanceEquipment(dangerousItem.id, { ...enhancementConfirmation, acknowledgedPermanentDestruction: true })
+                    if (preparationOpen) setCampaignLaunchFeedback(useGameStore.getState().message)
                     const result = useGameStore.getState().equippedItems[dangerousItem.slot]
                     setEnhancementAttempted((current) => ({ ...current, [dangerousItem.slot]: true }))
                     setEnhancementFeedback((current) => ({ ...current, [dangerousItem.slot]: { equipmentId: dangerousItem.id, message: result ? `强化结果：当前为 +${result.upgradeLevel ?? 0}。` : '强化失败：装备已永久破碎。' } }))

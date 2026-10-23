@@ -1,0 +1,166 @@
+{
+  "adoptedOn": "2026-10-19",
+  "source": "assets/developer-assets/preparation-ui-controls-v1-staging/equipment-detail-extraction-20261019/revision-01",
+  "sourceHashes": {
+    "manifest.json": "a024d2a72adf3d1e144f6b2745e5aeaa47fa0be98094720577d25ee7cc58fc11",
+    "freeze.json": "34fa25ce17ac51b66532766a4a57f4d00ada4ab7dd442d5435207a532727a208"
+  },
+  "copyMode": "byte-for-byte; staging remains frozen",
+  "files": [
+    {
+      "id": "ED01",
+      "file": "skins/ED01.png",
+      "sha256": "e5f366f3bf4339dd925fb673a19a23e9f97417f2dd49086166447b47555f9dc1"
+    },
+    {
+      "id": "ED02",
+      "file": "skins/ED02.png",
+      "sha256": "27f1f4eea31ec84b087a7d71bd00476fe178fd6ac221d02f1a35fc6c8eb7d2ae"
+    },
+    {
+      "id": "ED03",
+      "file": "skins/ED03.png",
+      "sha256": "5752057badc419dfbb5cbd17a7b6d2471a69eae63013bebd47914dd410437910"
+    },
+    {
+      "id": "ED04",
+      "file": "skins/ED04.png",
+      "sha256": "0a50f2b6e7b9bcdf91e5fff0dc3ae192f5d5eb38cdce8314ebf4e179346de941"
+    },
+    {
+      "id": "ED05",
+      "file": "skins/ED05.png",
+      "sha256": "c94d2638a6a07e522363fa71de2434bce796a933bcc867f5593c14f5378c1446"
+    },
+    {
+      "id": "ED06",
+      "file": "skins/ED06.png",
+      "sha256": "750d509318ecf66d9ff6c688858bc94fff97facfd784c2ccff4ecddb22ce114f"
+    },
+    {
+      "id": "ED07",
+      "file": "skins/ED07.png",
+      "sha256": "8b82e520dd887dcd8323168e11423490a7e632811e1405ad4cebbb442d2a4427"
+    },
+    {
+      "id": "ED08",
+      "file": "skins/ED08.png",
+      "sha256": "9e09b1010ff57a7961cb9b062100b026fc3c7b0c4279bf45d8ed89dcbfb362d3"
+    },
+    {
+      "id": "ED09",
+      "file": "icons/ED09.png",
+      "sha256": "06e03b7a33bb17cc65a8020aadb2473d41ccec7a0aed6ac1e1bc07f036a06853"
+    },
+    {
+      "id": "ED10",
+      "file": "icons/ED10.png",
+      "sha256": "02fda25c290fc03341493a2bae139d108e28bb5835bcb197e3475e0592c44162"
+    },
+    {
+      "id": "ED11",
+      "file": "icons/ED11.png",
+      "sha256": "fd4bc8f57c03348e5ca579cc61a9c8524afaeef03865300b9624599de68250b3"
+    },
+    {
+      "id": "ED12",
+      "file": "icons/ED12.png",
+      "sha256": "c8b6feb8b13db21c7f6e10cca8fee7462a646b466a8c19796b8de84dd723e5cc"
+    },
+    {
+      "id": "ED13.sword",
+      "file": "icons/ED13.sword.png",
+      "sha256": "efdcd4b24eb7c2224940feb6d8c134cdb1156bbbdfc2f5e36704551193703734"
+    },
+    {
+      "id": "ED13.bow",
+      "file": "icons/ED13.bow.png",
+      "sha256": "d29a069a08150d38c4b3cb51df509f21213902b084bfef2d3f374be166780585"
+    },
+    {
+      "id": "ED13.arm",
+      "file": "icons/ED13.arm.png",
+      "sha256": "16f2c4ddd449a5cdcac61d565ce424bc949f980139383a73dec0504818a90233"
+    },
+    {
+      "id": "ED13.boot",
+      "file": "icons/ED13.boot.png",
+      "sha256": "e6785671d7600d9999f3d818c6d662c0b48f273240b659533032fb9c14446f10"
+    },
+    {
+      "id": "ED13.feather",
+      "file": "icons/ED13.feather.png",
+      "sha256": "68488c7c1ad1d2b7c8026f7c221f7a69e42b44080dc9140640e9b91568a511ac"
+    },
+    {
+      "id": "ED14.star",
+      "file": "icons/ED14.star.png",
+      "sha256": "c48c300441eb38cae519c07172ec2f94c312751834e2a16a89c0e431cbcf80f3"
+    },
+    {
+      "id": "ED14.ring",
+      "file": "icons/ED14.ring.png",
+      "sha256": "11d53a01d8fd45a5d0baa1f5d4103964ea9fd16eca6c817eeb05878453172ef2"
+    },
+    {
+      "id": "ED15",
+      "file": "icons/ED15.png",
+      "sha256": "fb9cfc4f5feaf004a48dd26cd6a89356cd5289181c979a6db7108ed15f48f10c"
+    },
+    {
+      "id": "ED16",
+      "file": "skins/ED16.png",
+      "sha256": "e9380a58adaf8053e24a89ade0c5e55e0c5c88874eac0ee709a73e7ce8faa7cf"
+    },
+    {
+      "id": "ED17",
+      "file": "skins/ED17.png",
+      "sha256": "1d4b3748dccc307138b94551f1d64100a7fcd57f7b894b02a0a02ed46c7ebbf4"
+    },
+    {
+      "id": "ED18",
+      "file": "skins/ED18.png",
+      "sha256": "249374e6a681d14656b30d56a2315865221faac979f518a995955733aa2d2cca"
+    },
+    {
+      "id": "ED19",
+      "file": "skins/ED19.png",
+      "sha256": "d8aab03fced8aced8c88cae4848d5898d10d2836bbb5bf3aef698db5558a0b4d"
+    },
+    {
+      "id": "ED20",
+      "file": "skins/ED20.png",
+      "sha256": "a25a49d8c168bd43abb828e6d7036f5b310d2ca6b34f0656f95c78dbb0b8d8a8"
+    },
+    {
+      "id": "ED21",
+      "file": "skins/ED21.png",
+      "sha256": "be5f23b053618eef189034050999e220b1d6033c22a6eed4a7545d6190324353"
+    },
+    {
+      "id": "ED22",
+      "file": "skins/ED22.png",
+      "sha256": "d15d624d37142a3cf0ee58425e0e51f1717c75fa8885967a7c08c88cd098e42b"
+    },
+    {
+      "id": "ED23",
+      "file": "skins/ED23.png",
+      "sha256": "54ce77257da677dab7659a569abb3ddf167c5f8e974a7552eecca9b1b4982866"
+    },
+    {
+      "id": "ED24",
+      "file": "skins/ED24.png",
+      "sha256": "274c529c7e524e53a6176b606c2fa6526ac207248db8453aa958872afd17043b"
+    },
+    {
+      "id": "ED25",
+      "file": "skins/ED25.png",
+      "sha256": "4d2331933173552a5f369a64ece1422a1c301794591dcbf02a37b20acac8dc2f"
+    },
+    {
+      "id": "ED26",
+      "file": "skins/ED26.png",
+      "sha256": "9dae1e238ed07c020b374f01c57b96ef0bd2c668bce7bff9dd333ffbbeaa9875"
+    }
+  ]
+}

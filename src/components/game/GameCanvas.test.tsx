@@ -491,7 +491,7 @@ describe('GameCanvas', () => {
       '开始游戏', '角色选择', '物品仓库', '强化分解', '猎人之家', '公告信息', '游戏设置',
     ])
     fireEvent.click(screen.getByRole('button', { name: /^开始游戏$/ }))
-    expect(screen.getByTestId('campaign-modal-shell')).toBeTruthy()
+    expect(screen.getByTestId('preparation-overlay')).toBeTruthy()
     expect(screen.queryByRole('dialog', { name: '本地战斗测试' })).toBeNull()
     expect(screen.queryByTestId('local-test-controls')).toBeNull()
   })
@@ -524,7 +524,7 @@ describe('GameCanvas', () => {
     expect(screen.getByTestId('local-test-controls')).toBeTruthy()
     fireEvent.click(within(screen.getByTestId('forest-home-menu')).getByRole('button', { name: '开始游戏' }))
 
-    expect(screen.getByTestId('campaign-modal-shell')).toBeTruthy()
+    expect(screen.getByTestId('preparation-overlay')).toBeTruthy()
     expect(screen.queryByTestId('local-test-controls')).toBeNull()
     expect(screen.queryByRole('button', { name: '测试' })).toBeNull()
     expect(screen.queryByTestId('local-battle-entry')).toBeNull()
