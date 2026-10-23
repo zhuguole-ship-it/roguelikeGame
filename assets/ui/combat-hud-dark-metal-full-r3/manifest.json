@@ -1,0 +1,303 @@
+{
+  "schemaVersion": "combat-hud-dark-metal-full-r3",
+  "runtimeEligible": true,
+  "originalPortrait": "assets/ui/combat-hud-v2/archer-portrait-v2.png",
+  "mana": "prepared only; not shown or preloaded for archer",
+  "assets": [
+    {
+      "id": "portrait-frame",
+      "scale": 1,
+      "fileName": "portrait-frame-1x.png",
+      "width": 120,
+      "height": 112,
+      "sha256": "3ea90b4d404d250ae454708781df0bcdf66f347d7cb97b0fdb804f7a4d0b81fc",
+      "source": "public/assets/ui/combat-hud-dark-metal-r3/portrait-frame-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "portrait-frame",
+      "scale": 2,
+      "fileName": "portrait-frame-2x.png",
+      "width": 240,
+      "height": 224,
+      "sha256": "9cf6ebde84cfd5fab702f60d8999fe003843e61e14519c0ec779f16e045c2d5d",
+      "source": "public/assets/ui/combat-hud-dark-metal-r3/portrait-frame-2x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "portrait-content-mask",
+      "scale": 1,
+      "fileName": "portrait-content-mask-1x.png",
+      "width": 120,
+      "height": 112,
+      "sha256": "6db4ac955d3a20cba79a106c8ea5899d7b44b6debf6ede8301030bfcf7da75ec",
+      "source": "public/assets/ui/combat-hud-dark-metal-r3/portrait-content-mask-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "portrait-content-mask",
+      "scale": 2,
+      "fileName": "portrait-content-mask-2x.png",
+      "width": 240,
+      "height": 224,
+      "sha256": "931edcef1ac1c84cd8430bbe5280684d79f2d37ae7b29696e798b502541a7e29",
+      "source": "public/assets/ui/combat-hud-dark-metal-r3/portrait-content-mask-2x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "health-shell",
+      "scale": 1,
+      "fileName": "health-shell-1x.png",
+      "width": 283,
+      "height": 35,
+      "sha256": "16516a9aa38b7f4fbf1d841bdc118ee298b4a8f28be82fd8c58b2b45b8426adb",
+      "source": "public/assets/ui/combat-hud-dark-metal-r3/health-shell-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "health-shell",
+      "scale": 2,
+      "fileName": "health-shell-2x.png",
+      "width": 566,
+      "height": 70,
+      "sha256": "4b3f7b315f4f2319af5de506ae19944c34798db91db955d49cf0d962dd91b56a",
+      "source": "public/assets/ui/combat-hud-dark-metal-r3/health-shell-2x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "health-track",
+      "scale": 1,
+      "fileName": "health-track-1x.png",
+      "width": 283,
+      "height": 35,
+      "sha256": "8d0f7dd402d9dcb632b7e3a5d82327699cb8324cce5f7fb7a33e94ff62f6ab99",
+      "source": "public/assets/ui/combat-hud-dark-metal-r3/health-track-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "health-track",
+      "scale": 2,
+      "fileName": "health-track-2x.png",
+      "width": 566,
+      "height": 70,
+      "sha256": "c04ce904605b528cfc384a8f8e1bab128beed9df2eda831d3415a97f5bbc6dd4",
+      "source": "public/assets/ui/combat-hud-dark-metal-r3/health-track-2x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "health-fill",
+      "scale": 1,
+      "fileName": "health-fill-1x.png",
+      "width": 283,
+      "height": 35,
+      "sha256": "521b04fc3cd03554ac13192027ea4e3233c2d4eb01844891ed9b9b78c91ee4fd",
+      "source": "output/combat-hud-dark-metal-20261023/full-integration-r2/option2-review/health-fill-option2-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "health-fill",
+      "scale": 2,
+      "fileName": "health-fill-2x.png",
+      "width": 566,
+      "height": 70,
+      "sha256": "7150843363f9bca2f192e91288e59c95c2e95b665304bb118aceaca1aee5caa3",
+      "source": "output/combat-hud-dark-metal-20261023/full-integration-r2/option2-review/health-fill-option2-2x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "stamina-fill",
+      "scale": 1,
+      "fileName": "stamina-fill-1x.png",
+      "width": 283,
+      "height": 35,
+      "sha256": "b4584a7a16bc6c0be1ff6f0f46df95af21a10bf320aeae6fc4c4a2013c050fa5",
+      "source": "output/combat-hud-dark-metal-20261023/full-integration-r2/option2-review/stamina-fill-option2-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "stamina-fill",
+      "scale": 2,
+      "fileName": "stamina-fill-2x.png",
+      "width": 566,
+      "height": 70,
+      "sha256": "9c3ebe926e2be36052ef69abca9d6172f55a301082f1f47892c8aa2adf174498",
+      "source": "output/combat-hud-dark-metal-20261023/full-integration-r2/option2-review/stamina-fill-option2-2x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "mana-fill",
+      "scale": 1,
+      "fileName": "mana-fill-1x.png",
+      "width": 283,
+      "height": 35,
+      "sha256": "7d76c6a5682ef3f7a1aeb6cae7cf2426e69f3f87c1418005325ba30c12255095",
+      "source": "output/combat-hud-dark-metal-20261023/full-integration-r2/option2-review/mana-fill-option2-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "mana-fill",
+      "scale": 2,
+      "fileName": "mana-fill-2x.png",
+      "width": 566,
+      "height": 70,
+      "sha256": "0f91c672582d84366e65ed0133c965c4e9cfc4471b7e4cea14467379b58e8130",
+      "source": "output/combat-hud-dark-metal-20261023/full-integration-r2/option2-review/mana-fill-option2-2x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "skill-frame",
+      "scale": 1,
+      "fileName": "skill-frame-1x.png",
+      "width": 96,
+      "height": 96,
+      "sha256": "8ae0d28acba68866f973bc39d76a5392bf0174dade2c031d90260ca061cb3b74",
+      "source": "output/combat-hud-dark-metal-20261023/frame-concept-remake-r2/assets/skill-frame-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "skill-frame",
+      "scale": 2,
+      "fileName": "skill-frame-2x.png",
+      "width": 192,
+      "height": 192,
+      "sha256": "070d825ca29beab4a6a913113d92b4cc938a46744bc747fc007fa1f6e8d39d9e",
+      "source": "output/combat-hud-dark-metal-20261023/frame-concept-remake-r2/assets/skill-frame-2x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "skill-content-mask",
+      "scale": 1,
+      "fileName": "skill-content-mask-1x.png",
+      "width": 96,
+      "height": 96,
+      "sha256": "a465365897c233d4f7df7cef4e1319720da7ba3901233e78a5d9b81ba4345539",
+      "source": "output/combat-hud-dark-metal-20261023/frame-concept-remake-r2/assets/skill-content-mask-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "skill-content-mask",
+      "scale": 2,
+      "fileName": "skill-content-mask-2x.png",
+      "width": 192,
+      "height": 192,
+      "sha256": "311babc0bbfc765e91768333ef111386394d8b016a30618b8f0eed98055dbf2e",
+      "source": "output/combat-hud-dark-metal-20261023/frame-concept-remake-r2/assets/skill-content-mask-2x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "skill-empty",
+      "scale": 1,
+      "fileName": "skill-empty-1x.png",
+      "width": 96,
+      "height": 96,
+      "sha256": "b1be63828b152932a4d70ee8d38a34c2672ab0a82a9fa92b380c2da03460227d",
+      "source": "output/combat-hud-dark-metal-20261023/frame-concept-remake-r2/assets/skill-empty-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "skill-empty",
+      "scale": 2,
+      "fileName": "skill-empty-2x.png",
+      "width": 192,
+      "height": 192,
+      "sha256": "ee39b818b74e5900396848626f77dd152f8a47e3f6b855db8b7ac8d0801d4723",
+      "source": "output/combat-hud-dark-metal-20261023/frame-concept-remake-r2/assets/skill-empty-2x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "minimap-frame",
+      "scale": 1,
+      "fileName": "minimap-frame-1x.png",
+      "width": 192,
+      "height": 192,
+      "sha256": "d601ae9f108c57fd8e9dd94f1da753653926ad5cdc47b049a2823e8e913b9271",
+      "source": "output/combat-hud-dark-metal-20261023/frame-concept-remake-r2/assets/minimap-frame-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "minimap-frame",
+      "scale": 2,
+      "fileName": "minimap-frame-2x.png",
+      "width": 384,
+      "height": 384,
+      "sha256": "1957fb35a0cf57e9bce01d487493440a88c6475812f3894afc642a1a3d91c2c4",
+      "source": "output/combat-hud-dark-metal-20261023/frame-concept-remake-r2/assets/minimap-frame-2x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "minimap-content-mask",
+      "scale": 1,
+      "fileName": "minimap-content-mask-1x.png",
+      "width": 192,
+      "height": 192,
+      "sha256": "1afcc69393a68dfe57f1539688b47c9fff7dc1beef2ae1e53fce5eb4e690ebb3",
+      "source": "output/combat-hud-dark-metal-20261023/frame-concept-remake-r2/assets/minimap-content-mask-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "minimap-content-mask",
+      "scale": 2,
+      "fileName": "minimap-content-mask-2x.png",
+      "width": 384,
+      "height": 384,
+      "sha256": "b55ae782292808b5e6dd80af08dea50fb999271ef420f2ea8b86e37f7d98c1c0",
+      "source": "output/combat-hud-dark-metal-20261023/frame-concept-remake-r2/assets/minimap-content-mask-2x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "floor-target-ornament",
+      "scale": 1,
+      "fileName": "floor-target-ornament-1x.png",
+      "width": 240,
+      "height": 28,
+      "sha256": "60b4e8d7f863731ca7608fe8df1f83caaab6a79793f7ca90c3fe4f8baf210b53",
+      "source": "public/assets/ui/combat-hud-dark-metal-full-r1/floor-target-ornament-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "floor-target-ornament",
+      "scale": 2,
+      "fileName": "floor-target-ornament-2x.png",
+      "width": 480,
+      "height": 56,
+      "sha256": "d033c57b6a7635032444f453bb016f019b5509fdce78d02c977d45f07ddb0199",
+      "source": "public/assets/ui/combat-hud-dark-metal-full-r1/floor-target-ornament-2x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "utility-button",
+      "scale": 1,
+      "fileName": "utility-button-1x.png",
+      "width": 112,
+      "height": 36,
+      "sha256": "129970d7b0b754a25d64685a47c9cb0cdcef117f23a433b972ae50bdf65a48e2",
+      "source": "public/assets/ui/combat-hud-dark-metal-full-r1/utility-button-1x.png",
+      "byteIdentical": true
+    },
+    {
+      "id": "utility-button",
+      "scale": 2,
+      "fileName": "utility-button-2x.png",
+      "width": 224,
+      "height": 72,
+      "sha256": "6e5504c83ba5271f820848d8133a7b2f2760817eff452c9d0bd606557ff9da46",
+      "source": "public/assets/ui/combat-hud-dark-metal-full-r1/utility-button-2x.png",
+      "byteIdentical": true
+    }
+  ],
+  "fillAudit": "output/combat-hud-dark-metal-20261023/full-integration-r2/option2-review/audit.json",
+  "frameAudit": "output/combat-hud-dark-metal-20261023/frame-concept-remake-r2/audit.json",
+  "safeApertures": {
+    "skill": {
+      "1x": 58,
+      "2x": 122
+    },
+    "minimap": {
+      "1x": 146.342,
+      "2x": 300
+    }
+  },
+  "userAdoptedFrames": "frame-concept-remake-r2 final assets; 2026-10-23",
+  "conceptVisualAcceptance": false,
+  "browserAcceptance": false
+}
