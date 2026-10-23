@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { RotateCcw } from 'lucide-react'
+import { CombatHudFullLayer } from './CombatHudFullLayer'
 
 import { ARCHER_FIXED_PASSIVE, SKILL_BUILD_DESCRIPTIONS, SKILL_BUILD_LABELS } from '../../game/archerSkills'
 import { getActiveSkillRuntimePresentation } from '../../game/archerSkillEvolution'
@@ -3334,10 +3335,11 @@ export function GameOverlay({ onVillageModalVisibilityChange }: {
   return (
     <div
       {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.hud, highestLayer)}
-      className="pointer-events-none absolute left-4 top-20 border-2 border-[#08100b] bg-[rgba(8,16,11,0.68)] px-3 py-2 shadow-[0_0_0_2px_rgba(157,213,172,0.08)] md:top-[76px]"
+      className="combat-full-floor pointer-events-none"
       style={getCombatUiLayerStyle(COMBAT_UI_LAYER.hud)}
       data-testid="combat-floor-hud"
     >
+      <CombatHudFullLayer asset="floor-target-ornament" />
       <p
         className="font-pixel text-[9px] uppercase tracking-[0.12em] text-[#f4f0d7] md:text-[10px]"
         data-testid={isBossSpawnSearching ? 'boss-spawn-search-status' : 'combat-floor-objective'}

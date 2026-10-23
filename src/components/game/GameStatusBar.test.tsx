@@ -5,6 +5,8 @@ import { createInitialSnapshot, getCampaignRewardPresentationSnapshot } from '..
 import { ARCHER_SKILL_EVOLUTION_MAP } from '../../game/archerSkillEvolution'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
 import { getCombatHudV2AssetUrl } from '../../game/combatHudAssets'
+import { getCombatHudR3SegmentClip } from '../../game/combatHudR3Assets'
+import { getCombatHudFullAssetUrl } from '../../game/combatHudFullAssets'
 import type { EquipmentItem, SkillField } from '../../game/types'
 import { useGameStore } from '../../store/useGameStore'
 import {
@@ -64,55 +66,46 @@ describe('GameStatusBar', () => {
 
     expect(screen.getByTestId('combat-hud-layer').getAttribute('data-combat-ui-layer')).toBe('top-5')
     expect(screen.getByTestId('combat-hud-layer').style.zIndex).toBe('100')
-    expect(screen.getByTestId('combat-vitals-hud').className).toContain('w-[calc(100vw-1rem)]')
-    expect(screen.getByTestId('combat-vitals-hud').className).toContain('max-w-[16rem]')
+    expect(screen.getByTestId('combat-vitals-hud').className).toContain('combat-r3-vitals')
     expect(screen.queryByTestId('combat-campaign-reward-progress')).toBeNull()
     expect(screen.queryByTestId('combat-talent-v3-hud')).toBeNull()
     expect(screen.queryByText(/蓝晶 \d|节点 \d|突袭 \d|有限投入|无限成长|主流派|副流派/)).toBeNull()
     expect(screen.getByTestId('combat-vitals-hud').className).not.toMatch(/\bborder\b|\bbg-\[|\bshadow-/)
-    expect(screen.getByTestId('combat-hud-portrait-frame').className).toContain('rounded-full')
-    expect(screen.getByTestId('combat-hud-portrait-frame').className).toContain('border-[#d6a648]')
-    expect(screen.getByTestId('combat-hud-portrait-frame').className).toContain('h-11')
+    expect(screen.getByTestId('combat-hud-portrait-r3-frame').getAttribute('src')).toBe(getCombatHudFullAssetUrl('portrait-frame'))
     expect(screen.getByTestId('combat-hud-portrait').getAttribute('src')).toBe(getCombatHudV2AssetUrl('portrait'))
 
     expect(screen.getByTestId('combat-health-bar').getAttribute('aria-label')).toBe('生命 6 / 10')
     expect(screen.getByTestId('combat-health-value').textContent).toContain('6 / 10')
-    expect(screen.getByTestId('combat-health-bar').querySelector('img')?.getAttribute('src')).toBe(getCombatHudV2AssetUrl('health'))
-    expect(screen.getByTestId('combat-health-fill').style.width).toBe('60%')
-    expect(screen.getByTestId('combat-shield-fill').style.left).toBe('60%')
-    expect(screen.getByTestId('combat-shield-fill').style.width).toBe('30%')
-    expect(screen.getByTestId('combat-shield-fill').className).toContain('bg-[rgba(255,255,255,0.8)]')
+    expect(screen.getByTestId('combat-health-shell').getAttribute('src')).toBe(getCombatHudFullAssetUrl('health-shell'))
+    expect(screen.getByTestId('combat-health-fill').style.clipPath).toBe(getCombatHudR3SegmentClip(0, 60))
+    expect(screen.getByTestId('combat-shield-fill').style.clipPath).toBe(getCombatHudR3SegmentClip(60, 30))
+    expect(screen.getByTestId('combat-shield-aperture').style.maskImage).toContain(getCombatHudFullAssetUrl('health-fill', 2))
 
     expect(screen.getByTestId('combat-stamina-bar').getAttribute('aria-label')).toBe('体力 42 / 100')
     expect(screen.getByTestId('combat-stamina-value').textContent).toContain('42 / 100')
-    expect(screen.getByTestId('combat-stamina-bar').querySelector('img')?.getAttribute('src')).toBe(getCombatHudV2AssetUrl('stamina'))
-    expect(screen.getByTestId('combat-stamina-fill').style.width).toBe('42%')
+    expect(screen.getByTestId('combat-stamina-fill').getAttribute('src')).toBe(getCombatHudFullAssetUrl('stamina-fill'))
+    expect(screen.getByTestId('combat-stamina-fill').style.clipPath).toBe(getCombatHudR3SegmentClip(0, 42))
     expect(screen.queryByText('魔法')).toBeNull()
 
     const skillsHud = screen.getByTestId('combat-skills-hud')
-    expect(skillsHud.className).toContain('bottom-[6.25rem]')
-    expect(skillsHud.className).toContain('md:bottom-[7rem]')
-    expect(skillsHud.className).toContain('left-1/2')
-    expect(skillsHud.className).toContain('-translate-x-1/2')
-    expect(skillsHud.className).not.toMatch(/\b(?:bg|border|shadow)-/)
-    expect(skillsHud.className).not.toContain('xl:right-4')
-    expect(skillsHud.className).toContain('w-[calc(100%-1rem)]')
-    expect(screen.getByTestId('combat-skills-grid').className).toContain('grid-cols-3')
+    expect(skillsHud.className).toBe('combat-full-skills')
+    expect(screen.getByTestId('combat-skills-grid').className).toBe('combat-full-skills-grid')
 
     expect(screen.getByTestId('combat-skill-slot-0').getAttribute('aria-label')).toBe('穿刺箭')
     expect(screen.getByTestId('combat-skill-slot-1').getAttribute('aria-label')).toBe('箭雨坠落')
     expect(screen.getByTestId('combat-skill-slot-2').getAttribute('aria-label')).toBe('空槽')
     ;[0, 1, 2].forEach((index) => {
       const slot = screen.getByTestId(`combat-skill-slot-${index}`)
-      expect(slot.className).toContain('aspect-[649/287]')
-      expect(slot.style.backgroundImage).toContain(getCombatHudV2AssetUrl('skillSlots'))
-      expect(slot.style.backgroundSize).toBe('300% 100%')
+      expect(slot.className).toBe('combat-full-skill')
+      expect(screen.getByTestId(`combat-skill-frame-${index}`).getAttribute('src')).toBe(getCombatHudFullAssetUrl('skill-frame'))
+      expect(slot.querySelector('[style*="skill-content-mask-2x"]')).toBeTruthy()
+      expect(slot.querySelector('button')).toBeNull()
       expect(slot.dataset.frameIndex).toBe(String(index))
     })
     expect(screen.getByTestId('combat-skill-icon-0').getAttribute('src')).toBe(getArcherSkillIconAssetUrl('pierce-arrow'))
     expect(screen.getByTestId('combat-skill-icon-1').getAttribute('src')).toBe(getArcherSkillIconAssetUrl('arrow-rain'))
     expect(screen.getByTestId('combat-skill-icon-shell-2').querySelector('img')).toBeNull()
-    expect(screen.getByText('空槽')).toBeTruthy()
+    expect(screen.getByTestId('combat-skill-slot-2').querySelector('img[src*="skill-empty"]')).toBeTruthy()
     expect(screen.queryByText('Q')).toBeNull()
     expect(screen.queryByText('E')).toBeNull()
     expect(screen.queryByText('R')).toBeNull()

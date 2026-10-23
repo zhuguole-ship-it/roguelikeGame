@@ -32,9 +32,9 @@ export const COMBAT_HUD_V2_RUNTIME_ASSETS = {
   portrait: {
     fileName: 'archer-portrait-v2.png',
     source: 'portrait',
-    sha256: '77979fa3fc546608801209c23446027793a9078a935beb0405dd7a287803ef7b',
-    width: 512,
-    height: 512,
+    sha256: 'dd735f70b17bdf30e6058f56fd0d424a2df91a6d01ad1e177c579b21509ed13d',
+    width: 1200,
+    height: 1200,
   },
   health: {
     fileName: 'health-mana-bars-v2.png',

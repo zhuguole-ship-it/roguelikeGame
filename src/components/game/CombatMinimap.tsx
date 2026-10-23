@@ -4,14 +4,13 @@ import {
   projectWorldPositionToMinimap,
 } from '../../game/combatMinimap'
 import { useGameStore } from '../../store/useGameStore'
+import { CombatHudFullLayer, getCombatHudFullMaskStyle } from './CombatHudFullLayer'
 import {
   COMBAT_UI_LAYER,
   getCombatUiLayerAccessibilityProps,
   getCombatUiLayerStyle,
   useCombatUiLayerState,
 } from './combatUiLayers'
-
-const minimapFrameUrl = `${import.meta.env.BASE_URL}assets/ui/minimap-radar-image2/minimap_radar_gold_frame_512_empty_center.png`
 
 export function CombatMinimap() {
   const phase = useGameStore((state) => state.phase)
@@ -28,18 +27,13 @@ export function CombatMinimap() {
   return (
     <div
       {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.combat, highestLayer)}
-      className="pointer-events-none absolute right-2 top-2 h-24 w-24 select-none sm:h-28 sm:w-28 md:h-32 md:w-32 lg:h-44 lg:w-44"
+      className="combat-full-minimap pointer-events-none select-none"
       style={getCombatUiLayerStyle(COMBAT_UI_LAYER.combat)}
       data-testid="combat-minimap"
       aria-label="战斗小地图"
     >
-      <img
-        className="absolute inset-0 z-0 h-full w-full object-contain [image-rendering:pixelated]"
-        src={minimapFrameUrl}
-        alt=""
-        aria-hidden="true"
-      />
-      <div className="absolute left-1/2 top-1/2 z-10 h-[70%] w-[70%] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-full bg-black shadow-[inset_0_0_0_1px_rgba(246,200,111,0.2),inset_0_0_18px_rgba(0,0,0,0.96)]">
+      <div className="combat-full-minimap-aperture" style={getCombatHudFullMaskStyle('minimap-content-mask')} data-testid="combat-minimap-aperture">
+      <div className="combat-full-minimap-plot">
         <svg
           className="block h-full w-full"
           viewBox="0 0 100 100"
@@ -73,6 +67,8 @@ export function CombatMinimap() {
           />
         </svg>
       </div>
+      </div>
+      <CombatHudFullLayer asset="minimap-frame" testId="combat-minimap-frame" />
     </div>
   )
 }

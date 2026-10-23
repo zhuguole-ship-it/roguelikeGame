@@ -17,6 +17,7 @@ import { FirstDungeonChunkObservabilityPanel } from './FirstDungeonChunkObservab
 import { CombatDamageLog } from './CombatDamageLog'
 import { CombatBackgroundMusic } from './CombatBackgroundMusic'
 import { CombatMinimap } from './CombatMinimap'
+import { CombatHudFullLayer } from './CombatHudFullLayer'
 import { GameOverlay } from './GameOverlay'
 import { HomeBackgroundMusic } from './HomeBackgroundMusic'
 import { InitialSkillDraftOverlay } from './InitialSkillDraftOverlay'
@@ -60,6 +61,8 @@ function LocalTestControls({
   const [battleOpen, setBattleOpen] = useState(false)
   const [acceptanceOpen, setAcceptanceOpen] = useState(false)
   const [chunkObservabilityOpen, setChunkObservabilityOpen] = useState(false)
+  const [toolsExpanded, setToolsExpanded] = useState(false)
+  const toolsToggleRef = useRef<HTMLButtonElement | null>(null)
   const acceptanceLaunchRef = useRef<HTMLButtonElement | null>(null)
   const developmentAcceptance = useGameStore((state) => state.developmentAcceptance)
   const canRenderDeveloperControls = !isVillageModalOpen
@@ -75,12 +78,14 @@ function LocalTestControls({
 
   useEffect(() => {
     if (!acceptanceOpen && developmentAcceptance.active) {
-      acceptanceLaunchRef.current?.focus({ preventScroll: true })
+      const target = isHomepage || toolsExpanded ? acceptanceLaunchRef.current : toolsToggleRef.current
+      target?.focus({ preventScroll: true })
     }
-  }, [acceptanceOpen, developmentAcceptance.active])
+  }, [acceptanceOpen, developmentAcceptance.active, isHomepage, toolsExpanded])
 
   useEffect(() => {
     if (!canRenderDeveloperControls) {
+      setToolsExpanded(false)
       setOpen(false)
       setBattleOpen(false)
       setAcceptanceOpen(false)
@@ -99,11 +104,30 @@ function LocalTestControls({
       {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.developer, highestLayer)}
       className={`absolute text-[#f4f0d7] ${isHomepage
         ? 'left-4 top-4 w-[min(10rem,calc(50vw-2rem))]'
-        : `right-4 ${avoidMinimap ? 'top-[8.75rem] sm:top-[9.75rem] md:top-[11.75rem]' : 'top-4'}`}`}
+        : 'combat-full-tools'}`}
       data-placement={isHomepage ? 'homepage-left' : 'combat-right'}
+      data-avoids-minimap={avoidMinimap}
       style={getCombatUiLayerStyle(COMBAT_UI_LAYER.developer)}
       data-testid="local-test-controls"
     >
+      {!isHomepage ? (
+        <button ref={toolsToggleRef} type="button" className="combat-full-tools-toggle"
+          aria-expanded={toolsExpanded} aria-controls="combat-full-tool-list"
+          onClick={() => setToolsExpanded((value) => !value)}>
+          <CombatHudFullLayer asset="utility-button" />
+          <span>测试工具{developmentAcceptance.active ? ' · 临时' : ''} {toolsExpanded ? '▴' : '▾'}</span>
+        </button>
+      ) : null}
+      <div id="combat-full-tool-list" hidden={!isHomepage && !toolsExpanded}
+        className={isHomepage ? '' : 'combat-full-tool-list'}
+        onKeyDown={(event) => {
+          if (!isHomepage && event.key === 'Escape' && !open && !battleOpen && !acceptanceOpen && !chunkObservabilityOpen) {
+            event.preventDefault()
+            event.stopPropagation()
+            setToolsExpanded(false)
+            toolsToggleRef.current?.focus()
+          }
+        }}>
       <button
         type="button"
         className="border-2 border-[#080b0a] bg-[#f59e0b] px-4 py-2 font-pixel text-[10px] text-[#231306] shadow-[0_0_0_1px_rgba(218,165,71,0.76),0_4px_0_rgba(0,0,0,0.34)]"
@@ -144,6 +168,7 @@ function LocalTestControls({
       >
         地形观测
       </button>
+      </div>
       {open ? <DeveloperAssetPanel onClose={() => setOpen(false)} /> : null}
       {battleOpen ? <LocalBattleTestPanel controller={controller} session={session} spawnOptions={spawnOptions} onClose={() => setBattleOpen(false)} /> : null}
       {acceptanceOpen ? (
@@ -359,6 +384,10 @@ export function GameCanvas({ enableSceneLoading = import.meta.env.MODE !== 'test
         })
       }}
       onKeyDownCapture={(event) => {
+        // DOM tools keep native Tab/Enter/Space; their keys never cast or dash.
+        if (event.target instanceof Element && event.target.closest('[data-testid="local-test-controls"]')) return
+        if (event.key === 'Tab' && event.target === containerRef.current
+          && containerRef.current?.querySelector('.combat-full-tools-toggle')) return
         const key = event.key.toLowerCase()
         const hasModalPriority = highestLayer === COMBAT_UI_LAYER.pause
           || highestLayer === COMBAT_UI_LAYER.reward

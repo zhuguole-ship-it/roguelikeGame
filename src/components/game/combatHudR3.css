@@ -1,0 +1,25 @@
+/* Local vitals only: skill slots/minimap/other status layers keep their layout. */
+.combat-r3-vitals {
+  --combat-r3-value: #f4f0d7;
+  --combat-r3-shadow: #080b0a;
+  width: min(calc(100vw - 1rem), 320px);
+  aspect-ratio: 411 / 112;
+}
+.combat-r3-vitals-row { position: relative; width: 100%; height: 100%; }
+.combat-r3-portrait { position: absolute; left: 0; top: 0; width: 29.197080292%; height: 100%; }
+.combat-r3-bars { position: absolute; left: 31.143552311%; top: 0; width: 68.856447689%; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; }
+.combat-r3-bars > [data-testid="combat-stamina-bar"] { max-width: 200px; }
+.combat-r3-health { position: relative; width: 100%; aspect-ratio: 283 / 35; flex: none; }
+.combat-r3-layer { position: absolute; inset: 0; display: block; width: 100%; height: 100%; max-width: none; image-rendering: auto; pointer-events: none; user-select: none; }
+.combat-r3-masked-content { position: absolute; inset: 0; pointer-events: none; }
+.combat-r3-original-portrait { position: absolute; left: 12.5%; top: 9.821428571%; width: 75%; height: 80.357142857%; image-rendering: pixelated; }
+.combat-r3-shield { position: absolute; inset: 0; background: rgba(255,255,255,0.8); }
+.combat-r3-health-value { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--combat-r3-value); font: bold 12px/1 sans-serif; text-shadow: 1px 1px 1px var(--combat-r3-shadow), -1px -1px 1px var(--combat-r3-shadow); white-space: nowrap; }
+@media (min-width: 1280px) {
+  /* Keep a 16px gap before the existing centered, 560px-wide skill HUD. */
+  .combat-r3-vitals { width: min(411px, calc((100vw - 560px) / 2 - 2rem)); }
+  .combat-r3-health-value { font-size: 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .combat-r3-vitals *, .combat-r3-vitals { animation: none; transition: none; }
+}

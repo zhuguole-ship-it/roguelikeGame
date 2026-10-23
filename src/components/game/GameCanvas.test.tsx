@@ -73,6 +73,37 @@ afterEach(() => {
 })
 
 describe('GameCanvas', () => {
+  it('folds battle tools without changing game state and preserves native keyboard access', () => {
+    const triggerActiveSkill = vi.fn()
+    const triggerDash = vi.fn()
+    useGameStore.setState({ ...createInitialSnapshot('running'), mapObstacles: [], triggerActiveSkill, triggerDash })
+    render(<GameCanvas />)
+    const before = useGameStore.getState()
+    const toggle = screen.getByRole('button', { name: /测试工具/ })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('button', { name: '测试' })).toBeNull()
+    expect(screen.getByTestId('local-battle-entry').closest('[hidden]')).toBeTruthy()
+    expect(screen.getByLabelText('游戏画布').parentElement?.getAttribute('tabindex')).toBe('0')
+    expect(fireEvent.keyDown(toggle, { key: 'Tab' })).toBe(true)
+    expect(fireEvent.keyDown(toggle, { key: ' ' })).toBe(true)
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    const testButton = screen.getByRole('button', { name: '测试' })
+    expect(fireEvent.keyDown(testButton, { key: 'Tab' })).toBe(true)
+    fireEvent.keyDown(testButton, { key: 'q' })
+    fireEvent.keyDown(testButton, { key: 'Escape' })
+    expect(document.activeElement).toBe(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(triggerActiveSkill).not.toHaveBeenCalled()
+    expect(triggerDash).not.toHaveBeenCalled()
+    expect(useGameStore.getState()).toBe(before)
+    fireEvent.click(toggle)
+    act(() => useGameStore.setState({ phase: 'paused', pauseMenuOpen: true }))
+    expect(screen.queryByRole('button', { name: /测试工具/ })).toBeNull()
+    act(() => useGameStore.setState({ phase: 'running', pauseMenuOpen: false }))
+    expect(screen.getByRole('button', { name: /测试工具/ }).getAttribute('aria-expanded')).toBe('false')
+  })
+
   it.each([
     [1440, 900, 'infinite', 1, 2048, 1280],
     [1920, 1080, 'boss-arena', 22, 2276, 1280],
@@ -345,6 +376,7 @@ describe('GameCanvas', () => {
     render(<GameCanvas />)
 
     expect(screen.getByTestId('local-test-controls')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /测试工具/ }))
     fireEvent.click(screen.getByRole('button', { name: '测试' }))
     fireEvent.click(screen.getByLabelText('生命无限'))
     fireEvent.click(screen.getByLabelText('不攻击'))
@@ -361,6 +393,7 @@ describe('GameCanvas', () => {
 
     render(<GameCanvas />)
 
+    fireEvent.click(screen.getByRole('button', { name: /测试工具/ }))
     const entry = screen.getByTestId('first-dungeon-chunk-observability-entry')
     expect(entry.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(entry)
@@ -386,6 +419,7 @@ describe('GameCanvas', () => {
 
     render(<GameCanvas />)
 
+    fireEvent.click(screen.getByRole('button', { name: /测试工具/ }))
     const entry = screen.getByTestId('development-acceptance-entry')
     expect(entry.getAttribute('aria-expanded')).toBe('false')
     expect(entry.textContent).toContain('关卡测试')
@@ -471,8 +505,8 @@ describe('GameCanvas', () => {
     act(() => useGameStore.setState({ phase: 'running' }))
     const controls = screen.getByTestId('local-test-controls')
     expect(controls.getAttribute('data-placement')).toBe('combat-right')
-    expect(controls.className).toContain('right-4')
-    expect(controls.className).toContain('top-[8.75rem] sm:top-[9.75rem] md:top-[11.75rem]')
+    expect(controls.className).toContain('combat-full-tools')
+    expect(screen.getByRole('button', { name: /测试工具/ }).getAttribute('aria-expanded')).toBe('false')
     expect(controls.className).not.toContain('left-4')
   })
 

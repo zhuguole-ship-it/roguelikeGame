@@ -4,6 +4,7 @@ import { PLAYER_ARCHER_ACTIONS, getPlayerArcherRuntimeAssetUrls } from './archer
 import { developerAssetEntities } from './assetManifest'
 import { CAMPAIGN_MONSTER_THEMES } from './campaignMonsters'
 import { COMBAT_HUD_V2_RUNTIME_ASSETS, getCombatHudV2AssetUrl } from './combatHudAssets'
+import { COMBAT_HUD_FULL_PRELOAD_IDS, getCombatHudFullAssetRecord, getCombatHudFullAssetUrl } from './combatHudFullAssets'
 import { COMBAT_BACKGROUND_MUSIC_ASSETS } from './combatBackgroundMusicAssets'
 import { ENEMY_HIT_AUDIO_ASSET } from './enemyHitAudioAsset'
 import { getSpawnAudioResources, SEVEN_CUE_AUDIO_ASSETS } from './sevenCueAudioAssets'
@@ -215,12 +216,18 @@ export const getCombatAssetResources = (descriptor: CombatLoadingDependencyDescr
     createCombatRuntimeImageResource('environment.combat-mask', 'environment', COMBAT_DARK_MASK_ASSET_URL),
     ...getEnemyAssetResources(enemyIds),
     ...getPlayerArcherRuntimeAssetUrls().map((url, index) => createCombatRuntimeImageResource(`player.archer.frame.${index + 1}`, 'player-actions', url)),
-    ...Object.keys(COMBAT_HUD_V2_RUNTIME_ASSETS).map((assetId) => createCombatRuntimeImageResource(
+    ...(['portrait'] as const).map((assetId) => createCombatRuntimeImageResource(
       `combat-hud.${assetId}`,
       'combat-ui',
       getCombatHudV2AssetUrl(assetId as keyof typeof COMBAT_HUD_V2_RUNTIME_ASSETS),
       COMBAT_HUD_V2_RUNTIME_ASSETS[assetId as keyof typeof COMBAT_HUD_V2_RUNTIME_ASSETS].sha256,
     )),
+    ...COMBAT_HUD_FULL_PRELOAD_IDS.flatMap((assetId) => ([1, 2] as const).map((scale) => createCombatRuntimeImageResource(
+      `combat-hud.full.${assetId}.${scale}x`,
+      'combat-ui',
+      getCombatHudFullAssetUrl(assetId, scale),
+      getCombatHudFullAssetRecord(assetId, scale).sha256,
+    ))),
     ...skillIcons,
     ...transitionAssets,
     Object.freeze({

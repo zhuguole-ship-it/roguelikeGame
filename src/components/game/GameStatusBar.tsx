@@ -3,9 +3,10 @@ import { useEffect, useRef, useState } from 'react'
 import { useGameStore } from '../../store/useGameStore'
 import { getActiveSkillRuntimePresentation } from '../../game/archerSkillEvolution'
 import { getArcherSkillIconAssetUrl } from '../../game/archerSkillIcons'
-import { getArrowTurretIconFitClass, isArrowTurretDisplayId } from '../../game/arrowTurretAssets'
+import { getArrowTurretIconFitClass } from '../../game/arrowTurretAssets'
 import { ArcherSkillIconImage } from './ArcherSkillIconImage'
-import { getCombatHudV2AssetUrl } from '../../game/combatHudAssets'
+import { CombatHudR3Health, CombatHudR3Portrait } from './CombatHudR3Vitals'
+import { CombatHudFullLayer, getCombatHudFullMaskStyle } from './CombatHudFullLayer'
 import {
   getArrowTurretPresentation,
   getBeastContractDomainPresentationSnapshot,
@@ -42,11 +43,6 @@ export const getCombatHudBarSegments = (hp: number, maxHp: number, shield: numbe
 export const getCooldownRemainingLabel = (cooldownRemaining: number) => (
   cooldownRemaining > 0 ? String(Math.ceil(cooldownRemaining)) : null
 )
-
-const healthFrameUrl = getCombatHudV2AssetUrl('health')
-const staminaFrameUrl = getCombatHudV2AssetUrl('stamina')
-const portraitUrl = getCombatHudV2AssetUrl('portrait')
-const skillFrameUrl = getCombatHudV2AssetUrl('skillSlots')
 
 const formatHudValue = (value: number) => Math.max(0, Math.round(value))
 
@@ -267,77 +263,28 @@ export function GameStatusBar() {
     <>
       <div
         {...getCombatUiLayerAccessibilityProps(COMBAT_UI_LAYER.hud, highestLayer)}
-        className="pointer-events-none absolute inset-0"
+        className="combat-full-hud pointer-events-none absolute inset-0"
         style={getCombatUiLayerStyle(COMBAT_UI_LAYER.hud)}
         data-testid="combat-hud-layer"
       >
         <div
-          className="absolute bottom-2 left-2 w-[calc(100vw-1rem)] max-w-[16rem] sm:bottom-3 sm:left-3 lg:bottom-4 lg:left-4"
+          className="combat-full-vitals combat-r3-vitals"
           data-testid="combat-vitals-hud"
         >
-          <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
-            <div
-              className="h-11 w-11 shrink-0 overflow-hidden rounded-full border-2 border-[#d6a648] bg-[#080c09] shadow-[0_0_0_1px_#442b11] sm:h-12 sm:w-12"
-              data-testid="combat-hud-portrait-frame"
-            >
-              <img
-                src={portraitUrl}
-                alt="弓箭手"
-                className="block h-full w-full object-cover [image-rendering:pixelated]"
-                draggable="false"
-                data-testid="combat-hud-portrait"
-              />
-            </div>
-
-            <div className="min-w-0 flex-1 space-y-1">
-              <div
-                className="relative aspect-[1243/258] w-full overflow-hidden"
-                aria-label={`生命 ${formatHudValue(hp)} / ${formatHudValue(maxHp)}`}
-                data-testid="combat-health-bar"
-              >
-                <img
-                  src={healthFrameUrl}
-                  alt=""
-                  className="pointer-events-none absolute inset-x-0 top-0 block h-auto w-full max-w-none select-none [image-rendering:pixelated]"
-                  draggable="false"
-                />
-                <div className="absolute left-[18.5%] top-[35%] h-[40%] w-[72%] overflow-hidden" data-testid="combat-health-fill-clip">
-                  <div className="absolute inset-y-0 left-0 bg-[#c6342d]" style={{ width: `${healthSegments.health}%` }} data-testid="combat-health-fill" />
-                  <div
-                    className="absolute inset-y-0 bg-[rgba(255,255,255,0.8)]"
-                    style={{ left: `${healthSegments.health}%`, width: `${healthSegments.shield}%` }}
-                    data-testid="combat-shield-fill"
-                  />
-                </div>
-                <span className="absolute right-[10.5%] top-1/2 -translate-y-1/2 font-pixel text-[7px] text-[#f4f0d7] [text-shadow:1px_1px_0_#080b0a] sm:text-[8px]" data-testid="combat-health-value">
-                  {formatHudValue(hp)} / {formatHudValue(maxHp)}
-                </span>
-              </div>
-
-              <div
-                className="relative aspect-[1243/258] w-full overflow-hidden"
-                aria-label={`体力 ${formatHudValue(stamina)} / 100`}
-                data-testid="combat-stamina-bar"
-              >
-                <img
-                  src={staminaFrameUrl}
-                  alt=""
-                  className="pointer-events-none absolute inset-0 block h-full w-full select-none [image-rendering:pixelated]"
-                  draggable="false"
-                />
-                <div className="absolute left-[18.5%] top-[35%] h-[40%] w-[72%] overflow-hidden" data-testid="combat-stamina-fill-clip">
-                  <div className="h-full bg-[#d99a35]" style={{ width: `${staminaRatio}%` }} data-testid="combat-stamina-fill" />
-                </div>
-                <span className="absolute right-[10.5%] top-1/2 -translate-y-1/2 font-pixel text-[7px] text-[#f4f0d7] [text-shadow:1px_1px_0_#080b0a] sm:text-[8px]" data-testid="combat-stamina-value">
-                  {formatHudValue(stamina)} / 100
-                </span>
-              </div>
+          <div className="combat-r3-vitals-row">
+            <CombatHudR3Portrait full />
+            <div className="combat-r3-bars">
+              <span className="combat-full-profession">弓箭手</span>
+              <CombatHudR3Health hp={formatHudValue(hp)} maxHp={formatHudValue(maxHp)}
+                healthPercent={healthSegments.health} shieldPercent={healthSegments.shield} full />
+              <CombatHudR3Health hp={formatHudValue(stamina)} maxHp={100}
+                healthPercent={staminaRatio} shieldPercent={0} resource="stamina" full />
             </div>
           </div>
         </div>
 
-        <div className="absolute bottom-[6.25rem] left-1/2 w-[calc(100%-1rem)] max-w-[33rem] -translate-x-1/2 sm:bottom-[6.75rem] md:bottom-[7rem] md:w-[min(78vw,35rem)] xl:bottom-4 xl:w-[min(54vw,35rem)]" data-testid="combat-skills-hud">
-        <div className="grid grid-cols-3 items-stretch gap-1.5 sm:gap-2" data-testid="combat-skills-grid">
+        <div className="combat-full-skills" data-testid="combat-skills-hud">
+        <div className="combat-full-skills-grid" data-testid="combat-skills-grid">
           {[0, 1, 2].map((index) => {
             const skill = activeSkills[index]
             const presentation = skill ? getActiveSkillRuntimePresentation(skill) : null
@@ -347,7 +294,6 @@ export function GameStatusBar() {
               : 0
             const cooldownLabel = skill ? getCooldownRemainingLabel(skill.cooldownRemaining) : null
             const iconUrl = presentation ? getArcherSkillIconAssetUrl(presentation.displayId) : undefined
-            const turretNameOnly = isArrowTurretDisplayId(presentation?.displayId ?? '')
             const skillName = presentation?.name ?? '空槽'
 
             return (
@@ -360,15 +306,11 @@ export function GameStatusBar() {
                 data-runtime-display-id={presentation?.displayId ?? ''}
                 data-runtime-evolution-id={presentation?.evolutionId ?? ''}
                 data-runtime-family-id={presentation?.familyId ?? ''}
-                className="relative aspect-[649/287] min-w-0 overflow-hidden bg-[#080c09] [image-rendering:pixelated]"
-                style={{
-                  backgroundImage: `url(${skillFrameUrl})`,
-                  backgroundPosition: `${index * 50}% center`,
-                  backgroundRepeat: 'no-repeat',
-                  backgroundSize: '300% 100%',
-                }}
+                className="combat-full-skill"
               >
-                  <div className={`absolute left-[7%] top-[16%] h-[68%] overflow-hidden border border-[rgba(244,240,215,0.34)] bg-[#08100b] ${turretNameOnly ? 'w-[85%]' : 'w-[28%]'}`} data-testid={`combat-skill-icon-shell-${index}`}>
+                  <div className="combat-full-skill-aperture" style={getCombatHudFullMaskStyle('skill-content-mask')}>
+                  {!presentation ? <CombatHudFullLayer asset="skill-empty" /> : null}
+                  <div className="combat-full-skill-content" data-testid={`combat-skill-icon-shell-${index}`}>
                     {iconUrl ? (
                       <ArcherSkillIconImage
                         src={iconUrl}
@@ -379,7 +321,7 @@ export function GameStatusBar() {
                     ) : presentation ? (
                       <span
                         aria-hidden="true"
-                        className={`grid h-full w-full place-items-center break-words bg-[#0c1510] px-1 text-center font-pixel leading-tight tracking-[0.04em] text-amber-200 [image-rendering:pixelated] ${turretNameOnly ? 'text-[clamp(9px,1.1vw,14px)]' : 'text-[7px] sm:text-[8px]'} ${ready ? 'brightness-100' : 'brightness-50'}`}
+                        className={`combat-full-skill-name grid h-full w-full place-items-center break-words bg-[#0c1510] px-1 text-center leading-tight text-amber-200 ${ready ? 'brightness-100' : 'brightness-50'}`}
                         data-testid={`combat-skill-icon-placeholder-${index}`}
                       >
                         {presentation.name}
@@ -400,17 +342,18 @@ export function GameStatusBar() {
                       </span>
                     ) : null}
                   </div>
-                  {!turretNameOnly ? <span className="absolute left-[40%] right-[8%] top-1/2 min-w-0 -translate-y-1/2 truncate font-pixel text-[8px] leading-tight text-[#f4f0d7] [text-shadow:1px_1px_0_#080b0a] sm:text-[9px] md:text-[10px]" title={skillName}>
-                    {skillName}
-                  </span> : null}
+                  </div>
+                  <CombatHudFullLayer asset="skill-frame" testId={`combat-skill-frame-${index}`} />
               </div>
             )
           })}
         </div>
       </div>
         <RunTalentFeedbackHud />
-        <ArrowTurretHud />
-        <BeastContractDomainHud />
+        <div className="combat-full-context-left">
+          <ArrowTurretHud />
+          <BeastContractDomainHud />
+        </div>
       </div>
     </>
   )

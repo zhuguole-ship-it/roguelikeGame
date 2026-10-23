@@ -1,0 +1,49 @@
+/* Presentation only. Shared edge dimensions keep map/objective/tools aligned. */
+:root {
+  --combat-full-inset: 16px;
+  --combat-full-map: clamp(104px, 15vw, 192px);
+  --combat-full-skill: 96px;
+  --combat-full-text: #f4f0d7;
+  --combat-full-copper: #94734c;
+}
+.combat-full-layer { position: absolute; inset: 0; display: block; width: 100%; height: 100%; max-width: none; image-rendering: auto; pointer-events: none; user-select: none; }
+.combat-full-vitals.combat-r3-vitals {
+  position: absolute; top: var(--combat-full-inset); left: var(--combat-full-inset);
+  width: min(411px, calc(100vw - var(--combat-full-map) - 3 * var(--combat-full-inset) - 8px));
+}
+.combat-full-vitals .combat-r3-bars { gap: 0; padding-top: 18px; }
+.combat-full-vitals .combat-r3-bars > [data-testid="combat-stamina-bar"] { max-width: none; }
+.combat-full-profession { position: absolute; top: 2%; left: 4%; color: var(--combat-full-text); font: bold clamp(9px, 1.2vw, 16px)/1.2 sans-serif; text-shadow: 1px 1px 2px #000; }
+.combat-full-skills { position: absolute; bottom: var(--combat-full-inset); left: 50%; transform: translateX(-50%); }
+.combat-full-skills-grid { display: grid; grid-template-columns: repeat(3, var(--combat-full-skill)); gap: clamp(8px, 2vw, 24px); }
+.combat-full-skill { position: relative; width: var(--combat-full-skill); height: var(--combat-full-skill); }
+.combat-full-skill-aperture { position: absolute; inset: 0; background: #060908; }
+.combat-full-skill-content { position: absolute; inset: 15%; overflow: hidden; border-radius: 50%; }
+.combat-full-skill-name { font-size: clamp(8px, 1vw, 12px); }
+.combat-full-minimap { position: absolute; top: var(--combat-full-inset); right: var(--combat-full-inset); width: var(--combat-full-map); height: var(--combat-full-map); }
+.combat-full-minimap-aperture { position: absolute; inset: 0; background: #000; }
+.combat-full-minimap-plot { position: absolute; inset: 15%; overflow: hidden; border-radius: 50%; }
+.combat-full-floor { position: absolute; top: calc(var(--combat-full-inset) + var(--combat-full-map) + 4px); right: var(--combat-full-inset); width: var(--combat-full-map); min-height: 28px; display: grid; place-items: center; text-align: center; }
+.combat-full-floor p { position: relative; margin: 0 12px; color: var(--combat-full-text); font: bold clamp(9px, 1vw, 14px)/1.4 sans-serif; text-shadow: 1px 1px 2px #000; overflow-wrap: anywhere; }
+.combat-full-floor .combat-full-layer { top: 50%; height: auto; transform: translateY(-50%); }
+.combat-full-tools { position: absolute; top: calc(var(--combat-full-inset) + var(--combat-full-map) + 62px); right: var(--combat-full-inset); width: 136px; }
+.combat-full-tools-toggle { position: relative; width: 100%; min-height: 44px; color: var(--combat-full-text); font: 12px/1.2 sans-serif; }
+.combat-full-tools-toggle span { position: relative; }
+.combat-full-tools-toggle:focus-visible, .combat-full-tool-list button:focus-visible { outline: 2px solid #e9c38b; outline-offset: 2px; }
+.combat-full-tool-list { display: grid; gap: 4px; margin-top: 4px; max-height: min(45vh, 320px); overflow-y: auto; overscroll-behavior: contain; }
+.combat-full-tool-list[hidden] { display: none; }
+.combat-full-tool-list button { margin: 0; width: 100%; min-height: 36px; padding: 6px; border: 1px solid var(--combat-full-copper); background: #171a18; color: var(--combat-full-text); box-shadow: none; }
+.combat-full-context-left { position: absolute; left: var(--combat-full-inset); bottom: var(--combat-full-inset); display: flex; flex-direction: column; gap: 8px; width: min(240px, 25vw); max-height: calc(100% - 150px); }
+.combat-full-context-left > [data-testid] { position: relative; inset: auto; width: 100%; max-width: 100%; flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+.combat-full-hud [data-testid="run-talent-feedback-hud"] { top: auto; bottom: calc(var(--combat-full-skill) + 24px); right: var(--combat-full-inset); max-width: min(34vw, 360px); }
+@media (max-width: 767px) {
+  :root { --combat-full-inset: 8px; --combat-full-skill: 72px; }
+  .combat-full-vitals .combat-r3-health-value { font-size: 9px; }
+  .combat-full-vitals .combat-r3-bars { padding-top: 10px; }
+  .combat-full-tools { width: 112px; }
+  .combat-full-context-left { bottom: calc(var(--combat-full-skill) + 24px); width: min(45vw, 200px); max-height: 28vh; }
+  .combat-full-hud [data-testid="run-talent-feedback-hud"] { max-width: 45vw; max-height: 28vh; overflow-y: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .combat-full-hud *, .combat-full-tools *, .combat-full-minimap * { animation: none; transition: none; }
+}
